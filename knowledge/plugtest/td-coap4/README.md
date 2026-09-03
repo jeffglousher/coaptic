@@ -1,15 +1,21 @@
 ---
 type: Reference
 title: Vendored cabo/td-coap4 README
-description: Attribution for the CoAP#4 YAML sources. Not a test-case rewrite.
+description: "Attribution for the CoAP#4 YAML sources. Not a test-case rewrite."
 tags: [plugtest, attribution]
-generated: { by: cursor_agent/cursor-grok-4.6, at: 2026-09-03T12:10:15Z }
 status: stable
 sources:
   - id: td-coap4
-    resource: https://github.com/cabo/td-coap4
+    resource: "https://github.com/cabo/td-coap4"
     title: cabo/td-coap4
-    retrieved: 2026-09-03T00:00:00Z
+    retrieved: "2026-09-03T00:00:00Z"
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Vendored: ETSI CoAP#4 Test Descriptions (YAML sources)

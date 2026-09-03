@@ -1,20 +1,27 @@
 ---
 type: Test Descriptions
-title: CoAP#4 base
-description: In-scope ETSI CoAP#4 base TDs (TD_COAP_CORE_*). Canonical source is td-coap4/base.yml.
+title: "CoAP#4 base"
+description: "In-scope ETSI CoAP#4 base TDs (TD_COAP_CORE_*). Canonical source is td-coap4/base.yml."
 resource: td-coap4/base.yml
+td_ids: [TD_COAP_CORE_01, TD_COAP_CORE_02, TD_COAP_CORE_03, TD_COAP_CORE_04, TD_COAP_CORE_05, TD_COAP_CORE_06, TD_COAP_CORE_07, TD_COAP_CORE_08, TD_COAP_CORE_09, TD_COAP_CORE_10, TD_COAP_CORE_11, TD_COAP_CORE_12, TD_COAP_CORE_13, TD_COAP_CORE_14, TD_COAP_CORE_15, TD_COAP_CORE_16, TD_COAP_CORE_17, TD_COAP_CORE_18, TD_COAP_CORE_19, TD_COAP_CORE_20, TD_COAP_CORE_21, TD_COAP_CORE_22, TD_COAP_CORE_23, TD_COAP_CORE_31]
 tags: [plugtest, base, core]
-generated: { by: cursor_agent/cursor-grok-4.6, at: 2026-09-03T12:10:15Z }
 status: stable
 scope: in-scope
 sources:
   - id: base-yml
-    resource: https://raw.githubusercontent.com/cabo/td-coap4/master/base.yml
+    resource: "https://raw.githubusercontent.com/cabo/td-coap4/master/base.yml"
     title: cabo/td-coap4 base.yml
-    retrieved: 2026-09-03T00:00:00Z
+    retrieved: "2026-09-03T00:00:00Z"
   - id: rfc7252
     resource: /rfcs/rfc7252.md
     title: RFC 7252
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, td_ids]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Base (in scope)

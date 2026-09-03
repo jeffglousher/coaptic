@@ -4,7 +4,6 @@ title: Constrained CoAP architecture
 description: Six core memory areas and a bounded progress contract. Canonical source is design.md.
 resource: ../design.md
 tags: [architecture, bounded, memory]
-generated: { by: cursor_agent/cursor-grok-4.6-high-fast, at: 2026-09-03T11:50:09Z }
 status: stable
 sources:
   - id: design
@@ -13,6 +12,13 @@ sources:
   - id: drawio
     resource: ../coap_constrained_design.drawio
     title: Architecture diagrams
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Model

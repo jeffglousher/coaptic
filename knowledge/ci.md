@@ -1,10 +1,11 @@
 ---
 type: Playbook
 title: CI and release
-description: PR-only fmt/clippy/test/doc. v* tags publish rustdoc. Squash-only merges.
+description: "PR-only fmt/clippy/test/doc. v* tags publish rustdoc. Squash-only merges."
 resource: ../.github/workflows/ci.yml
+ci_triggers: [on.pull_request, workflow_dispatch]
+release_triggers: [on.push.tags, workflow_dispatch]
 tags: [ci, release, github]
-generated: { by: cursor_agent/cursor-grok-4.6-high-fast, at: 2026-09-03T11:50:09Z }
 status: stable
 sources:
   - id: ci
@@ -13,6 +14,13 @@ sources:
   - id: release
     resource: ../.github/workflows/release.yml
     title: Tag Release workflow
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, ci_triggers, release_triggers]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Triggers

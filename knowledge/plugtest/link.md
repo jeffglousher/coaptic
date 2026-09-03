@@ -1,20 +1,27 @@
 ---
 type: Test Descriptions
-title: CoAP#4 link format
-description: In-scope ETSI CoAP#4 link-format TDs (TD_COAP_LINK_*). Canonical source is td-coap4/link.yml.
+title: "CoAP#4 link format"
+description: "In-scope ETSI CoAP#4 link-format TDs (TD_COAP_LINK_*). Canonical source is td-coap4/link.yml."
 resource: td-coap4/link.yml
+td_ids: [TD_COAP_LINK_01, TD_COAP_LINK_02, TD_COAP_LINK_03, TD_COAP_LINK_04, TD_COAP_LINK_05, TD_COAP_LINK_06, TD_COAP_LINK_07, TD_COAP_LINK_08, TD_COAP_LINK_09]
 tags: [plugtest, link, core]
-generated: { by: cursor_agent/cursor-grok-4.6, at: 2026-09-03T12:10:15Z }
 status: stable
 scope: in-scope
 sources:
   - id: link-yml
-    resource: https://raw.githubusercontent.com/cabo/td-coap4/master/link.yml
+    resource: "https://raw.githubusercontent.com/cabo/td-coap4/master/link.yml"
     title: cabo/td-coap4 link.yml
-    retrieved: 2026-09-03T00:00:00Z
+    retrieved: "2026-09-03T00:00:00Z"
   - id: rfc6690
     resource: /rfcs/rfc6690.md
     title: RFC 6690
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, td_ids]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Link format (in scope)

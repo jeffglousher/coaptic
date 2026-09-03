@@ -1,10 +1,17 @@
 ---
 type: Crate
 title: coaptic
-description: Stand-alone no_std CoAP engine crate. Locked name coaptic.
+description: Stand-alone no_std CoAP engine
 resource: ../Cargo.toml
+crate_name: coaptic
+license: MIT OR Apache-2.0
+edition: "2024"
+rust-version: "1.85"
+features:
+  default: []
+  alloc: []
+  std: [alloc]
 tags: [coaptic, crate, no_std]
-generated: { by: cursor_agent/cursor-grok-4.6-high-fast, at: 2026-09-03T11:50:09Z }
 status: stable
 sources:
   - id: cargo
@@ -16,6 +23,13 @@ sources:
   - id: license-apache
     resource: ../LICENSE-APACHE
     title: Apache-2.0 license
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, title, crate_name, license, edition, rust-version, description, features]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Crate

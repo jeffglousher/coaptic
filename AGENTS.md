@@ -40,5 +40,6 @@ Skills live in `.agents/skills/`:
 
 - `bounded-engine` — memory areas, slots, tables, progress, pin/app access
 - `plugtest` — CoAP interoperability against this repo's plugtest bundle
+- `okf-frontmatter` — three-pass OKF frontmatter (extract → enrich → validate; fail closed)
 
 Knowledge lives in `knowledge/` (OKF v0.2). Protocol copies: `knowledge/rfcs/`. Plugtest: `knowledge/plugtest/`.
