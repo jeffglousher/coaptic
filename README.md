@@ -2,6 +2,8 @@
 
 A stand-alone `no_std` CoAP engine. Custom slots and tables, optional alloc, high throughput.
 
+Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Architecture notes below are the current reference. Protocol behavior stays in `rfcs/`.
 
 # Constrained CoAP Reference Architecture

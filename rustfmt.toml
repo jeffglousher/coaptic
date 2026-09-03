@@ -1,0 +1,3 @@
+# rust-lang rustfmt defaults. Set edition so `rustfmt` (not only `cargo fmt`)
+# parses this crate as 2024.
+edition = "2024"
