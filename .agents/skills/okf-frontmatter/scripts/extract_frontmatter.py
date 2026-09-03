@@ -53,7 +53,9 @@ ON_KEY_RE = re.compile(r"^(\s*)([A-Za-z_][\w]*)\s*:")
 PATH_TYPES = {
     "crate": "Crate",
     "architecture": "Architecture",
+    "memory": "Architecture",
     "memory-areas": "Memory Areas",
+    "profiles": "Architecture",
     "ci": "Playbook",
     "review": "Policy",
     "okf-frontmatter": "Playbook",
@@ -427,9 +429,13 @@ def extract_concept(md_path: Path, root: Path, at: str) -> dict[str, Any]:
             for key in ("license", "edition", "rust-version", "description", "features"):
                 if key in parsed:
                     set_field(fm, fields, key, parsed[key])
-    elif cid in {"architecture", "memory-areas"}:
+    elif cid in {"architecture", "memory", "memory-areas"}:
         if (root / "design.md").is_file():
             set_field(fm, fields, "resource", "../design.md")
+    elif cid == "profiles":
+        mem = knowledge / "memory.md"
+        if mem.is_file():
+            set_field(fm, fields, "resource", "/memory.md")
     elif cid == "ci":
         ci = root / ".github" / "workflows" / "ci.yml"
         release = root / ".github" / "workflows" / "release.yml"

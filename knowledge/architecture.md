@@ -18,12 +18,12 @@ deterministic:
   fields: [type, resource]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-03T12:49:03Z"
+  at: "2026-09-03T21:11:50Z"
 ---
 
 # Model
 
-Six core-managed memory areas. Progress is bounded and rotating. Inventory: [Memory areas](/memory-areas.md).
+Six core-managed memory areas. Progress is bounded and rotating. Inventory: [Memory areas](/memory-areas.md). Locked crate memory/API: [Memory](/memory.md).
 
 | Artifact | Role |
 | --- | --- |

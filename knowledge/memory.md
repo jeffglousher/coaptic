@@ -1,0 +1,94 @@
+---
+type: Architecture
+title: Locked memory and API
+description: Locked datagram/body slot sizes, Storage trait, builder typestate, and crate names.
+resource: ../design.md
+tags: [architecture, memory, slots, storage]
+status: stable
+sources:
+  - id: design
+    resource: ../design.md
+    title: Constrained CoAP reference architecture
+  - id: rfc7252
+    resource: /rfcs/rfc7252.md
+    title: "RFC 7252 §4.6 Message Size"
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T21:11:50Z"
+  fields: [type, resource]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T21:11:50Z"
+---
+
+# Locked memory and API
+
+Decisions below are locked (Jeff, 2026-09-03). Do not invent extra architecture. Protocol behavior stays in [`knowledge/rfcs/`](/rfcs/index.md). Inventory of the six areas: [Memory areas](/memory-areas.md). Canonical ownership and progress: [`design.md`](../design.md). Profile numbers: [Profiles](/profiles.md).
+
+# Datagram slot
+
+A datagram slot holds one CoAP message: the UDP payload. That is the CoAP header, token, options, payload marker, and payload.
+
+It does not hold Ethernet, IP, or UDP headers. The engine does not parse Ethernet. A normal socket `recvfrom` already stripped L2/L3/L4 headers.
+
+Peer address and port are sidecar metadata next to the slot, not bytes inside it.
+
+# Datagram slot bytes
+
+Default datagram slot size is **1472** bytes. That is IPv4 UDP max on Ethernet (`1500 − 20 − 8`), so a standard Ethernet-sized CoAP message fits.
+
+[RFC 7252](/rfcs/rfc7252.md) §4.6 **1152** remains a constrained / unknown-PMTU profile, not the crate default. See [`profiles::Constrained`](/profiles.md).
+
+**1280** is IPv6 IP-packet MTU, not a CoAP body size. **1024** is payload-in-one-datagram, not the slot.
+
+# Body slots
+
+Body slots are a separate complete-body capacity for block-wise transfer. Starting default **4096** bytes. Independent of datagram slot size.
+
+# Storage
+
+One engine, two backends. Logic (acquire / release / rotate) is written once against the trait.
+
+```text
+Engine<S: Storage>
+```
+
+- `no_std` default: `Memory<P: MemoryProfile>` owns six typed arrays. `MemoryProfile` is a trait with **named** associated constants, not a pile of positional const generics: RX/TX datagram slot counts and bytes, RX/TX body slot counts and bytes, dedup entries, observe entries. Ship `profiles::Default` (1472 dgram, 4096 body, modest slot counts) and `profiles::Constrained` (1152 dgram). Numbers: [Profiles](/profiles.md).
+- `alloc` feature: `AllocMemory` with runtime `Capacities`, one heap allocation at init, then no growth.
+
+Do not carve a byte slab.
+
+RX and TX are two pools of the same types (`DatagramPool`, `BodyPool`).
+
+# Builder
+
+`EngineBuilder` is consuming, with a nats-style terminal `build()`. Typestate so `build()` exists only when all six areas are specified (via a profile or method-by-method). `build()` moves `Storage` in. `alloc` adds `build_alloc()` from `Capacities`. Size mismatch is a build error.
+
+# Names
+
+| Name | Role |
+| --- | --- |
+| `Engine` | Protocol engine, generic over `Storage` |
+| `EngineBuilder` | Consuming typestate builder |
+| `Memory` | `no_std` backend: six typed arrays, profile-sized |
+| `MemoryProfile` | Named associated constants for the six areas |
+| `AllocMemory` | `alloc` backend: one heap allocation, then no growth |
+| `Capacities` | Runtime sizes for `AllocMemory` / `build_alloc()` |
+| `Storage` | Trait both backends implement |
+| `DatagramPool` | Pool of datagram slots (RX and TX are two pools) |
+| `BodyPool` | Pool of body slots (RX and TX are two pools) |
+| `DedupTable` | Dedup table |
+| `ObserveTable` | Observe interest table |
+| `SlotId` | Slot identifier |
+| `profiles::Default` | 1472 dgram, 4096 body, modest slot counts |
+| `profiles::Constrained` | 1152 dgram |
+
+# Tests
+
+Named here; implement later.
+
+- build mismatch
+- acquire-until-full then saturation
+- release-and-reuse
+- rotating cursor does not restart at zero
+- alloc and no-alloc backends pass the same pool tests
