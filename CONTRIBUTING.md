@@ -3,7 +3,7 @@
 Humans and agents are the same kind of contributor. Either may author. Either may review.
 
 - Agents: follow [AGENTS.md](AGENTS.md).
-- Knowledge: [knowledge/](knowledge/) (OKF v0.2).
+- Knowledge: [knowledge/](knowledge/) (OKF v0.2). Protocol copies: [knowledge/rfcs/](knowledge/rfcs/). Plugtest: [knowledge/plugtest/](knowledge/plugtest/).
 - Rules are not forked here. [AGENTS.md](AGENTS.md) is the policy.
 
 ## Checks

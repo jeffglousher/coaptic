@@ -28,4 +28,4 @@ Change those two together when architecture facts change. Update this concept if
 
 # Boundary
 
-Protocol behavior stays in [`rfcs/`](/rfcs.md). This concept does not restate wire format.
+Protocol behavior stays in [`knowledge/rfcs/`](/rfcs/index.md). This concept does not restate wire format.

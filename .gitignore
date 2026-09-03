@@ -24,7 +24,7 @@ rustc-ice-*.txt
 #.idea/
 
 # Generated diagram renders; coap_constrained_design.drawio is canonical.
-# rfcs/*.pdf stay in the tree.
+# knowledge/rfcs/*.pdf stay in the tree.
 /coap_constrained_design.png
 /coap_constrained_design.svg
 /coap_constrained_design.pdf

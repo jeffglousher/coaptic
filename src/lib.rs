@@ -1,7 +1,7 @@
 //! Stand-alone [`no_std`] CoAP engine.
 //!
 //! Architecture and the bounded-memory contract live in [`design.md`][design].
-//! Protocol behavior is defined by the IETF documents in [`rfcs/`][rfcs]. This
+//! Protocol behavior is defined by the IETF documents in [`knowledge/rfcs/`][rfcs]. This
 //! crate does not restate wire format.
 //!
 //! # Features
@@ -11,7 +11,7 @@
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
 //! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
-//! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/rfcs
+//! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
 
 #![no_std]
 

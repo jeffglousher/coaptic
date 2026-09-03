@@ -4,7 +4,7 @@ Agents and humans are the same kind of contributor. Either may author. Either ma
 
 ## Docs
 
-Public docs live in rustdoc (`//!` / `///`). Do not narrate protocol or architecture in `//` comments. Point rustdoc at `design.md` and `rfcs/`.
+Public docs live in rustdoc (`//!` / `///`). Do not narrate protocol or architecture in `//` comments. Point rustdoc at `design.md` and `knowledge/rfcs/`.
 
 ## History
 
@@ -12,7 +12,7 @@ Git is the history. Do not keep deprecated files, name graveyards, or compatibil
 
 ## Architecture
 
-Read `knowledge/index.md` then `design.md` before architecture work. Do not rewrite `design.md` or `rfcs/` unless the task says to. Do not restate RFC wire format, timers, or option semantics.
+Read `knowledge/index.md` then `design.md` before architecture work. Do not rewrite `design.md` or `knowledge/rfcs/` unless the task says to. Do not restate RFC wire format, timers, or option semantics.
 
 ## Crate
 
@@ -36,4 +36,9 @@ cargo doc --no-deps --all-features
 
 ## Skills and knowledge
 
-Skills live in `.agents/skills/`. Knowledge lives in `knowledge/` (OKF v0.2).
+Skills live in `.agents/skills/`:
+
+- `bounded-engine` — memory areas, slots, tables, progress, pin/app access
+- `plugtest` — CoAP interoperability against this repo's plugtest bundle
+
+Knowledge lives in `knowledge/` (OKF v0.2). Protocol copies: `knowledge/rfcs/`. Plugtest: `knowledge/plugtest/`.

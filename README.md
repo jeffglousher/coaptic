@@ -4,7 +4,7 @@ A stand-alone `no_std` CoAP engine. Custom slots and tables, optional alloc, hig
 
 Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Knowledge: [knowledge/](knowledge/).
 
-Architecture notes below are the current reference. Protocol behavior stays in `rfcs/`.
+Architecture notes below are the current reference. Protocol behavior stays in `knowledge/rfcs/`.
 
 # Constrained CoAP Reference Architecture
 
@@ -14,7 +14,7 @@ A bounded, allocation-independent CoAP architecture for constrained devices.
 
 - `design.md` — current architecture and reference progress contract.
 - `coap_constrained_design.drawio` — editable architecture diagrams.
-- `rfcs/` — local IETF CoAP/CoRE copies (txt + PDF). See `rfcs/INDEX.md`. Protocol behavior stays there.
+- `knowledge/rfcs/` — local IETF CoAP/CoRE copies (txt + PDF). See `knowledge/rfcs/index.md`. Protocol behavior stays there.
 
 Generated PNG/SVG/PDF diagram renders are disposable and are not canonical.
 
