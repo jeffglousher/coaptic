@@ -45,6 +45,8 @@ python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate
 
 or `python3 .agents/skills/okf-frontmatter/scripts/validate_frontmatter.py`.
 
+PR CI job `okf` runs `--validate` (same `pull_request` / `workflow_dispatch` triggers as the rest of CI; no push-to-main). Non-zero validate fails the check (PR NO-GO).
+
 Critical (exit non-zero, NO-GO): missing frontmatter or `type`; reserved files with a concept `type`; any pass-1 field disagrees with a fresh extract; RFC without sibling `rfcNNNN.txt` or filename ≠ `Request for Comments:`; duplicate `sources[].id` with different `resource`; new `verified` `human:` actor not already on `main`; plugtest `td_ids` not a subset of vendored YAML keys; missing `deterministic` / `deterministic.fields` after regenerate.
 
 Non-critical (warn, still GO): extra unknown keys, broken optional cross-links, description style.

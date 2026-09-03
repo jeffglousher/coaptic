@@ -17,4 +17,4 @@ okf_version: "0.2"
 
 # Operations
 
-* [CI](ci.md) - PR-only `fmt`/`clippy`/`test`/`doc`. `v*` tags publish rustdoc.
+* [CI](ci.md) - PR-only `fmt`/`clippy`/`test`/`doc`/`okf`. `v*` tags publish rustdoc.

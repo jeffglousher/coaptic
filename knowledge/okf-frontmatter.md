@@ -31,4 +31,4 @@ This bundle's concept YAML is produced in three passes. Procedure: [okf-frontmat
 | 2 enrich | LLM, then dedupe (pass-1 keys win) | (agent) |
 | 3 validate | same process, no LLM | `python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate` |
 
-Pass 3 reviews files on disk. Critical failure is a NO-GO. Do not invent `verified` human review.
+Pass 3 reviews files on disk. Critical failure is a NO-GO. PR CI job `okf` runs `--validate`. Do not invent `verified` human review.

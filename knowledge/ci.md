@@ -1,7 +1,7 @@
 ---
 type: Playbook
 title: CI and release
-description: "PR-only fmt/clippy/test/doc. v* tags publish rustdoc. Squash-only merges."
+description: "PR-only fmt/clippy/test/doc/okf. v* tags publish rustdoc. Squash-only merges."
 resource: ../.github/workflows/ci.yml
 ci_triggers: [on.pull_request, workflow_dispatch]
 release_triggers: [on.push.tags, workflow_dispatch]
@@ -27,7 +27,7 @@ generated:
 
 | Trigger | Workflow | What it does |
 | --- | --- | --- |
-| `pull_request` to `main`, `workflow_dispatch` | CI | `fmt`, `clippy`, `test`, `doc` |
+| `pull_request` to `main`, `workflow_dispatch` | CI | `fmt`, `clippy`, `test`, `doc`, `okf` |
 | `v*` tags, `workflow_dispatch` | Release | rustdoc to GitHub Pages |
 
 # Policy
