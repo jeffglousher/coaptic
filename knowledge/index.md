@@ -11,7 +11,8 @@ okf_version: "0.2"
 
 * [Architecture](architecture.md) - Six areas and bounded progress. Canonical source is `design.md`.
 * [Memory areas](memory-areas.md) - The six core-managed areas, linked to `design.md` sections.
-* [RFCs](rfcs.md) - Local IETF CoAP/CoRE copies. Index only; do not copy RFC text.
+* [RFCs](rfcs/) - Local IETF CoAP/CoRE copies. One concept plus `.txt`/`.pdf` per RFC.
+* [Plugtest](plugtest/) - ETSI CoAP plugtest TDs and the coaptic mapping.
 
 # Operations
 
