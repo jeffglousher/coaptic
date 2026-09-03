@@ -1,14 +1,10 @@
 # Contributing
 
-Humans and agents follow the same rules.
+Humans and agents are the same kind of contributor. Either may author. Either may review.
 
-## Rules
-
-- Read `design.md` first. Do not rewrite `design.md` or the files in `rfcs/` unless the change is specifically about those documents.
-- Do not restate IETF wire format, protocol state machines, or option semantics. Point at `rfcs/`.
-- The crate is `#![no_std]` by default. `alloc` and `std` are optional features (`std` implies `alloc`).
-- Slot and table types live in this crate. Do not depend on `heapless` for that architecture.
-- Keep pull requests small.
+- Agents: follow [AGENTS.md](AGENTS.md).
+- Knowledge: [knowledge/](knowledge/) (OKF v0.2).
+- Rules are not forked here. [AGENTS.md](AGENTS.md) is the policy.
 
 ## Checks
 
@@ -21,5 +17,7 @@ cargo doc --no-deps --all-features
 ```
 
 CI (`fmt`, `clippy`, `test`, `doc`) runs on pull requests to `main` (and on `workflow_dispatch`). Merging a PR does not start another CI run. Version tags (`v*`) run the Release workflow, which publishes rustdoc to GitHub Pages. Crate publish can be added to that same tag workflow later.
+
+Merges are squash-only. The repository stays private until a first public go.
 
 Toolchain is `stable` via `rust-toolchain.toml`. Edition is 2024 (MSRV 1.85).
