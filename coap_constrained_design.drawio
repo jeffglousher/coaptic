@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-09-02T14:30:00.000Z" agent="ChatGPT" version="24.7.17" type="device">
+  <diagram id="memory-model" name="Memory Model">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="Constrained CoAP — Bounded Memory Model" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="330" y="20" width="500" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="socket" value="UDP / Socket" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="470" y="700" width="220" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="rx" value="Incoming Datagram Pool&lt;br&gt;&lt;b&gt;RX Datagram Slots&lt;/b&gt;&lt;br&gt;ingress workspace + slot-local state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="555" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="tx" value="Outgoing Datagram Pool&lt;br&gt;&lt;b&gt;TX Datagram Slots&lt;/b&gt;&lt;br&gt;egress bytes + active outbound state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="740" y="555" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="inbody" value="Incoming Body Pool&lt;br&gt;&lt;b&gt;complete contiguous bodies&lt;/b&gt;&lt;br&gt;Block / Q-Block state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="300" width="300" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="outbody" value="Outgoing Body Pool&lt;br&gt;&lt;b&gt;complete contiguous bodies&lt;/b&gt;&lt;br&gt;Block / Q-Block state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="740" y="300" width="300" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="dedup" value="Dedup Table&lt;br&gt;compact duplicate history" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="140" width="300" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="observe" value="Observe Interest Table&lt;br&gt;relation + pending/coalescing state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="740" y="140" width="300" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="app" value="Application&lt;br&gt;resource semantics + application-owned state" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="440" y="120" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="socket" target="rx">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="tx" target="socket">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="rx" target="inbody">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="outbody" target="tx">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="rx" target="dedup">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="rx" target="observe">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="inbody" target="app">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="app" target="outbody">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="rx" target="app">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="app" target="tx">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n1" value="Ordinary payloads use Datagram Slots directly. Block-wise bodies use Body Slots, but every individual CoAP message still uses the shared Datagram Pools. No Body↔Datagram reservation or binding." style="shape=note;whiteSpace=wrap;html=1;size=15;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="420" y="430" width="320" height="105" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="progress-contract" name="Progress Contract">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title2" value="Reference Progress Contract" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="360" y="20" width="450" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="transport" value="Transport / Socket Progress" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="445" y="650" width="280" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="datagram" value="Datagram Progress" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="445" y="500" width="280" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="block" value="Block / Q-Block Progress" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="345" width="300" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="obs" value="Observe Progress" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="750" y="345" width="300" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="application" value="Application Participation" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="445" y="180" width="280" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="transport" target="datagram">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="datagram" target="transport">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="block" target="datagram">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="datagram" target="block">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="obs" target="datagram">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="datagram" target="obs">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="block" target="application">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="application" target="block">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="obs" target="application">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="application" target="obs">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="bounded" value="Bounded pass&lt;br&gt;inspect bounded state → do bounded work → return" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="85" y="510" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="rotate" value="Rotating iteration&lt;br&gt;resume after prior stopping point&lt;br&gt;do not restart at slot zero" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="785" y="510" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsm" value="General lifetime rule&lt;br&gt;&lt;b&gt;Every occupied slot/entry has explicit retention and release/terminal conditions.&lt;/b&gt;&lt;br&gt;Timing stays with that owner when required." style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="340" y="300" width="490" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="pnote" value="No traffic priorities. No private overflow queue. No universal global pass order. Protocol-specific state machines and timers remain in the applicable IETF specifications." style="shape=note;whiteSpace=wrap;html=1;size=15;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="370" y="730" width="430" height="80" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="capacity-saturation" name="Capacity and Saturation">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title3" value="Capacity, Pacing, and Saturation" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="320" y="20" width="530" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="bodycount" value="Body Slot count&lt;br&gt;bounds admitted block-wise bodies" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="100" y="150" width="310" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="dgramcount" value="Datagram Slot count&lt;br&gt;bounds individual-message concurrency&lt;br&gt;and influences pacing/throughput" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="760" y="150" width="310" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="heur" value="Reference starting heuristic&lt;br&gt;&lt;b&gt;B = Incoming Body Slots + Outgoing Body Slots&lt;/b&gt;&lt;br&gt;RX = RX_base + B&lt;br&gt;TX = TX_base + B" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="380" y="300" width="410" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="measure" value="Measurement / tuning&lt;br&gt;platform packet rate • CPU • socket/network stack • loss/RTT" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="380" y="485" width="410" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="sat" value="At saturation&lt;br&gt;bounded state machines continue fair passes&lt;br&gt;errors / timeout / refusal / packet loss may occur&lt;br&gt;memory and work-per-pass remain bounded" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="310" y="650" width="550" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="bodycount" target="heur">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="dgramcount" target="heur">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="heur" target="measure">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="measure" target="sat">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c5" value="The heuristic is not a correctness formula. Datagram Slots remain shared. Smaller Datagram pools are valid when stronger pacing/isolation is intentional." style="shape=note;whiteSpace=wrap;html=1;size=15;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="455" width="300" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="c6" value="Adding Body Slots does not prove the platform can advance all bodies concurrently at full rate. Defaults must be validated against the useful socket rate." style="shape=note;whiteSpace=wrap;html=1;size=15;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="840" y="455" width="290" height="135" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
