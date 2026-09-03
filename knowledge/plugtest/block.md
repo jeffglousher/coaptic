@@ -1,23 +1,30 @@
 ---
 type: Test Descriptions
-title: CoAP#4 block and Observe
-description: In-scope ETSI CoAP#4 block and Observe TDs. Canonical source is td-coap4/block.yml.
+title: "CoAP#4 block and Observe"
+description: "In-scope ETSI CoAP#4 block and Observe TDs. Canonical source is td-coap4/block.yml."
 resource: td-coap4/block.yml
+td_ids: [TD_COAP_BLOCK_01, TD_COAP_BLOCK_02, TD_COAP_BLOCK_03, TD_COAP_BLOCK_04, TD_COAP_BLOCK_05, TD_COAP_BLOCK_06, TD_COAP_OBS_01, TD_COAP_OBS_02, TD_COAP_OBS_04, TD_COAP_OBS_05, TD_COAP_OBS_06, TD_COAP_OBS_07, TD_COAP_OBS_08, TD_COAP_OBS_09, TD_COAP_OBS_10, TD_COAP_OBS_11, TD_COAP_OBS_12, TD_COAP_OBS_13, TD_COAP_OBS_14]
 tags: [plugtest, block, observe]
-generated: { by: cursor_agent/cursor-grok-4.6, at: 2026-09-03T12:10:15Z }
 status: stable
 scope: in-scope
 sources:
   - id: block-yml
-    resource: https://raw.githubusercontent.com/cabo/td-coap4/master/block.yml
+    resource: "https://raw.githubusercontent.com/cabo/td-coap4/master/block.yml"
     title: cabo/td-coap4 block.yml
-    retrieved: 2026-09-03T00:00:00Z
+    retrieved: "2026-09-03T00:00:00Z"
   - id: rfc7959
     resource: /rfcs/rfc7959.md
     title: RFC 7959
   - id: rfc7641
     resource: /rfcs/rfc7641.md
     title: RFC 7641
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, td_ids]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Block and Observe (in scope)

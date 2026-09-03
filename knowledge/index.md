@@ -6,6 +6,7 @@ okf_version: "0.2"
 
 * [coaptic crate](crate.md) - Stand-alone `no_std` CoAP engine crate. Locked name `coaptic`.
 * [Review policy](review.md) - Agents and humans are equal authors and reviewers.
+* [OKF frontmatter](okf-frontmatter.md) - Three-pass concept frontmatter (extract → enrich → validate).
 
 # Architecture
 
@@ -16,4 +17,4 @@ okf_version: "0.2"
 
 # Operations
 
-* [CI](ci.md) - PR-only `fmt`/`clippy`/`test`/`doc`. `v*` tags publish rustdoc.
+* [CI](ci.md) - PR-only `fmt`/`clippy`/`test`/`doc`/`okf`. `v*` tags publish rustdoc.

@@ -1,17 +1,24 @@
 ---
 type: Test Descriptions
-title: CoAP#4 6LoWPAN
-description: Deferred ETSI CoAP#4 6LoWPAN TDs. Not required until 6LoWPAN / security work.
+title: "CoAP#4 6LoWPAN"
+description: "Deferred ETSI CoAP#4 6LoWPAN TDs. Not required until 6LoWPAN / security work."
 resource: td-coap4/6lowpan.yml
+td_ids: [TD_6LoWPAN_FORMAT_01, TD_6LoWPAN_FORMAT_07, TD_6LoWPAN_FORMAT_06, TD_6LoWPAN_ND_01, TD_6LoWPAN_ND_06, TD_6LoWPAN_HC_01, TD_6LoWPAN_HC_03, TD_6LoWPAN_HC_09, TD_6LoWPAN_HC_05, TD_6LoWPAN_HC_07, TD_6LoWPAN_ND_HC_01, TD_6LoWPAN_ND_HC_03, TD_6LoWPAN_FORMAT_02, TD_6LoWPAN_FORMAT_08, TD_6LoWPAN_FORMAT_05, TD_6LoWPAN_ND_02, TD_6LoWPAN_ND_07, TD_6LoWPAN_HC_02, TD_6LoWPAN_HC_04, TD_6LoWPAN_HC_10, TD_6LoWPAN_HC_06, TD_6LoWPAN_HC_08, TD_6LoWPAN_ND_HC_02, TD_6LoWPAN_ND_HC_04, TD_6LoWPAN_FORMAT_03, TD_6LoWPAN_FORMAT_04, TD_6LoWPAN_ND_03, TD_6LoWPAN_ND_04, TD_6LoWPAN_ND_05]
 tags: [plugtest, 6lowpan, deferred]
-generated: { by: cursor_agent/cursor-grok-4.6, at: 2026-09-03T12:10:15Z }
 status: deprecated
 scope: deferred
 sources:
   - id: 6lowpan-yml
-    resource: https://raw.githubusercontent.com/cabo/td-coap4/master/6lowpan.yml
+    resource: "https://raw.githubusercontent.com/cabo/td-coap4/master/6lowpan.yml"
     title: cabo/td-coap4 6lowpan.yml
-    retrieved: 2026-09-03T00:00:00Z
+    retrieved: "2026-09-03T00:00:00Z"
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource, td_ids]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # 6LoWPAN (deferred)

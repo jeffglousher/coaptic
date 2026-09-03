@@ -4,12 +4,18 @@ title: Review and authorship
 description: Agents and humans are equal authors and reviewers. rustdoc over comments. Git is history.
 resource: ../AGENTS.md
 tags: [review, policy, rustdoc]
-generated: { by: cursor_agent/cursor-grok-4.6-high-fast, at: 2026-09-03T11:50:09Z }
 status: stable
 sources:
   - id: agents
     resource: ../AGENTS.md
     title: Always-on agent file
+deterministic:
+  by: "process:okf-frontmatter"
+  at: "2026-09-03T12:49:03Z"
+  fields: [type, resource]
+generated:
+  by: cursor_agent/cursor-grok-4.6
+  at: "2026-09-03T12:49:03Z"
 ---
 
 # Policy

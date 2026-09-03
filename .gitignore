@@ -28,3 +28,7 @@ rustc-ice-*.txt
 /coap_constrained_design.png
 /coap_constrained_design.svg
 /coap_constrained_design.pdf
+
+# Python bytecode from the OKF frontmatter scripts
+__pycache__/
+*.pyc
