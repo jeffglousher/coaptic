@@ -1,9 +1,14 @@
 //! RFC 7252 option value formats: empty, opaque, uint, and string.
 //!
+//! Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2 (RFC 9177)
+//! reuse the uint codec. They are not in RFC 7252 Table 4. [`BlockValue`]
+//! holds NUM/M/SZX; Q-Block uses the same bitfields.
+//!
 //! These codecs operate on option *value* bytes after
 //! [`crate::message::decode`] / before [`crate::message::encode`]. They do
 //! not parse option headers. Wire format lives in
-//! `knowledge/rfcs/rfc7252.txt`. This module does not restate it.
+//! `knowledge/rfcs/rfc7252.txt`, `knowledge/rfcs/rfc7959.txt`, and
+//! `knowledge/rfcs/rfc9177.txt`. This module does not restate it.
 
 use core::fmt;
 
@@ -122,6 +127,12 @@ impl From<ContentFormat> for EncodedUint {
     }
 }
 
+impl From<BlockValue> for EncodedUint {
+    fn from(block: BlockValue) -> Self {
+        block.encode()
+    }
+}
+
 impl fmt::Debug for EncodedUint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("EncodedUint")
@@ -176,6 +187,21 @@ pub fn decode_observe(bytes: &[u8]) -> Result<u32, ValueError> {
         return Err(ValueError::UintOverflow);
     }
     decode_uint(bytes)
+}
+
+/// Encode a Block / Q-Block option value (uint, 0–3 bytes).
+///
+/// See [`BlockValue::encode`].
+#[must_use]
+pub const fn encode_block(value: BlockValue) -> EncodedUint {
+    value.encode()
+}
+
+/// Decode a Block / Q-Block option value.
+///
+/// See [`BlockValue::decode`].
+pub fn decode_block(bytes: &[u8]) -> Result<BlockValue, ValueError> {
+    BlockValue::decode(bytes)
 }
 
 /// UTF-8 view of a string option value. Does not allocate.
@@ -235,6 +261,137 @@ impl From<ContentFormat> for u16 {
     }
 }
 
+/// NUM/M/SZX fields of Block1, Block2, Q-Block1, and Q-Block2.
+///
+/// Q-Block uses the same bitfields (RFC 9177 §4.2). BERT SZX 7 is rejected.
+/// This type does not assemble bodies. Enabled body slot capacity is a
+/// multiple of [`Self::SIZE_MAX`] (1024); see `design.md` and
+/// `knowledge/memory.md`.
+///
+/// See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BlockValue {
+    num: u32,
+    more: bool,
+    szx: u8,
+}
+
+impl BlockValue {
+    /// Smallest legal SZX (block size 16).
+    pub const SZX_MIN: u8 = 0;
+    /// Largest legal SZX (block size 1024). SZX 7 is reserved.
+    pub const SZX_MAX: u8 = 6;
+    /// Largest NUM that fits in a 3-byte Block option value (20 bits).
+    pub const NUM_MAX: u32 = 0x000f_ffff;
+    /// Smallest legal block size in bytes (SZX 0).
+    pub const SIZE_MIN: u16 = 16;
+    /// Largest legal block size in bytes (SZX 6).
+    ///
+    /// Enabled body slots are a multiple of this. This crate does not
+    /// reassemble block-wise bodies here.
+    pub const SIZE_MAX: u16 = 1024;
+
+    /// Build from NUM, M, and SZX.
+    pub const fn new(num: u32, more: bool, szx: u8) -> Result<Self, ValueError> {
+        if szx > Self::SZX_MAX {
+            return Err(ValueError::IllegalSzx);
+        }
+        if num > Self::NUM_MAX {
+            return Err(ValueError::BlockNumOverflow);
+        }
+        Ok(Self { num, more, szx })
+    }
+
+    /// Build from NUM, M, and a legal block size in bytes (16, 32, …, 1024).
+    pub const fn from_size(num: u32, more: bool, size: u16) -> Result<Self, ValueError> {
+        match Self::szx_from_size(size) {
+            Ok(szx) => Self::new(num, more, szx),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Block number (NUM).
+    #[must_use]
+    pub const fn num(self) -> u32 {
+        self.num
+    }
+
+    /// More flag (M).
+    #[must_use]
+    pub const fn more(self) -> bool {
+        self.more
+    }
+
+    /// Size exponent (SZX, 0..=6).
+    #[must_use]
+    pub const fn szx(self) -> u8 {
+        self.szx
+    }
+
+    /// Block size in bytes for this SZX.
+    #[must_use]
+    pub const fn size(self) -> u16 {
+        16 << self.szx
+    }
+
+    /// Packed Block / Q-Block uint. See `knowledge/rfcs/rfc7959.txt`.
+    #[must_use]
+    pub const fn as_uint(self) -> u32 {
+        (self.num << 4) | ((self.more as u32) << 3) | u32::from(self.szx)
+    }
+
+    /// Encode as a uint option value (0–3 bytes; leading zeros omitted).
+    #[must_use]
+    pub const fn encode(self) -> EncodedUint {
+        EncodedUint::new(self.as_uint())
+    }
+
+    /// Decode a Block / Q-Block option value.
+    ///
+    /// Rejects more than 3 value bytes (RFC 7959 / RFC 9177 length), SZX 7,
+    /// and NUM above 20 bits. Empty bytes are NUM 0, M unset, SZX 0.
+    pub fn decode(bytes: &[u8]) -> Result<Self, ValueError> {
+        if bytes.len() > 3 {
+            return Err(ValueError::UintOverflow);
+        }
+        let val = decode_uint(bytes)?;
+        Self::from_uint(val)
+    }
+
+    /// Unpack a Block / Q-Block uint.
+    pub const fn from_uint(val: u32) -> Result<Self, ValueError> {
+        if val > 0x00ff_ffff {
+            return Err(ValueError::BlockNumOverflow);
+        }
+        let szx = (val & 7) as u8;
+        let more = val & 8 != 0;
+        let num = val >> 4;
+        Self::new(num, more, szx)
+    }
+
+    /// Block size in bytes for `szx`, or [`ValueError::IllegalSzx`].
+    pub const fn size_from_szx(szx: u8) -> Result<u16, ValueError> {
+        if szx > Self::SZX_MAX {
+            return Err(ValueError::IllegalSzx);
+        }
+        Ok(16 << szx)
+    }
+
+    /// SZX for a legal block size in bytes, or [`ValueError::IllegalSzx`].
+    pub const fn szx_from_size(size: u16) -> Result<u8, ValueError> {
+        match size {
+            16 => Ok(0),
+            32 => Ok(1),
+            64 => Ok(2),
+            128 => Ok(3),
+            256 => Ok(4),
+            512 => Ok(5),
+            1024 => Ok(6),
+            _ => Err(ValueError::IllegalSzx),
+        }
+    }
+}
+
 /// Options with a given number, in wire order.
 #[derive(Clone, Debug)]
 pub struct OptionsByNumber<'a> {
@@ -275,6 +432,20 @@ impl<'a> Iterator for OpaqueOptions<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(Opt::value)
+    }
+}
+
+/// Block / Q-Block values of options with a given number.
+#[derive(Clone, Debug)]
+pub struct BlockOptions<'a> {
+    inner: OptionsByNumber<'a>,
+}
+
+impl<'a> Iterator for BlockOptions<'a> {
+    type Item = Result<BlockValue, ValueError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(Opt::as_block)
     }
 }
 
@@ -393,6 +564,44 @@ impl<'a> Opt<'a> {
         Self::uint(OptionNumber::SIZE1, encoded)
     }
 
+    /// Size2 (uint). RFC 7959; not in RFC 7252 Table 4.
+    #[must_use]
+    pub const fn size2(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::SIZE2, encoded)
+    }
+
+    /// Block1 (NUM/M/SZX uint). `encoded` must outlive the [`Opt`].
+    ///
+    /// See `knowledge/rfcs/rfc7959.txt`.
+    #[must_use]
+    pub const fn block1(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::BLOCK1, encoded)
+    }
+
+    /// Block2 (NUM/M/SZX uint). `encoded` must outlive the [`Opt`].
+    ///
+    /// See `knowledge/rfcs/rfc7959.txt`.
+    #[must_use]
+    pub const fn block2(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::BLOCK2, encoded)
+    }
+
+    /// Q-Block1 (same NUM/M/SZX as [`BlockValue`]).
+    ///
+    /// See `knowledge/rfcs/rfc9177.txt`.
+    #[must_use]
+    pub const fn q_block1(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::Q_BLOCK1, encoded)
+    }
+
+    /// Q-Block2 (same NUM/M/SZX as [`BlockValue`]; repeatable).
+    ///
+    /// See `knowledge/rfcs/rfc9177.txt`.
+    #[must_use]
+    pub const fn q_block2(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::Q_BLOCK2, encoded)
+    }
+
     /// Observe (uint). `encoded` must outlive the [`Opt`].
     ///
     /// Register is 0, deregister is 1, notifications carry a sequence number.
@@ -433,6 +642,11 @@ impl<'a> Opt<'a> {
     /// Decode this option value as a uint that fits in `u16`.
     pub fn as_uint16(self) -> Result<u16, ValueError> {
         decode_uint16(self.value())
+    }
+
+    /// Decode this option value as Block / Q-Block NUM/M/SZX.
+    pub fn as_block(self) -> Result<BlockValue, ValueError> {
+        BlockValue::decode(self.value())
     }
 
     /// Table 4 format for this option number, if it is an RFC 7252 option.
@@ -605,6 +819,38 @@ impl<'a> ParsedMessage<'a> {
         self.get_option(OptionNumber::SIZE1).map(Opt::as_uint)
     }
 
+    /// Size2, if present. RFC 7959; not in RFC 7252 Table 4.
+    #[must_use]
+    pub fn size2(self) -> Option<Result<u32, ValueError>> {
+        self.get_option(OptionNumber::SIZE2).map(Opt::as_uint)
+    }
+
+    /// Block1, if present.
+    #[must_use]
+    pub fn block1(self) -> Option<Result<BlockValue, ValueError>> {
+        self.get_option(OptionNumber::BLOCK1).map(Opt::as_block)
+    }
+
+    /// Block2, if present.
+    #[must_use]
+    pub fn block2(self) -> Option<Result<BlockValue, ValueError>> {
+        self.get_option(OptionNumber::BLOCK2).map(Opt::as_block)
+    }
+
+    /// Q-Block1, if present. Same value format as [`BlockValue`].
+    #[must_use]
+    pub fn q_block1(self) -> Option<Result<BlockValue, ValueError>> {
+        self.get_option(OptionNumber::Q_BLOCK1).map(Opt::as_block)
+    }
+
+    /// Q-Block2 values in wire order. Repeatable; same format as [`BlockValue`].
+    #[must_use]
+    pub fn q_block2(self) -> BlockOptions<'a> {
+        BlockOptions {
+            inner: self.get_options(OptionNumber::Q_BLOCK2),
+        }
+    }
+
     /// Observe, if present.
     ///
     /// On a GET, 0 is register and 1 is deregister. In a response the value
@@ -676,9 +922,9 @@ impl<'a> ParsedMessage<'a> {
 #[cfg(test)]
 mod unit_tests {
     use super::{
-        ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK,
-        OptionValueFormat, as_str, decode_observe, decode_uint, decode_uint16, encode_observe,
-        encode_uint, option_value_format,
+        BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
+        OBSERVE_SEQUENCE_MASK, OptionValueFormat, as_str, decode_block, decode_observe, decode_uint,
+        decode_uint16, encode_block, encode_observe, encode_uint, option_value_format,
     };
     use crate::error::ValueError;
     use crate::message::OptionNumber;
@@ -781,6 +1027,102 @@ mod unit_tests {
             option_value_format(OptionNumber::CONTENT_FORMAT),
             Some(OptionValueFormat::Uint)
         );
-        assert_eq!(option_value_format(OptionNumber::new(23)), None);
+        assert_eq!(option_value_format(OptionNumber::BLOCK2), None);
+        assert_eq!(option_value_format(OptionNumber::BLOCK1), None);
+        assert_eq!(option_value_format(OptionNumber::SIZE2), None);
+        assert_eq!(option_value_format(OptionNumber::Q_BLOCK1), None);
+        assert_eq!(option_value_format(OptionNumber::Q_BLOCK2), None);
+        assert!(!OptionNumber::BLOCK2.is_rfc7252());
+        assert!(!OptionNumber::Q_BLOCK1.is_rfc7252());
+        assert!(!OptionNumber::SIZE2.is_rfc7252());
+    }
+
+    #[test]
+    fn block_szx_size_and_roundtrip() {
+        const SIZES: [u16; 7] = [16, 32, 64, 128, 256, 512, 1024];
+        for (szx, &size) in SIZES.iter().enumerate() {
+            let szx = szx as u8;
+            assert_eq!(BlockValue::size_from_szx(szx).expect("legal szx"), size);
+            assert_eq!(BlockValue::szx_from_size(size).expect("legal size"), szx);
+            let more = szx % 2 == 1;
+            let value = BlockValue::from_size(u32::from(szx), more, size).expect("from_size");
+            assert_eq!(value.szx(), szx);
+            assert_eq!(value.size(), size);
+            assert_eq!(value.more(), more);
+            assert_eq!(value.num(), u32::from(szx));
+            let encoded = encode_block(value);
+            assert_eq!(decode_block(encoded.as_bytes()).expect("roundtrip"), value);
+            assert_eq!(EncodedUint::from(value).as_bytes(), encoded.as_bytes());
+        }
+        assert_eq!(BlockValue::size_from_szx(7), Err(ValueError::IllegalSzx));
+        assert_eq!(BlockValue::szx_from_size(15), Err(ValueError::IllegalSzx));
+        assert_eq!(BlockValue::szx_from_size(17), Err(ValueError::IllegalSzx));
+        assert_eq!(BlockValue::szx_from_size(2048), Err(ValueError::IllegalSzx));
+        assert_eq!(BlockValue::SIZE_MAX, 1024);
+    }
+
+    #[test]
+    fn block_num_boundaries_and_more_flag() {
+        let first = BlockValue::new(0, false, 0).expect("zero");
+        assert_eq!(first.encode().as_bytes(), &[] as &[u8]);
+        assert_eq!(decode_block(&[]).expect("empty"), first);
+
+        let more = BlockValue::new(0, true, 0).expect("more");
+        assert_eq!(more.encode().as_bytes(), &[0x08]);
+        assert!(more.more());
+
+        let one_byte_max = BlockValue::new(15, false, 0).expect("1-byte NUM");
+        assert_eq!(one_byte_max.encode().as_bytes(), &[0xf0]);
+
+        let two_byte_min = BlockValue::new(16, false, 0).expect("2-byte NUM");
+        assert_eq!(two_byte_min.encode().as_bytes(), &[0x01, 0x00]);
+
+        let two_byte_max = BlockValue::new(4095, true, 6).expect("2-byte max");
+        assert_eq!(two_byte_max.encode().as_bytes(), &[0xff, 0xfe]);
+
+        let three_byte_min = BlockValue::new(4096, false, 6).expect("3-byte NUM");
+        assert_eq!(three_byte_min.encode().as_bytes(), &[0x01, 0x00, 0x06]);
+
+        let num_max = BlockValue::new(BlockValue::NUM_MAX, false, 6).expect("NUM max");
+        assert_eq!(num_max.encode().as_bytes(), &[0xff, 0xff, 0xf6]);
+        assert_eq!(
+            decode_block(num_max.encode().as_bytes()).expect("max roundtrip"),
+            num_max
+        );
+
+        assert_eq!(
+            BlockValue::new(BlockValue::NUM_MAX + 1, false, 0),
+            Err(ValueError::BlockNumOverflow)
+        );
+        assert_eq!(
+            BlockValue::from_uint(0x0100_0000),
+            Err(ValueError::BlockNumOverflow)
+        );
+        assert_eq!(decode_block(&[1, 0, 0, 0]), Err(ValueError::UintOverflow));
+        assert_eq!(decode_block(&[0x07]), Err(ValueError::IllegalSzx));
+        assert_eq!(
+            decode_block(&[0, 0x16]).expect("leading zero"),
+            BlockValue::new(1, false, 6).expect("num 1 szx 6")
+        );
+    }
+
+    #[test]
+    fn block_option_numbers_critical_bits() {
+        assert!(OptionNumber::BLOCK2.is_critical());
+        assert!(OptionNumber::BLOCK2.is_unsafe());
+        assert!(OptionNumber::BLOCK1.is_critical());
+        assert!(OptionNumber::BLOCK1.is_unsafe());
+        assert!(OptionNumber::Q_BLOCK1.is_critical());
+        assert!(OptionNumber::Q_BLOCK1.is_unsafe());
+        assert!(OptionNumber::Q_BLOCK2.is_critical());
+        assert!(OptionNumber::Q_BLOCK2.is_unsafe());
+        assert!(!OptionNumber::SIZE2.is_critical());
+        assert!(!OptionNumber::SIZE2.is_unsafe());
+        assert!(OptionNumber::SIZE2.is_no_cache_key());
+        assert_eq!(OptionNumber::Q_BLOCK1.get(), 19);
+        assert_eq!(OptionNumber::BLOCK2.get(), 23);
+        assert_eq!(OptionNumber::BLOCK1.get(), 27);
+        assert_eq!(OptionNumber::SIZE2.get(), 28);
+        assert_eq!(OptionNumber::Q_BLOCK2.get(), 31);
     }
 }

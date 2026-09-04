@@ -45,8 +45,9 @@
 //! and decodes RFC 7252 empty / opaque / uint / string values (uint uses a
 //! stack buffer; string decode is a `&str` view). Named [`Opt`] constructors
 //! and [`ParsedMessage`] accessors cover Table 4 options plus Observe
-//! (RFC 7641 option 6; not in Table 4, elective). Two optional
-//! checks, neither used by [`decode`]:
+//! (RFC 7641 option 6; not in Table 4, elective) and Block / Q-Block / Size2
+//! ([`BlockValue`] NUM/M/SZX; RFC 7959 / RFC 9177; not in Table 4). Two
+//! optional checks, neither used by [`decode`]:
 //!
 //! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
 //!   ([`ParseError::UnrecognizedCritical`])
@@ -100,10 +101,11 @@ pub use storage::profiles;
 
 pub use error::{BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 pub use message::{
-    Code, ContentFormat, EncodedUint, Header, Message, MessageId, OBSERVE_DEREGISTER,
+    BlockValue, Code, ContentFormat, EncodedUint, Header, Message, MessageId, OBSERVE_DEREGISTER,
     OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber, OptionValueFormat, Options,
-    OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode, decode_observe, decode_uint,
-    decode_uint16, empty_ack, empty_rst, encode, encode_observe, encode_uint,
+    OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode, decode_block, decode_observe,
+    decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_block, encode_observe,
+    encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;

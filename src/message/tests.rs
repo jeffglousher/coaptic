@@ -1,8 +1,8 @@
 //! Library unit tests for RFC 7252 decode/encode. Not plugtest.
 
 use super::value::{
-    ContentFormat, MAX_AGE_DEFAULT, OBSERVE_DEREGISTER, OBSERVE_REGISTER, as_str, encode_observe,
-    encode_uint,
+    BlockValue, ContentFormat, MAX_AGE_DEFAULT, OBSERVE_DEREGISTER, OBSERVE_REGISTER, as_str,
+    encode_block, encode_observe, encode_uint,
 };
 use super::{
     Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Type, decode,
@@ -290,17 +290,19 @@ fn encode_buffer_too_small() {
 
 #[test]
 fn unrecognized_critical_is_structured_not_policy() {
-    // Option 23 (Block2) is critical and not in RFC 7252 Table 4.
+    // Block2 is critical and not in RFC 7252 Table 4.
     // Decode accepts it as opaque; check_rfc7252_options reports it.
-    let opts = [Opt::new(OptionNumber::new(23), &[0x02])];
+    let opts = [Opt::new(OptionNumber::BLOCK2, &[0x02])];
     let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(3)).with_options(&opts);
     let mut buf = [0u8; 32];
     let bytes = encode_to(&msg, &mut buf);
     let parsed = decode(bytes).expect("opaque parse");
-    assert_eq!(parsed.unrecognized_critical(), Some(OptionNumber::new(23)));
+    assert!(!OptionNumber::BLOCK2.is_rfc7252());
+    assert!(OptionNumber::BLOCK2.is_critical());
+    assert_eq!(parsed.unrecognized_critical(), Some(OptionNumber::BLOCK2));
     assert_eq!(
         parsed.check_rfc7252_options(),
-        Err(ParseError::UnrecognizedCritical(OptionNumber::new(23)))
+        Err(ParseError::UnrecognizedCritical(OptionNumber::BLOCK2))
     );
 
     // Observe (6) is elective and not in RFC 7252 Table 4; not reported.
@@ -422,6 +424,95 @@ fn observe_option_roundtrip_register_deregister_and_sequence() {
 }
 
 #[test]
+fn block_options_roundtrip_szx_more_and_qblock() {
+    let block2 = encode_block(BlockValue::from_size(0, true, 1024).expect("szx 6"));
+    let block1 = encode_block(BlockValue::new(2, false, 3).expect("szx 3"));
+    let size2 = encode_uint(4096);
+    let q1 = encode_block(BlockValue::new(1, true, 0).expect("q1"));
+    let q2a = encode_block(BlockValue::new(0, true, 2).expect("q2a"));
+    let q2b = encode_block(BlockValue::new(1, false, 2).expect("q2b"));
+    let opts = [
+        Opt::uri_path("large"),
+        Opt::q_block1(&q1),
+        Opt::block2(&block2),
+        Opt::block1(&block1),
+        Opt::size2(&size2),
+        Opt::q_block2(&q2a),
+        Opt::q_block2(&q2b),
+    ];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+
+    assert_eq!(
+        parsed.block2(),
+        Some(Ok(BlockValue::from_size(0, true, 1024).expect("want 1024")))
+    );
+    assert_eq!(
+        parsed.block1(),
+        Some(Ok(BlockValue::new(2, false, 3).expect("want 128")))
+    );
+    assert_eq!(parsed.size2(), Some(Ok(4096)));
+    assert_eq!(
+        parsed.q_block1(),
+        Some(Ok(BlockValue::new(1, true, 0).expect("q1")))
+    );
+    let q2: [BlockValue; 2] = {
+        let mut out = [BlockValue::new(0, false, 0).expect("z"); 2];
+        let mut i = 0;
+        for v in parsed.q_block2() {
+            out[i] = v.expect("q2");
+            i += 1;
+        }
+        assert_eq!(i, 2);
+        out
+    };
+    assert_eq!(q2[0], BlockValue::new(0, true, 2).expect("q2a"));
+    assert_eq!(q2[1], BlockValue::new(1, false, 2).expect("q2b"));
+    assert_eq!(parsed.uri_path().next(), Some(Ok("large")));
+
+    parsed.check_rfc7252_formats().expect("not Table 4");
+    assert_eq!(
+        parsed.check_rfc7252_options(),
+        Err(ParseError::UnrecognizedCritical(OptionNumber::Q_BLOCK1))
+    );
+
+    let mut again = [0u8; 256];
+    let n2 = parsed.encode(&mut again).expect("re-encode");
+    assert_eq!(&buf[..n], &again[..n2]);
+}
+
+#[test]
+fn block_options_builder_sorts_with_table4() {
+    let blk = encode_block(BlockValue::new(0, false, 6).expect("1024"));
+    let size2 = encode_uint(2048);
+    let mut opts = OptionsBuilder::<4>::new();
+    opts.push(Opt::size2(&size2)).expect("size2");
+    opts.push(Opt::uri_path("b")).expect("path");
+    opts.push(Opt::block2(&blk)).expect("block2");
+    opts.push(Opt::size1(&size2)).expect("size1");
+
+    let numbers: [OptionNumber; 4] = [
+        opts.as_slice()[0].number(),
+        opts.as_slice()[1].number(),
+        opts.as_slice()[2].number(),
+        opts.as_slice()[3].number(),
+    ];
+    assert_eq!(
+        numbers,
+        [
+            OptionNumber::URI_PATH,
+            OptionNumber::BLOCK2,
+            OptionNumber::SIZE2,
+            OptionNumber::SIZE1,
+        ]
+    );
+
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_options(opts.as_slice());
+    assert_roundtrip(&msg);
+}
+
+#[test]
 fn helpers_roundtrip_uri_path_segments() {
     let opts = [Opt::uri_path("sensors"), Opt::uri_path("temp")];
     let (n, buf) = parse_opts(&opts);
@@ -495,6 +586,18 @@ fn uint_helpers_uri_port_accept_size1() {
     assert_eq!(parsed.uri_port(), Some(Ok(5683)));
     assert_eq!(parsed.accept(), Some(Ok(ContentFormat::JSON)));
     assert_eq!(parsed.size1(), Some(Ok(4096)));
+}
+
+#[test]
+fn uint_helpers_size2() {
+    let size = encode_uint(0);
+    let opts = [Opt::size2(&size)];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert_eq!(parsed.size2(), Some(Ok(0)));
+    assert!(!OptionNumber::SIZE2.is_rfc7252());
+    parsed.check_rfc7252_options().expect("elective Size2");
+    parsed.check_rfc7252_formats().expect("not Table 4");
 }
 
 #[test]

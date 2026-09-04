@@ -9,13 +9,17 @@
 //! [`Transmission`] names RFC 7252 §4.8 defaults; retransmit algorithms are
 //! not implemented.
 //!
-//! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 helpers) in
-//! any order and yields a slice for [`Message::with_options`].
+//! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 and
+//! Block / Q-Block helpers) in any order and yields a slice for
+//! [`Message::with_options`].
 //!
 //! [`value`] codecs interpret option values as empty, opaque, uint, or
 //! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
-//! Table 4. [`ParsedMessage::check_rfc7252_formats`] is optional and separate
-//! from wire decode and from [`ParsedMessage::check_rfc7252_options`].
+//! Table 4. Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2
+//! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX. None of those
+//! numbers are in Table 4. [`ParsedMessage::check_rfc7252_formats`] is
+//! optional and separate from wire decode and from
+//! [`ParsedMessage::check_rfc7252_options`].
 //!
 //! Wire format lives in `knowledge/rfcs/rfc7252.txt`. This module does not
 //! restate it.
@@ -34,9 +38,10 @@ pub use decode::{ParsedMessage, decode};
 pub use encode::{Message, encode};
 pub use option::{Opt, OptionNumber, Options};
 pub use value::{
-    ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK,
-    OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions, decode_observe, decode_uint,
-    decode_uint16, encode_observe, encode_uint,
+    BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
+    OBSERVE_SEQUENCE_MASK, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
+    decode_block, decode_observe, decode_uint, decode_uint16, encode_block, encode_observe,
+    encode_uint,
 };
 
 pub use crate::error::{OptionsFull, ValueError};
