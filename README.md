@@ -4,7 +4,7 @@ A stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bound
 
 ## Library surface
 
-- `coaptic::message` — decode/encode a CoAP datagram (`&[u8]`). No `Engine` required.
+- `coaptic::message` — decode/encode a CoAP datagram (`&[u8]`), plus RFC 7252 option value codecs (`message::value`). No `Engine` required.
 - `coaptic::storage` — bounded `Engine` / `Memory` / pools (main types are also at the crate root).
 - `coaptic::profiles` — `Default` (1472-byte datagrams) and `Constrained` (1152).
 

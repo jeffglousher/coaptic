@@ -3,12 +3,17 @@
 //! [`decode`] and [`encode`] operate on a datagram buffer (the UDP payload).
 //! They do not require [`crate::Engine`].
 //!
+//! [`value`] codecs interpret option values as empty, opaque, uint, or
+//! string. [`ParsedMessage::check_rfc7252_formats`] is optional and separate
+//! from wire decode and from [`ParsedMessage::check_rfc7252_options`].
+//!
 //! Wire format lives in `knowledge/rfcs/rfc7252.txt`. This module does not
 //! restate it.
 
 mod decode;
 mod encode;
 mod option;
+pub mod value;
 
 #[cfg(test)]
 mod tests;
@@ -16,6 +21,12 @@ mod tests;
 pub use decode::{ParsedMessage, decode};
 pub use encode::{Message, encode};
 pub use option::{Opt, OptionNumber, Options};
+pub use value::{
+    ContentFormat, EncodedUint, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
+    decode_uint, decode_uint16, encode_uint,
+};
+
+pub use crate::error::ValueError;
 
 use core::fmt;
 

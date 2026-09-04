@@ -74,7 +74,8 @@ impl<'a> ParsedMessage<'a> {
 
     /// Fail if [`Self::unrecognized_critical`] finds an option.
     ///
-    /// [`decode`] does not call this.
+    /// [`decode`] does not call this. Distinct from
+    /// [`Self::check_rfc7252_formats`].
     pub fn check_rfc7252_options(self) -> Result<(), ParseError> {
         match self.unrecognized_critical() {
             Some(n) => Err(ParseError::UnrecognizedCritical(n)),
@@ -98,9 +99,9 @@ impl<'a> ParsedMessage<'a> {
 
 /// Parse one CoAP datagram (UDP payload). Does not require [`crate::Engine`].
 ///
-/// Options are accepted as opaque number + value. Use
-/// [`ParsedMessage::check_rfc7252_options`] for a structured unrecognized-critical
-/// report.
+/// Options are accepted as opaque number + value. Optional checks:
+/// [`ParsedMessage::check_rfc7252_options`] (unrecognized critical) and
+/// [`ParsedMessage::check_rfc7252_formats`] (known option, wrong format).
 pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     if buf.len() < 4 {
         return Err(ParseError::TruncatedHeader);
