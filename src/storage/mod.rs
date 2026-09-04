@@ -7,6 +7,8 @@
 //! [`DatagramSlots`]. [`Engine::write_rx`] associates an [`Endpoint`] sidecar
 //! when RX bytes are written. Pending CON state is sidecar on TX slots
 //! ([`PendingCon`]); empty ACK/RST matching is not the Dedup Table.
+//! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
+//! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! They do not invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
@@ -15,6 +17,7 @@ mod builder;
 mod capacities;
 mod endpoint;
 mod engine;
+mod exchange;
 mod memory;
 mod occupancy;
 mod pending;
@@ -35,6 +38,7 @@ pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
 pub use endpoint::Endpoint;
 pub use engine::Engine;
+pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
 pub use pending::{PendingCon, PendingCons};
 pub use pool::{BodyPool, DatagramPool};

@@ -17,7 +17,9 @@
 //! sidecar metadata (address and port) next to the slot. The Dedup Table
 //! stores [`DedupEntry`] rows keyed by Message ID and remote [`Endpoint`].
 //! Pending CON matching ([`PendingCon`]) is sidecar on TX datagram slots,
-//! a different identity from Dedup. OSCORE, DTLS, and plugtest harnesses
+//! a different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
+//! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
+//! TX pool count (not a seventh area). OSCORE, DTLS, and plugtest harnesses
 //! are out of scope here.
 //!
 //! # Message
@@ -32,7 +34,9 @@
 //! [`Message`] into an acquired slot (`set_len` included). Empty ACK/RST
 //! constructors and [`ParsedMessage`] detectors live in [`message`]. Pending
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
-//! seventh area and not the Dedup Table. Optional format/critical checks
+//! seventh area and not the Dedup Table. Outstanding request matching
+//! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
+//! not a response for that table. Optional format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes
@@ -101,7 +105,7 @@ pub use message::{
 pub use storage::AllocMemory;
 pub use storage::{
     BodyPool, Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots,
-    DedupTable, Endpoint, Engine, EngineBuilder, Memory, MemoryProfile, Missing, NoBodies,
-    ObserveTable, PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage,
-    WithBodies,
+    DedupTable, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable,
+    Exchanges, Memory, MemoryProfile, Missing, NoBodies, ObserveTable, PendingCon, PendingCons,
+    Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
 };

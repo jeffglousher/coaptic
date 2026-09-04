@@ -5,6 +5,10 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::ExchangeEntry;
+use super::ExchangeKey;
+use super::ExchangeTable;
+use super::Exchanges;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotError;
@@ -105,6 +109,7 @@ pub struct Memory<P: MemoryProfile, B = NoBodies> {
     tx: P::TxDatagram,
     dedup: P::Dedup,
     observe: P::Observe,
+    exchange: ExchangeTable<{ P::TX_DATAGRAM_SLOTS }>,
     #[allow(dead_code)]
     bodies: B,
 }
@@ -118,6 +123,7 @@ impl<P: MemoryProfile> Memory<P> {
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
             observe: P::Observe::default(),
+            exchange: ExchangeTable::new(),
             bodies: NoBodies,
         }
     }
@@ -138,6 +144,7 @@ impl<P: MemoryProfile> Memory<P, WithBodies<P>> {
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
             observe: P::Observe::default(),
+            exchange: ExchangeTable::new(),
             bodies: WithBodies::new(),
         }
     }
@@ -198,6 +205,17 @@ impl<P: MemoryProfile, B> Memory<P, B> {
     /// Observe interest table (mutable).
     pub fn observe_mut(&mut self) -> &mut P::Observe {
         &mut self.observe
+    }
+
+    /// Outstanding-request table (Token + remote [`Endpoint`]).
+    #[must_use]
+    pub fn exchange(&self) -> &ExchangeTable<{ P::TX_DATAGRAM_SLOTS }> {
+        &self.exchange
+    }
+
+    /// Outstanding-request table (mutable).
+    pub fn exchange_mut(&mut self) -> &mut ExchangeTable<{ P::TX_DATAGRAM_SLOTS }> {
+        &mut self.exchange
     }
 }
 
@@ -389,6 +407,24 @@ where
 
     fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
         self.dedup.entry(id)
+    }
+}
+
+impl<P: MemoryProfile, B> Exchanges for Memory<P, B> {
+    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+        self.exchange.insert(entry)
+    }
+
+    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+        self.exchange.lookup(key)
+    }
+
+    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+        self.exchange.take(key)
+    }
+
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+        self.exchange.entry(id)
     }
 }
 

@@ -9,11 +9,15 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::ExchangeEntry;
+use super::ExchangeKey;
+use super::Exchanges;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::Capacities;
+use super::exchange::ExchangeStore;
 use super::occupancy::HeapOccupancy;
 use super::slot::{SlotError, SlotId};
 use super::table::DedupStore;
@@ -29,6 +33,7 @@ pub struct AllocMemory {
     tx: AllocDatagramPool,
     dedup: AllocDedupTable,
     observe: AllocTable,
+    exchange: AllocExchangeTable,
     rx_body: Option<AllocBodyPool>,
     tx_body: Option<AllocBodyPool>,
 }
@@ -58,6 +63,7 @@ impl AllocMemory {
             tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes),
             dedup: AllocDedupTable::new(capacities.dedup_entries),
             observe: AllocTable::new(capacities.observe_entries),
+            exchange: AllocExchangeTable::new(capacities.tx_datagram_slots),
             rx_body,
             tx_body,
         })
@@ -371,6 +377,24 @@ impl PendingCons for AllocMemory {
     }
 }
 
+impl Exchanges for AllocMemory {
+    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+        self.exchange.insert(entry)
+    }
+
+    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+        self.exchange.lookup(key)
+    }
+
+    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+        self.exchange.take(key)
+    }
+
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+        self.exchange.entry(id)
+    }
+}
+
 impl DedupSlots for AllocMemory {
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
@@ -506,6 +530,95 @@ impl DedupStore for AllocDedupTable {
             return None;
         }
         self.entries.get(id.index()).copied().flatten()
+    }
+}
+
+struct AllocExchangeTable {
+    entries: Box<[Option<ExchangeEntry>]>,
+    occ: HeapOccupancy,
+}
+
+impl AllocExchangeTable {
+    fn new(entries: usize) -> Self {
+        Self {
+            entries: vec![None; entries].into_boxed_slice(),
+            occ: HeapOccupancy::new(entries),
+        }
+    }
+
+    fn reset(&mut self, id: SlotId) {
+        if let Some(slot) = self.entries.get_mut(id.index()) {
+            *slot = None;
+        }
+    }
+}
+
+impl ExchangeStore for AllocExchangeTable {
+    fn insert(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+        if let Some(id) = self.lookup(entry.key()) {
+            return Some(id);
+        }
+        let id = self.occ.acquire()?;
+        self.entries[id.index()] = Some(entry);
+        Some(id)
+    }
+
+    fn lookup(&self, key: ExchangeKey) -> Option<SlotId> {
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.entry(id) {
+                Some(entry) if entry.key() == key => Some(id),
+                _ => None,
+            }
+        })
+    }
+
+    fn take(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+        let id = self.lookup(key)?;
+        let entry = self.entry(id)?;
+        let _ = self.release(id);
+        Some(entry)
+    }
+
+    fn entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get(id.index()).copied().flatten()
+    }
+}
+
+impl SlotPool for AllocExchangeTable {
+    fn acquire(&mut self) -> Option<SlotId> {
+        let id = self.occ.acquire()?;
+        self.reset(id);
+        Some(id)
+    }
+
+    fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.release(id)?;
+        self.reset(id);
+        Ok(())
+    }
+
+    fn rotate(&mut self) {
+        self.occ.rotate();
+    }
+
+    fn slot_count(&self) -> usize {
+        self.occ.slot_count()
+    }
+
+    fn occupied_count(&self) -> usize {
+        self.occ.occupied_count()
+    }
+
+    fn is_occupied(&self, id: SlotId) -> bool {
+        self.occ.is_occupied(id)
+    }
+
+    fn cursor(&self) -> usize {
+        self.occ.cursor()
     }
 }
 

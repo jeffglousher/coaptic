@@ -5,7 +5,7 @@ A stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bound
 ## Library surface
 
 - `coaptic::message` — decode/encode a CoAP datagram (`&[u8]`), empty ACK/RST constructors, RFC 7252 option value codecs (`message::value`), and `OptionsBuilder` for out-of-order option insertion. No `Engine` required.
-- `coaptic::storage` — bounded `Engine` / `Memory` / pools (main types are also at the crate root). `Engine` decodes/encodes occupied datagram slots when the backend implements `DatagramSlots`. Datagram slots hold CoAP bytes only; `Endpoint` is sidecar metadata. The Dedup Table stores typed `DedupEntry` rows. Pending CON matching (`PendingCon`) is sidecar on TX slots, not a seventh area.
+- `coaptic::storage` — bounded `Engine` / `Memory` / pools (main types are also at the crate root). `Engine` decodes/encodes occupied datagram slots when the backend implements `DatagramSlots`. Datagram slots hold CoAP bytes only; `Endpoint` is sidecar metadata. The Dedup Table stores typed `DedupEntry` rows. Pending CON matching (`PendingCon`) is sidecar on TX slots. Token matching (`ExchangeEntry`) is a compact table keyed by Token + remote Endpoint, sized from the TX pool count. Neither is a seventh area.
 - `coaptic::profiles` — `Default` (1472-byte datagrams) and `Constrained` (1152).
 
 Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Knowledge: [knowledge/](knowledge/). Plugtest harnesses are not in this crate yet.
