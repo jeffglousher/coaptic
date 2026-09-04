@@ -5,11 +5,16 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::DatagramSlots;
+use super::DedupEntry;
+use super::DedupKey;
+use super::DedupSlots;
+use super::Endpoint;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::Capacities;
 use super::occupancy::HeapOccupancy;
-use super::slot::{Peer, SlotError, SlotId};
+use super::slot::{SlotError, SlotId};
+use super::table::DedupStore;
 use crate::error::BuildError;
 
 /// `alloc` backend: runtime [`Capacities`], typed heap arrays, no later growth.
@@ -19,7 +24,7 @@ use crate::error::BuildError;
 pub struct AllocMemory {
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
-    dedup: AllocTable,
+    dedup: AllocDedupTable,
     observe: AllocTable,
     rx_body: Option<AllocBodyPool>,
     tx_body: Option<AllocBodyPool>,
@@ -48,7 +53,7 @@ impl AllocMemory {
         Ok(Self {
             rx: AllocDatagramPool::new(capacities.rx_datagram_slots, capacities.rx_datagram_bytes),
             tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes),
-            dedup: AllocTable::new(capacities.dedup_entries),
+            dedup: AllocDedupTable::new(capacities.dedup_entries),
             observe: AllocTable::new(capacities.observe_entries),
             rx_body,
             tx_body,
@@ -114,8 +119,7 @@ impl Storage for AllocMemory {
 struct AllocSlot {
     buf: Box<[u8]>,
     len: usize,
-    #[allow(dead_code)]
-    peer: Peer,
+    endpoint: Option<Endpoint>,
 }
 
 struct AllocDatagramPool {
@@ -131,7 +135,7 @@ impl AllocDatagramPool {
             v.push(AllocSlot {
                 buf: vec![0u8; bytes].into_boxed_slice(),
                 len: 0,
-                peer: Peer::PLACEHOLDER,
+                endpoint: None,
             });
         }
         Self {
@@ -144,7 +148,7 @@ impl AllocDatagramPool {
     fn reset(&mut self, id: SlotId) {
         if let Some(slot) = self.slots.get_mut(id.index()) {
             slot.len = 0;
-            slot.peer = Peer::PLACEHOLDER;
+            slot.endpoint = None;
         }
     }
 
@@ -175,6 +179,25 @@ impl AllocDatagramPool {
             return Err(SlotError::LengthExceedsSlot);
         }
         self.slots[id.index()].len = len;
+        Ok(())
+    }
+
+    fn endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.slots.get(id.index())?.endpoint
+    }
+
+    fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.slots[id.index()].endpoint = Some(endpoint);
         Ok(())
     }
 }
@@ -237,6 +260,40 @@ impl DatagramSlots for AllocMemory {
     fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
         self.tx.set_len(id, len)
     }
+
+    fn rx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        self.rx.endpoint(id)
+    }
+
+    fn tx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        self.tx.endpoint(id)
+    }
+
+    fn set_rx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        self.rx.set_endpoint(id, endpoint)
+    }
+
+    fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        self.tx.set_endpoint(id, endpoint)
+    }
+}
+
+impl DedupSlots for AllocMemory {
+    fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
+        self.dedup.insert(entry)
+    }
+
+    fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {
+        self.dedup.lookup(key)
+    }
+
+    fn remove_dedup(&mut self, key: DedupKey) -> bool {
+        self.dedup.remove(key)
+    }
+
+    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
+        self.dedup.entry(id)
+    }
 }
 
 struct AllocBodyPool {
@@ -252,7 +309,7 @@ impl AllocBodyPool {
             v.push(AllocSlot {
                 buf: vec![0u8; bytes].into_boxed_slice(),
                 len: 0,
-                peer: Peer::PLACEHOLDER,
+                endpoint: None,
             });
         }
         Self {
@@ -270,6 +327,95 @@ impl AllocBodyPool {
 }
 
 impl SlotPool for AllocBodyPool {
+    fn acquire(&mut self) -> Option<SlotId> {
+        let id = self.occ.acquire()?;
+        self.reset(id);
+        Some(id)
+    }
+
+    fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.release(id)?;
+        self.reset(id);
+        Ok(())
+    }
+
+    fn rotate(&mut self) {
+        self.occ.rotate();
+    }
+
+    fn slot_count(&self) -> usize {
+        self.occ.slot_count()
+    }
+
+    fn occupied_count(&self) -> usize {
+        self.occ.occupied_count()
+    }
+
+    fn is_occupied(&self, id: SlotId) -> bool {
+        self.occ.is_occupied(id)
+    }
+
+    fn cursor(&self) -> usize {
+        self.occ.cursor()
+    }
+}
+
+struct AllocDedupTable {
+    entries: Box<[Option<DedupEntry>]>,
+    occ: HeapOccupancy,
+}
+
+impl AllocDedupTable {
+    fn new(entries: usize) -> Self {
+        Self {
+            entries: vec![None; entries].into_boxed_slice(),
+            occ: HeapOccupancy::new(entries),
+        }
+    }
+
+    fn reset(&mut self, id: SlotId) {
+        if let Some(slot) = self.entries.get_mut(id.index()) {
+            *slot = None;
+        }
+    }
+}
+
+impl DedupStore for AllocDedupTable {
+    fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
+        if let Some(id) = self.lookup(entry.key()) {
+            return Some(id);
+        }
+        let id = self.occ.acquire()?;
+        self.entries[id.index()] = Some(entry);
+        Some(id)
+    }
+
+    fn lookup(&self, key: DedupKey) -> Option<SlotId> {
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.entry(id) {
+                Some(entry) if entry.key() == key => Some(id),
+                _ => None,
+            }
+        })
+    }
+
+    fn remove(&mut self, key: DedupKey) -> bool {
+        match self.lookup(key) {
+            Some(id) => self.release(id).is_ok(),
+            None => false,
+        }
+    }
+
+    fn entry(&self, id: SlotId) -> Option<DedupEntry> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get(id.index()).copied().flatten()
+    }
+}
+
+impl SlotPool for AllocDedupTable {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);

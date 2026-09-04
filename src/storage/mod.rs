@@ -4,12 +4,14 @@
 //! parse and encode live in [`crate::message`]. [`Engine`] methods
 //! [`Engine::decode_rx`] / [`Engine::encode_tx`] (and the TX/RX mirrors)
 //! glue those codecs to occupied datagram slots when the backend implements
-//! [`DatagramSlots`]. They do not invent 4.02 / RST policy.
+//! [`DatagramSlots`]. [`Engine::write_rx`] associates an [`Endpoint`] sidecar
+//! when RX bytes are written. They do not invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
 mod builder;
 mod capacities;
+mod endpoint;
 mod engine;
 mod memory;
 mod occupancy;
@@ -28,11 +30,12 @@ mod tests;
 pub use alloc_memory::AllocMemory;
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
+pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
 pub use pool::{BodyPool, DatagramPool};
-pub use slot::{Peer, SlotError, SlotId};
-pub use table::{DedupTable, ObserveTable};
+pub use slot::{SlotError, SlotId};
+pub use table::{DedupEntry, DedupKey, DedupTable, ObserveTable};
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///
@@ -114,4 +117,38 @@ pub trait DatagramSlots {
 
     /// Record the filled TX datagram length.
     fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
+
+    /// Sidecar [`Endpoint`] for an occupied RX slot.
+    fn rx_endpoint(&self, id: SlotId) -> Option<Endpoint>;
+
+    /// Sidecar [`Endpoint`] for an occupied TX slot.
+    fn tx_endpoint(&self, id: SlotId) -> Option<Endpoint>;
+
+    /// Set RX sidecar [`Endpoint`]. Not written into the byte buffer.
+    fn set_rx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
+
+    /// Set TX sidecar [`Endpoint`]. Not written into the byte buffer.
+    fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
+}
+
+/// Typed Dedup Table access.
+///
+/// Insert, lookup, and remove scan the configured entry count (O(n) in
+/// capacity). Capacity is fixed at construction. [`Memory`] and
+/// [`AllocMemory`] implement this so [`Engine`] can store [`DedupEntry`]
+/// values in the existing table slots.
+pub trait DedupSlots {
+    /// Insert `entry`, or return the existing slot if the key is present.
+    ///
+    /// `None` when the table is full and the key is not already stored.
+    fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId>;
+
+    /// Occupied slot matching `key`, if any.
+    fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId>;
+
+    /// Release the slot matching `key`, if occupied.
+    fn remove_dedup(&mut self, key: DedupKey) -> bool;
+
+    /// Occupied payload at `id`.
+    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry>;
 }

@@ -1,19 +1,20 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
 use super::SlotPool;
+use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
-use super::slot::{Peer, SlotError, SlotId};
+use super::slot::{SlotError, SlotId};
 use crate::error::SlotMessageError;
 use crate::message::{Message, ParsedMessage};
 
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
-/// Each slot holds CoAP message bytes (UDP payload) plus sidecar [`Peer`]
-/// metadata. The peer is not stored in the byte buffer.
+/// Each slot holds CoAP message bytes (UDP payload) plus sidecar [`Endpoint`]
+/// metadata. The endpoint is not stored in the byte buffer.
 pub struct DatagramPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
-    peers: [Peer; SLOTS],
+    endpoints: [Option<Endpoint>; SLOTS],
     occ: Occupancy<SLOTS>,
 }
 
@@ -24,7 +25,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
         Self {
             bytes: [[0u8; BYTES]; SLOTS],
             lens: [0; SLOTS],
-            peers: [Peer::PLACEHOLDER; SLOTS],
+            endpoints: [None; SLOTS],
             occ: Occupancy::new(),
         }
     }
@@ -87,14 +88,40 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
         Ok(())
     }
 
-    /// Sidecar peer for an occupied slot.
-    #[must_use]
-    pub fn peer(&self, id: SlotId) -> Option<Peer> {
-        self.occ.is_occupied(id).then(|| self.peers[id.index()])
+    /// Copy `bytes` into an occupied slot, record length, and set sidecar [`Endpoint`].
+    pub fn write(
+        &mut self,
+        id: SlotId,
+        bytes: &[u8],
+        endpoint: Endpoint,
+    ) -> Result<usize, SlotError> {
+        {
+            let buf = self.payload_mut(id).ok_or(if id.index() < SLOTS {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            })?;
+            if bytes.len() > buf.len() {
+                return Err(SlotError::LengthExceedsSlot);
+            }
+            buf[..bytes.len()].copy_from_slice(bytes);
+        }
+        self.set_len(id, bytes.len())?;
+        self.set_endpoint(id, endpoint)?;
+        Ok(bytes.len())
     }
 
-    /// Set sidecar peer metadata. Not written into the byte buffer.
-    pub fn set_peer(&mut self, id: SlotId, peer: Peer) -> Result<(), SlotError> {
+    /// Sidecar endpoint for an occupied slot. `None` if free or not yet set.
+    #[must_use]
+    pub fn endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.endpoints[id.index()]
+    }
+
+    /// Set sidecar endpoint metadata. Not written into the byte buffer.
+    pub fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < SLOTS {
                 SlotError::NotOccupied
@@ -102,14 +129,14 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
                 SlotError::InvalidSlot
             });
         }
-        self.peers[id.index()] = peer;
+        self.endpoints[id.index()] = Some(endpoint);
         Ok(())
     }
 
     fn reset(&mut self, id: SlotId) {
         let idx = id.index();
         self.lens[idx] = 0;
-        self.peers[idx] = Peer::PLACEHOLDER;
+        self.endpoints[idx] = None;
     }
 }
 
@@ -153,11 +180,13 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
     }
 }
 
-/// Byte access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
+/// Byte and sidecar access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
 pub(crate) trait DatagramBytes {
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
+    fn endpoint(&self, id: SlotId) -> Option<Endpoint>;
+    fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
@@ -171,6 +200,14 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
         DatagramPool::set_len(self, id, len)
+    }
+
+    fn endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        DatagramPool::endpoint(self, id)
+    }
+
+    fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        DatagramPool::set_endpoint(self, id, endpoint)
     }
 }
 

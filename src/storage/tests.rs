@@ -2,15 +2,21 @@
 
 #[cfg(feature = "alloc")]
 use super::Capacities;
+use super::DedupEntry;
+use super::DedupKey;
+use super::DedupTable;
+use super::Endpoint;
 use super::Engine;
 use super::EngineBuilder;
 use super::Memory;
 use super::MemoryProfile;
 use super::SlotError;
+use super::SlotPool;
 use super::Storage;
 use super::WithBodies;
 use super::profiles;
 use crate::error::BuildError;
+use crate::message::{Code, Message, MessageId, Type, encode};
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
@@ -239,6 +245,103 @@ fn tables_acquire_release_rotate() {
     engine.release_observe(o).expect("release observe");
 }
 
+fn sample_datagram(id: u16) -> ([u8; 16], usize) {
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(id));
+    let mut buf = [0u8; 16];
+    let n = encode(&msg, &mut buf).expect("encode sample");
+    (buf, n)
+}
+
+#[test]
+fn engine_write_rx_associates_endpoint() {
+    let mut engine = build_default();
+    let id = engine.acquire_rx().expect("rx");
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (buf, n) = sample_datagram(0x1111);
+    assert_eq!(engine.rx_endpoint(id), None);
+    assert_eq!(engine.write_rx(id, &buf[..n], ep).expect("write"), n);
+    assert_eq!(engine.rx_endpoint(id), Some(ep));
+    let parsed = engine.decode_rx(id).expect("decode");
+    assert_eq!(parsed.message_id(), MessageId::new(0x1111));
+
+    engine.release_rx(id).expect("release");
+    assert_eq!(engine.rx_endpoint(id), None);
+    while engine.acquire_rx().is_some() {}
+    engine.release_rx(id).expect("free the written slot");
+    let reused = engine.acquire_rx().expect("reuse same slot");
+    assert_eq!(reused, id);
+    assert_eq!(engine.rx_endpoint(reused), None);
+}
+
+#[test]
+fn engine_set_tx_endpoint() {
+    let mut engine = build_default();
+    let id = engine.acquire_tx().expect("tx");
+    let ep = Endpoint::v6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 5683);
+    engine.set_tx_endpoint(id, ep).expect("set");
+    assert_eq!(engine.tx_endpoint(id), Some(ep));
+    assert_eq!(engine.set_rx_endpoint(id, ep), Err(SlotError::NotOccupied));
+}
+
+#[test]
+fn dedup_hit_miss_and_capacity() {
+    let mut table = DedupTable::<2>::new();
+    let a = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5683));
+    let b = DedupEntry::new(MessageId::new(2), Endpoint::v4([192, 0, 2, 1], 5683));
+    let miss_id = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 2], 5683));
+    let miss_port = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5684));
+    let extra = DedupEntry::new(MessageId::new(3), Endpoint::v4([192, 0, 2, 1], 5683));
+
+    assert_eq!(table.lookup(a.key()), None);
+    let id_a = table.insert(a).expect("insert a");
+    assert_eq!(table.lookup(a.key()), Some(id_a));
+    assert_eq!(table.insert(a).expect("idempotent"), id_a);
+    assert_eq!(table.occupied_count(), 1);
+    assert_eq!(table.lookup(miss_id.key()), None);
+    assert_eq!(table.lookup(miss_port.key()), None);
+
+    let id_b = table.insert(b).expect("insert b");
+    assert_ne!(id_a, id_b);
+    assert!(table.insert(extra).is_none());
+    assert_eq!(table.occupied_count(), 2);
+    assert_eq!(table.entry(id_a), Some(a));
+
+    assert!(table.remove(a.key()));
+    assert_eq!(table.lookup(a.key()), None);
+    assert!(!table.remove(a.key()));
+    let id_extra = table.insert(extra).expect("room after remove");
+    assert_eq!(id_extra, id_a);
+}
+
+#[test]
+fn engine_dedup_insert_lookup_remove() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([198, 51, 100, 7], 5683);
+    let key = DedupKey::new(MessageId::new(9), ep);
+    let entry = DedupEntry::from(key);
+    assert_eq!(engine.lookup_dedup(key), None);
+    let id = engine.insert_dedup(entry).expect("insert");
+    assert_eq!(engine.lookup_dedup(key), Some(id));
+    assert_eq!(engine.dedup_entry(id), Some(entry));
+    assert!(engine.remove_dedup(key));
+    assert_eq!(engine.lookup_dedup(key), None);
+}
+
+#[test]
+fn engine_dedup_fills_to_capacity() {
+    let mut engine = build_default();
+    let n = profiles::Default::DEDUP_ENTRIES;
+    let ep = Endpoint::v4([203, 0, 113, 1], 5683);
+    for i in 0..n {
+        let entry = DedupEntry::new(MessageId::new(i as u16), ep);
+        assert!(engine.insert_dedup(entry).is_some());
+    }
+    let overflow = DedupEntry::new(MessageId::new(n as u16), ep);
+    assert!(engine.insert_dedup(overflow).is_none());
+    let first = DedupKey::new(MessageId::new(0), ep);
+    assert!(engine.lookup_dedup(first).is_some());
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -345,6 +448,39 @@ mod alloc_backend {
             assert!(engine.acquire_rx_body().is_some());
         }
         assert!(engine.acquire_rx_body().is_none());
+    }
+
+    #[test]
+    fn alloc_write_rx_associates_endpoint() {
+        let mut engine = build_alloc(false);
+        let id = engine.acquire_rx().expect("rx");
+        let ep = Endpoint::v4([192, 0, 2, 9], 5683);
+        let (buf, n) = sample_datagram(0x2222);
+        engine.write_rx(id, &buf[..n], ep).expect("write");
+        assert_eq!(engine.rx_endpoint(id), Some(ep));
+        assert_eq!(
+            engine.decode_rx(id).expect("decode").message_id(),
+            MessageId::new(0x2222)
+        );
+    }
+
+    #[test]
+    fn alloc_dedup_hit_miss_and_capacity() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 8], 5683);
+        let a = DedupEntry::new(MessageId::new(1), ep);
+        let id = engine.insert_dedup(a).expect("insert");
+        assert_eq!(engine.lookup_dedup(a.key()), Some(id));
+        assert_eq!(engine.insert_dedup(a).expect("idempotent"), id);
+        for i in 1..profiles::Default::DEDUP_ENTRIES {
+            let entry = DedupEntry::new(MessageId::new(i as u16 + 1), ep);
+            assert!(engine.insert_dedup(entry).is_some());
+        }
+        assert!(
+            engine
+                .insert_dedup(DedupEntry::new(MessageId::new(99), ep))
+                .is_none()
+        );
     }
 
     #[test]
