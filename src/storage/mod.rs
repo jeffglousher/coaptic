@@ -9,7 +9,9 @@
 //! ([`PendingCon`]); empty ACK/RST matching is not the Dedup Table.
 //! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
-//! They do not invent 4.02 / RST policy.
+//! Observe interest rows ([`ObserveInterest`]) fill the existing
+//! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
+//! key). They do not invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -43,7 +45,7 @@ pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
 pub use pending::{PendingCon, PendingCons};
 pub use pool::{BodyPool, DatagramPool};
 pub use slot::{SlotError, SlotId};
-pub use table::{DedupEntry, DedupKey, DedupTable, ObserveTable};
+pub use table::{DedupEntry, DedupKey, DedupTable, ObserveInterest, ObserveKey, ObserveTable};
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///
@@ -179,4 +181,29 @@ pub trait DedupSlots {
 
     /// Occupied payload at `id`.
     fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry>;
+}
+
+/// Typed Observe Interest Table access.
+///
+/// Insert, lookup, remove, and take scan the configured entry count (O(n) in
+/// capacity). Capacity is the profile observe-entry count. [`Memory`] and
+/// [`AllocMemory`] implement this so [`Engine`] can store
+/// [`ObserveInterest`] values in the existing table slots.
+pub trait ObserveSlots {
+    /// Insert `interest`, or return the existing slot if the key is present.
+    ///
+    /// `None` when the table is full and the key is not already stored.
+    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId>;
+
+    /// Occupied slot matching `key`, if any.
+    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId>;
+
+    /// Release the slot matching `key`, if occupied.
+    fn remove_observe(&mut self, key: ObserveKey) -> bool;
+
+    /// Remove and return the occupied payload matching `key`, if any.
+    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest>;
+
+    /// Occupied payload at `id`.
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest>;
 }

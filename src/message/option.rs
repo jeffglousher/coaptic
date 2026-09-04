@@ -42,6 +42,8 @@ impl OptionNumber {
     pub const ETAG: Self = Self(4);
     /// If-None-Match (5).
     pub const IF_NONE_MATCH: Self = Self(5);
+    /// Observe (6). RFC 7641; not in RFC 7252 Table 4.
+    pub const OBSERVE: Self = Self(6);
     /// Uri-Port (7).
     pub const URI_PORT: Self = Self(7);
     /// Location-Path (8).

@@ -92,6 +92,7 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `Endpoint` | UDP peer sidecar next to a datagram slot |
 | `DedupKey` / `DedupEntry` | Dedup identity (Message ID + remote Endpoint) |
 | `ObserveTable` | Observe interest table |
+| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint) |
 | `SlotId` | Slot identifier |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |

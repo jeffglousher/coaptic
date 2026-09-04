@@ -19,8 +19,9 @@
 //! Pending CON matching ([`PendingCon`]) is sidecar on TX datagram slots,
 //! a different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
 //! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
-//! TX pool count (not a seventh area). OSCORE, DTLS, and plugtest harnesses
-//! are out of scope here.
+//! TX pool count (not a seventh area). Observe interest ([`ObserveInterest`])
+//! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]).
+//! OSCORE, DTLS, and plugtest harnesses are out of scope here.
 //!
 //! # Message
 //!
@@ -36,13 +37,15 @@
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
 //! seventh area and not the Dedup Table. Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
-//! not a response for that table. Optional format/critical checks
+//! not a response for that table. Observe register/deregister fills
+//! [`ObserveInterest`] rows. Optional format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes
 //! and decodes RFC 7252 empty / opaque / uint / string values (uint uses a
 //! stack buffer; string decode is a `&str` view). Named [`Opt`] constructors
-//! and [`ParsedMessage`] accessors cover Table 4 options. Two optional
+//! and [`ParsedMessage`] accessors cover Table 4 options plus Observe
+//! (RFC 7641 option 6; not in Table 4, elective). Two optional
 //! checks, neither used by [`decode`]:
 //!
 //! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
@@ -97,15 +100,17 @@ pub use storage::profiles;
 
 pub use error::{BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 pub use message::{
-    Code, ContentFormat, EncodedUint, Header, Message, MessageId, Opt, OptionNumber,
-    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode,
-    decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_uint,
+    Code, ContentFormat, EncodedUint, Header, Message, MessageId, OBSERVE_DEREGISTER,
+    OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber, OptionValueFormat, Options,
+    OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode, decode_observe, decode_uint,
+    decode_uint16, empty_ack, empty_rst, encode, encode_observe, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
     BodyPool, Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots,
     DedupTable, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable,
-    Exchanges, Memory, MemoryProfile, Missing, NoBodies, ObserveTable, PendingCon, PendingCons,
-    Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
+    Exchanges, Memory, MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots,
+    ObserveTable, PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage,
+    WithBodies,
 };

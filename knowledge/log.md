@@ -2,6 +2,7 @@
 
 ## 2026-09-04
 
+* **Update**: RFC 7641 Observe at the library + table layer: option 6 uint codec (`encode_observe` / `decode_observe`, register 0 / deregister 1 / 24-bit sequence), typed `ObserveKey` / `ObserveInterest` rows (Token + remote Endpoint) in the existing `ObserveTable`, and Engine register/deregister glue. Not in RFC 7252 Table 4; elective. No notification scheduler. No `design.md` change.
 * **Update**: Token-based request/response matching (`ExchangeKey` / `ExchangeEntry` / `ExchangeTable`: Token + remote Endpoint). Compact table sized from the TX Datagram Pool count, independent occupancy so separate/NON responses outlive the TX slot. Dedup and pending CON remain separate identities. Empty ACK (0.00) does not complete an exchange; piggybacked ACK with a response code does. No seventh area; no `design.md` change.
 * **Update**: Empty ACK/RST constructors plus pending-CON matching as TX datagram sidecar (`PendingCon`: Message ID + remote Endpoint + TX `SlotId`). Dedup remains a separate identity. No seventh area; no `design.md` change. Retransmit / RTO / NSTART algorithms are not implemented (`Transmission` named constants only).
 * **Update**: Replaced the `Peer` placeholder with [`Endpoint`](../src/storage/endpoint.rs) (IPv4/IPv6 sidecar) and typed Dedup Table rows (`DedupKey` / `DedupEntry`: Message ID + remote Endpoint). No `design.md` change.
