@@ -788,7 +788,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block1(body_id)?;
-        self.encode_issued_body_tx(issued, body_id, tx_id, ty, code, message_id, true)
+        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), true)
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block2.
@@ -822,7 +822,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block2(body_id)?;
-        self.encode_issued_body_tx(issued, body_id, tx_id, ty, code, message_id, false)
+        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), false)
     }
 
     fn apply_incoming_rx(
@@ -878,19 +878,18 @@ impl<S: Storage + BodySlots> Engine<S> {
         }
     }
 
-    fn encode_issued_body_tx(
+    fn finish_outgoing_tx(
         &mut self,
         issued: OutgoingBlock,
         body_id: SlotId,
         tx_id: SlotId,
-        ty: Type,
-        code: Code,
-        message_id: MessageId,
+        header: (Type, Code, MessageId),
         block1: bool,
     ) -> Result<OutgoingBlock, BlockTransferError>
     where
         S: DatagramSlots,
     {
+        let (ty, code, message_id) = header;
         let transfer = self
             .storage
             .tx_body_transfer(body_id)

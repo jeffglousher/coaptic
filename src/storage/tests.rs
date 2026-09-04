@@ -1,6 +1,7 @@
 //! Named storage-layer tests from `knowledge/memory.md` plus body-pool checks.
 
 use super::BlockKey;
+use super::BlockRole;
 use super::BodySlots;
 #[cfg(feature = "alloc")]
 use super::Capacities;
@@ -1305,7 +1306,7 @@ fn block2_single_block_body() {
     assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
     let t = engine.rx_body_transfer(progress.id()).expect("sidecar");
     assert_eq!(t.key(), key);
-    assert_eq!(t.role(), super::BlockRole::IncomingBlock2);
+    assert_eq!(t.role(), BlockRole::IncomingBlock2);
     assert_eq!(t.szx(), 0);
     assert!(!t.more());
 }
@@ -1420,7 +1421,7 @@ fn block1_outgoing_slices_and_encodes() {
     let id = engine.start_block1(key, &body, 0).expect("start");
     assert_eq!(engine.tx_body_payload(id), Some(body.as_slice()));
     let t = engine.tx_body_transfer(id).expect("sidecar");
-    assert_eq!(t.role(), super::BlockRole::OutgoingBlock1);
+    assert_eq!(t.role(), BlockRole::OutgoingBlock1);
 
     let b0 = engine.next_block1(id).expect("b0");
     assert_eq!(b0.block().num(), 0);
@@ -1614,7 +1615,7 @@ mod alloc_backend {
         assert_eq!(engine.rx_body_payload(done.id()), Some(body.as_slice()));
         assert_eq!(
             engine.rx_body_transfer(done.id()).expect("role").role(),
-            super::BlockRole::IncomingBlock2
+            BlockRole::IncomingBlock2
         );
 
         let out = engine.start_block1(key, &body, 0).expect("out");
