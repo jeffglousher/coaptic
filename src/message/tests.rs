@@ -68,7 +68,7 @@ fn roundtrip_post_with_payload() {
 
 #[test]
 fn roundtrip_empty_ack() {
-    let msg = Message::new(Type::Acknowledgement, Code::EMPTY, MessageId::new(0x00ab));
+    let msg = Message::empty_ack(MessageId::new(0x00ab));
     assert_roundtrip(&msg);
     let mut buf = [0u8; 8];
     assert_eq!(encode_to(&msg, &mut buf), &[0x60, 0x00, 0x00, 0xab]);
@@ -76,8 +76,35 @@ fn roundtrip_empty_ack() {
 
 #[test]
 fn roundtrip_empty_rst() {
-    let msg = Message::new(Type::Reset, Code::EMPTY, MessageId::new(7));
+    let msg = Message::empty_rst(MessageId::new(7));
     assert_roundtrip(&msg);
+}
+
+#[test]
+fn empty_ack_rst_constructors_wire_bytes() {
+    let mut buf = [0u8; 8];
+    let ack = crate::empty_ack(MessageId::new(0x00ab));
+    assert_eq!(ack.ty(), Type::Acknowledgement);
+    assert!(ack.code().is_empty());
+    assert_eq!(encode_to(&ack, &mut buf), &[0x60, 0x00, 0x00, 0xab]);
+    let parsed = decode(&[0x60, 0x00, 0x00, 0xab]).expect("ack");
+    assert!(parsed.is_empty_ack());
+    assert!(parsed.is_empty_ack_or_rst());
+    assert!(!parsed.is_empty_rst());
+
+    let rst = crate::empty_rst(MessageId::new(7));
+    assert_eq!(rst.ty(), Type::Reset);
+    assert_eq!(encode_to(&rst, &mut buf), &[0x70, 0x00, 0x00, 0x07]);
+    let parsed = decode(&[0x70, 0x00, 0x00, 0x07]).expect("rst");
+    assert!(parsed.is_empty_rst());
+    assert!(parsed.is_empty_ack_or_rst());
+    assert!(!parsed.is_empty_ack());
+
+    let get = Message::new(Type::Confirmable, Code::GET, MessageId::new(1));
+    let n = encode(&get, &mut buf).expect("get");
+    let parsed = decode(&buf[..n]).expect("get decode");
+    assert!(!parsed.is_empty_ack_or_rst());
+    assert!(!parsed.is_empty());
 }
 
 #[test]

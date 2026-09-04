@@ -9,6 +9,8 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::PendingCon;
+use super::PendingCons;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::Capacities;
@@ -16,6 +18,7 @@ use super::occupancy::HeapOccupancy;
 use super::slot::{SlotError, SlotId};
 use super::table::DedupStore;
 use crate::error::BuildError;
+use crate::message::MessageId;
 
 /// `alloc` backend: runtime [`Capacities`], typed heap arrays, no later growth.
 ///
@@ -120,6 +123,7 @@ struct AllocSlot {
     buf: Box<[u8]>,
     len: usize,
     endpoint: Option<Endpoint>,
+    pending_mid: Option<MessageId>,
 }
 
 struct AllocDatagramPool {
@@ -136,6 +140,7 @@ impl AllocDatagramPool {
                 buf: vec![0u8; bytes].into_boxed_slice(),
                 len: 0,
                 endpoint: None,
+                pending_mid: None,
             });
         }
         Self {
@@ -149,6 +154,7 @@ impl AllocDatagramPool {
         if let Some(slot) = self.slots.get_mut(id.index()) {
             slot.len = 0;
             slot.endpoint = None;
+            slot.pending_mid = None;
         }
     }
 
@@ -199,6 +205,48 @@ impl AllocDatagramPool {
         }
         self.slots[id.index()].endpoint = Some(endpoint);
         Ok(())
+    }
+
+    fn pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.slots.get(id.index())?.pending_mid
+    }
+
+    fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.slots[id.index()].pending_mid = Some(message_id);
+        Ok(())
+    }
+
+    fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.slots[id.index()].pending_mid = None;
+        Ok(())
+    }
+
+    fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            if self.pending_mid(id) == Some(message_id) && self.endpoint(id) == Some(endpoint) {
+                Some(id)
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -276,6 +324,51 @@ impl DatagramSlots for AllocMemory {
     fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
         self.tx.set_endpoint(id, endpoint)
     }
+
+    fn tx_pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        self.tx.pending_mid(id)
+    }
+
+    fn set_tx_pending(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        self.tx.set_pending_mid(id, message_id)
+    }
+
+    fn clear_tx_pending(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.tx.clear_pending_mid(id)
+    }
+
+    fn lookup_tx_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        self.tx.lookup_pending(message_id, endpoint)
+    }
+}
+
+impl PendingCons for AllocMemory {
+    fn record_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<SlotId> {
+        self.tx.set_endpoint(id, endpoint).ok()?;
+        self.tx.set_pending_mid(id, message_id).ok()?;
+        Some(id)
+    }
+
+    fn lookup_pending_con(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        self.tx.lookup_pending(message_id, endpoint)
+    }
+
+    fn take_pending_con(&mut self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        let id = self.tx.lookup_pending(message_id, endpoint)?;
+        self.tx.clear_pending_mid(id).ok()?;
+        Some(id)
+    }
+
+    fn pending_con(&self, id: SlotId) -> Option<PendingCon> {
+        let message_id = self.tx.pending_mid(id)?;
+        let endpoint = self.tx.endpoint(id)?;
+        Some(PendingCon::new(message_id, endpoint, id))
+    }
 }
 
 impl DedupSlots for AllocMemory {
@@ -310,6 +403,7 @@ impl AllocBodyPool {
                 buf: vec![0u8; bytes].into_boxed_slice(),
                 len: 0,
                 endpoint: None,
+                pending_mid: None,
             });
         }
         Self {

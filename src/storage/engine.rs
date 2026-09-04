@@ -6,11 +6,13 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::PendingCon;
+use super::PendingCons;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
 use crate::error::SlotMessageError;
-use crate::message::{Message, ParsedMessage};
+use crate::message::{Message, MessageId, ParsedMessage};
 
 /// Protocol engine, generic over [`Storage`].
 ///
@@ -23,7 +25,10 @@ use crate::message::{Message, ParsedMessage};
 /// [`Self::write_rx`] copies bytes and sets the sidecar [`Endpoint`].
 /// When `S` implements [`DedupSlots`], insert / lookup / remove store
 /// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
-/// Optional format and unrecognized-critical checks stay on [`ParsedMessage`].
+/// When `S` implements [`PendingCons`], outgoing CON slots are marked
+/// pending on the TX datagram sidecar and matched against empty ACK/RST.
+/// Dedup and pending CON are different identities. Optional format and
+/// unrecognized-critical checks stay on [`ParsedMessage`].
 /// This type does not invent 4.02 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
@@ -287,6 +292,77 @@ impl<S: Storage + DedupSlots> Engine<S> {
     #[must_use]
     pub fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
         self.storage.dedup_entry(id)
+    }
+}
+
+impl<S: Storage + PendingCons> Engine<S> {
+    /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
+    ///
+    /// Sets the TX sidecar endpoint. `None` when the slot is free or out of
+    /// range (TX pool saturation, or never acquired). Idempotent for the same
+    /// MID and endpoint. Does not use the Dedup Table.
+    pub fn record_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<SlotId> {
+        self.storage.record_pending_con(id, endpoint, message_id)
+    }
+
+    /// Occupied TX slot pending for `message_id` and `endpoint`, if any. O(n).
+    #[must_use]
+    pub fn lookup_pending_con(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        self.storage.lookup_pending_con(message_id, endpoint)
+    }
+
+    /// Clear pending for the matching TX slot. The slot stays occupied.
+    ///
+    /// The caller releases the returned slot. `None` on miss.
+    pub fn take_pending_con(
+        &mut self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<SlotId> {
+        self.storage.take_pending_con(message_id, endpoint)
+    }
+
+    /// Pending CON view at TX `id`, if that slot is marked pending.
+    #[must_use]
+    pub fn pending_con(&self, id: SlotId) -> Option<PendingCon> {
+        self.storage.pending_con(id)
+    }
+
+    /// If `parsed` is an empty ACK or RST, take the matching pending CON.
+    ///
+    /// Match is Message ID plus `endpoint`. Returns the TX slot id; the
+    /// caller releases it. `None` when the datagram is not an empty ACK/RST
+    /// or no pending CON matches. Does not consult the Dedup Table.
+    pub fn match_empty_ack_rst(
+        &mut self,
+        parsed: &ParsedMessage<'_>,
+        endpoint: Endpoint,
+    ) -> Option<SlotId> {
+        if !parsed.is_empty_ack_or_rst() {
+            return None;
+        }
+        self.storage.take_pending_con(parsed.message_id(), endpoint)
+    }
+
+    /// Decode occupied RX `id` and [`Self::match_empty_ack_rst`] using its sidecar endpoint.
+    pub fn match_empty_ack_rst_rx(&mut self, id: SlotId) -> Result<Option<SlotId>, SlotMessageError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let (message_id, is_empty) = {
+            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            (parsed.message_id(), parsed.is_empty_ack_or_rst())
+        };
+        if !is_empty {
+            return Ok(None);
+        }
+        Ok(self.storage.take_pending_con(message_id, endpoint))
     }
 }
 

@@ -3,6 +3,12 @@
 //! [`decode`] and [`encode`] operate on a datagram buffer (the UDP payload).
 //! They do not require [`crate::Engine`].
 //!
+//! [`empty_ack`] and [`empty_rst`] build the empty ACK / RST messages used to
+//! confirm or reject a CON. [`ParsedMessage::is_empty_ack`] /
+//! [`ParsedMessage::is_empty_rst`] detect them after decode.
+//! [`Transmission`] names RFC 7252 §4.8 defaults; retransmit algorithms are
+//! not implemented.
+//!
 //! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 helpers) in
 //! any order and yields a slice for [`Message::with_options`].
 //!
@@ -359,4 +365,35 @@ impl Header {
             id,
         }
     }
+}
+
+/// Empty ACK for `id`. See [`Message::empty_ack`].
+#[must_use]
+pub const fn empty_ack(id: MessageId) -> Message<'static> {
+    Message::empty_ack(id)
+}
+
+/// Empty RST for `id`. See [`Message::empty_rst`].
+#[must_use]
+pub const fn empty_rst(id: MessageId) -> Message<'static> {
+    Message::empty_rst(id)
+}
+
+/// RFC 7252 §4.8 defaults. Retransmit, RTO, and NSTART algorithms are not implemented.
+///
+/// See `knowledge/rfcs/rfc7252.txt`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Transmission;
+
+impl Transmission {
+    /// `ACK_TIMEOUT` in milliseconds.
+    pub const ACK_TIMEOUT_MS: u32 = 2_000;
+    /// `ACK_RANDOM_FACTOR` numerator (`3 / 2` = 1.5).
+    pub const ACK_RANDOM_FACTOR_NUM: u16 = 3;
+    /// `ACK_RANDOM_FACTOR` denominator (`3 / 2` = 1.5).
+    pub const ACK_RANDOM_FACTOR_DEN: u16 = 2;
+    /// `MAX_RETRANSMIT`.
+    pub const MAX_RETRANSMIT: u8 = 4;
+    /// `NSTART`.
+    pub const NSTART: u8 = 1;
 }

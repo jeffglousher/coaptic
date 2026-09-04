@@ -16,7 +16,9 @@
 //! datagram slot holds CoAP message bytes (UDP payload). [`Endpoint`] is
 //! sidecar metadata (address and port) next to the slot. The Dedup Table
 //! stores [`DedupEntry`] rows keyed by Message ID and remote [`Endpoint`].
-//! OSCORE, DTLS, and plugtest harnesses are out of scope here.
+//! Pending CON matching ([`PendingCon`]) is sidecar on TX datagram slots,
+//! a different identity from Dedup. OSCORE, DTLS, and plugtest harnesses
+//! are out of scope here.
 //!
 //! # Message
 //!
@@ -27,9 +29,11 @@
 //! yields a non-decreasing slice for [`Message::with_options`].
 //!
 //! [`Engine`] can decode an occupied RX/TX datagram slot and encode a
-//! [`Message`] into an acquired slot (`set_len` included). Optional
-//! format/critical checks remain separate calls. The library does not invent
-//! 4.02 / RST policy.
+//! [`Message`] into an acquired slot (`set_len` included). Empty ACK/RST
+//! constructors and [`ParsedMessage`] detectors live in [`message`]. Pending
+//! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
+//! seventh area and not the Dedup Table. Optional format/critical checks
+//! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes
 //! and decodes RFC 7252 empty / opaque / uint / string values (uint uses a
@@ -90,13 +94,14 @@ pub use storage::profiles;
 pub use error::{BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 pub use message::{
     Code, ContentFormat, EncodedUint, Header, Message, MessageId, Opt, OptionNumber,
-    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Type, decode, decode_uint,
-    decode_uint16, encode, encode_uint,
+    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode,
+    decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
     BodyPool, Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots,
     DedupTable, Endpoint, Engine, EngineBuilder, Memory, MemoryProfile, Missing, NoBodies,
-    ObserveTable, Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
+    ObserveTable, PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage,
+    WithBodies,
 };

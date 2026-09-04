@@ -33,6 +33,22 @@ impl<'a> Message<'a> {
         }
     }
 
+    /// Empty ACK (code 0.00, TKL 0, no options or payload) for `id`.
+    ///
+    /// See `knowledge/rfcs/rfc7252.txt`.
+    #[must_use]
+    pub const fn empty_ack(id: MessageId) -> Self {
+        Self::new(Type::Acknowledgement, Code::EMPTY, id)
+    }
+
+    /// Empty RST (code 0.00, TKL 0, no options or payload) for `id`.
+    ///
+    /// See `knowledge/rfcs/rfc7252.txt`.
+    #[must_use]
+    pub const fn empty_rst(id: MessageId) -> Self {
+        Self::new(Type::Reset, Code::EMPTY, id)
+    }
+
     /// Set the token.
     #[must_use]
     pub const fn with_token(mut self, token: Token) -> Self {

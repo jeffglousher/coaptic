@@ -2,6 +2,7 @@
 
 #[cfg(feature = "alloc")]
 use super::Capacities;
+use super::DatagramPool;
 use super::DedupEntry;
 use super::DedupKey;
 use super::DedupTable;
@@ -10,13 +11,15 @@ use super::Engine;
 use super::EngineBuilder;
 use super::Memory;
 use super::MemoryProfile;
+use super::PendingCon;
 use super::SlotError;
+use super::SlotId;
 use super::SlotPool;
 use super::Storage;
 use super::WithBodies;
 use super::profiles;
 use crate::error::BuildError;
-use crate::message::{Code, Message, MessageId, Type, encode};
+use crate::message::{Code, Message, MessageId, Type, empty_ack, empty_rst, encode};
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
@@ -342,6 +345,154 @@ fn engine_dedup_fills_to_capacity() {
     assert!(engine.lookup_dedup(first).is_some());
 }
 
+#[test]
+fn pending_con_hit_miss_wrong_endpoint() {
+    let mut pool = DatagramPool::<2, 16>::new();
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mid = MessageId::new(0x1111);
+
+    let id = pool.acquire().expect("tx");
+    pool.set_endpoint(id, ep).expect("endpoint");
+    pool.set_pending_mid(id, mid).expect("pending");
+    assert_eq!(pool.lookup_pending(mid, ep), Some(id));
+    assert_eq!(pool.lookup_pending(MessageId::new(0x2222), ep), None);
+    assert_eq!(pool.lookup_pending(mid, other), None);
+    assert_eq!(pool.pending_mid(id), Some(mid));
+
+    pool.clear_pending_mid(id).expect("clear");
+    assert_eq!(pool.lookup_pending(mid, ep), None);
+    assert_eq!(pool.pending_mid(id), None);
+}
+
+#[test]
+fn pending_con_capacity_is_tx_pool() {
+    let mut pool = DatagramPool::<2, 16>::new();
+    let ep = Endpoint::v4([198, 51, 100, 1], 5683);
+    let a = pool.acquire().expect("a");
+    let b = pool.acquire().expect("b");
+    assert!(pool.acquire().is_none());
+    pool.set_pending_mid(a, MessageId::new(1)).expect("a");
+    pool.set_pending_mid(b, MessageId::new(2)).expect("b");
+    assert_eq!(
+        pool.set_pending_mid(SlotId::from_index(2), MessageId::new(3)),
+        Err(SlotError::InvalidSlot)
+    );
+    pool.release(a).expect("release");
+    assert_eq!(pool.pending_mid(a), None);
+    let reused = pool.acquire().expect("reuse");
+    assert_eq!(reused, a);
+    assert_eq!(pool.pending_mid(reused), None);
+}
+
+#[test]
+fn engine_encode_con_then_empty_ack_clears_pending() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 9], 5683);
+    let mid = MessageId::new(0x4242);
+    let tx = engine.acquire_tx().expect("tx");
+    let con = Message::new(Type::Confirmable, Code::GET, mid);
+    engine.encode_tx(tx, &con).expect("encode con");
+    assert_eq!(engine.record_pending_con(tx, ep, mid), Some(tx));
+    assert_eq!(engine.pending_con(tx), Some(PendingCon::new(mid, ep, tx)));
+    assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
+
+    let rx = engine.acquire_rx().expect("rx");
+    let ack = empty_ack(mid);
+    let mut buf = [0u8; 8];
+    let n = encode(&ack, &mut buf).expect("ack bytes");
+    engine.write_rx(rx, &buf[..n], ep).expect("write ack");
+    let matched = engine.match_empty_ack_rst_rx(rx).expect("match");
+    assert_eq!(matched, Some(tx));
+    assert_eq!(engine.pending_con(tx), None);
+    assert_eq!(engine.lookup_pending_con(mid, ep), None);
+    engine.release_tx(tx).expect("caller releases");
+}
+
+#[test]
+fn engine_empty_rst_matches_and_wrong_endpoint_misses() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 10], 5683);
+    let other = Endpoint::v4([192, 0, 2, 11], 5683);
+    let mid = MessageId::new(9);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+        .expect("encode");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+
+    let rst = empty_rst(mid);
+    let mut buf = [0u8; 8];
+    let n = encode(&rst, &mut buf).expect("rst bytes");
+    let parsed = crate::message::decode(&buf[..n]).expect("rst");
+    assert!(parsed.is_empty_rst());
+    assert_eq!(engine.match_empty_ack_rst(&parsed, other), None);
+    assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), Some(tx));
+    assert_eq!(engine.pending_con(tx), None);
+}
+
+#[test]
+fn engine_pending_con_distinct_from_dedup() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 20], 5683);
+    let mid = MessageId::new(5);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+        .expect("encode");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+    let dedup = engine
+        .insert_dedup(DedupEntry::new(mid, ep))
+        .expect("dedup");
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+
+    let parsed = crate::message::decode(&[0x60, 0x00, 0x00, 0x05]).expect("ack");
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), Some(tx));
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+    assert_eq!(engine.pending_con(tx), None);
+}
+
+#[test]
+fn engine_record_pending_con_saturation() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 30], 5683);
+    let n = profiles::Default::TX_DATAGRAM_SLOTS;
+    for i in 0..n {
+        let id = engine.acquire_tx().expect("tx");
+        let mid = MessageId::new(i as u16);
+        engine
+            .encode_tx(id, &Message::new(Type::Confirmable, Code::GET, mid))
+            .expect("encode");
+        assert_eq!(engine.record_pending_con(id, ep, mid), Some(id));
+    }
+    assert!(engine.acquire_tx().is_none());
+    assert!(
+        engine
+            .record_pending_con(SlotId::from_index(n), ep, MessageId::new(99))
+            .is_none()
+    );
+}
+
+#[test]
+fn engine_non_empty_or_wrong_type_does_not_take_pending() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 40], 5683);
+    let mid = MessageId::new(3);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+        .expect("encode");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+
+    let get = Message::new(Type::Confirmable, Code::GET, mid);
+    let mut buf = [0u8; 16];
+    let n = encode(&get, &mut buf).expect("get");
+    let parsed = crate::message::decode(&buf[..n]).expect("decode get");
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), None);
+    assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -481,6 +632,25 @@ mod alloc_backend {
                 .insert_dedup(DedupEntry::new(MessageId::new(99), ep))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn alloc_encode_con_then_empty_ack_clears_pending() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 12], 5683);
+        let mid = MessageId::new(0x55);
+        let tx = engine.acquire_tx().expect("tx");
+        engine
+            .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+            .expect("encode");
+        engine.record_pending_con(tx, ep, mid).expect("pending");
+        let rx = engine.acquire_rx().expect("rx");
+        let ack = empty_ack(mid);
+        let mut buf = [0u8; 8];
+        let n = encode(&ack, &mut buf).expect("ack");
+        engine.write_rx(rx, &buf[..n], ep).expect("write");
+        assert_eq!(engine.match_empty_ack_rst_rx(rx).expect("match"), Some(tx));
+        assert_eq!(engine.pending_con(tx), None);
     }
 
     #[test]

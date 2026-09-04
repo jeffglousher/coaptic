@@ -5,6 +5,8 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::PendingCon;
+use super::PendingCons;
 use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
@@ -12,6 +14,7 @@ use super::Storage;
 use super::capacities::{Capacities, bytes_ok};
 use super::pool::DatagramBytes;
 use super::table::DedupStore;
+use crate::message::MessageId;
 
 /// Named associated constants for the areas present in [`Memory`].
 ///
@@ -317,6 +320,54 @@ where
 
     fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
         DatagramBytes::set_endpoint(&mut self.tx, id, endpoint)
+    }
+
+    fn tx_pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        DatagramBytes::pending_mid(&self.tx, id)
+    }
+
+    fn set_tx_pending(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        DatagramBytes::set_pending_mid(&mut self.tx, id, message_id)
+    }
+
+    fn clear_tx_pending(&mut self, id: SlotId) -> Result<(), SlotError> {
+        DatagramBytes::clear_pending_mid(&mut self.tx, id)
+    }
+
+    fn lookup_tx_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        DatagramBytes::lookup_pending(&self.tx, message_id, endpoint)
+    }
+}
+
+impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
+where
+    P::TxDatagram: DatagramBytes,
+{
+    fn record_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<SlotId> {
+        DatagramBytes::set_endpoint(&mut self.tx, id, endpoint).ok()?;
+        DatagramBytes::set_pending_mid(&mut self.tx, id, message_id).ok()?;
+        Some(id)
+    }
+
+    fn lookup_pending_con(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        DatagramBytes::lookup_pending(&self.tx, message_id, endpoint)
+    }
+
+    fn take_pending_con(&mut self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        let id = DatagramBytes::lookup_pending(&self.tx, message_id, endpoint)?;
+        DatagramBytes::clear_pending_mid(&mut self.tx, id).ok()?;
+        Some(id)
+    }
+
+    fn pending_con(&self, id: SlotId) -> Option<PendingCon> {
+        let message_id = DatagramBytes::pending_mid(&self.tx, id)?;
+        let endpoint = DatagramBytes::endpoint(&self.tx, id)?;
+        Some(PendingCon::new(message_id, endpoint, id))
     }
 }
 
