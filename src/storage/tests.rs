@@ -372,8 +372,11 @@ fn pending_con_capacity_is_tx_pool() {
     let a = pool.acquire().expect("a");
     let b = pool.acquire().expect("b");
     assert!(pool.acquire().is_none());
+    pool.set_endpoint(a, ep).expect("ep a");
+    pool.set_endpoint(b, ep).expect("ep b");
     pool.set_pending_mid(a, MessageId::new(1)).expect("a");
     pool.set_pending_mid(b, MessageId::new(2)).expect("b");
+    assert_eq!(pool.lookup_pending(MessageId::new(1), ep), Some(a));
     assert_eq!(
         pool.set_pending_mid(SlotId::from_index(2), MessageId::new(3)),
         Err(SlotError::InvalidSlot)
