@@ -17,7 +17,8 @@
 //! sidecar metadata (address and port) next to the slot. The Dedup Table
 //! stores [`DedupEntry`] rows keyed by Message ID and remote [`Endpoint`].
 //! Pending CON matching ([`PendingCon`]) is sidecar on TX datagram slots,
-//! a different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
+//! including retransmit / RTO bookkeeping ([`PendingRto`]; caller clock and
+//! jitter). A different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
 //! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
 //! TX pool count (not a seventh area). Observe interest ([`ObserveInterest`])
 //! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]).
@@ -42,7 +43,8 @@
 //! [`Message`] into an acquired slot (`set_len` included). Empty ACK/RST
 //! constructors and [`ParsedMessage`] detectors live in [`message`]. Pending
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
-//! seventh area and not the Dedup Table. Outstanding request matching
+//! seventh area and not the Dedup Table. [`Engine::poll_retransmit`] walks
+//! due pending TX slots using a caller-supplied clock. Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
 //! [`ObserveInterest`] rows. Classic incoming Block1 / Block2, incoming
@@ -128,5 +130,6 @@ pub use storage::{
     DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable, Endpoint, Engine,
     EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory, MemoryProfile,
     Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable, OutgoingBlock,
-    PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
+    PendingCon, PendingCons, PendingRto, Present, Retransmit, SlotError, SlotId, SlotPool, Storage,
+    WithBodies,
 };

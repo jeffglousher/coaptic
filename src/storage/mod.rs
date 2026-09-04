@@ -6,7 +6,8 @@
 //! glue those codecs to occupied datagram slots when the backend implements
 //! [`DatagramSlots`]. [`Engine::write_rx`] associates an [`Endpoint`] sidecar
 //! when RX bytes are written. Pending CON state is sidecar on TX slots
-//! ([`PendingCon`]); empty ACK/RST matching is not the Dedup Table.
+//! ([`PendingCon`] / [`PendingRto`]); empty ACK/RST matching is not the
+//! Dedup Table. [`Engine::poll_retransmit`] walks due TX slots.
 //! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
@@ -48,7 +49,7 @@ pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
-pub use pending::{PendingCon, PendingCons};
+pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};
 pub use slot::{SlotError, SlotId};
 pub use table::{DedupEntry, DedupKey, DedupTable, ObserveInterest, ObserveKey, ObserveTable};

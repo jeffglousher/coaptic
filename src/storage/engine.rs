@@ -15,6 +15,7 @@ use super::ObserveKey;
 use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
+use super::Retransmit;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
@@ -28,7 +29,7 @@ use crate::message::{
 ///
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
 /// Q-Block body-slot assembly when `S` implements [`BodySlots`]. BERT,
-/// Observe notify, missing-block recovery, and RTO are not implemented.
+/// Observe notify, and missing-block recovery are not implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -37,7 +38,8 @@ use crate::message::{
 /// When `S` implements [`DedupSlots`], insert / lookup / remove store
 /// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
 /// When `S` implements [`PendingCons`], outgoing CON slots are marked
-/// pending on the TX datagram sidecar and matched against empty ACK/RST.
+/// pending on the TX datagram sidecar (RTO included) and matched against
+/// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
@@ -319,16 +321,22 @@ impl<S: Storage + DedupSlots> Engine<S> {
 impl<S: Storage + PendingCons> Engine<S> {
     /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
     ///
+    /// Initializes RTO from [`crate::Transmission`] using caller `now_ms`
+    /// and `jitter_ms` (no OS clock; `0` jitter is the ACK_TIMEOUT floor).
     /// Sets the TX sidecar endpoint. `None` when the slot is free or out of
-    /// range (TX pool saturation, or never acquired). Idempotent for the same
-    /// MID and endpoint. Does not use the Dedup Table.
+    /// range, or when outstanding pending CONs to `endpoint` already equal
+    /// [`crate::Transmission::NSTART`]. Idempotent for the same MID and
+    /// endpoint on `id` (RTO is not reset). Does not use the Dedup Table.
     pub fn record_pending_con(
         &mut self,
         id: SlotId,
         endpoint: Endpoint,
         message_id: MessageId,
+        now_ms: u64,
+        jitter_ms: u32,
     ) -> Option<SlotId> {
-        self.storage.record_pending_con(id, endpoint, message_id)
+        self.storage
+            .record_pending_con(id, endpoint, message_id, now_ms, jitter_ms)
     }
 
     /// Occupied TX slot pending for `message_id` and `endpoint`, if any. O(n).
@@ -337,7 +345,7 @@ impl<S: Storage + PendingCons> Engine<S> {
         self.storage.lookup_pending_con(message_id, endpoint)
     }
 
-    /// Clear pending for the matching TX slot. The slot stays occupied.
+    /// Clear pending and RTO for the matching TX slot. The slot stays occupied.
     ///
     /// The caller releases the returned slot. `None` on miss.
     pub fn take_pending_con(
@@ -356,9 +364,10 @@ impl<S: Storage + PendingCons> Engine<S> {
 
     /// If `parsed` is an empty ACK or RST, take the matching pending CON.
     ///
-    /// Match is Message ID plus `endpoint`. Returns the TX slot id; the
-    /// caller releases it. `None` when the datagram is not an empty ACK/RST
-    /// or no pending CON matches. Does not consult the Dedup Table.
+    /// Match is Message ID plus `endpoint`. Clears pending and RTO. Returns
+    /// the TX slot id; the caller releases it. `None` when the datagram is
+    /// not an empty ACK/RST or no pending CON matches. Does not consult the
+    /// Dedup Table.
     pub fn match_empty_ack_rst(
         &mut self,
         parsed: &ParsedMessage<'_>,
@@ -384,6 +393,16 @@ impl<S: Storage + PendingCons> Engine<S> {
             return Ok(None);
         }
         Ok(self.storage.take_pending_con(message_id, endpoint))
+    }
+
+    /// Next pending CON whose timeout is due at caller `now_ms`, if any.
+    ///
+    /// Scans pending TX slots in index order (O(n)). On
+    /// [`Retransmit::Due`], doubles the timeout and increments attempts.
+    /// On [`Retransmit::GiveUp`], clears pending. Does not send. See
+    /// `knowledge/rfcs/rfc7252.txt` §4.2.
+    pub fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+        self.storage.poll_retransmit(now_ms)
     }
 }
 

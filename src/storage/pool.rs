@@ -7,6 +7,7 @@ use super::block::{
 };
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
+use super::pending::{PendingMark, PendingRto};
 use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, SlotMessageError};
 use crate::message::{BlockValue, Message, MessageId, ParsedMessage};
@@ -14,13 +15,13 @@ use crate::message::{BlockValue, Message, MessageId, ParsedMessage};
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
 /// Each slot holds CoAP message bytes (UDP payload) plus sidecar [`Endpoint`]
-/// metadata. On TX slots, an optional pending Message ID marks a CON waiting
-/// for ACK/RST. Neither sidecar is stored in the byte buffer.
+/// metadata. On TX slots, an optional pending mark (Message ID + RTO) marks
+/// a CON waiting for ACK/RST. Neither sidecar is stored in the byte buffer.
 pub struct DatagramPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
     endpoints: [Option<Endpoint>; SLOTS],
-    pending_mids: [Option<MessageId>; SLOTS],
+    pending: [Option<PendingMark>; SLOTS],
     occ: Occupancy<SLOTS>,
 }
 
@@ -32,7 +33,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
             bytes: [[0u8; BYTES]; SLOTS],
             lens: [0; SLOTS],
             endpoints: [None; SLOTS],
-            pending_mids: [None; SLOTS],
+            pending: [None; SLOTS],
             occ: Occupancy::new(),
         }
     }
@@ -143,14 +144,37 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
     /// Pending CON Message ID for an occupied slot, if marked.
     #[must_use]
     pub fn pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        self.pending_mark(id).map(|m| m.message_id)
+    }
+
+    /// Pending CON RTO for an occupied slot, if marked.
+    #[must_use]
+    pub fn pending_rto(&self, id: SlotId) -> Option<PendingRto> {
+        self.pending_mark(id).map(|m| m.rto)
+    }
+
+    fn pending_mark(&self, id: SlotId) -> Option<PendingMark> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.pending_mids.get(id.index()).copied().flatten()
+        self.pending.get(id.index()).copied().flatten()
     }
 
     /// Mark occupied `id` as a pending CON with `message_id`.
+    ///
+    /// RTO is [`PendingRto::new`]`(0, 0)`. Prefer
+    /// [`Self::set_pending`] when the caller has a clock.
     pub fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        self.set_pending(id, message_id, PendingRto::new(0, 0))
+    }
+
+    /// Mark occupied `id` as a pending CON with `message_id` and `rto`.
+    pub fn set_pending(
+        &mut self,
+        id: SlotId,
+        message_id: MessageId,
+        rto: PendingRto,
+    ) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < SLOTS {
                 SlotError::NotOccupied
@@ -158,11 +182,11 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
                 SlotError::InvalidSlot
             });
         }
-        self.pending_mids[id.index()] = Some(message_id);
+        self.pending[id.index()] = Some(PendingMark::new(message_id, rto));
         Ok(())
     }
 
-    /// Clear the pending-CON mark. The slot stays occupied.
+    /// Clear the pending-CON mark and RTO. The slot stays occupied.
     pub fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < SLOTS {
@@ -171,7 +195,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
                 SlotError::InvalidSlot
             });
         }
-        self.pending_mids[id.index()] = None;
+        self.pending[id.index()] = None;
         Ok(())
     }
 
@@ -194,7 +218,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
         let idx = id.index();
         self.lens[idx] = 0;
         self.endpoints[idx] = None;
-        self.pending_mids[idx] = None;
+        self.pending[idx] = None;
     }
 }
 
@@ -246,7 +270,14 @@ pub(crate) trait DatagramBytes {
     fn endpoint(&self, id: SlotId) -> Option<Endpoint>;
     fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
     fn pending_mid(&self, id: SlotId) -> Option<MessageId>;
+    fn pending_rto(&self, id: SlotId) -> Option<PendingRto>;
     fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError>;
+    fn set_pending(
+        &mut self,
+        id: SlotId,
+        message_id: MessageId,
+        rto: PendingRto,
+    ) -> Result<(), SlotError>;
     fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError>;
     fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId>;
 }
@@ -276,8 +307,21 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
         DatagramPool::pending_mid(self, id)
     }
 
+    fn pending_rto(&self, id: SlotId) -> Option<PendingRto> {
+        DatagramPool::pending_rto(self, id)
+    }
+
     fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
         DatagramPool::set_pending_mid(self, id, message_id)
+    }
+
+    fn set_pending(
+        &mut self,
+        id: SlotId,
+        message_id: MessageId,
+        rto: PendingRto,
+    ) -> Result<(), SlotError> {
+        DatagramPool::set_pending(self, id, message_id, rto)
     }
 
     fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError> {

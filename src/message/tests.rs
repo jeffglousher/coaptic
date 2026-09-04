@@ -5,8 +5,8 @@ use super::value::{
     encode_block, encode_observe, encode_uint,
 };
 use super::{
-    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Type, decode,
-    encode,
+    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Transmission,
+    Type, decode, encode,
 };
 use crate::MemoryProfile;
 use crate::error::{EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
@@ -872,5 +872,30 @@ fn slot_glue_rejects_free_slot() {
     assert_eq!(
         engine.encode_tx(id, &msg).unwrap_err(),
         SlotMessageError::Slot(SlotError::NotOccupied)
+    );
+}
+
+#[test]
+fn transmission_initial_timeout_clamps_jitter() {
+    assert_eq!(
+        Transmission::initial_timeout_ms(0),
+        Transmission::ACK_TIMEOUT_MS
+    );
+    assert_eq!(
+        Transmission::initial_timeout_ms(500),
+        Transmission::ACK_TIMEOUT_MS + 500
+    );
+    assert_eq!(
+        Transmission::initial_timeout_ms(Transmission::ACK_RANDOM_SPAN_MS),
+        Transmission::ACK_TIMEOUT_MS + Transmission::ACK_RANDOM_SPAN_MS
+    );
+    assert_eq!(
+        Transmission::initial_timeout_ms(Transmission::ACK_RANDOM_SPAN_MS + 1),
+        Transmission::ACK_TIMEOUT_MS + Transmission::ACK_RANDOM_SPAN_MS
+    );
+    assert_eq!(
+        Transmission::ACK_RANDOM_SPAN_MS,
+        Transmission::ACK_TIMEOUT_MS / u32::from(Transmission::ACK_RANDOM_FACTOR_DEN)
+            * u32::from(Transmission::ACK_RANDOM_FACTOR_NUM - Transmission::ACK_RANDOM_FACTOR_DEN)
     );
 }

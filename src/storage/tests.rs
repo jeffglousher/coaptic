@@ -21,6 +21,8 @@ use super::ObserveInterest;
 use super::ObserveKey;
 use super::ObserveTable;
 use super::PendingCon;
+use super::PendingRto;
+use super::Retransmit;
 use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
@@ -29,7 +31,8 @@ use super::WithBodies;
 use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
-    BlockValue, Code, Message, MessageId, Opt, Token, Type, empty_ack, empty_rst, encode,
+    BlockValue, Code, Message, MessageId, Opt, Token, Transmission, Type, empty_ack, empty_rst,
+    encode,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -407,7 +410,7 @@ fn engine_encode_con_then_empty_ack_clears_pending() {
     let tx = engine.acquire_tx().expect("tx");
     let con = Message::new(Type::Confirmable, Code::GET, mid);
     engine.encode_tx(tx, &con).expect("encode con");
-    assert_eq!(engine.record_pending_con(tx, ep, mid), Some(tx));
+    assert_eq!(engine.record_pending_con(tx, ep, mid, 0, 0), Some(tx));
     assert_eq!(engine.pending_con(tx), Some(PendingCon::new(mid, ep, tx)));
     assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
 
@@ -420,6 +423,10 @@ fn engine_encode_con_then_empty_ack_clears_pending() {
     assert_eq!(matched, Some(tx));
     assert_eq!(engine.pending_con(tx), None);
     assert_eq!(engine.lookup_pending_con(mid, ep), None);
+    assert_eq!(
+        engine.poll_retransmit(u64::from(Transmission::ACK_TIMEOUT_MS)),
+        None
+    );
     engine.release_tx(tx).expect("caller releases");
 }
 
@@ -433,7 +440,9 @@ fn engine_empty_rst_matches_and_wrong_endpoint_misses() {
     engine
         .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
         .expect("encode");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
 
     let rst = empty_rst(mid);
     let mut buf = [0u8; 8];
@@ -455,7 +464,9 @@ fn engine_pending_con_distinct_from_dedup() {
     engine
         .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
         .expect("encode");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
     let dedup = engine
         .insert_dedup(DedupEntry::new(mid, ep))
         .expect("dedup");
@@ -470,20 +481,26 @@ fn engine_pending_con_distinct_from_dedup() {
 #[test]
 fn engine_record_pending_con_saturation() {
     let mut engine = build_default();
-    let ep = Endpoint::v4([192, 0, 2, 30], 5683);
     let n = profiles::Default::TX_DATAGRAM_SLOTS;
     for i in 0..n {
         let id = engine.acquire_tx().expect("tx");
         let mid = MessageId::new(i as u16);
+        let ep = Endpoint::v4([192, 0, 2, i as u8], 5683);
         engine
             .encode_tx(id, &Message::new(Type::Confirmable, Code::GET, mid))
             .expect("encode");
-        assert_eq!(engine.record_pending_con(id, ep, mid), Some(id));
+        assert_eq!(engine.record_pending_con(id, ep, mid, 0, 0), Some(id));
     }
     assert!(engine.acquire_tx().is_none());
     assert!(
         engine
-            .record_pending_con(SlotId::from_index(n), ep, MessageId::new(99))
+            .record_pending_con(
+                SlotId::from_index(n),
+                Endpoint::v4([192, 0, 2, 99], 5683),
+                MessageId::new(99),
+                0,
+                0
+            )
             .is_none()
     );
 }
@@ -497,7 +514,9 @@ fn engine_non_empty_or_wrong_type_does_not_take_pending() {
     engine
         .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
         .expect("encode");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
 
     let get = Message::new(Type::Confirmable, Code::GET, mid);
     let mut buf = [0u8; 16];
@@ -505,6 +524,165 @@ fn engine_non_empty_or_wrong_type_does_not_take_pending() {
     let parsed = crate::message::decode(&buf[..n]).expect("decode get");
     assert_eq!(engine.match_empty_ack_rst(&parsed, ep), None);
     assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
+}
+
+fn record_pending_at(
+    engine: &mut Engine<Memory<profiles::Default>>,
+    ep: Endpoint,
+    mid: u16,
+    now_ms: u64,
+    jitter_ms: u32,
+) -> SlotId {
+    let tx = engine.acquire_tx().expect("tx");
+    let message_id = MessageId::new(mid);
+    engine
+        .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, message_id))
+        .expect("encode");
+    engine
+        .record_pending_con(tx, ep, message_id, now_ms, jitter_ms)
+        .expect("pending");
+    tx
+}
+
+#[test]
+fn engine_pending_con_first_timeout_due() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 50], 5683);
+    let tx = record_pending_at(&mut engine, ep, 1, 0, 0);
+    let timeout = Transmission::ACK_TIMEOUT_MS;
+    assert_eq!(engine.poll_retransmit(u64::from(timeout) - 1), None);
+    let due = engine.poll_retransmit(u64::from(timeout)).expect("due");
+    match due {
+        Retransmit::Due(pending) => {
+            assert_eq!(pending.tx_slot(), tx);
+            assert_eq!(pending.rto().attempts(), 1);
+            assert_eq!(pending.rto().timeout_ms(), timeout.saturating_mul(2));
+            assert_eq!(
+                pending.rto().next_timeout_ms(),
+                u64::from(timeout) + u64::from(timeout.saturating_mul(2))
+            );
+        }
+        Retransmit::GiveUp(_) => panic!("first timeout is a retransmit"),
+    }
+    assert!(engine.pending_con(tx).is_some());
+}
+
+#[test]
+fn engine_pending_con_backoff_increases() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 51], 5683);
+    let tx = record_pending_at(&mut engine, ep, 2, 0, 0);
+    let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for attempt in 1..=3 {
+        timeout = timeout.saturating_mul(2);
+        match engine.poll_retransmit(now).expect("due") {
+            Retransmit::Due(pending) => {
+                assert_eq!(pending.tx_slot(), tx);
+                assert_eq!(pending.rto().attempts(), attempt);
+                assert_eq!(pending.rto().timeout_ms(), timeout);
+                now = pending.rto().next_timeout_ms();
+            }
+            Retransmit::GiveUp(_) => panic!("backoff still has attempts"),
+        }
+        assert_eq!(engine.poll_retransmit(now.saturating_sub(1)), None);
+    }
+}
+
+#[test]
+fn engine_pending_con_ack_clears_rto() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 52], 5683);
+    let tx = record_pending_at(&mut engine, ep, 3, 0, 0);
+    let parsed = crate::message::decode(&[0x60, 0x00, 0x00, 0x03]).expect("ack");
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), Some(tx));
+    assert_eq!(engine.pending_con(tx), None);
+    assert_eq!(
+        engine.poll_retransmit(u64::from(Transmission::ACK_TIMEOUT_MS)),
+        None
+    );
+}
+
+#[test]
+fn engine_pending_con_max_retransmit_give_up() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 53], 5683);
+    let tx = record_pending_at(&mut engine, ep, 4, 0, 0);
+    let mut now = 0;
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for _ in 0..Transmission::MAX_RETRANSMIT {
+        now += u64::from(timeout);
+        match engine.poll_retransmit(now).expect("due") {
+            Retransmit::Due(pending) => {
+                assert_eq!(pending.tx_slot(), tx);
+                timeout = pending.rto().timeout_ms();
+                now = pending.rto().next_timeout_ms() - u64::from(timeout);
+            }
+            Retransmit::GiveUp(_) => panic!("give-up before MAX_RETRANSMIT"),
+        }
+    }
+    now += u64::from(timeout);
+    match engine.poll_retransmit(now).expect("give up") {
+        Retransmit::GiveUp(pending) => {
+            assert_eq!(pending.tx_slot(), tx);
+            assert_eq!(pending.rto().attempts(), Transmission::MAX_RETRANSMIT);
+        }
+        Retransmit::Due(_) => panic!("should give up"),
+    }
+    assert_eq!(engine.pending_con(tx), None);
+    assert_eq!(engine.lookup_pending_con(MessageId::new(4), ep), None);
+    engine.release_tx(tx).expect("caller releases");
+}
+
+#[test]
+fn engine_pending_con_nstart() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 54], 5683);
+    let other = Endpoint::v4([192, 0, 2, 55], 5683);
+    let a = record_pending_at(&mut engine, ep, 10, 0, 0);
+    let b = engine.acquire_tx().expect("tx b");
+    engine
+        .encode_tx(
+            b,
+            &Message::new(Type::Confirmable, Code::GET, MessageId::new(11)),
+        )
+        .expect("encode");
+    assert_eq!(
+        engine.record_pending_con(b, ep, MessageId::new(11), 0, 0),
+        None
+    );
+    assert_eq!(engine.pending_con(a).map(|p| p.tx_slot()), Some(a));
+    assert_eq!(engine.pending_con(b), None);
+    assert_eq!(
+        engine.record_pending_con(a, ep, MessageId::new(10), 1_000, 0),
+        Some(a)
+    );
+    assert_eq!(
+        engine.pending_con(a).expect("kept").rto(),
+        PendingRto::new(0, 0)
+    );
+    assert_eq!(
+        engine.record_pending_con(b, other, MessageId::new(11), 0, 0),
+        Some(b)
+    );
+}
+
+#[test]
+fn engine_pending_con_caller_jitter() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 56], 5683);
+    let jitter = 500;
+    let tx = record_pending_at(&mut engine, ep, 6, 0, jitter);
+    let first = Transmission::initial_timeout_ms(jitter);
+    assert_eq!(
+        engine.pending_con(tx).expect("pending").rto().timeout_ms(),
+        first
+    );
+    assert_eq!(engine.poll_retransmit(u64::from(first) - 1), None);
+    assert!(matches!(
+        engine.poll_retransmit(u64::from(first)),
+        Some(Retransmit::Due(_))
+    ));
 }
 
 fn sample_token(bytes: &[u8]) -> Token {
@@ -642,7 +820,9 @@ fn engine_empty_ack_does_not_complete_exchange() {
         .record_request(tx, ep)
         .expect("record")
         .expect("request");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
 
     let rx = engine.acquire_rx().expect("rx");
     let (buf, n) = encode_into(&empty_ack(mid));
@@ -727,7 +907,9 @@ fn engine_exchange_distinct_from_dedup_and_pending_con() {
             &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
         )
         .expect("encode");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
     engine
         .record_request(tx, ep)
         .expect("record")
@@ -1016,7 +1198,9 @@ fn engine_observe_distinct_from_exchange_dedup_and_pending_con() {
             &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
         )
         .expect("encode");
-    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_pending_con(tx, ep, mid, 0, 0)
+        .expect("pending");
     engine
         .record_request(tx, ep)
         .expect("record")
@@ -2028,13 +2212,45 @@ mod alloc_backend {
         engine
             .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
             .expect("encode");
-        engine.record_pending_con(tx, ep, mid).expect("pending");
+        engine
+            .record_pending_con(tx, ep, mid, 0, 0)
+            .expect("pending");
         let rx = engine.acquire_rx().expect("rx");
         let ack = empty_ack(mid);
         let mut buf = [0u8; 8];
         let n = encode(&ack, &mut buf).expect("ack");
         engine.write_rx(rx, &buf[..n], ep).expect("write");
         assert_eq!(engine.match_empty_ack_rst_rx(rx).expect("match"), Some(tx));
+        assert_eq!(engine.pending_con(tx), None);
+        assert_eq!(
+            engine.poll_retransmit(u64::from(Transmission::ACK_TIMEOUT_MS)),
+            None
+        );
+    }
+
+    #[test]
+    fn alloc_pending_con_first_timeout_and_give_up() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 13], 5683);
+        let mid = MessageId::new(0x56);
+        let tx = engine.acquire_tx().expect("tx");
+        engine
+            .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+            .expect("encode");
+        engine
+            .record_pending_con(tx, ep, mid, 0, 0)
+            .expect("pending");
+        let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+        for _ in 0..Transmission::MAX_RETRANSMIT {
+            match engine.poll_retransmit(now).expect("due") {
+                Retransmit::Due(pending) => now = pending.rto().next_timeout_ms(),
+                Retransmit::GiveUp(_) => panic!("give-up before max"),
+            }
+        }
+        assert!(matches!(
+            engine.poll_retransmit(now),
+            Some(Retransmit::GiveUp(_))
+        ));
         assert_eq!(engine.pending_con(tx), None);
     }
 
