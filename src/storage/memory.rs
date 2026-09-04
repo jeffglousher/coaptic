@@ -5,6 +5,9 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::ExchangeEntry;
+use super::ExchangeKey;
+use super::Exchanges;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotError;
@@ -12,6 +15,7 @@ use super::SlotId;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::{Capacities, bytes_ok};
+use super::exchange::ExchangeStore;
 use super::pool::DatagramBytes;
 use super::table::DedupStore;
 use crate::message::MessageId;
@@ -62,6 +66,8 @@ pub trait MemoryProfile {
     type Dedup: SlotPool + Default;
     /// Observe interest table array type.
     type Observe: SlotPool + Default;
+    /// Outstanding-request table. Sized from [`Self::TX_DATAGRAM_SLOTS`].
+    type Exchange: SlotPool + Default;
 }
 
 /// Marker: [`Memory`] has no body pools.
@@ -105,6 +111,7 @@ pub struct Memory<P: MemoryProfile, B = NoBodies> {
     tx: P::TxDatagram,
     dedup: P::Dedup,
     observe: P::Observe,
+    exchange: P::Exchange,
     #[allow(dead_code)]
     bodies: B,
 }
@@ -118,6 +125,7 @@ impl<P: MemoryProfile> Memory<P> {
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
             observe: P::Observe::default(),
+            exchange: P::Exchange::default(),
             bodies: NoBodies,
         }
     }
@@ -138,6 +146,7 @@ impl<P: MemoryProfile> Memory<P, WithBodies<P>> {
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
             observe: P::Observe::default(),
+            exchange: P::Exchange::default(),
             bodies: WithBodies::new(),
         }
     }
@@ -198,6 +207,17 @@ impl<P: MemoryProfile, B> Memory<P, B> {
     /// Observe interest table (mutable).
     pub fn observe_mut(&mut self) -> &mut P::Observe {
         &mut self.observe
+    }
+
+    /// Outstanding-request table (Token + remote [`Endpoint`]).
+    #[must_use]
+    pub fn exchange(&self) -> &P::Exchange {
+        &self.exchange
+    }
+
+    /// Outstanding-request table (mutable).
+    pub fn exchange_mut(&mut self) -> &mut P::Exchange {
+        &mut self.exchange
     }
 }
 
@@ -389,6 +409,27 @@ where
 
     fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
         self.dedup.entry(id)
+    }
+}
+
+impl<P: MemoryProfile, B> Exchanges for Memory<P, B>
+where
+    P::Exchange: ExchangeStore,
+{
+    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+        self.exchange.insert(entry)
+    }
+
+    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+        self.exchange.lookup(key)
+    }
+
+    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+        self.exchange.take(key)
+    }
+
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+        self.exchange.entry(id)
     }
 }
 

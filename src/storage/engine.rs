@@ -6,13 +6,16 @@ use super::DedupEntry;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
+use super::ExchangeEntry;
+use super::ExchangeKey;
+use super::Exchanges;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
 use crate::error::SlotMessageError;
-use crate::message::{Message, MessageId, ParsedMessage};
+use crate::message::{Message, MessageId, ParsedMessage, Token};
 
 /// Protocol engine, generic over [`Storage`].
 ///
@@ -27,7 +30,11 @@ use crate::message::{Message, MessageId, ParsedMessage};
 /// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
 /// When `S` implements [`PendingCons`], outgoing CON slots are marked
 /// pending on the TX datagram sidecar and matched against empty ACK/RST.
-/// Dedup and pending CON are different identities. Optional format and
+/// When `S` implements [`Exchanges`], outstanding CON/NON requests are
+/// recorded by Token and remote [`Endpoint`] and taken on a matching
+/// response. Empty ACK (code 0.00) is not a token-matching response;
+/// a piggybacked ACK with a response code is. Dedup, pending CON, and
+/// exchange matching are different identities. Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`].
 /// This type does not invent 4.02 / RST policy.
 ///
@@ -363,6 +370,139 @@ impl<S: Storage + PendingCons> Engine<S> {
             return Ok(None);
         }
         Ok(self.storage.take_pending_con(message_id, endpoint))
+    }
+}
+
+impl<S: Storage + Exchanges> Engine<S> {
+    /// Insert an outstanding request, or return the existing slot if the key is present.
+    ///
+    /// `None` when the table is full and the key is not already stored. Scans
+    /// the TX-derived capacity (O(n)). Does not use Dedup or pending CON.
+    pub fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+        self.storage.insert_exchange(entry)
+    }
+
+    /// Occupied exchange slot matching `key`, if any. O(n) in capacity.
+    #[must_use]
+    pub fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+        self.storage.lookup_exchange(key)
+    }
+
+    /// Remove and return the outstanding request matching `key`, if any.
+    ///
+    /// The caller releases [`ExchangeEntry::tx_slot`] when it still holds that
+    /// TX datagram. `None` on miss.
+    pub fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+        self.storage.take_exchange(key)
+    }
+
+    /// Occupied exchange payload at `id`.
+    #[must_use]
+    pub fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+        self.storage.exchange_entry(id)
+    }
+
+    /// Record an outstanding CON/NON request from occupied TX `id`.
+    ///
+    /// Sets the TX sidecar endpoint. `Ok(None)` when the datagram is not a
+    /// CON/NON request, or the table is full. Idempotent for the same Token
+    /// and endpoint. Does not mark pending CON and does not use Dedup.
+    pub fn record_request(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+    ) -> Result<Option<ExchangeEntry>, SlotMessageError>
+    where
+        S: DatagramSlots,
+    {
+        let (token, message_id, is_request) = {
+            let parsed = decode_occupied(self.storage.tx_payload(id))?;
+            (
+                parsed.token(),
+                parsed.message_id(),
+                super::exchange::is_con_or_non_request(&parsed),
+            )
+        };
+        if !is_request {
+            return Ok(None);
+        }
+        self.storage.set_tx_endpoint(id, endpoint)?;
+        let entry = ExchangeEntry::new(token, endpoint, message_id, id);
+        let table_id = self.storage.insert_exchange(entry);
+        Ok(table_id.and_then(|tid| self.storage.exchange_entry(tid)))
+    }
+
+    /// If `parsed` is a response for `endpoint`, take the matching exchange.
+    ///
+    /// Match is Token plus `endpoint` ([`ExchangeKey`]). A piggybacked ACK
+    /// also requires the request Message ID. Empty ACK/RST are not responses.
+    /// Returns the entry; the caller releases the TX slot. `None` on miss.
+    /// Does not consult Dedup or pending CON.
+    pub fn match_response(
+        &mut self,
+        parsed: &ParsedMessage<'_>,
+        endpoint: Endpoint,
+    ) -> Option<ExchangeEntry> {
+        self.take_matching_response(
+            parsed.token(),
+            parsed.ty(),
+            parsed.code(),
+            parsed.message_id(),
+            endpoint,
+        )
+    }
+
+    /// Decode occupied RX `id` and [`Self::match_response`] using its sidecar endpoint.
+    pub fn match_response_rx(
+        &mut self,
+        id: SlotId,
+    ) -> Result<Option<ExchangeEntry>, SlotMessageError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let (token, ty, code, message_id) = {
+            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            (
+                parsed.token(),
+                parsed.ty(),
+                parsed.code(),
+                parsed.message_id(),
+            )
+        };
+        Ok(self.take_matching_response(token, ty, code, message_id, endpoint))
+    }
+
+    fn take_matching_response(
+        &mut self,
+        token: Token,
+        ty: crate::message::Type,
+        code: crate::message::Code,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ExchangeEntry> {
+        if !code.is_response()
+            || !matches!(
+                ty,
+                crate::message::Type::Confirmable
+                    | crate::message::Type::NonConfirmable
+                    | crate::message::Type::Acknowledgement
+            )
+        {
+            return None;
+        }
+        let key = ExchangeKey::new(token, endpoint);
+        let id = self.storage.lookup_exchange(key)?;
+        let entry = self.storage.exchange_entry(id)?;
+        let mid_ok = match ty {
+            crate::message::Type::Acknowledgement => message_id == entry.message_id(),
+            crate::message::Type::Confirmable | crate::message::Type::NonConfirmable => true,
+            crate::message::Type::Reset => false,
+        };
+        if !mid_ok {
+            return None;
+        }
+        self.storage.take_exchange(key)
     }
 }
 

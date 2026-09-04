@@ -9,6 +9,9 @@ use super::DedupTable;
 use super::Endpoint;
 use super::Engine;
 use super::EngineBuilder;
+use super::ExchangeEntry;
+use super::ExchangeKey;
+use super::ExchangeTable;
 use super::Memory;
 use super::MemoryProfile;
 use super::PendingCon;
@@ -19,7 +22,7 @@ use super::Storage;
 use super::WithBodies;
 use super::profiles;
 use crate::error::BuildError;
-use crate::message::{Code, Message, MessageId, Type, empty_ack, empty_rst, encode};
+use crate::message::{Code, Message, MessageId, Token, Type, empty_ack, empty_rst, encode};
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
@@ -496,6 +499,317 @@ fn engine_non_empty_or_wrong_type_does_not_take_pending() {
     assert_eq!(engine.lookup_pending_con(mid, ep), Some(tx));
 }
 
+fn sample_token(bytes: &[u8]) -> Token {
+    Token::new(bytes).expect("token")
+}
+
+fn encode_into(msg: &Message<'_>) -> ([u8; 32], usize) {
+    let mut buf = [0u8; 32];
+    let n = encode(msg, &mut buf).expect("encode");
+    (buf, n)
+}
+
+#[test]
+fn exchange_hit_miss_wrong_endpoint() {
+    let mut table = ExchangeTable::<2>::new();
+    let tok = sample_token(&[0x71]);
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let tx = SlotId::from_index(0);
+    let a = ExchangeEntry::new(tok, ep, MessageId::new(1), tx);
+    let miss_tok = ExchangeEntry::new(sample_token(&[0x72]), ep, MessageId::new(1), tx);
+    let miss_ep = ExchangeEntry::new(tok, other, MessageId::new(1), tx);
+
+    assert_eq!(table.lookup(a.key()), None);
+    let id_a = table.insert(a).expect("insert");
+    assert_eq!(table.lookup(a.key()), Some(id_a));
+    assert_eq!(table.insert(a).expect("idempotent"), id_a);
+    assert_eq!(table.occupied_count(), 1);
+    assert_eq!(table.lookup(miss_tok.key()), None);
+    assert_eq!(table.lookup(miss_ep.key()), None);
+    assert_eq!(table.entry(id_a), Some(a));
+
+    let taken = table.take(a.key()).expect("take");
+    assert_eq!(taken, a);
+    assert_eq!(table.lookup(a.key()), None);
+    assert!(table.take(a.key()).is_none());
+}
+
+#[test]
+fn exchange_empty_token_is_a_valid_key() {
+    let mut table = ExchangeTable::<2>::new();
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 1], 5684);
+    let tx = SlotId::from_index(0);
+    let empty = ExchangeEntry::new(Token::EMPTY, ep, MessageId::new(4), tx);
+    let other_empty = ExchangeEntry::new(Token::EMPTY, other, MessageId::new(5), tx);
+
+    let id = table.insert(empty).expect("empty token");
+    assert_eq!(table.lookup(ExchangeKey::new(Token::EMPTY, ep)), Some(id));
+    assert_eq!(table.lookup(other_empty.key()), None);
+    assert_eq!(table.insert(empty).expect("idempotent empty"), id);
+    assert_eq!(table.occupied_count(), 1);
+
+    let id_other = table.insert(other_empty).expect("empty other endpoint");
+    assert_ne!(id, id_other);
+    assert_eq!(table.take(empty.key()).expect("take").token(), Token::EMPTY);
+    assert_eq!(table.lookup(empty.key()), None);
+}
+
+#[test]
+fn exchange_capacity_saturation() {
+    let mut table = ExchangeTable::<2>::new();
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let a = ExchangeEntry::new(
+        sample_token(&[1]),
+        ep,
+        MessageId::new(1),
+        SlotId::from_index(0),
+    );
+    let b = ExchangeEntry::new(
+        sample_token(&[2]),
+        ep,
+        MessageId::new(2),
+        SlotId::from_index(1),
+    );
+    let extra = ExchangeEntry::new(
+        sample_token(&[3]),
+        ep,
+        MessageId::new(3),
+        SlotId::from_index(2),
+    );
+
+    assert!(table.insert(a).is_some());
+    assert!(table.insert(b).is_some());
+    assert!(table.insert(extra).is_none());
+    assert_eq!(table.occupied_count(), 2);
+    assert!(table.take(a.key()).is_some());
+    assert!(table.insert(extra).is_some());
+}
+
+#[test]
+fn engine_record_request_then_piggybacked_response() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 9], 5683);
+    let mid = MessageId::new(0x4242);
+    let tok = sample_token(&[0xaa]);
+    let tx = engine.acquire_tx().expect("tx");
+    let req = Message::new(Type::Confirmable, Code::GET, mid).with_token(tok);
+    engine.encode_tx(tx, &req).expect("encode");
+    let recorded = engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    assert_eq!(recorded.token(), tok);
+    assert_eq!(recorded.endpoint(), ep);
+    assert_eq!(recorded.message_id(), mid);
+    assert_eq!(recorded.tx_slot(), tx);
+    assert!(engine.lookup_exchange(recorded.key()).is_some());
+    assert_eq!(engine.tx_endpoint(tx), Some(ep));
+
+    let rx = engine.acquire_rx().expect("rx");
+    let ack = Message::new(Type::Acknowledgement, Code::CONTENT, mid).with_token(tok);
+    let (buf, n) = encode_into(&ack);
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let matched = engine.match_response_rx(rx).expect("match").expect("hit");
+    assert_eq!(matched, recorded);
+    assert_eq!(engine.lookup_exchange(recorded.key()), None);
+    engine.release_tx(tx).expect("caller releases");
+}
+
+#[test]
+fn engine_empty_ack_does_not_complete_exchange() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 10], 5683);
+    let mid = MessageId::new(9);
+    let tok = sample_token(&[0x73]);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+
+    let rx = engine.acquire_rx().expect("rx");
+    let (buf, n) = encode_into(&empty_ack(mid));
+    engine.write_rx(rx, &buf[..n], ep).expect("write ack");
+    assert_eq!(engine.match_response_rx(rx).expect("token match"), None);
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    assert_eq!(
+        engine.match_empty_ack_rst_rx(rx).expect("confirm"),
+        Some(tx)
+    );
+    assert_eq!(engine.pending_con(tx), None);
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+}
+
+#[test]
+fn engine_exchange_wrong_endpoint_misses() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 10], 5683);
+    let other = Endpoint::v4([192, 0, 2, 11], 5683);
+    let mid = MessageId::new(9);
+    let tok = sample_token(&[0x01]);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::NonConfirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+
+    let resp =
+        Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(99)).with_token(tok);
+    let (buf, n) = encode_into(&resp);
+    let parsed = crate::message::decode(&buf[..n]).expect("resp");
+    assert_eq!(engine.match_response(&parsed, other), None);
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    assert_eq!(
+        engine.match_response(&parsed, ep).expect("hit").token(),
+        tok
+    );
+}
+
+#[test]
+fn engine_separate_response_survives_tx_release() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 20], 5683);
+    let mid = MessageId::new(5);
+    let tok = Token::EMPTY;
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    engine.release_tx(tx).expect("release after send");
+
+    let rx = engine.acquire_rx().expect("rx");
+    let resp = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(80)).with_token(tok);
+    let (buf, n) = encode_into(&resp);
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let matched = engine.match_response_rx(rx).expect("match").expect("hit");
+    assert_eq!(matched.token(), Token::EMPTY);
+    assert_eq!(matched.tx_slot(), tx);
+    assert_eq!(engine.lookup_exchange(ExchangeKey::new(tok, ep)), None);
+}
+
+#[test]
+fn engine_exchange_distinct_from_dedup_and_pending_con() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 20], 5683);
+    let mid = MessageId::new(5);
+    let tok = sample_token(&[0x74]);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    let dedup = engine
+        .insert_dedup(DedupEntry::new(mid, ep))
+        .expect("dedup");
+
+    let ack = empty_ack(mid);
+    let (buf, n) = encode_into(&ack);
+    let parsed_ack = crate::message::decode(&buf[..n]).expect("empty ack");
+    assert_eq!(engine.match_response(&parsed_ack, ep), None);
+    assert_eq!(engine.match_empty_ack_rst(&parsed_ack, ep), Some(tx));
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    assert_eq!(engine.pending_con(tx), None);
+
+    let piggy = Message::new(Type::Acknowledgement, Code::CONTENT, mid).with_token(tok);
+    let (buf, n) = encode_into(&piggy);
+    let parsed = crate::message::decode(&buf[..n]).expect("piggy");
+    assert!(engine.match_response(&parsed, ep).is_some());
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+    assert_eq!(engine.lookup_exchange(ExchangeKey::new(tok, ep)), None);
+}
+
+#[test]
+fn engine_exchange_fills_to_tx_capacity() {
+    let mut engine = build_default();
+    let n = profiles::Default::TX_DATAGRAM_SLOTS;
+    let ep = Endpoint::v4([203, 0, 113, 1], 5683);
+    for i in 0..n {
+        let entry = ExchangeEntry::new(
+            sample_token(&[i as u8 + 1]),
+            ep,
+            MessageId::new(i as u16),
+            SlotId::from_index(i),
+        );
+        assert!(engine.insert_exchange(entry).is_some());
+    }
+    let overflow = ExchangeEntry::new(
+        sample_token(&[0xff]),
+        ep,
+        MessageId::new(n as u16),
+        SlotId::from_index(n),
+    );
+    assert!(engine.insert_exchange(overflow).is_none());
+    assert!(
+        engine
+            .lookup_exchange(ExchangeKey::new(sample_token(&[1]), ep))
+            .is_some()
+    );
+}
+
+#[test]
+fn engine_record_request_rejects_empty_ack() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 30], 5683);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(tx, &empty_ack(MessageId::new(1)))
+        .expect("ack");
+    assert_eq!(engine.record_request(tx, ep).expect("not a request"), None);
+}
+
+#[test]
+fn engine_piggybacked_wrong_mid_does_not_take() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 40], 5683);
+    let mid = MessageId::new(3);
+    let tok = sample_token(&[0x21]);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+
+    let wrong_mid =
+        Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(99)).with_token(tok);
+    let (buf, n) = encode_into(&wrong_mid);
+    let parsed = crate::message::decode(&buf[..n]).expect("decode");
+    assert_eq!(engine.match_response(&parsed, ep), None);
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -654,6 +968,81 @@ mod alloc_backend {
         engine.write_rx(rx, &buf[..n], ep).expect("write");
         assert_eq!(engine.match_empty_ack_rst_rx(rx).expect("match"), Some(tx));
         assert_eq!(engine.pending_con(tx), None);
+    }
+
+    #[test]
+    fn alloc_record_request_then_piggybacked_response() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 12], 5683);
+        let mid = MessageId::new(0x55);
+        let tok = sample_token(&[0xab]);
+        let tx = engine.acquire_tx().expect("tx");
+        engine
+            .encode_tx(
+                tx,
+                &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+            )
+            .expect("encode");
+        engine
+            .record_request(tx, ep)
+            .expect("record")
+            .expect("request");
+        let rx = engine.acquire_rx().expect("rx");
+        let ack = Message::new(Type::Acknowledgement, Code::CONTENT, mid).with_token(tok);
+        let (buf, n) = encode_into(&ack);
+        engine.write_rx(rx, &buf[..n], ep).expect("write");
+        let matched = engine.match_response_rx(rx).expect("match").expect("hit");
+        assert_eq!(matched.token(), tok);
+        assert_eq!(engine.lookup_exchange(ExchangeKey::new(tok, ep)), None);
+    }
+
+    #[test]
+    fn alloc_empty_ack_does_not_complete_exchange() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 13], 5683);
+        let mid = MessageId::new(8);
+        let tok = sample_token(&[0x08]);
+        let tx = engine.acquire_tx().expect("tx");
+        engine
+            .encode_tx(
+                tx,
+                &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+            )
+            .expect("encode");
+        engine
+            .record_request(tx, ep)
+            .expect("record")
+            .expect("request");
+        let (buf, n) = encode_into(&empty_ack(mid));
+        let parsed = crate::message::decode(&buf[..n]).expect("ack");
+        assert_eq!(engine.match_response(&parsed, ep), None);
+        assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    }
+
+    #[test]
+    fn alloc_exchange_fills_to_tx_capacity() {
+        let mut engine = build_alloc(false);
+        let n = profiles::Default::TX_DATAGRAM_SLOTS;
+        let ep = Endpoint::v4([192, 0, 2, 14], 5683);
+        for i in 0..n {
+            let entry = ExchangeEntry::new(
+                sample_token(&[i as u8 + 1]),
+                ep,
+                MessageId::new(i as u16),
+                SlotId::from_index(i),
+            );
+            assert!(engine.insert_exchange(entry).is_some());
+        }
+        assert!(
+            engine
+                .insert_exchange(ExchangeEntry::new(
+                    sample_token(&[0xff]),
+                    ep,
+                    MessageId::new(99),
+                    SlotId::from_index(n),
+                ))
+                .is_none()
+        );
     }
 
     #[test]
