@@ -1,7 +1,7 @@
 ---
 type: Architecture
 title: Capacity profiles
-description: Default (1472 dgram, 4096 body) versus Constrained (1152 dgram) MemoryProfile numbers.
+description: Default (1472 dgram, 4096 body = 4 × 1024) versus Constrained (1152 dgram) MemoryProfile numbers.
 resource: /memory.md
 tags: [architecture, memory, profiles]
 status: stable
@@ -15,13 +15,16 @@ sources:
   - id: rfc7252
     resource: /rfcs/rfc7252.md
     title: "RFC 7252 §4.6 Message Size"
+  - id: block-testing
+    resource: /block-testing.md
+    title: Block and Q-Block testing policy
 deterministic:
   by: "process:okf-frontmatter"
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:09:05Z"
   fields: [type, resource]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:09:05Z"
 ---
 
 # Capacity profiles
@@ -48,12 +51,14 @@ Locked starting numbers for `MemoryProfile` implementations. API and slot meanin
 | | `profiles::Default` | `profiles::Constrained` |
 | --- | --- | --- |
 | Datagram slot bytes (RX and TX) | **1472** | **1152** |
-| Body slot bytes (RX and TX) | **4096** | not locked here |
+| Body slot bytes (RX and TX) | **4096** = 4 × 1024 | not locked here |
 | Slot and table counts | modest | not locked here |
 
 1472 is IPv4 UDP max on Ethernet (`1500 − 20 − 8`). 1152 is the RFC 7252 §4.6 constrained / unknown-PMTU message size. 1280 is IPv6 IP-packet MTU, not a CoAP body size. 1024 is payload-in-one-datagram, not a slot size.
 
-Body capacity is independent of datagram slot size. Constrained locks only the datagram slot bytes in this table.
+Default body **4096** is four max-size Block/Q-Block blocks (SZX max). Constrained still does not lock body here. **0** body slots and/or **0** body bytes is valid on either profile (no block-wise). Do not require a minimum body size in the API. Body capacity is independent of datagram slot size.
+
+Block/Q-Block tests are a combinatorial sweep, not this Default ceiling. Policy: [Block testing](/block-testing.md).
 
 # Backends
 

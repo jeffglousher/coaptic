@@ -5,6 +5,7 @@ ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers
 # Requirements
 
 * [coaptic plugtest requirements](requirements.md) - In-scope vs deferred suites; six-area engine constraint.
+* [Block testing](/block-testing.md) - Combinatorial Block/Q-Block SZX × 1–25-block sweep; Default is not the test ceiling.
 
 # In-scope (CoAP#4)
 

@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-09-04
+
+* **Update**: Locked body default **4096** = 4 × 1024 and zero-body as valid. Added [Block testing](/block-testing.md) combinatorial SZX × 1–25-block sweep policy (spec only).
+
 ## 2026-09-03
 
 * **Update**: Added locked crate memory/API concepts [Memory](/memory.md) and [Profiles](/profiles.md) (1472 datagram default, Storage trait, named `MemoryProfile` constants). Spec only; no engine implementation.

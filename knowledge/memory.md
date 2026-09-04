@@ -12,13 +12,16 @@ sources:
   - id: rfc7252
     resource: /rfcs/rfc7252.md
     title: "RFC 7252 §4.6 Message Size"
+  - id: block-testing
+    resource: /block-testing.md
+    title: Block and Q-Block testing policy
 deterministic:
   by: "process:okf-frontmatter"
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:09:05Z"
   fields: [type, resource]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:09:05Z"
 ---
 
 # Locked memory and API
@@ -43,7 +46,11 @@ Default datagram slot size is **1472** bytes. That is IPv4 UDP max on Ethernet (
 
 # Body slots
 
-Body slots are a separate complete-body capacity for block-wise transfer. Starting default **4096** bytes. Independent of datagram slot size.
+Body slots are a separate complete-body capacity for block-wise transfer. Independent of datagram slot size.
+
+Default body slot bytes is **4096** = 4 × 1024 (four max-size Block/Q-Block blocks, SZX max). Datagram default stays **1472**. This is intentional: default is small; tests go bigger. Sweep policy: [Block testing](/block-testing.md).
+
+Body is not mandatory. **0** body slots and/or **0** body bytes is a valid configuration (no block-wise). Capacities go from zero up to platform/system limits via `MemoryProfile` / `Capacities`. Do not require a minimum body size in the API.
 
 # Storage
 
@@ -53,7 +60,7 @@ One engine, two backends. Logic (acquire / release / rotate) is written once aga
 Engine<S: Storage>
 ```
 
-- `no_std` default: `Memory<P: MemoryProfile>` owns six typed arrays. `MemoryProfile` is a trait with **named** associated constants, not a pile of positional const generics: RX/TX datagram slot counts and bytes, RX/TX body slot counts and bytes, dedup entries, observe entries. Ship `profiles::Default` (1472 dgram, 4096 body, modest slot counts) and `profiles::Constrained` (1152 dgram). Numbers: [Profiles](/profiles.md).
+- `no_std` default: `Memory<P: MemoryProfile>` owns six typed arrays. `MemoryProfile` is a trait with **named** associated constants, not a pile of positional const generics: RX/TX datagram slot counts and bytes, RX/TX body slot counts and bytes, dedup entries, observe entries. Ship `profiles::Default` (1472 dgram, 4096 body = 4 × 1024, modest slot counts) and `profiles::Constrained` (1152 dgram). Zero body is valid. Numbers: [Profiles](/profiles.md).
 - `alloc` feature: `AllocMemory` with runtime `Capacities`, one heap allocation at init, then no growth.
 
 Do not carve a byte slab.
@@ -80,7 +87,7 @@ RX and TX are two pools of the same types (`DatagramPool`, `BodyPool`).
 | `DedupTable` | Dedup table |
 | `ObserveTable` | Observe interest table |
 | `SlotId` | Slot identifier |
-| `profiles::Default` | 1472 dgram, 4096 body, modest slot counts |
+| `profiles::Default` | 1472 dgram, 4096 body (4 × 1024), modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
 # Tests

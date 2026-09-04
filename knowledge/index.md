@@ -12,8 +12,9 @@ okf_version: "0.2"
 
 * [Architecture](architecture.md) - Six areas and bounded progress. Canonical source is `design.md`.
 * [Memory areas](memory-areas.md) - The six core-managed areas, linked to `design.md` sections.
-* [Memory](memory.md) - Locked datagram/body slots, Storage trait, builder, and names.
+* [Memory](memory.md) - Locked datagram/body slots, Storage trait, builder, and names. Default body 4096 = 4 × 1024; zero body is valid.
 * [Profiles](profiles.md) - Default vs Constrained capacity numbers.
+* [Block testing](block-testing.md) - Combinatorial Block/Q-Block SZX × 1–25-block sweep. Default is not the test ceiling.
 * [RFCs](rfcs/) - Local IETF CoAP/CoRE copies. One concept plus `.txt`/`.pdf` per RFC.
 * [Plugtest](plugtest/) - ETSI CoAP plugtest TDs and the coaptic mapping.
 
