@@ -480,7 +480,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         ))
     }
 
-    /// Admit an outgoing Block1 / Block2 body: acquire a slot and copy the complete body.
+    /// Admit an outgoing Block / Q-Block body: acquire a slot and copy the complete body.
     ///
     /// `role` must be outgoing.
     pub fn start_outgoing(
@@ -490,7 +490,11 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        let transfer = BlockTransfer::outgoing(key, role, body.len(), szx, BYTES)?;
+        let transfer = if role.is_q_block() {
+            BlockTransfer::outgoing_q(key, role, body.len(), szx, BYTES)?
+        } else {
+            BlockTransfer::outgoing(key, role, body.len(), szx, BYTES)?
+        };
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
         let idx = id.index();
         if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, body) {
@@ -501,9 +505,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Ok(id)
     }
 
-    /// Issue the next in-order outgoing range from `id`.
+    /// Issue the next outgoing range from `id`.
     ///
-    /// `role` must match the slot's transfer.
+    /// Classic Block is in-order. Q-Block issues the next unsent NUM in the
+    /// current window. `role` must match the slot's transfer.
     pub fn next_outgoing(
         &mut self,
         id: SlotId,
@@ -522,7 +527,11 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         if transfer.role() != role {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        let (block, offset, len) = transfer.issue_outgoing()?;
+        let (block, offset, len) = if role.is_q_block() {
+            transfer.issue_q_outgoing()?
+        } else {
+            transfer.issue_outgoing()?
+        };
         Ok(OutgoingBlock::new(
             id,
             block,
@@ -530,6 +539,30 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
             len,
             transfer.is_complete(),
         ))
+    }
+
+    /// Advance an outgoing Q-Block window after a peer ACK of `num`.
+    pub fn ack_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (filled, complete) = transfer.ack_q_window(num)?;
+        Ok(BlockProgress::new(id, filled, complete))
     }
 
     fn reset(&mut self, id: SlotId) {
@@ -606,6 +639,15 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         BodyPool::next_outgoing(self, id, role)
+    }
+
+    fn ack_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        BodyPool::ack_outgoing(self, id, role, num)
     }
 }
 
