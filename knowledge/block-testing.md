@@ -19,11 +19,11 @@ sources:
     title: coaptic plugtest requirements
 deterministic:
   by: "process:okf-frontmatter"
-  at: "2026-09-04T11:09:05Z"
+  at: "2026-09-04T11:33:33Z"
   fields: [type]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-04T11:09:05Z"
+  at: "2026-09-04T11:33:33Z"
 ---
 
 # Block / Q-Block testing policy
@@ -44,9 +44,9 @@ Body length of 25 blocks is required so Q-Block exercises multiple cycles of par
 
 # Capacity
 
-`profiles::Default` body **4096** = 4 × 1024 is a small starting default, not the test ceiling. The harness may use `AllocMemory` or a large test profile.
+This sweep requires block-wise **enabled**. Enabled body capacity is in **bytes**, a **multiple of 1024**. `profiles::Default` body **4096** = 4 × 1024 is a small starting default, not the test ceiling. The harness may use `AllocMemory` or a large test profile.
 
-**0** body slots and/or **0** body bytes remains a valid configuration (no block-wise). That configuration is not a Block/Q-Block sweep case.
+`.block_wise(false)` means Storage has no body pools. 0 body bytes is not a stand-in for disabled and is not a sweep case.
 
 # Mapping
 

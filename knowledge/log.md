@@ -2,7 +2,7 @@
 
 ## 2026-09-04
 
-* **Update**: Locked body default **4096** = 4 × 1024 and zero-body as valid. Added [Block testing](/block-testing.md) combinatorial SZX × 1–25-block sweep policy (spec only).
+* **Update**: Locked block-wise as an explicit builder switch: disabled ⇒ no body pools; enabled body bytes are a multiple of 1024 (default **4096** = 4 × 1024). Added [Block testing](/block-testing.md) combinatorial SZX × 1–25-block sweep (spec only).
 
 ## 2026-09-03
 

@@ -20,11 +20,11 @@ sources:
     title: Block and Q-Block testing policy
 deterministic:
   by: "process:okf-frontmatter"
-  at: "2026-09-04T11:09:05Z"
+  at: "2026-09-04T11:33:33Z"
   fields: [type]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-04T11:09:05Z"
+  at: "2026-09-04T11:33:33Z"
 ---
 
 # Scope
@@ -49,7 +49,7 @@ Implement the TD identifiers that appear in those YAML files. Do not invent TD i
 
 The 2014 CoAP#4 TDs do not cover Q-Block or Echo / Request-Tag ([RFC 9175](/rfcs/rfc9175.md)). Extra interop checks for those come from the RFC files themselves, not from made-up TD numbers.
 
-Engine Block/Q-Block tests (beyond CoAP#4 TDs) are a dynamic combinatorial SZX × 1–25-block sweep, not a hard-coded case list. `profiles::Default` body 4096 is not the test ceiling. Policy: [Block testing](/block-testing.md).
+Engine Block/Q-Block tests (beyond CoAP#4 TDs) are a dynamic combinatorial SZX × 1–25-block sweep, not a hard-coded case list. Sweep assumes block-wise **enabled**. `profiles::Default` body 4096 is the enabled default, not the test ceiling, and not a disable knob. Policy: [Block testing](/block-testing.md).
 
 ## Deferred (OSCORE / DTLS / 6LoWPAN)
 
