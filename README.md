@@ -1,8 +1,14 @@
 # coaptic
 
-A stand-alone `no_std` CoAP engine. Custom slots and tables, optional alloc, high throughput.
+A stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded storage engine. Custom slots and tables, optional alloc.
 
-Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Knowledge: [knowledge/](knowledge/).
+## Library surface
+
+- `coaptic::message` — decode/encode a CoAP datagram (`&[u8]`). No `Engine` required.
+- `coaptic::storage` — bounded `Engine` / `Memory` / pools (main types are also at the crate root).
+- `coaptic::profiles` — `Default` (1472-byte datagrams) and `Constrained` (1152).
+
+Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Knowledge: [knowledge/](knowledge/). Plugtest harnesses are not in this crate yet.
 
 Architecture notes below are the current reference. Protocol behavior stays in `knowledge/rfcs/`.
 

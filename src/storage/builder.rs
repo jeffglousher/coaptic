@@ -2,14 +2,14 @@
 
 use core::marker::PhantomData;
 
-use crate::capacities::{Capacities, bytes_ok};
-use crate::engine::Engine;
+use super::Engine;
+use super::Storage;
+use super::capacities::{Capacities, bytes_ok};
+use super::memory::MemoryProfile;
 use crate::error::BuildError;
-use crate::memory::MemoryProfile;
-use crate::storage::Storage;
 
 #[cfg(feature = "alloc")]
-use crate::alloc_memory::AllocMemory;
+use super::AllocMemory;
 
 /// Typestate: a required builder input is not yet set.
 #[derive(Clone, Copy, Debug)]

@@ -4,11 +4,12 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::capacities::Capacities;
+use super::SlotPool;
+use super::Storage;
+use super::capacities::Capacities;
+use super::occupancy::HeapOccupancy;
+use super::slot::{Peer, SlotError, SlotId};
 use crate::error::BuildError;
-use crate::occupancy::HeapOccupancy;
-use crate::slot::{Peer, SlotError, SlotId};
-use crate::storage::{SlotPool, Storage};
 
 /// `alloc` backend: runtime [`Capacities`], typed heap arrays, no later growth.
 ///

@@ -3,9 +3,9 @@
 //! Datagram and enabled-body **bytes** are locked in `knowledge/profiles.md`.
 //! Slot and table counts below are modest starting numbers.
 
-use crate::memory::MemoryProfile;
-use crate::pool::{BodyPool, DatagramPool};
-use crate::table::{DedupTable, ObserveTable};
+use super::memory::MemoryProfile;
+use super::pool::{BodyPool, DatagramPool};
+use super::table::{DedupTable, ObserveTable};
 
 macro_rules! impl_profile {
     (

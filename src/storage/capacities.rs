@@ -1,7 +1,7 @@
 //! Runtime capacity description shared by the builder and both backends.
 
+use super::memory::MemoryProfile;
 use crate::error::BuildError;
-use crate::memory::MemoryProfile;
 
 /// Byte multiple required for enabled body slots (max Block/Q-Block SZX).
 pub(crate) const BODY_BYTE_QUANTUM: usize = 1024;

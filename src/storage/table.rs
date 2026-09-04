@@ -1,8 +1,8 @@
 //! [`DedupTable`] and [`ObserveTable`]: fixed entry slots plus rotating occupancy.
 
-use crate::occupancy::Occupancy;
-use crate::slot::{SlotError, SlotId};
-use crate::storage::SlotPool;
+use super::SlotPool;
+use super::occupancy::Occupancy;
+use super::slot::{SlotError, SlotId};
 
 /// Placeholder dedup history row. Protocol fields are not modeled yet.
 #[derive(Clone, Copy, Debug, Default)]

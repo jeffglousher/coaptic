@@ -1,8 +1,8 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
-use crate::occupancy::Occupancy;
-use crate::slot::{Peer, SlotError, SlotId};
-use crate::storage::SlotPool;
+use super::SlotPool;
+use super::occupancy::Occupancy;
+use super::slot::{Peer, SlotError, SlotId};
 
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
