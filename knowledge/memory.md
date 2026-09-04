@@ -88,6 +88,8 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `Storage` | Trait both backends implement |
 | `DatagramPool` | Pool of datagram slots (RX and TX are two pools) |
 | `BodyPool` | Pool of body slots when block-wise is enabled (RX and TX are two pools) |
+| `BlockTransfer` / `BlockKey` | Classic Block1/Block2 sidecar on a body slot (Token + remote Endpoint) |
+| `BodySlots` | Typed admit / write / complete / slice access to body pools |
 | `DedupTable` | Dedup table |
 | `Endpoint` | UDP peer sidecar next to a datagram slot |
 | `DedupKey` / `DedupEntry` | Dedup identity (Message ID + remote Endpoint) |

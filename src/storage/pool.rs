@@ -1,11 +1,12 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
 use super::SlotPool;
+use super::block::{BlockKey, BlockProgress, BlockTransfer, OutgoingBlock, write_range};
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::error::SlotMessageError;
-use crate::message::{Message, MessageId, ParsedMessage};
+use crate::error::{BlockTransferError, SlotMessageError};
+use crate::message::{BlockValue, Message, MessageId, ParsedMessage};
 
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
@@ -289,9 +290,13 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 ///
 /// Independent of datagram slot size. Capacity is in bytes and must be a
 /// multiple of 1024 when constructed through the engine builder.
+///
+/// Each occupied slot may hold a [`BlockTransfer`] sidecar (classic Block1 /
+/// Block2). See `design.md` Incoming / Outgoing Body Slot.
 pub struct BodyPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
+    transfers: [Option<BlockTransfer>; SLOTS],
     occ: Occupancy<SLOTS>,
 }
 
@@ -302,6 +307,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Self {
             bytes: [[0u8; BYTES]; SLOTS],
             lens: [0; SLOTS],
+            transfers: [None; SLOTS],
             occ: Occupancy::new(),
         }
     }
@@ -346,14 +352,206 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Ok(())
     }
 
+    /// [`BlockTransfer`] sidecar for an occupied slot.
+    #[must_use]
+    pub fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.transfers.get(id.index()).copied().flatten()
+    }
+
+    /// Occupied slot whose sidecar matches `key`, if any. O(n) in slot count.
+    #[must_use]
+    pub fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+        (0..SLOTS).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.transfer(id) {
+                Some(t) if t.key() == key => Some(id),
+                _ => None,
+            }
+        })
+    }
+
+    /// Admit an incoming Block1 body: acquire a slot and write the first block.
+    ///
+    /// Classic Block starts at NUM 0. Subsequent blocks use
+    /// [`Self::write_incoming`].
+    pub fn admit_incoming(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        expected_len: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        let transfer =
+            BlockTransfer::incoming_block1(key, block, payload.len(), BYTES, expected_len)?;
+        let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
+        let idx = id.index();
+        if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, payload) {
+            let _ = self.release(id);
+            return Err(e);
+        }
+        self.transfers[idx] = Some(transfer);
+        Ok(id)
+    }
+
+    /// Write the next in-order incoming Block1 range into `id`.
+    pub fn write_incoming(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let idx = id.index();
+        let offset = {
+            let transfer = self.transfers[idx]
+                .as_mut()
+                .ok_or(BlockTransferError::NoTransfer)?;
+            transfer.accept_incoming(block, payload.len(), BYTES)?
+        };
+        write_range(&mut self.bytes[idx], &mut self.lens[idx], offset, payload)?;
+        let transfer = self.transfers[idx].ok_or(BlockTransferError::NoTransfer)?;
+        Ok(BlockProgress::new(
+            id,
+            transfer.filled(),
+            transfer.is_complete(),
+        ))
+    }
+
+    /// Admit or continue an incoming Block1 transfer identified by `key`.
+    pub fn apply_incoming(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        expected_len: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        if let Some(id) = self.lookup(key) {
+            return self.write_incoming(id, block, payload);
+        }
+        let id = self.admit_incoming(key, block, payload, expected_len)?;
+        let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+        Ok(BlockProgress::new(
+            id,
+            transfer.filled(),
+            transfer.is_complete(),
+        ))
+    }
+
+    /// Admit an outgoing Block2 body: acquire a slot and copy the complete body.
+    pub fn start_outgoing(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        let transfer = BlockTransfer::outgoing_block2(key, body.len(), szx, BYTES)?;
+        let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
+        let idx = id.index();
+        if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, body) {
+            let _ = self.release(id);
+            return Err(e);
+        }
+        self.transfers[idx] = Some(transfer);
+        Ok(id)
+    }
+
+    /// Issue the next in-order outgoing Block2 range from `id`.
+    pub fn next_outgoing(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        let (block, offset, len) = transfer.issue_outgoing()?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
+    }
+
     fn reset(&mut self, id: SlotId) {
-        self.lens[id.index()] = 0;
+        let idx = id.index();
+        self.lens[idx] = 0;
+        self.transfers[idx] = None;
     }
 }
 
 impl<const SLOTS: usize, const BYTES: usize> Default for BodyPool<SLOTS, BYTES> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<SLOTS, BYTES> {
+    fn payload(&self, id: SlotId) -> Option<&[u8]> {
+        BodyPool::payload(self, id)
+    }
+
+    fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        BodyPool::transfer(self, id)
+    }
+
+    fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+        BodyPool::lookup(self, key)
+    }
+
+    fn admit_incoming(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        expected_len: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        BodyPool::admit_incoming(self, key, block, payload, expected_len)
+    }
+
+    fn write_incoming(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        BodyPool::write_incoming(self, id, block, payload)
+    }
+
+    fn apply_incoming(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        expected_len: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        BodyPool::apply_incoming(self, key, block, payload, expected_len)
+    }
+
+    fn start_outgoing(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        BodyPool::start_outgoing(self, key, body, szx)
+    }
+
+    fn next_outgoing(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        BodyPool::next_outgoing(self, id)
     }
 }
 

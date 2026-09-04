@@ -11,10 +11,13 @@
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
 //! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
-//! key). They do not invent 4.02 / RST policy.
+//! key). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
+//! sidecar on body-pool slots when block-wise is enabled. They do not
+//! invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
+mod block;
 mod builder;
 mod capacities;
 mod endpoint;
@@ -36,6 +39,7 @@ mod tests;
 
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
+pub use block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock};
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
 pub use endpoint::Endpoint;
@@ -206,4 +210,69 @@ pub trait ObserveSlots {
 
     /// Occupied payload at `id`.
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest>;
+}
+
+/// Classic Block1 / Block2 access to Incoming / Outgoing Body Pools.
+///
+/// Present only when block-wise is enabled. [`Memory`] without body pools and
+/// `AllocMemory` built with `.block_wise(false)` return `None` /
+/// [`crate::BlockTransferError::NoBodyPools`]. See `design.md`.
+pub trait BodySlots {
+    /// Filled incoming body, if `id` is occupied.
+    fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
+
+    /// Filled outgoing body, if `id` is occupied.
+    fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
+
+    /// Incoming Block1 sidecar, if `id` holds a transfer.
+    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+
+    /// Outgoing Block2 sidecar, if `id` holds a transfer.
+    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+
+    /// Incoming body slot matching `key`, if any. O(n) in RX body occupancy.
+    fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId>;
+
+    /// Outgoing body slot matching `key`, if any. O(n) in TX body occupancy.
+    fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId>;
+
+    /// Admit a new incoming Block1 body (first block, typically NUM 0).
+    fn admit_block1(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
+    /// Write the next in-order incoming Block1 range into `id`.
+    fn write_block1(
+        &mut self,
+        id: SlotId,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit or continue incoming Block1 for `key`.
+    fn apply_block1(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit an outgoing Block2 body (complete body copied into a TX slot).
+    fn start_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
+    /// Issue the next in-order outgoing Block2 range from `id`.
+    fn next_block2(
+        &mut self,
+        id: SlotId,
+    ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
 }
