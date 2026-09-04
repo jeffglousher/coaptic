@@ -5,7 +5,9 @@
 //! [`Engine::decode_rx`] / [`Engine::encode_tx`] (and the TX/RX mirrors)
 //! glue those codecs to occupied datagram slots when the backend implements
 //! [`DatagramSlots`]. [`Engine::write_rx`] associates an [`Endpoint`] sidecar
-//! when RX bytes are written. They do not invent 4.02 / RST policy.
+//! when RX bytes are written. Pending CON state is sidecar on TX slots
+//! ([`PendingCon`]); empty ACK/RST matching is not the Dedup Table.
+//! They do not invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -15,6 +17,7 @@ mod endpoint;
 mod engine;
 mod memory;
 mod occupancy;
+mod pending;
 mod pool;
 pub mod profiles;
 mod slot;
@@ -33,6 +36,7 @@ pub use capacities::Capacities;
 pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
+pub use pending::{PendingCon, PendingCons};
 pub use pool::{BodyPool, DatagramPool};
 pub use slot::{SlotError, SlotId};
 pub use table::{DedupEntry, DedupKey, DedupTable, ObserveTable};
@@ -129,6 +133,26 @@ pub trait DatagramSlots {
 
     /// Set TX sidecar [`Endpoint`]. Not written into the byte buffer.
     fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
+
+    /// Pending CON Message ID on an occupied TX slot, if marked.
+    fn tx_pending_mid(&self, id: SlotId) -> Option<crate::message::MessageId>;
+
+    /// Mark occupied TX `id` as pending CON with `message_id`.
+    fn set_tx_pending(
+        &mut self,
+        id: SlotId,
+        message_id: crate::message::MessageId,
+    ) -> Result<(), SlotError>;
+
+    /// Clear the pending-CON mark on TX `id`. The slot stays occupied.
+    fn clear_tx_pending(&mut self, id: SlotId) -> Result<(), SlotError>;
+
+    /// Occupied TX slot pending for `message_id` and `endpoint`, if any.
+    fn lookup_tx_pending(
+        &self,
+        message_id: crate::message::MessageId,
+        endpoint: Endpoint,
+    ) -> Option<SlotId>;
 }
 
 /// Typed Dedup Table access.

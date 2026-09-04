@@ -5,16 +5,18 @@ use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
 use crate::error::SlotMessageError;
-use crate::message::{Message, ParsedMessage};
+use crate::message::{Message, MessageId, ParsedMessage};
 
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
 /// Each slot holds CoAP message bytes (UDP payload) plus sidecar [`Endpoint`]
-/// metadata. The endpoint is not stored in the byte buffer.
+/// metadata. On TX slots, an optional pending Message ID marks a CON waiting
+/// for ACK/RST. Neither sidecar is stored in the byte buffer.
 pub struct DatagramPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
     endpoints: [Option<Endpoint>; SLOTS],
+    pending_mids: [Option<MessageId>; SLOTS],
     occ: Occupancy<SLOTS>,
 }
 
@@ -26,6 +28,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
             bytes: [[0u8; BYTES]; SLOTS],
             lens: [0; SLOTS],
             endpoints: [None; SLOTS],
+            pending_mids: [None; SLOTS],
             occ: Occupancy::new(),
         }
     }
@@ -133,10 +136,61 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
         Ok(())
     }
 
+    /// Pending CON Message ID for an occupied slot, if marked.
+    #[must_use]
+    pub fn pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.pending_mids.get(id.index()).copied().flatten()
+    }
+
+    /// Mark occupied `id` as a pending CON with `message_id`.
+    pub fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.pending_mids[id.index()] = Some(message_id);
+        Ok(())
+    }
+
+    /// Clear the pending-CON mark. The slot stays occupied.
+    pub fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.pending_mids[id.index()] = None;
+        Ok(())
+    }
+
+    /// Occupied slot whose pending MID and sidecar endpoint match, if any.
+    ///
+    /// Scans the configured slot count (O(n)).
+    #[must_use]
+    pub fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        (0..SLOTS).find_map(|i| {
+            let id = SlotId::from_index(i);
+            if self.pending_mid(id) == Some(message_id) && self.endpoint(id) == Some(endpoint) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    }
+
     fn reset(&mut self, id: SlotId) {
         let idx = id.index();
         self.lens[idx] = 0;
         self.endpoints[idx] = None;
+        self.pending_mids[idx] = None;
     }
 }
 
@@ -187,6 +241,10 @@ pub(crate) trait DatagramBytes {
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
     fn endpoint(&self, id: SlotId) -> Option<Endpoint>;
     fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError>;
+    fn pending_mid(&self, id: SlotId) -> Option<MessageId>;
+    fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError>;
+    fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError>;
+    fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId>;
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
@@ -208,6 +266,22 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 
     fn set_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
         DatagramPool::set_endpoint(self, id, endpoint)
+    }
+
+    fn pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        DatagramPool::pending_mid(self, id)
+    }
+
+    fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        DatagramPool::set_pending_mid(self, id, message_id)
+    }
+
+    fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError> {
+        DatagramPool::clear_pending_mid(self, id)
+    }
+
+    fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        DatagramPool::lookup_pending(self, message_id, endpoint)
     }
 }
 

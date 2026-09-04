@@ -2,6 +2,7 @@
 
 ## 2026-09-04
 
+* **Update**: Empty ACK/RST constructors plus pending-CON matching as TX datagram sidecar (`PendingCon`: Message ID + remote Endpoint + TX `SlotId`). Dedup remains a separate identity. No seventh area; no `design.md` change. Retransmit / RTO / NSTART algorithms are not implemented (`Transmission` named constants only).
 * **Update**: Replaced the `Peer` placeholder with [`Endpoint`](../src/storage/endpoint.rs) (IPv4/IPv6 sidecar) and typed Dedup Table rows (`DedupKey` / `DedupEntry`: Message ID + remote Endpoint). No `design.md` change.
 * **Update**: Fixed-capacity `OptionsBuilder` for non-decreasing option encode; thin `Engine` ↔ message slot glue (`decode_rx` / `encode_tx` and mirrors). No `design.md` change.
 * **Update**: RFC 7252 §3.2 option value codecs on the library façade (`message::value`). Optional format check is separate from wire decode and from unrecognized-critical. No `design.md` change.

@@ -53,6 +53,30 @@ impl<'a> ParsedMessage<'a> {
         self.payload
     }
 
+    /// Empty message (code 0.00). Successful [`decode`] already rejected extra bytes.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.code().is_empty()
+    }
+
+    /// Empty ACK.
+    #[must_use]
+    pub const fn is_empty_ack(self) -> bool {
+        matches!(self.ty(), Type::Acknowledgement) && self.is_empty()
+    }
+
+    /// Empty RST.
+    #[must_use]
+    pub const fn is_empty_rst(self) -> bool {
+        matches!(self.ty(), Type::Reset) && self.is_empty()
+    }
+
+    /// Empty ACK or empty RST (the types that confirm or reject a pending CON).
+    #[must_use]
+    pub const fn is_empty_ack_or_rst(self) -> bool {
+        self.is_empty_ack() || self.is_empty_rst()
+    }
+
     /// Options in the message, in wire order.
     #[must_use]
     pub const fn options(self) -> Options<'a> {
