@@ -3,6 +3,7 @@
 //! Datagram and enabled-body **bytes** are locked in `knowledge/profiles.md`.
 //! Slot and table counts below are modest starting numbers.
 
+use super::exchange::ExchangeTable;
 use super::memory::MemoryProfile;
 use super::pool::{BodyPool, DatagramPool};
 use super::table::{DedupTable, ObserveTable};
@@ -35,6 +36,7 @@ macro_rules! impl_profile {
             type TxBody = BodyPool<$txb_n, $txb_b>;
             type Dedup = DedupTable<$dedup>;
             type Observe = ObserveTable<$obs>;
+            type Exchange = ExchangeTable<$tx_n>;
         }
 
         const _: () = {

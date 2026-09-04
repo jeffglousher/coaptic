@@ -971,7 +971,6 @@ mod alloc_backend {
     }
 
     #[test]
-    #[test]
     fn alloc_record_request_then_piggybacked_response() {
         let mut engine = build_alloc(false);
         let ep = Endpoint::v4([192, 0, 2, 12], 5683);
