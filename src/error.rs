@@ -240,3 +240,104 @@ impl std::error::Error for SlotMessageError {
         }
     }
 }
+
+/// Failure of a classic Block1 / Block2 body-slot transfer.
+///
+/// These are structured reports for the body-pool state machine. The library
+/// does not invent 4.02 / 4.08 / RST policy. See `design.md` (Incoming /
+/// Outgoing Body Slot) and `knowledge/rfcs/rfc7959.txt`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockTransferError {
+    /// Storage has no body pools (`.block_wise(false)`).
+    NoBodyPools,
+    /// Body pool is full; no slot can be admitted.
+    Saturated,
+    /// Slot addressing or occupancy failure.
+    Slot(SlotError),
+    /// Occupied body slot has no transfer sidecar.
+    NoTransfer,
+    /// Token or remote endpoint does not match the slot's transfer.
+    IdentityMismatch,
+    /// Block1 / Block2 option is missing from the datagram.
+    MissingBlock,
+    /// NUM is below the next expected block (already filled).
+    Overlap,
+    /// NUM is above the next expected block (classic Block is in-order).
+    Gap,
+    /// SZX differs from the SZX locked on the first block.
+    SzxMismatch,
+    /// Block range would exceed the body-slot byte capacity.
+    Overflow,
+    /// M=0 length does not match Size1 / Size2, or a block would exceed it.
+    LengthInconsistent,
+    /// Transfer already completed (M=0 accepted or last Block2 issued).
+    AlreadyComplete,
+    /// Payload length is not valid for this NUM / M / SZX.
+    PayloadLength,
+    /// Option-value decode failed (illegal SZX, NUM overflow, …).
+    Value(ValueError),
+    /// Occupied datagram is not a well-formed CoAP message.
+    Parse(ParseError),
+    /// Encoding a Block2 datagram failed.
+    Encode(EncodeError),
+}
+
+impl core::fmt::Display for BlockTransferError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoBodyPools => f.write_str("body pools are absent"),
+            Self::Saturated => f.write_str("body pool is saturated"),
+            Self::Slot(e) => write!(f, "{e}"),
+            Self::NoTransfer => f.write_str("body slot has no block transfer"),
+            Self::IdentityMismatch => f.write_str("block transfer identity does not match"),
+            Self::MissingBlock => f.write_str("Block1 or Block2 option is missing"),
+            Self::Overlap => f.write_str("block NUM overlaps an already filled range"),
+            Self::Gap => f.write_str("block NUM skips the next expected block"),
+            Self::SzxMismatch => f.write_str("block SZX does not match the transfer"),
+            Self::Overflow => f.write_str("block exceeds body slot capacity"),
+            Self::LengthInconsistent => f.write_str("completed length does not match Size1/Size2"),
+            Self::AlreadyComplete => f.write_str("block transfer is already complete"),
+            Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
+            Self::Value(e) => write!(f, "{e}"),
+            Self::Parse(e) => write!(f, "{e}"),
+            Self::Encode(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<SlotError> for BlockTransferError {
+    fn from(e: SlotError) -> Self {
+        Self::Slot(e)
+    }
+}
+
+impl From<ValueError> for BlockTransferError {
+    fn from(e: ValueError) -> Self {
+        Self::Value(e)
+    }
+}
+
+impl From<ParseError> for BlockTransferError {
+    fn from(e: ParseError) -> Self {
+        Self::Parse(e)
+    }
+}
+
+impl From<EncodeError> for BlockTransferError {
+    fn from(e: EncodeError) -> Self {
+        Self::Encode(e)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for BlockTransferError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Slot(e) => Some(e),
+            Self::Value(e) => Some(e),
+            Self::Parse(e) => Some(e),
+            Self::Encode(e) => Some(e),
+            _ => None,
+        }
+    }
+}

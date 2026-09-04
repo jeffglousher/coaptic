@@ -1,5 +1,6 @@
 //! [`Engine`]: acquire / release / rotate against [`Storage`].
 
+use super::BodySlots;
 use super::Capacities;
 use super::DatagramSlots;
 use super::DedupEntry;
@@ -17,13 +18,15 @@ use super::PendingCons;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
-use crate::error::SlotMessageError;
-use crate::message::{Message, MessageId, ParsedMessage, Token};
+use super::block::{BlockKey, BlockProgress, BlockTransfer, OutgoingBlock};
+use crate::error::{BlockTransferError, SlotMessageError};
+use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, Token, Type};
 
 /// Protocol engine, generic over [`Storage`].
 ///
-/// Storage engine: occupancy, acquire/release, and rotating cursors.
-/// Protocol state machines are not implemented.
+/// Storage engine: occupancy, acquire/release, rotating cursors, and classic
+/// Block1 / Block2 body-slot assembly when `S` implements [`BodySlots`].
+/// Q-Block multi-window, BERT, Observe notify, and RTO are not implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -38,10 +41,13 @@ use crate::message::{Message, MessageId, ParsedMessage, Token};
 /// response. Empty ACK (code 0.00) is not a token-matching response;
 /// a piggybacked ACK with a response code is. When `S` implements
 /// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
-/// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). Dedup,
-/// pending CON, exchange matching, and Observe interest are different
-/// identities. Optional format and unrecognized-critical checks stay on
-/// [`ParsedMessage`]. This type does not invent 4.02 / RST policy.
+/// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
+/// implements [`BodySlots`], incoming Block1 assembles into the Incoming
+/// Body Pool and outgoing Block2 slices the Outgoing Body Pool. Dedup,
+/// pending CON, exchange matching, Observe interest, and body-slot
+/// transfers are different identities. Optional format and
+/// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
+/// not invent 4.02 / 4.08 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
@@ -610,6 +616,180 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             return Ok(None);
         }
         Ok(self.storage.take_observe(ObserveKey::new(token, endpoint)))
+    }
+}
+
+impl<S: Storage + BodySlots> Engine<S> {
+    /// Filled incoming body bytes, if `id` is occupied.
+    #[must_use]
+    pub fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.storage.rx_body_payload(id)
+    }
+
+    /// Filled outgoing body bytes, if `id` is occupied.
+    #[must_use]
+    pub fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.storage.tx_body_payload(id)
+    }
+
+    /// Incoming Block1 sidecar on `id`.
+    #[must_use]
+    pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        self.storage.rx_body_transfer(id)
+    }
+
+    /// Outgoing Block2 sidecar on `id`.
+    #[must_use]
+    pub fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        self.storage.tx_body_transfer(id)
+    }
+
+    /// Incoming body slot matching `key`, if any.
+    #[must_use]
+    pub fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
+        self.storage.lookup_rx_body(key)
+    }
+
+    /// Outgoing body slot matching `key`, if any.
+    #[must_use]
+    pub fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
+        self.storage.lookup_tx_body(key)
+    }
+
+    /// Admit a new incoming Block1 body when the first block arrives.
+    ///
+    /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
+    /// `size1` is the Size1 hint when present. See `design.md` and
+    /// `knowledge/rfcs/rfc7959.txt`.
+    pub fn admit_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.admit_block1(key, block, payload, size1)
+    }
+
+    /// Write the next in-order incoming Block1 range into `id`.
+    ///
+    /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
+    /// Size1. Does not invent 4.08 policy.
+    pub fn write_block1(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.write_block1(id, block, payload)
+    }
+
+    /// Admit or continue incoming Block1 for `key`.
+    pub fn apply_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.apply_block1(key, block, payload, size1)
+    }
+
+    /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
+    ///
+    /// Copies the datagram payload into the body slot (datagram RX stays
+    /// separate). Missing Block1 is [`BlockTransferError::MissingBlock`].
+    pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
+        let (token, block, size1, n) = {
+            let parsed =
+                crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
+            let block = match parsed.block1() {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err(BlockTransferError::MissingBlock),
+            };
+            let size1 = match parsed.size1() {
+                Some(Ok(n)) => Some(n),
+                Some(Err(e)) => return Err(e.into()),
+                None => None,
+            };
+            let payload = parsed.payload();
+            if payload.len() > tmp.len() {
+                return Err(BlockTransferError::PayloadLength);
+            }
+            tmp[..payload.len()].copy_from_slice(payload);
+            (parsed.token(), block, size1, payload.len())
+        };
+        self.apply_block1(BlockKey::new(token, endpoint), block, &tmp[..n], size1)
+    }
+
+    /// Copy a complete body into an Outgoing Body Slot and start Block2.
+    pub fn start_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_block2(key, body, szx)
+    }
+
+    /// Issue the next in-order outgoing Block2 range. Bytes stay in the body slot.
+    pub fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_block2(id)
+    }
+
+    /// Issue the next Block2 and encode it into occupied TX `tx_id`.
+    ///
+    /// Token and remote endpoint come from the body-slot sidecar. The caller
+    /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    pub fn encode_block2_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_block2(body_id)?;
+        let transfer = self
+            .storage
+            .tx_body_transfer(body_id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
+        let payload = self
+            .storage
+            .tx_body_payload(body_id)
+            .ok_or(SlotError::NotOccupied)?;
+        let end = issued
+            .offset()
+            .checked_add(issued.len())
+            .ok_or(BlockTransferError::Overflow)?;
+        if end > payload.len() || issued.len() > tmp.len() {
+            return Err(BlockTransferError::Overflow);
+        }
+        tmp[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+        let encoded = issued.block().encode();
+        let opts = [Opt::block2(&encoded)];
+        let msg = Message::new(ty, code, message_id)
+            .with_token(transfer.token())
+            .with_options(&opts)
+            .with_payload(&tmp[..issued.len()]);
+        let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
+            SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
+            SlotMessageError::Parse(p) => BlockTransferError::Parse(p),
+            SlotMessageError::Encode(enc) => BlockTransferError::Encode(enc),
+        })?;
+        self.storage.set_tx_len(tx_id, n)?;
+        self.storage.set_tx_endpoint(tx_id, transfer.endpoint())?;
+        Ok(issued)
     }
 }
 

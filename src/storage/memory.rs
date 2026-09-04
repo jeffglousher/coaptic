@@ -1,5 +1,6 @@
 //! `no_std` [`Memory`] backend: typed arrays sized by [`MemoryProfile`].
 
+use super::BodySlots;
 use super::DatagramSlots;
 use super::DedupEntry;
 use super::DedupKey;
@@ -17,11 +18,13 @@ use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
 use super::Storage;
+use super::block::{BlockKey, BlockProgress, BlockTransfer, BodyOps, OutgoingBlock};
 use super::capacities::{Capacities, bytes_ok};
 use super::exchange::ExchangeStore;
 use super::pool::DatagramBytes;
 use super::table::{DedupStore, ObserveStore};
-use crate::message::MessageId;
+use crate::error::BlockTransferError;
+use crate::message::{BlockValue, MessageId};
 
 /// Named associated constants for the areas present in [`Memory`].
 ///
@@ -458,6 +461,146 @@ where
 
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
         self.observe.entry(id)
+    }
+}
+
+impl<P: MemoryProfile> BodySlots for Memory<P> {
+    fn rx_body_payload(&self, _id: SlotId) -> Option<&[u8]> {
+        None
+    }
+
+    fn tx_body_payload(&self, _id: SlotId) -> Option<&[u8]> {
+        None
+    }
+
+    fn rx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer> {
+        None
+    }
+
+    fn tx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer> {
+        None
+    }
+
+    fn lookup_rx_body(&self, _key: BlockKey) -> Option<SlotId> {
+        None
+    }
+
+    fn lookup_tx_body(&self, _key: BlockKey) -> Option<SlotId> {
+        None
+    }
+
+    fn admit_block1(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn write_block1(
+        &mut self,
+        _id: SlotId,
+        _block: BlockValue,
+        _payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn apply_block1(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn start_block2(
+        &mut self,
+        _key: BlockKey,
+        _body: &[u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn next_block2(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+}
+
+impl<P: MemoryProfile> BodySlots for Memory<P, WithBodies<P>>
+where
+    P::RxBody: BodyOps,
+    P::TxBody: BodyOps,
+{
+    fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.bodies.rx.payload(id)
+    }
+
+    fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.bodies.tx.payload(id)
+    }
+
+    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        self.bodies.rx.transfer(id)
+    }
+
+    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+        self.bodies.tx.transfer(id)
+    }
+
+    fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
+        self.bodies.rx.lookup(key)
+    }
+
+    fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
+        self.bodies.tx.lookup(key)
+    }
+
+    fn admit_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies.rx.admit_incoming(key, block, payload, size1)
+    }
+
+    fn write_block1(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies.rx.write_incoming(id, block, payload)
+    }
+
+    fn apply_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies.rx.apply_incoming(key, block, payload, size1)
+    }
+
+    fn start_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies.tx.start_outgoing(key, body, szx)
+    }
+
+    fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies.tx.next_outgoing(id)
     }
 }
 

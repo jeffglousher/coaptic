@@ -21,7 +21,10 @@
 //! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
 //! TX pool count (not a seventh area). Observe interest ([`ObserveInterest`])
 //! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]).
-//! OSCORE, DTLS, and plugtest harnesses are out of scope here.
+//! Classic Block1 / Block2 body assembly uses a [`BlockTransfer`] sidecar on
+//! Incoming / Outgoing Body Pool slots when `.block_wise(true)` (Token +
+//! remote [`Endpoint`]; see `design.md`). Q-Block multi-window, BERT, and
+//! plugtest are out of scope here. OSCORE and DTLS are also out of scope.
 //!
 //! # Message
 //!
@@ -38,7 +41,9 @@
 //! seventh area and not the Dedup Table. Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
-//! [`ObserveInterest`] rows. Optional format/critical checks
+//! [`ObserveInterest`] rows. Classic incoming Block1 / outgoing Block2
+//! assemble or slice complete bodies in body-pool slots ([`BlockTransfer`])
+//! when [`BodySlots`] is implemented. Optional format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes
@@ -99,7 +104,10 @@ pub mod storage;
 
 pub use storage::profiles;
 
-pub use error::{BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
+pub use error::{
+    BlockTransferError, BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError,
+    ValueError,
+};
 pub use message::{
     BlockValue, Code, ContentFormat, EncodedUint, Header, Message, MessageId, OBSERVE_DEREGISTER,
     OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber, OptionValueFormat, Options,
@@ -110,9 +118,9 @@ pub use message::{
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    BodyPool, Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots,
-    DedupTable, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable,
-    Exchanges, Memory, MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots,
-    ObserveTable, PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage,
-    WithBodies,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyPool, BodySlots, Capacities,
+    DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable, Endpoint, Engine,
+    EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory, MemoryProfile,
+    Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable, OutgoingBlock,
+    PendingCon, PendingCons, Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
 };
