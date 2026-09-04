@@ -1481,6 +1481,173 @@ fn block2_szx_mismatch_and_release() {
     assert!(engine.lookup_rx_body(key).is_none());
 }
 
+#[test]
+fn q_block1_out_of_order_then_complete() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 1) as u8);
+    let b2 = BlockValue::from_size(2, false, 16).expect("2");
+    let p2 = engine
+        .apply_q_block1(key, b2, &body[32..], Some(40))
+        .expect("num 2");
+    assert!(!p2.complete());
+    assert_eq!(p2.filled(), 0);
+    assert_eq!(engine.rx_body_payload(p2.id()), Some(&body[..0]));
+
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let p0 = engine
+        .apply_q_block1(key, b0, &body[..16], Some(40))
+        .expect("num 0");
+    assert_eq!(p0.filled(), 16);
+    assert_eq!(engine.rx_body_payload(p0.id()), Some(&body[..16]));
+
+    let b1 = BlockValue::from_size(1, true, 16).expect("1");
+    let done = engine
+        .apply_q_block1(key, b1, &body[16..32], Some(40))
+        .expect("num 1");
+    assert!(done.complete());
+    assert_eq!(done.filled(), 40);
+    assert_eq!(engine.rx_body_payload(done.id()), Some(body.as_slice()));
+    let t = engine.rx_body_transfer(done.id()).expect("sidecar");
+    assert_eq!(t.role(), BlockRole::IncomingQBlock1);
+    assert!(t.is_q_block());
+}
+
+#[test]
+fn q_block1_duplicate_and_outside_window() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let first = BlockValue::from_size(0, true, 16).expect("0");
+    engine
+        .apply_q_block1(key, first, &[0u8; 16], None)
+        .expect("first");
+    assert_eq!(
+        engine.apply_q_block1(key, first, &[0u8; 16], None),
+        Err(BlockTransferError::Duplicate)
+    );
+    let outside = BlockValue::from_size(u32::from(crate::BlockTransfer::MAX_PAYLOADS), true, 16)
+        .expect("next window");
+    assert_eq!(
+        engine.apply_q_block1(key, outside, &[0u8; 16], None),
+        Err(BlockTransferError::OutsideWindow)
+    );
+}
+
+#[test]
+fn q_block2_two_windows_complete() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0x31]), Endpoint::v4([192, 0, 2, 31], 5683));
+    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS) + 1;
+    let expected = (last as usize) * 16 + 8;
+    let body: [u8; 184] = core::array::from_fn(|i| (i % 251) as u8);
+    assert_eq!(body.len(), expected);
+
+    for n in 0..crate::BlockTransfer::MAX_PAYLOADS {
+        let off = usize::from(n) * 16;
+        let block = BlockValue::from_size(u32::from(n), true, 16).expect("w0");
+        engine
+            .apply_q_block2(key, block, &body[off..off + 16], Some(expected as u32))
+            .expect("window 0");
+    }
+    let t = engine
+        .rx_body_transfer(engine.lookup_rx_body(key).expect("id"))
+        .expect("sidecar");
+    assert_eq!(
+        t.window_base(),
+        u32::from(crate::BlockTransfer::MAX_PAYLOADS)
+    );
+    assert_eq!(t.role(), BlockRole::IncomingQBlock2);
+
+    let final_off = (last as usize) * 16;
+    let last_block = BlockValue::from_size(last, false, 16).expect("m0");
+    engine
+        .apply_q_block2(key, last_block, &body[final_off..], Some(expected as u32))
+        .expect("final");
+    let mid =
+        BlockValue::from_size(u32::from(crate::BlockTransfer::MAX_PAYLOADS), true, 16).expect("10");
+    let mid_off = usize::from(crate::BlockTransfer::MAX_PAYLOADS) * 16;
+    let done = engine
+        .apply_q_block2(
+            key,
+            mid,
+            &body[mid_off..mid_off + 16],
+            Some(expected as u32),
+        )
+        .expect("gap");
+    assert!(done.complete());
+    assert_eq!(engine.rx_body_payload(done.id()), Some(body.as_slice()));
+}
+
+#[test]
+fn q_block_absent_when_block_wise_false() {
+    let mut engine = build_default();
+    let key = block_key();
+    let block = BlockValue::from_size(0, false, 16).expect("16");
+    assert_eq!(
+        engine.apply_q_block1(key, block, b"x", None),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert_eq!(
+        engine.apply_q_block2(key, block, b"x", None),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert!(!engine.has_body_pools());
+}
+
+#[test]
+fn q_block1_apply_from_rx_datagram() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 19], 5683);
+    let token = sample_token(&[0xb1]);
+    let payload = b"q-block";
+    let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
+    let size1 = crate::encode_uint(payload.len() as u32);
+    let opts = [Opt::q_block1(&blk), Opt::size1(&size1)];
+    let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(11))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(payload);
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let progress = engine.apply_q_block1_rx(rx).expect("apply");
+    assert!(progress.complete());
+    assert_eq!(
+        engine.rx_body_payload(progress.id()),
+        Some(payload.as_slice())
+    );
+    assert_eq!(
+        engine.lookup_rx_body(BlockKey::new(token, ep)),
+        Some(progress.id())
+    );
+}
+
+#[test]
+fn q_block2_apply_from_rx_datagram() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 20], 5683);
+    let token = sample_token(&[0xb2]);
+    let payload = b"q2-body";
+    let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
+    let size2 = crate::encode_uint(payload.len() as u32);
+    let opts = [Opt::size2(&size2), Opt::q_block2(&blk)];
+    let msg = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(12))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(payload);
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let progress = engine.apply_q_block2_rx(rx).expect("apply");
+    assert!(progress.complete());
+    assert_eq!(
+        engine.rx_body_payload(progress.id()),
+        Some(payload.as_slice())
+    );
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;

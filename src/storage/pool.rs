@@ -1,7 +1,10 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
 use super::SlotPool;
-use super::block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, write_range};
+use super::block::{
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, accept_incoming_role,
+    block_offset, start_incoming, store_incoming, write_range,
+};
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
@@ -291,8 +294,8 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 /// Independent of datagram slot size. Capacity is in bytes and must be a
 /// multiple of 1024 when constructed through the engine builder.
 ///
-/// Each occupied slot may hold a [`BlockTransfer`] sidecar (classic Block1 /
-/// Block2). See `design.md` Incoming / Outgoing Body Slot.
+/// Each occupied slot may hold a [`BlockTransfer`] sidecar (classic Block or
+/// incoming Q-Block). See `design.md` Incoming / Outgoing Body Slot.
 pub struct BodyPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
@@ -373,10 +376,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         })
     }
 
-    /// Admit an incoming Block1 / Block2 body: acquire a slot and write the first block.
+    /// Admit an incoming Block / Q-Block body: acquire a slot and write the first block.
     ///
-    /// Classic Block starts at NUM 0. Subsequent blocks use
-    /// [`Self::write_incoming`]. `role` must be incoming.
+    /// Classic Block starts at NUM 0. Q-Block may start with any NUM in window
+    /// 0. Subsequent blocks use [`Self::write_incoming`]. `role` must be incoming.
     pub fn admit_incoming(
         &mut self,
         key: BlockKey,
@@ -385,11 +388,22 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<SlotId, BlockTransferError> {
-        let transfer =
-            BlockTransfer::incoming(key, role, block, payload.len(), BYTES, expected_len)?;
+        let transfer = start_incoming(key, role, block, payload.len(), BYTES, expected_len)?;
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
         let idx = id.index();
-        if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, payload) {
+        let offset = if role.is_q_block() {
+            block_offset(block.num(), usize::from(block.size()))?
+        } else {
+            0
+        };
+        let contiguous = role.is_q_block().then_some(transfer.filled());
+        if let Err(e) = store_incoming(
+            &mut self.bytes[idx],
+            &mut self.lens[idx],
+            offset,
+            payload,
+            contiguous,
+        ) {
             let _ = self.release(id);
             return Err(e);
         }
@@ -397,9 +411,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Ok(id)
     }
 
-    /// Write the next in-order incoming range into `id`.
+    /// Write the next incoming range into `id`.
     ///
-    /// `role` must match the slot's transfer.
+    /// Classic Block is in-order. Q-Block allows out-of-order NUMs in the
+    /// current window. `role` must match the slot's transfer.
     pub fn write_incoming(
         &mut self,
         id: SlotId,
@@ -422,9 +437,20 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
             if transfer.role() != role {
                 return Err(BlockTransferError::IdentityMismatch);
             }
-            transfer.accept_incoming(block, payload.len(), BYTES)?
+            accept_incoming_role(transfer, block, payload.len(), BYTES)?
         };
-        write_range(&mut self.bytes[idx], &mut self.lens[idx], offset, payload)?;
+        let contiguous = role.is_q_block().then_some(
+            self.transfers[idx]
+                .ok_or(BlockTransferError::NoTransfer)?
+                .filled(),
+        );
+        store_incoming(
+            &mut self.bytes[idx],
+            &mut self.lens[idx],
+            offset,
+            payload,
+            contiguous,
+        )?;
         let transfer = self.transfers[idx].ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,

@@ -13,8 +13,9 @@
 //! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
 //! key). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
 //! sidecar on body-pool slots when block-wise is enabled (incoming
-//! Block1/Block2, outgoing Block1/Block2). They do not invent 4.02 / RST
-//! policy.
+//! Block1/Block2, outgoing Block1/Block2). Incoming Q-Block1 / Q-Block2
+//! reuse the same slots with a `MAX_PAYLOADS` window. They do not invent
+//! 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -213,13 +214,13 @@ pub trait ObserveSlots {
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest>;
 }
 
-/// Classic Block1 / Block2 access to Incoming / Outgoing Body Pools.
+/// Classic Block and incoming Q-Block access to Incoming / Outgoing Body Pools.
 ///
 /// Present only when block-wise is enabled. [`Memory`] without body pools and
 /// `AllocMemory` built with `.block_wise(false)` return `None` /
-/// [`crate::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 use
-/// the Incoming Body Pool; outgoing Block1 / Block2 use the Outgoing Body
-/// Pool. See `design.md`.
+/// [`crate::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 /
+/// Q-Block1 / Q-Block2 use the Incoming Body Pool; outgoing Block1 / Block2
+/// use the Outgoing Body Pool. See `design.md`.
 pub trait BodySlots {
     /// Filled incoming body, if `id` is occupied.
     fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
@@ -284,6 +285,58 @@ pub trait BodySlots {
 
     /// Admit or continue incoming Block2 for `key`.
     fn apply_block2(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit a new incoming Q-Block1 body (first block in window 0).
+    fn admit_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
+    /// Write one incoming Q-Block1 range into `id` (out-of-order in-window).
+    fn write_q_block1(
+        &mut self,
+        id: SlotId,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit or continue incoming Q-Block1 for `key`.
+    fn apply_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit a new incoming Q-Block2 body (first block in window 0).
+    fn admit_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
+    /// Write one incoming Q-Block2 range into `id` (out-of-order in-window).
+    fn write_q_block2(
+        &mut self,
+        id: SlotId,
+        block: crate::message::BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Admit or continue incoming Q-Block2 for `key`.
+    fn apply_q_block2(
         &mut self,
         key: BlockKey,
         block: crate::message::BlockValue,

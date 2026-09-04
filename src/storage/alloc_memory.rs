@@ -21,7 +21,8 @@ use super::PendingCons;
 use super::SlotPool;
 use super::Storage;
 use super::block::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, OutgoingBlock, write_range,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, OutgoingBlock,
+    accept_incoming_role, block_offset, start_incoming, store_incoming, write_range,
 };
 use super::capacities::Capacities;
 use super::exchange::ExchangeStore;
@@ -521,6 +522,82 @@ impl BodySlots for AllocMemory {
             .apply_incoming(key, BlockRole::IncomingBlock2, block, payload, size2)
     }
 
+    fn admit_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .admit_incoming(key, BlockRole::IncomingQBlock1, block, payload, size1)
+    }
+
+    fn write_q_block1(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .write_incoming(id, BlockRole::IncomingQBlock1, block, payload)
+    }
+
+    fn apply_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .apply_incoming(key, BlockRole::IncomingQBlock1, block, payload, size1)
+    }
+
+    fn admit_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .admit_incoming(key, BlockRole::IncomingQBlock2, block, payload, size2)
+    }
+
+    fn write_q_block2(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .write_incoming(id, BlockRole::IncomingQBlock2, block, payload)
+    }
+
+    fn apply_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .apply_incoming(key, BlockRole::IncomingQBlock2, block, payload, size2)
+    }
+
     fn start_block1(
         &mut self,
         key: BlockKey,
@@ -651,7 +728,7 @@ impl AllocBodyPool {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<SlotId, BlockTransferError> {
-        let transfer = BlockTransfer::incoming(
+        let transfer = start_incoming(
             key,
             role,
             block,
@@ -660,9 +737,15 @@ impl AllocBodyPool {
             expected_len,
         )?;
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
+        let offset = if role.is_q_block() {
+            block_offset(block.num(), usize::from(block.size()))?
+        } else {
+            0
+        };
+        let contiguous = role.is_q_block().then_some(transfer.filled());
         let write_err = {
             let slot = &mut self.slots[id.index()];
-            write_range(&mut slot.buf, &mut slot.len, 0, payload).err()
+            store_incoming(&mut slot.buf, &mut slot.len, offset, payload, contiguous).err()
         };
         if let Some(e) = write_err {
             let _ = self.release(id);
@@ -695,10 +778,16 @@ impl AllocBodyPool {
             if transfer.role() != role {
                 return Err(BlockTransferError::IdentityMismatch);
             }
-            transfer.accept_incoming(block, payload.len(), slot_bytes)?
+            accept_incoming_role(transfer, block, payload.len(), slot_bytes)?
         };
+        let contiguous = role.is_q_block().then_some(
+            self.slots[id.index()]
+                .transfer
+                .ok_or(BlockTransferError::NoTransfer)?
+                .filled(),
+        );
         let slot = &mut self.slots[id.index()];
-        write_range(&mut slot.buf, &mut slot.len, offset, payload)?;
+        store_incoming(&mut slot.buf, &mut slot.len, offset, payload, contiguous)?;
         let transfer = slot.transfer.ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,

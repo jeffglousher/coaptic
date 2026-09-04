@@ -1,9 +1,11 @@
-//! Classic Block1 / Block2 transfer sidecar for a body slot.
+//! Block / Q-Block transfer sidecar for a body slot.
 //!
 //! Each occupied Incoming / Outgoing Body Slot holds one contiguous body and
-//! the Block state for that body (`design.md`). Individual CoAP messages stay
-//! in ordinary datagram slots. Q-Block multi-window, BERT, and random-access
-//! recovery are out of scope. See `knowledge/rfcs/rfc7959.txt`.
+//! the Block or Q-Block state for that body (`design.md`). Individual CoAP
+//! messages stay in ordinary datagram slots. Incoming Q-Block1 / Q-Block2
+//! use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10). BERT,
+//! Q-Block transmit, and random-access recovery are out of scope. See
+//! `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
 
 use super::endpoint::Endpoint;
 use super::slot::SlotId;
@@ -48,6 +50,10 @@ pub enum BlockRole {
     IncomingBlock1,
     /// Incoming Block2: server → client response body.
     IncomingBlock2,
+    /// Incoming Q-Block1: client → server request body (RFC 9177 window).
+    IncomingQBlock1,
+    /// Incoming Q-Block2: server → client response body (RFC 9177 window).
+    IncomingQBlock2,
     /// Outgoing Block1: client → server request body.
     OutgoingBlock1,
     /// Outgoing Block2: server → client response body.
@@ -55,16 +61,28 @@ pub enum BlockRole {
 }
 
 impl BlockRole {
-    /// Incoming Block1 or incoming Block2 (RX body pool).
+    /// Incoming Block1 / Block2 / Q-Block1 / Q-Block2 (RX body pool).
     #[must_use]
     pub const fn is_incoming(self) -> bool {
-        matches!(self, Self::IncomingBlock1 | Self::IncomingBlock2)
+        matches!(
+            self,
+            Self::IncomingBlock1
+                | Self::IncomingBlock2
+                | Self::IncomingQBlock1
+                | Self::IncomingQBlock2
+        )
     }
 
     /// Outgoing Block1 or outgoing Block2 (TX body pool).
     #[must_use]
     pub const fn is_outgoing(self) -> bool {
         matches!(self, Self::OutgoingBlock1 | Self::OutgoingBlock2)
+    }
+
+    /// Incoming Q-Block1 or incoming Q-Block2.
+    #[must_use]
+    pub const fn is_q_block(self) -> bool {
+        matches!(self, Self::IncomingQBlock1 | Self::IncomingQBlock2)
     }
 }
 
@@ -168,11 +186,21 @@ impl OutgoingBlock {
     }
 }
 
+/// Current Q-Block `MAX_PAYLOADS_SET` (RFC 9177 §2 / §7.2).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct QWindow {
+    base: u32,
+    mask: u16,
+    final_num: Option<u32>,
+    final_payload_len: u16,
+}
+
 /// Block transfer sidecar stored next to one body-slot buffer.
 ///
-/// Classic Block is in-order: the next NUM must be [`Self::next_num`]. Q-Block
-/// windows are not represented here. See `design.md` and
-/// `knowledge/rfcs/rfc7959.txt`.
+/// Classic Block is in-order: the next NUM must be [`Self::next_num`]. Incoming
+/// Q-Block tracks a [`Self::MAX_PAYLOADS`]-wide bitmap on the current window
+/// and allows out-of-order NUMs inside that window. See `design.md`,
+/// `knowledge/rfcs/rfc7959.txt`, and `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockTransfer {
     key: BlockKey,
@@ -184,9 +212,13 @@ pub struct BlockTransfer {
     filled: usize,
     complete: bool,
     expected_len: Option<u32>,
+    q: Option<QWindow>,
 }
 
 impl BlockTransfer {
+    /// RFC 9177 §7.2 default `MAX_PAYLOADS`; this crate's receive window size.
+    pub const MAX_PAYLOADS: u8 = 10;
+
     /// Incoming sidecar after the first accepted block.
     ///
     /// `role` must be [`BlockRole::IncomingBlock1`] or
@@ -199,7 +231,7 @@ impl BlockTransfer {
         capacity: usize,
         expected_len: Option<u32>,
     ) -> Result<Self, BlockTransferError> {
-        if !role.is_incoming() {
+        if !role.is_incoming() || role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
         }
         if block.num() != 0 {
@@ -215,6 +247,7 @@ impl BlockTransfer {
             filled: 0,
             complete: false,
             expected_len,
+            q: None,
         };
         transfer.accept_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -256,6 +289,79 @@ impl BlockTransfer {
         )
     }
 
+    /// Incoming Q-Block sidecar after the first accepted block.
+    ///
+    /// `role` must be [`BlockRole::IncomingQBlock1`] or
+    /// [`BlockRole::IncomingQBlock2`]. The first datagram may be any NUM in
+    /// window 0 (`0..MAX_PAYLOADS`). See `knowledge/rfcs/rfc9177.txt`.
+    pub fn incoming_q(
+        key: BlockKey,
+        role: BlockRole,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+        expected_len: Option<u32>,
+    ) -> Result<Self, BlockTransferError> {
+        if !role.is_q_block() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let mut transfer = Self {
+            key,
+            role,
+            num: 0,
+            szx: block.szx(),
+            more: block.more(),
+            next_num: 0,
+            filled: 0,
+            complete: false,
+            expected_len,
+            q: Some(QWindow {
+                base: 0,
+                mask: 0,
+                final_num: None,
+                final_payload_len: 0,
+            }),
+        };
+        transfer.accept_q_incoming(block, payload_len, capacity)?;
+        Ok(transfer)
+    }
+
+    /// Incoming Q-Block1 sidecar after the first accepted block.
+    pub fn incoming_q_block1(
+        key: BlockKey,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+        expected_len: Option<u32>,
+    ) -> Result<Self, BlockTransferError> {
+        Self::incoming_q(
+            key,
+            BlockRole::IncomingQBlock1,
+            block,
+            payload_len,
+            capacity,
+            expected_len,
+        )
+    }
+
+    /// Incoming Q-Block2 sidecar after the first accepted block.
+    pub fn incoming_q_block2(
+        key: BlockKey,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+        expected_len: Option<u32>,
+    ) -> Result<Self, BlockTransferError> {
+        Self::incoming_q(
+            key,
+            BlockRole::IncomingQBlock2,
+            block,
+            payload_len,
+            capacity,
+            expected_len,
+        )
+    }
+
     /// Outgoing sidecar for a complete body already in the slot.
     ///
     /// `role` must be [`BlockRole::OutgoingBlock1`] or
@@ -285,6 +391,7 @@ impl BlockTransfer {
                 filled: body_len,
                 complete: false,
                 expected_len: Some(len),
+                q: None,
             })
         } else {
             Err(BlockTransferError::Overflow)
@@ -329,10 +436,16 @@ impl BlockTransfer {
         self.key.endpoint()
     }
 
-    /// Incoming or outgoing Block1 / Block2 role.
+    /// Incoming or outgoing Block / Q-Block role.
     #[must_use]
     pub const fn role(self) -> BlockRole {
         self.role
+    }
+
+    /// Whether this sidecar is an incoming Q-Block window.
+    #[must_use]
+    pub const fn is_q_block(self) -> bool {
+        self.role.is_q_block()
     }
 
     /// Last accepted (incoming) or last issued (outgoing) NUM.
@@ -377,6 +490,24 @@ impl BlockTransfer {
         self.expected_len
     }
 
+    /// First NUM of the current Q-Block window (`MAX_PAYLOADS_SET`).
+    #[must_use]
+    pub const fn window_base(self) -> u32 {
+        match self.q {
+            Some(q) => q.base,
+            None => 0,
+        }
+    }
+
+    /// Bitmask of received NUMs in the current window (`bit i` is `base + i`).
+    #[must_use]
+    pub const fn window_mask(self) -> u16 {
+        match self.q {
+            Some(q) => q.mask,
+            None => 0,
+        }
+    }
+
     /// Accept one in-order incoming block. Returns the write offset.
     pub fn accept_incoming(
         &mut self,
@@ -384,7 +515,7 @@ impl BlockTransfer {
         payload_len: usize,
         capacity: usize,
     ) -> Result<usize, BlockTransferError> {
-        if !self.role.is_incoming() {
+        if !self.role.is_incoming() || self.role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
         }
         if self.complete {
@@ -434,6 +565,126 @@ impl BlockTransfer {
         Ok(offset)
     }
 
+    /// Accept one incoming Q-Block in the current window. Returns the write offset.
+    ///
+    /// Out-of-order NUMs inside `[window_base, window_base + MAX_PAYLOADS)` are
+    /// stored. Duplicates and NUMs outside that window are rejected. The window
+    /// advances when every slot in the current `MAX_PAYLOADS_SET` is filled.
+    /// The body completes when the M=0 block is stored and the prefix has no
+    /// gaps. See `knowledge/rfcs/rfc9177.txt`.
+    pub fn accept_q_incoming(
+        &mut self,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+    ) -> Result<usize, BlockTransferError> {
+        if !self.role.is_q_block() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        if self.complete {
+            return Err(BlockTransferError::AlreadyComplete);
+        }
+        if block.szx() != self.szx {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+
+        let expected_len = self.expected_len;
+        let q = self
+            .q
+            .as_mut()
+            .ok_or(BlockTransferError::IdentityMismatch)?;
+        if block.num() < q.base {
+            return Err(BlockTransferError::Duplicate);
+        }
+        let idx = block.num() - q.base;
+        if idx >= u32::from(Self::MAX_PAYLOADS) {
+            return Err(BlockTransferError::OutsideWindow);
+        }
+        let bit = 1u16 << idx;
+        if q.mask & bit != 0 {
+            return Err(BlockTransferError::Duplicate);
+        }
+        if let Some(final_num) = q.final_num {
+            if block.num() > final_num {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
+        }
+        if !block.more() {
+            let after = idx.saturating_add(1);
+            if after < u32::from(Self::MAX_PAYLOADS) && (q.mask >> after) != 0 {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
+        }
+
+        let size = usize::from(block.size());
+        if block.more() {
+            if payload_len != size {
+                return Err(BlockTransferError::PayloadLength);
+            }
+        } else if payload_len > size {
+            return Err(BlockTransferError::PayloadLength);
+        }
+        let final_payload_len =
+            u16::try_from(payload_len).map_err(|_| BlockTransferError::Overflow)?;
+
+        let offset = block_offset(block.num(), size)?;
+        let end = offset
+            .checked_add(payload_len)
+            .ok_or(BlockTransferError::Overflow)?;
+        if end > capacity {
+            return Err(BlockTransferError::Overflow);
+        }
+        if let Some(expected) = expected_len {
+            let expected = usize::try_from(expected).map_err(|_| BlockTransferError::Overflow)?;
+            if end > expected || (!block.more() && end != expected) {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
+        }
+
+        q.mask |= bit;
+        if !block.more() {
+            q.final_num = Some(block.num());
+            q.final_payload_len = final_payload_len;
+        }
+
+        let window_full = (1u16 << Self::MAX_PAYLOADS) - 1;
+        while q.mask == window_full && q.final_num.is_none() {
+            q.base = q
+                .base
+                .checked_add(u32::from(Self::MAX_PAYLOADS))
+                .ok_or(BlockTransferError::Overflow)?;
+            q.mask = 0;
+        }
+
+        let contig = q
+            .base
+            .checked_add(q.mask.trailing_ones())
+            .ok_or(BlockTransferError::Overflow)?;
+        if let Some(final_num) = q.final_num {
+            if contig > final_num {
+                self.filled = block_offset(final_num, size)?
+                    .checked_add(usize::from(q.final_payload_len))
+                    .ok_or(BlockTransferError::Overflow)?;
+                self.complete = true;
+                self.next_num = final_num
+                    .checked_add(1)
+                    .ok_or(BlockTransferError::Overflow)?;
+            } else {
+                self.filled = block_offset(contig, size)?;
+                self.complete = false;
+                self.next_num = contig;
+            }
+        } else {
+            self.filled = block_offset(contig, size)?;
+            self.complete = false;
+            self.next_num = contig;
+        }
+
+        self.num = block.num();
+        self.more = block.more();
+        Ok(offset)
+    }
+
     /// Issue the next in-order outgoing block. Returns `(block, offset, len)`.
     pub fn issue_outgoing(&mut self) -> Result<(BlockValue, usize, usize), BlockTransferError> {
         if !self.role.is_outgoing() {
@@ -464,11 +715,63 @@ impl BlockTransfer {
     }
 }
 
-fn block_offset(num: u32, size: usize) -> Result<usize, BlockTransferError> {
+pub(crate) fn block_offset(num: u32, size: usize) -> Result<usize, BlockTransferError> {
     usize::try_from(num)
         .ok()
         .and_then(|n| n.checked_mul(size))
         .ok_or(BlockTransferError::Overflow)
+}
+
+/// Start a classic or Q-Block incoming sidecar from `role`.
+pub(crate) fn start_incoming(
+    key: BlockKey,
+    role: BlockRole,
+    block: BlockValue,
+    payload_len: usize,
+    capacity: usize,
+    expected_len: Option<u32>,
+) -> Result<BlockTransfer, BlockTransferError> {
+    if role.is_q_block() {
+        BlockTransfer::incoming_q(key, role, block, payload_len, capacity, expected_len)
+    } else {
+        BlockTransfer::incoming(key, role, block, payload_len, capacity, expected_len)
+    }
+}
+
+/// Accept the next classic or Q-Block incoming range from `transfer.role()`.
+pub(crate) fn accept_incoming_role(
+    transfer: &mut BlockTransfer,
+    block: BlockValue,
+    payload_len: usize,
+    capacity: usize,
+) -> Result<usize, BlockTransferError> {
+    if transfer.role().is_q_block() {
+        transfer.accept_q_incoming(block, payload_len, capacity)
+    } else {
+        transfer.accept_incoming(block, payload_len, capacity)
+    }
+}
+
+/// Write `payload` at `offset`. `contiguous` is the visible prefix (Q-Block holes).
+///
+/// When `contiguous` is `None`, the filled length becomes `offset + payload.len()`
+/// (classic in-order).
+pub(crate) fn store_incoming(
+    buf: &mut [u8],
+    filled: &mut usize,
+    offset: usize,
+    payload: &[u8],
+    contiguous: Option<usize>,
+) -> Result<(), BlockTransferError> {
+    let end = offset
+        .checked_add(payload.len())
+        .ok_or(BlockTransferError::Overflow)?;
+    if end > buf.len() {
+        return Err(BlockTransferError::Overflow);
+    }
+    buf[offset..end].copy_from_slice(payload);
+    *filled = contiguous.unwrap_or(end);
+    Ok(())
 }
 
 /// Byte and transfer access shared by [`super::BodyPool`] and the alloc body pool.
@@ -767,6 +1070,30 @@ mod tests {
                 .expect_err("in as out"),
             BlockTransferError::IdentityMismatch
         );
+        assert_eq!(
+            BlockTransfer::incoming(
+                key(),
+                BlockRole::IncomingQBlock1,
+                szx16(0, false),
+                8,
+                4096,
+                None
+            )
+            .expect_err("q as classic"),
+            BlockTransferError::IdentityMismatch
+        );
+        assert_eq!(
+            BlockTransfer::incoming_q(
+                key(),
+                BlockRole::IncomingBlock1,
+                szx16(0, false),
+                8,
+                4096,
+                None
+            )
+            .expect_err("classic as q"),
+            BlockTransferError::IdentityMismatch
+        );
     }
 
     #[test]
@@ -784,5 +1111,78 @@ mod tests {
                 .expect_err("out"),
             BlockTransferError::IdentityMismatch
         );
+    }
+
+    #[test]
+    fn q_block_out_of_order_within_window() {
+        let mut t = BlockTransfer::incoming_q_block1(key(), szx16(2, false), 8, 4096, Some(40))
+            .expect("num 2 first");
+        assert_eq!(t.role(), BlockRole::IncomingQBlock1);
+        assert!(t.is_q_block());
+        assert_eq!(t.window_base(), 0);
+        assert_eq!(t.filled(), 0);
+        assert!(!t.is_complete());
+        assert_eq!(t.accept_q_incoming(szx16(0, true), 16, 4096).expect("0"), 0);
+        assert_eq!(t.filled(), 16);
+        assert_eq!(t.next_num(), 1);
+        assert_eq!(
+            t.accept_q_incoming(szx16(1, true), 16, 4096).expect("1"),
+            16
+        );
+        assert!(t.is_complete());
+        assert_eq!(t.filled(), 40);
+    }
+
+    #[test]
+    fn q_block_duplicate_and_outside_window() {
+        let mut t =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, None).expect("0");
+        assert_eq!(t.role(), BlockRole::IncomingQBlock2);
+        assert_eq!(
+            t.accept_q_incoming(szx16(0, true), 16, 4096)
+                .expect_err("dup"),
+            BlockTransferError::Duplicate
+        );
+        assert_eq!(
+            t.accept_q_incoming(
+                szx16(u32::from(BlockTransfer::MAX_PAYLOADS), true),
+                16,
+                4096
+            )
+            .expect_err("next window"),
+            BlockTransferError::OutsideWindow
+        );
+    }
+
+    #[test]
+    fn q_block_advances_window_then_completes() {
+        let last = u32::from(BlockTransfer::MAX_PAYLOADS) + 1;
+        let expected = (last as usize) * 16 + 8;
+        let mut t = BlockTransfer::incoming_q_block1(
+            key(),
+            szx16(0, true),
+            16,
+            4096,
+            Some(expected as u32),
+        )
+        .expect("0");
+        for n in 1..BlockTransfer::MAX_PAYLOADS {
+            t.accept_q_incoming(szx16(u32::from(n), true), 16, 4096)
+                .expect("window 0");
+        }
+        assert_eq!(t.window_base(), u32::from(BlockTransfer::MAX_PAYLOADS));
+        assert_eq!(t.window_mask(), 0);
+        assert!(!t.is_complete());
+        t.accept_q_incoming(szx16(last, false), 8, 4096)
+            .expect("final first");
+        assert!(!t.is_complete());
+        t.accept_q_incoming(
+            szx16(u32::from(BlockTransfer::MAX_PAYLOADS), true),
+            16,
+            4096,
+        )
+        .expect("gap fill");
+        assert!(t.is_complete());
+        assert_eq!(t.filled(), expected);
     }
 }
