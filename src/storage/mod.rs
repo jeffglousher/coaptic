@@ -1,11 +1,39 @@
-//! [`Storage`] and the occupancy contract both backends implement.
+//! Bounded storage: [`Engine`], [`Memory`], pools, and tables.
+//!
+//! Acquire / release / rotate is written once against [`Storage`]. Message
+//! parse and encode live in [`crate::message`] and do not require an engine.
+//!
+//! See `design.md` and `knowledge/memory.md`.
 
-use crate::capacities::Capacities;
-use crate::slot::{SlotError, SlotId};
+mod builder;
+mod capacities;
+mod engine;
+mod memory;
+mod occupancy;
+mod pool;
+pub mod profiles;
+mod slot;
+mod table;
+
+#[cfg(feature = "alloc")]
+mod alloc_memory;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(feature = "alloc")]
+pub use alloc_memory::AllocMemory;
+pub use builder::{EngineBuilder, Missing, Present};
+pub use capacities::Capacities;
+pub use engine::Engine;
+pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
+pub use pool::{BodyPool, DatagramPool};
+pub use slot::{Peer, SlotError, SlotId};
+pub use table::{DedupTable, ObserveTable};
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///
-/// Logic lives here so [`crate::Engine`] stays generic over [`Storage`].
+/// Logic lives here so [`Engine`] stays generic over [`Storage`].
 pub trait SlotPool {
     /// Occupy the next free slot starting at the rotating cursor.
     ///
@@ -33,7 +61,7 @@ pub trait SlotPool {
 
 /// Backing store for the six core areas that are present.
 ///
-/// RX and TX datagrams are two [`crate::DatagramPool`] values. Body pools exist
+/// RX and TX datagrams are two [`DatagramPool`] values. Body pools exist
 /// only when block-wise is enabled; [`Self::rx_body`] / [`Self::tx_body`] then
 /// return `None`.
 ///

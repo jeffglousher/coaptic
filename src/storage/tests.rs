@@ -1,14 +1,16 @@
 //! Named storage-layer tests from `knowledge/memory.md` plus body-pool checks.
 
-use crate::Engine;
-use crate::builder::EngineBuilder;
 #[cfg(feature = "alloc")]
-use crate::capacities::Capacities;
+use super::Capacities;
+use super::Engine;
+use super::EngineBuilder;
+use super::Memory;
+use super::MemoryProfile;
+use super::SlotError;
+use super::Storage;
+use super::WithBodies;
+use super::profiles;
 use crate::error::BuildError;
-use crate::memory::{Memory, MemoryProfile, WithBodies};
-use crate::profiles;
-use crate::slot::SlotError;
-use crate::storage::Storage;
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()

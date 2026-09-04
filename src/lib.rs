@@ -1,15 +1,33 @@
-//! Stand-alone [`no_std`] CoAP engine.
+//! Stand-alone [`no_std`] CoAP library: messages plus bounded storage.
+//!
+//! # Modules
+//!
+//! - [`message`] — decode and encode a CoAP datagram (`&[u8]` / `&mut [u8]`).
+//!   Usable with no [`Engine`].
+//! - [`storage`] — [`Engine`] generic over [`Storage`] (acquire / release /
+//!   rotate), [`Memory`], pools, and tables. Main types are also re-exported
+//!   at the crate root.
+//! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
+//!   [`profiles::Constrained`] (1152).
 //!
 //! Architecture and the bounded-memory contract live in [`design.md`][design].
 //! Protocol behavior is defined by the IETF documents in [`knowledge/rfcs/`][rfcs].
-//! This crate does not restate wire format.
+//! This crate does not restate wire format. There is no Ethernet handling: a
+//! datagram slot holds CoAP message bytes (UDP payload). [`Peer`] is sidecar
+//! metadata, currently a placeholder until `Endpoint` exists. OSCORE, DTLS,
+//! and plugtest harnesses are out of scope here.
 //!
-//! This release implements the **storage layer** only: [`Engine`] is generic over
-//! [`Storage`] (acquire / release / rotate). There is no CoAP parser and no
-//! Ethernet handling. A datagram slot holds CoAP message bytes (UDP payload);
-//! [`Peer`] is sidecar metadata, currently a placeholder until `Endpoint` exists.
+//! # Message
 //!
-//! # Backends
+//! [`decode`] parses a UDP payload into [`ParsedMessage`], a borrowed view
+//! (header, [`Token`], option iterator, payload). [`encode`] writes a
+//! [`Message`] into a caller buffer. Round-trip is byte-stable for canonical
+//! option encoding. Critical unrecognized options are a structured
+//! [`ParseError::UnrecognizedCritical`] via
+//! [`ParsedMessage::check_rfc7252_options`]; the library does not invent
+//! 4.02 / RST policy.
+//!
+//! # Storage backends
 //!
 //! - `no_std` default: [`Memory<P>`](Memory) owns typed arrays sized by
 //!   [`MemoryProfile`] named associated constants. [`profiles::Default`] uses
@@ -46,31 +64,21 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "alloc")]
-mod alloc_memory;
-mod builder;
-mod capacities;
-mod engine;
 mod error;
-mod memory;
-mod occupancy;
-mod pool;
-pub mod profiles;
-mod slot;
-mod storage;
-mod table;
+pub mod message;
+pub mod storage;
 
+pub use storage::profiles;
+
+pub use error::{BuildError, EncodeError, ParseError};
+pub use message::{
+    Code, Header, Message, MessageId, Opt, OptionNumber, Options, ParsedMessage, Token, Type,
+    decode, encode,
+};
 #[cfg(feature = "alloc")]
-pub use alloc_memory::AllocMemory;
-pub use builder::{EngineBuilder, Missing, Present};
-pub use capacities::Capacities;
-pub use engine::Engine;
-pub use error::BuildError;
-pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
-pub use pool::{BodyPool, DatagramPool};
-pub use slot::{Peer, SlotError, SlotId};
-pub use storage::{SlotPool, Storage};
-pub use table::{DedupTable, ObserveTable};
-
-#[cfg(test)]
-mod tests;
+pub use storage::AllocMemory;
+pub use storage::{
+    BodyPool, Capacities, DatagramPool, DedupTable, Engine, EngineBuilder, Memory, MemoryProfile,
+    Missing, NoBodies, ObserveTable, Peer, Present, SlotError, SlotId, SlotPool, Storage,
+    WithBodies,
+};

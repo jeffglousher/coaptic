@@ -1,7 +1,8 @@
 //! `no_std` [`Memory`] backend: typed arrays sized by [`MemoryProfile`].
 
-use crate::capacities::{Capacities, bytes_ok};
-use crate::storage::{SlotPool, Storage};
+use super::SlotPool;
+use super::Storage;
+use super::capacities::{Capacities, bytes_ok};
 
 /// Named associated constants for the areas present in [`Memory`].
 ///

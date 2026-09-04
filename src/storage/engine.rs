@@ -1,14 +1,15 @@
 //! [`Engine`]: acquire / release / rotate against [`Storage`].
 
-use crate::capacities::Capacities;
-use crate::slot::{SlotError, SlotId};
-use crate::storage::Storage;
+use super::Capacities;
+use super::SlotError;
+use super::SlotId;
+use super::Storage;
 
 /// Protocol engine, generic over [`Storage`].
 ///
-/// This crate currently implements the storage layer only: occupancy,
-/// acquire/release, and rotating cursors. Protocol state machines are not
-/// implemented.
+/// Storage engine: occupancy, acquire/release, and rotating cursors.
+/// Protocol state machines are not implemented. Decode and encode a
+/// datagram with [`crate::message`]; this type does not parse bytes.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]

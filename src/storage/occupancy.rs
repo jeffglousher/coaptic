@@ -3,7 +3,7 @@
 //! Acquire starts at the cursor and wraps. A successful acquire leaves the cursor
 //! on the following index so the next pass does not restart at zero.
 
-use crate::slot::{SlotError, SlotId};
+use super::slot::{SlotError, SlotId};
 
 pub(crate) fn acquire(occupied: &mut [bool], cursor: &mut usize) -> Option<SlotId> {
     let n = occupied.len();
