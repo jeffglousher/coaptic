@@ -22,7 +22,13 @@
 //! [`decode`] parses a UDP payload into [`ParsedMessage`], a borrowed view
 //! (header, [`Token`], option iterator, payload). [`encode`] writes a
 //! [`Message`] into a caller buffer. Round-trip is byte-stable for canonical
-//! option encoding.
+//! option encoding. [`OptionsBuilder`] inserts options in any order and
+//! yields a non-decreasing slice for [`Message::with_options`].
+//!
+//! [`Engine`] can decode an occupied RX/TX datagram slot and encode a
+//! [`Message`] into an acquired slot (`set_len` included). Optional
+//! format/critical checks remain separate calls. The library does not invent
+//! 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes
 //! and decodes RFC 7252 empty / opaque / uint / string values (uint uses a
@@ -80,16 +86,16 @@ pub mod storage;
 
 pub use storage::profiles;
 
-pub use error::{BuildError, EncodeError, ParseError, ValueError};
+pub use error::{BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 pub use message::{
     Code, ContentFormat, EncodedUint, Header, Message, MessageId, Opt, OptionNumber,
-    OptionValueFormat, Options, ParsedMessage, Token, Type, decode, decode_uint, decode_uint16,
-    encode, encode_uint,
+    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Type, decode, decode_uint,
+    decode_uint16, encode, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    BodyPool, Capacities, DatagramPool, DedupTable, Engine, EngineBuilder, Memory, MemoryProfile,
-    Missing, NoBodies, ObserveTable, Peer, Present, SlotError, SlotId, SlotPool, Storage,
-    WithBodies,
+    BodyPool, Capacities, DatagramPool, DatagramSlots, DedupTable, Engine, EngineBuilder, Memory,
+    MemoryProfile, Missing, NoBodies, ObserveTable, Peer, Present, SlotError, SlotId, SlotPool,
+    Storage, WithBodies,
 };

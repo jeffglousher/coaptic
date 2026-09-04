@@ -1,7 +1,10 @@
 //! Bounded storage: [`Engine`], [`Memory`], pools, and tables.
 //!
 //! Acquire / release / rotate is written once against [`Storage`]. Message
-//! parse and encode live in [`crate::message`] and do not require an engine.
+//! parse and encode live in [`crate::message`]. [`Engine`] methods
+//! [`Engine::decode_rx`] / [`Engine::encode_tx`] (and the TX/RX mirrors)
+//! glue those codecs to occupied datagram slots when the backend implements
+//! [`DatagramSlots`]. They do not invent 4.02 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -87,4 +90,28 @@ pub trait Storage {
 
     /// Outgoing Body Pool, if block-wise storage includes body areas.
     fn tx_body(&mut self) -> Option<&mut dyn SlotPool>;
+}
+
+/// Filled datagram bytes for occupied RX/TX slots.
+///
+/// [`Memory`] and [`AllocMemory`] implement this so [`Engine`] can decode
+/// and encode without inventing protocol responses.
+pub trait DatagramSlots {
+    /// Filled RX datagram, if `id` is occupied.
+    fn rx_payload(&self, id: SlotId) -> Option<&[u8]>;
+
+    /// Filled TX datagram, if `id` is occupied.
+    fn tx_payload(&self, id: SlotId) -> Option<&[u8]>;
+
+    /// Writable RX slot buffer (full capacity).
+    fn rx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
+
+    /// Writable TX slot buffer (full capacity).
+    fn tx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
+
+    /// Record the filled RX datagram length.
+    fn set_rx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
+
+    /// Record the filled TX datagram length.
+    fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
 }

@@ -2,12 +2,13 @@
 
 use super::value::{ContentFormat, MAX_AGE_DEFAULT, as_str, encode_uint};
 use super::{
-    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, Token, Type, decode, encode,
+    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Type, decode,
+    encode,
 };
 use crate::MemoryProfile;
-use crate::error::{EncodeError, ParseError, ValueError};
+use crate::error::{EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 use crate::profiles;
-use crate::storage::{EngineBuilder, Memory, SlotPool};
+use crate::storage::{EngineBuilder, Memory, SlotError, SlotId, SlotPool};
 
 fn encode_to<'a>(msg: &Message<'_>, buf: &'a mut [u8]) -> &'a [u8] {
     let n = encode(msg, buf).expect("encode");
@@ -571,27 +572,126 @@ fn helpers_compose_with_engine_datagram_slot() {
 
     let id = engine.acquire_rx().expect("rx slot");
     let cf = ContentFormat::JSON.encode();
-    let opts = [Opt::uri_path("slot"), Opt::content_format(&cf)];
-    let msg =
-        Message::new(Type::Confirmable, Code::GET, MessageId::new(0x3333)).with_options(&opts);
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::content_format(&cf)).expect("cf");
+    opts.push(Opt::uri_path("slot")).expect("path");
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x3333))
+        .with_options(opts.as_slice());
 
-    let n = {
-        let slot = engine
-            .storage_mut()
-            .rx_datagram_mut()
-            .payload_mut(id)
-            .expect("occupied");
-        encode(&msg, slot).expect("encode into slot")
-    };
-    engine
-        .storage_mut()
-        .rx_datagram_mut()
-        .set_len(id, n)
-        .expect("set_len");
-
-    let bytes = engine.storage().rx_datagram().payload(id).expect("filled");
-    let parsed = decode(bytes).expect("decode slot bytes");
+    engine.encode_rx(id, &msg).expect("encode into rx slot");
+    let parsed = engine.decode_rx(id).expect("decode slot bytes");
     assert_eq!(parsed.uri_path().next(), Some(Ok("slot")));
     assert_eq!(parsed.content_format(), Some(Ok(ContentFormat::JSON)));
+    parsed.check_rfc7252_options().expect("known options");
     parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn options_builder_out_of_order_roundtrip() {
+    let cf = ContentFormat::TEXT_PLAIN.encode();
+    let mut opts = OptionsBuilder::<4>::new();
+    opts.push(Opt::uri_query("q=1")).expect("query");
+    opts.push(Opt::uri_path("sensors")).expect("seg0");
+    opts.push(Opt::content_format(&cf)).expect("cf");
+    opts.push(Opt::uri_path("temp")).expect("seg1");
+
+    assert_eq!(
+        [
+            opts.as_slice()[0].number(),
+            opts.as_slice()[1].number(),
+            opts.as_slice()[2].number(),
+            opts.as_slice()[3].number(),
+        ],
+        [
+            OptionNumber::URI_PATH,
+            OptionNumber::URI_PATH,
+            OptionNumber::CONTENT_FORMAT,
+            OptionNumber::URI_QUERY,
+        ]
+    );
+    assert_eq!(opts.as_slice()[0].as_str(), Ok("sensors"));
+    assert_eq!(opts.as_slice()[1].as_str(), Ok("temp"));
+
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x42))
+        .with_options(opts.as_slice());
+    assert_roundtrip(&msg);
+
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let parsed = decode(&buf[..n]).expect("decode");
+    let mut path = parsed.uri_path();
+    assert_eq!(path.next(), Some(Ok("sensors")));
+    assert_eq!(path.next(), Some(Ok("temp")));
+    assert_eq!(parsed.content_format(), Some(Ok(ContentFormat::TEXT_PLAIN)));
+    assert_eq!(parsed.uri_query().next(), Some(Ok("q=1")));
+}
+
+#[test]
+fn options_builder_capacity_full() {
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::uri_path("a")).expect("a");
+    opts.push(Opt::uri_path("b")).expect("b");
+    assert_eq!(opts.push(Opt::uri_path("c")).err(), Some(OptionsFull));
+}
+
+#[test]
+fn encode_tx_slot_and_decode_back() {
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("storage build");
+
+    let id = engine.acquire_tx().expect("tx slot");
+    let cf = ContentFormat::JSON.encode();
+    let mut opts = OptionsBuilder::<3>::new();
+    opts.push(Opt::content_format(&cf)).expect("cf");
+    opts.push(Opt::uri_path("temp")).expect("path");
+    let token = Token::new(&[0xaa, 0xbb]).expect("token");
+    let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(0x1111))
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(b"{}");
+
+    let n = engine.encode_tx(id, &msg).expect("encode tx");
+    assert!(n > 4);
+    assert_eq!(
+        engine
+            .storage()
+            .tx_datagram()
+            .payload(id)
+            .expect("len")
+            .len(),
+        n
+    );
+
+    let parsed = engine.decode_tx(id).expect("decode tx");
+    assert_eq!(parsed.ty(), Type::NonConfirmable);
+    assert_eq!(parsed.code(), Code::PUT);
+    assert_eq!(parsed.message_id(), MessageId::new(0x1111));
+    assert_eq!(parsed.token(), token);
+    assert_eq!(parsed.payload(), b"{}");
+    assert_eq!(parsed.uri_path().next(), Some(Ok("temp")));
+    assert_eq!(parsed.content_format(), Some(Ok(ContentFormat::JSON)));
+    parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn slot_glue_rejects_free_slot() {
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("storage build");
+
+    let id = SlotId::from_index(0);
+    assert_eq!(
+        engine.decode_rx(id).unwrap_err(),
+        SlotMessageError::Slot(SlotError::NotOccupied)
+    );
+    let msg = Message::new(Type::Acknowledgement, Code::EMPTY, MessageId::new(1));
+    assert_eq!(
+        engine.encode_tx(id, &msg).unwrap_err(),
+        SlotMessageError::Slot(SlotError::NotOccupied)
+    );
 }

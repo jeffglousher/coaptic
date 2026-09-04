@@ -257,6 +257,29 @@ mod alloc_backend {
     }
 
     #[test]
+    fn alloc_engine_encodes_and_decodes_tx_slot() {
+        let mut engine = build_alloc(false);
+        let id = engine.acquire_tx().expect("tx");
+        let cf = crate::ContentFormat::JSON.encode();
+        let mut opts = crate::OptionsBuilder::<2>::new();
+        opts.push(crate::Opt::uri_path("heap")).expect("path");
+        opts.push(crate::Opt::content_format(&cf)).expect("cf");
+        let msg = crate::Message::new(
+            crate::Type::Confirmable,
+            crate::Code::GET,
+            crate::MessageId::new(7),
+        )
+        .with_options(opts.as_slice());
+        engine.encode_tx(id, &msg).expect("encode");
+        let parsed = engine.decode_tx(id).expect("decode");
+        assert_eq!(parsed.uri_path().next(), Some(Ok("heap")));
+        assert_eq!(
+            parsed.content_format(),
+            Some(Ok(crate::ContentFormat::JSON))
+        );
+    }
+
+    #[test]
     fn alloc_and_no_alloc_backends_pass_the_same_pool_tests() {
         let mut stack = build_default();
         let mut heap = build_alloc(false);

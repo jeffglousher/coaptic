@@ -3,6 +3,8 @@
 use super::SlotPool;
 use super::occupancy::Occupancy;
 use super::slot::{Peer, SlotError, SlotId};
+use crate::error::SlotMessageError;
+use crate::message::{Message, ParsedMessage};
 
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
@@ -49,6 +51,24 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
             return None;
         }
         Some(&mut self.bytes[id.index()])
+    }
+
+    /// Decode the occupied slot's filled bytes with [`crate::message::decode`].
+    ///
+    /// Does not run format or unrecognized-critical checks.
+    pub fn decode(&self, id: SlotId) -> Result<ParsedMessage<'_>, SlotMessageError> {
+        crate::message::decode(self.payload(id).ok_or(SlotError::NotOccupied)?)
+            .map_err(SlotMessageError::Parse)
+    }
+
+    /// Encode `msg` into the occupied slot and record the filled length.
+    pub fn encode(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
+        let n = {
+            let buf = self.payload_mut(id).ok_or(SlotError::NotOccupied)?;
+            crate::message::encode(msg, buf).map_err(SlotMessageError::Encode)?
+        };
+        self.set_len(id, n)?;
+        Ok(n)
     }
 
     /// Mark how many bytes in the slot are the current datagram.
@@ -130,6 +150,27 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
 
     fn cursor(&self) -> usize {
         self.occ.cursor()
+    }
+}
+
+/// Byte access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
+pub(crate) trait DatagramBytes {
+    fn payload(&self, id: SlotId) -> Option<&[u8]>;
+    fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
+    fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
+}
+
+impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
+    fn payload(&self, id: SlotId) -> Option<&[u8]> {
+        DatagramPool::payload(self, id)
+    }
+
+    fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        DatagramPool::payload_mut(self, id)
+    }
+
+    fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        DatagramPool::set_len(self, id, len)
     }
 }
 

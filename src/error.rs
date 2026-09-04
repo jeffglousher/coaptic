@@ -1,6 +1,7 @@
-//! Builder, parse, and encode errors.
+//! Builder, parse, encode, and slot-glue errors.
 
 use crate::message::OptionNumber;
+use crate::storage::SlotError;
 
 /// Failure to construct an [`Engine`](crate::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,3 +166,69 @@ impl core::fmt::Display for ValueError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for ValueError {}
+
+/// [`OptionsBuilder`](crate::OptionsBuilder) has no free slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OptionsFull;
+
+impl core::fmt::Display for OptionsFull {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("options builder is full")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for OptionsFull {}
+
+/// Failure to decode or encode a CoAP datagram in an occupied slot.
+///
+/// Slot occupancy is distinct from [`ParseError`] / [`EncodeError`]. The
+/// library does not invent 4.02 / RST policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlotMessageError {
+    /// The slot is free or the identifier is out of range.
+    Slot(SlotError),
+    /// Occupied bytes are not a well-formed CoAP datagram.
+    Parse(ParseError),
+    /// Encoding failed (buffer too small, empty-message rules, or options).
+    Encode(EncodeError),
+}
+
+impl core::fmt::Display for SlotMessageError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Slot(e) => write!(f, "{e}"),
+            Self::Parse(e) => write!(f, "{e}"),
+            Self::Encode(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<SlotError> for SlotMessageError {
+    fn from(e: SlotError) -> Self {
+        Self::Slot(e)
+    }
+}
+
+impl From<ParseError> for SlotMessageError {
+    fn from(e: ParseError) -> Self {
+        Self::Parse(e)
+    }
+}
+
+impl From<EncodeError> for SlotMessageError {
+    fn from(e: EncodeError) -> Self {
+        Self::Encode(e)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SlotMessageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Slot(e) => Some(e),
+            Self::Parse(e) => Some(e),
+            Self::Encode(e) => Some(e),
+        }
+    }
+}
