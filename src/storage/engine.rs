@@ -20,13 +20,15 @@ use super::SlotId;
 use super::Storage;
 use super::block::{BlockKey, BlockProgress, BlockTransfer, OutgoingBlock};
 use crate::error::{BlockTransferError, SlotMessageError};
-use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, Token, Type};
+use crate::message::{
+    BlockValue, Code, Message, MessageId, Opt, ParsedMessage, Token, Type, encode_uint,
+};
 
 /// Protocol engine, generic over [`Storage`].
 ///
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
-/// incoming Q-Block body-slot assembly when `S` implements [`BodySlots`].
-/// Q-Block transmit, BERT, Observe notify, and RTO are not implemented.
+/// Q-Block body-slot assembly when `S` implements [`BodySlots`]. BERT,
+/// Observe notify, missing-block recovery, and RTO are not implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -43,12 +45,12 @@ use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, T
 /// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
 /// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
 /// implements [`BodySlots`], incoming Block1 / Block2 / Q-Block1 / Q-Block2
-/// assemble into the Incoming Body Pool and outgoing Block1 / Block2 slice
-/// the Outgoing Body Pool. Dedup,
+/// assemble into the Incoming Body Pool and outgoing Block1 / Block2 /
+/// Q-Block1 / Q-Block2 slice the Outgoing Body Pool. Dedup,
 /// pending CON, exchange matching, Observe interest, and body-slot
 /// transfers are different identities. Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
-/// not invent 4.02 / 4.08 / RST policy.
+/// not invent 4.02 / 4.08 / 2.31 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
@@ -889,7 +891,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block1(body_id)?;
-        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), true)
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::Block1,
+        )
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block2.
@@ -923,7 +931,153 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block2(body_id)?;
-        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), false)
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::Block2,
+        )
+    }
+
+    /// Copy a complete body into an Outgoing Body Slot and start Q-Block1.
+    pub fn start_q_block1(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_q_block1(key, body, szx)
+    }
+
+    /// Issue the next unsent outgoing Q-Block1 range in the current window.
+    pub fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_q_block1(id)
+    }
+
+    /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
+    ///
+    /// `num` is the Q-Block1 NUM from the peer (RFC 9177 §4.3: all blocks
+    /// through `num` received). Empty ACK is not a window ACK. Does not invent
+    /// 2.31 / 4.08 policy.
+    pub fn ack_q_block1(
+        &mut self,
+        id: SlotId,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.ack_q_block1(id, num)
+    }
+
+    /// Issue the next Q-Block1 and encode it into occupied TX `tx_id`.
+    ///
+    /// Token and remote endpoint come from the body-slot sidecar. Size1 is
+    /// encoded (RFC 9177 §4.6). Request-Tag is caller-owned. The caller
+    /// supplies type, code, and Message ID.
+    pub fn encode_q_block1_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_q_block1(body_id)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::QBlock1,
+        )
+    }
+
+    /// Decode occupied RX `id` and [`Self::ack_q_block1`] using Q-Block1 NUM.
+    ///
+    /// Empty ACK (code 0.00) has no Q-Block1 and is [`BlockTransferError::MissingBlock`].
+    /// Token need not match (RFC 9177 §6 may use a new Token per request);
+    /// endpoint must match the body slot. Does not inspect the response code.
+    pub fn ack_q_block1_rx(
+        &mut self,
+        body_id: SlotId,
+        rx_id: SlotId,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.ack_outgoing_rx(body_id, rx_id, RxBlockOpt::QBlock1)
+    }
+
+    /// Copy a complete body into an Outgoing Body Slot and start Q-Block2.
+    pub fn start_q_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_q_block2(key, body, szx)
+    }
+
+    /// Issue the next unsent outgoing Q-Block2 range in the current window.
+    pub fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_q_block2(id)
+    }
+
+    /// Advance an outgoing Q-Block2 window using the peer Continue NUM.
+    ///
+    /// `num` is the Continue Q-Block2 NUM (RFC 9177 §4.4: `num % MAX_PAYLOADS
+    /// == 0` and `num != 0`). Empty ACK is not a window ACK. Does not invent
+    /// 2.31 / 4.08 policy.
+    pub fn ack_q_block2(
+        &mut self,
+        id: SlotId,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.ack_q_block2(id, num)
+    }
+
+    /// Issue the next Q-Block2 and encode it into occupied TX `tx_id`.
+    ///
+    /// Token and remote endpoint come from the body-slot sidecar. Size2 is
+    /// encoded (RFC 9177 §4.6). ETag is caller-owned. The caller supplies
+    /// type, code, and Message ID.
+    pub fn encode_q_block2_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_q_block2(body_id)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::QBlock2,
+        )
+    }
+
+    /// Decode occupied RX `id` and [`Self::ack_q_block2`] using Q-Block2 NUM.
+    ///
+    /// Empty ACK (code 0.00) has no Q-Block2 and is [`BlockTransferError::MissingBlock`].
+    /// A Continue request must have M set. Token need not match; endpoint must
+    /// match the body slot. Does not invent 2.31 policy.
+    pub fn ack_q_block2_rx(
+        &mut self,
+        body_id: SlotId,
+        rx_id: SlotId,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.ack_outgoing_rx(body_id, rx_id, RxBlockOpt::QBlock2)
     }
 
     fn apply_incoming_rx(
@@ -979,7 +1133,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         body_id: SlotId,
         tx_id: SlotId,
         header: (Type, Code, MessageId),
-        block1: bool,
+        which: OutgoingBlockOpt,
     ) -> Result<OutgoingBlock, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1003,14 +1157,21 @@ impl<S: Storage + BodySlots> Engine<S> {
         }
         tmp[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
         let encoded = issued.block().encode();
-        let opts = if block1 {
-            [Opt::block1(&encoded)]
-        } else {
-            [Opt::block2(&encoded)]
+        let size_n = u32::try_from(transfer.filled()).map_err(|_| BlockTransferError::Overflow)?;
+        let size = encode_uint(size_n);
+        let q1 = [Opt::q_block1(&encoded), Opt::size1(&size)];
+        let q2 = [Opt::size2(&size), Opt::q_block2(&encoded)];
+        let b1 = [Opt::block1(&encoded)];
+        let b2 = [Opt::block2(&encoded)];
+        let opts: &[Opt<'_>] = match which {
+            OutgoingBlockOpt::Block1 => &b1,
+            OutgoingBlockOpt::Block2 => &b2,
+            OutgoingBlockOpt::QBlock1 => &q1,
+            OutgoingBlockOpt::QBlock2 => &q2,
         };
         let msg = Message::new(ty, code, message_id)
             .with_token(transfer.token())
-            .with_options(&opts)
+            .with_options(opts)
             .with_payload(&tmp[..issued.len()]);
         let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
             SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
@@ -1021,6 +1182,60 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.set_tx_endpoint(tx_id, transfer.endpoint())?;
         Ok(issued)
     }
+
+    fn ack_outgoing_rx(
+        &mut self,
+        body_id: SlotId,
+        rx_id: SlotId,
+        which: RxBlockOpt,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self
+            .storage
+            .rx_endpoint(rx_id)
+            .ok_or(SlotError::NotOccupied)?;
+        let num = {
+            let parsed = crate::message::decode(
+                self.storage
+                    .rx_payload(rx_id)
+                    .ok_or(SlotError::NotOccupied)?,
+            )?;
+            if parsed.is_empty() {
+                return Err(BlockTransferError::MissingBlock);
+            }
+            let block = match which.read_block(&parsed) {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err(BlockTransferError::MissingBlock),
+            };
+            if matches!(which, RxBlockOpt::QBlock2) && !block.more() {
+                return Err(BlockTransferError::Gap);
+            }
+            block.num()
+        };
+        let transfer = self
+            .storage
+            .tx_body_transfer(body_id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.endpoint() != endpoint {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        match which {
+            RxBlockOpt::QBlock1 => self.ack_q_block1(body_id, num),
+            RxBlockOpt::QBlock2 => self.ack_q_block2(body_id, num),
+            RxBlockOpt::Block1 | RxBlockOpt::Block2 => Err(BlockTransferError::IdentityMismatch),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OutgoingBlockOpt {
+    Block1,
+    Block2,
+    QBlock1,
+    QBlock2,
 }
 
 #[derive(Clone, Copy)]

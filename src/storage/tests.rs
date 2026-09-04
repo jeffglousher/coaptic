@@ -1591,6 +1591,14 @@ fn q_block_absent_when_block_wise_false() {
         engine.apply_q_block2(key, block, b"x", None),
         Err(BlockTransferError::NoBodyPools)
     );
+    assert_eq!(
+        engine.start_q_block1(key, b"x", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert_eq!(
+        engine.start_q_block2(key, b"x", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
     assert!(!engine.has_body_pools());
 }
 
@@ -1645,6 +1653,160 @@ fn q_block2_apply_from_rx_datagram() {
     assert_eq!(
         engine.rx_body_payload(progress.id()),
         Some(payload.as_slice())
+    );
+}
+
+#[test]
+fn q_block1_outgoing_full_window_advance_and_encode() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS);
+    let body_len = (last as usize) * 16 + 8;
+    let body: [u8; 168] = core::array::from_fn(|i| (i % 251) as u8);
+    assert_eq!(body.len(), body_len);
+
+    let id = engine.start_q_block1(key, &body, 0).expect("start");
+    let t = engine.tx_body_transfer(id).expect("sidecar");
+    assert_eq!(t.role(), BlockRole::OutgoingQBlock1);
+    assert!(t.is_q_block());
+    assert_eq!(engine.tx_body_payload(id), Some(body.as_slice()));
+
+    for n in 0..crate::BlockTransfer::MAX_PAYLOADS {
+        let issued = engine.next_q_block1(id).expect("window");
+        assert_eq!(issued.block().num(), u32::from(n));
+        assert!(issued.block().more());
+        assert_eq!(issued.len(), 16);
+    }
+    assert_eq!(
+        engine.next_q_block1(id),
+        Err(BlockTransferError::OutsideWindow)
+    );
+
+    let empty = empty_ack(MessageId::new(1));
+    let mut ack_buf = [0u8; 8];
+    let ack_n = encode(&empty, &mut ack_buf).expect("empty");
+    let rx = engine.acquire_rx().expect("rx");
+    engine
+        .write_rx(rx, &ack_buf[..ack_n], key.endpoint())
+        .expect("write empty");
+    assert_eq!(
+        engine.ack_q_block1_rx(id, rx),
+        Err(BlockTransferError::MissingBlock)
+    );
+
+    engine
+        .ack_q_block1(id, u32::from(crate::BlockTransfer::MAX_PAYLOADS) - 1)
+        .expect("continue");
+    let t = engine.tx_body_transfer(id).expect("advanced");
+    assert_eq!(t.window_base(), last);
+    assert_eq!(t.window_mask(), 0);
+
+    let tx = engine.acquire_tx().expect("tx");
+    let issued = engine
+        .encode_q_block1_tx(id, tx, Type::NonConfirmable, Code::PUT, MessageId::new(20))
+        .expect("encode last");
+    assert_eq!(issued.block().num(), last);
+    assert!(!issued.block().more());
+    assert!(issued.complete());
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(parsed.q_block1().expect("opt").expect("val").num(), last);
+    assert_eq!(
+        parsed.size1().expect("size1").expect("val"),
+        body_len as u32
+    );
+    assert_eq!(parsed.payload(), &body[(last as usize) * 16..]);
+    assert_eq!(parsed.token(), key.token());
+    assert_eq!(engine.tx_endpoint(tx), Some(key.endpoint()));
+    assert_eq!(
+        engine.next_q_block1(id),
+        Err(BlockTransferError::AlreadyComplete)
+    );
+}
+
+#[test]
+fn q_block2_outgoing_window_advance_and_complete() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0x42]), Endpoint::v4([192, 0, 2, 42], 5683));
+    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS);
+    let body_len = (last as usize) * 16 + 8;
+    let body: [u8; 168] = core::array::from_fn(|i| (i + 7) as u8);
+
+    let id = engine.start_q_block2(key, &body, 0).expect("start");
+    assert_eq!(
+        engine.tx_body_transfer(id).expect("role").role(),
+        BlockRole::OutgoingQBlock2
+    );
+    for _ in 0..crate::BlockTransfer::MAX_PAYLOADS {
+        engine.next_q_block2(id).expect("window");
+    }
+    assert_eq!(
+        engine.next_q_block2(id),
+        Err(BlockTransferError::OutsideWindow)
+    );
+
+    let cont = BlockValue::from_size(last, true, 16)
+        .expect("continue")
+        .encode();
+    let opts = [Opt::q_block2(&cont)];
+    let msg = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(21))
+        .with_token(sample_token(&[0x99]))
+        .with_options(&opts);
+    let mut buf = [0u8; 32];
+    let n = encode(&msg, &mut buf).expect("encode continue");
+    let rx = engine.acquire_rx().expect("rx");
+    engine
+        .write_rx(rx, &buf[..n], key.endpoint())
+        .expect("write");
+    engine.ack_q_block2_rx(id, rx).expect("ack continue");
+    assert_eq!(
+        engine.tx_body_transfer(id).expect("advanced").window_base(),
+        last
+    );
+
+    let tx = engine.acquire_tx().expect("tx");
+    let issued = engine
+        .encode_q_block2_tx(
+            id,
+            tx,
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(22),
+        )
+        .expect("last");
+    assert!(!issued.block().more());
+    assert!(issued.complete());
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(
+        parsed.q_block2().next().expect("opt").expect("val").num(),
+        last
+    );
+    assert_eq!(
+        parsed.size2().expect("size2").expect("val"),
+        body_len as u32
+    );
+    assert_eq!(parsed.payload(), &body[(last as usize) * 16..]);
+}
+
+#[test]
+fn q_block_outgoing_szx1024_completes() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0x64]), Endpoint::v4([192, 0, 2, 64], 5683));
+    let body: [u8; 2048] = core::array::from_fn(|i| (i % 251) as u8);
+    let id = engine.start_q_block2(key, &body, 6).expect("start");
+    let first = engine.next_q_block2(id).expect("b0");
+    assert_eq!(
+        (first.block().num(), first.block().more(), first.len()),
+        (0, true, 1024)
+    );
+    let last = engine.next_q_block2(id).expect("b1");
+    assert_eq!(
+        (last.block().num(), last.block().more(), last.len()),
+        (1, false, 1024)
+    );
+    assert!(last.complete());
+    assert_eq!(
+        engine.next_q_block2(id),
+        Err(BlockTransferError::AlreadyComplete)
     );
 }
 
@@ -1792,6 +1954,15 @@ mod alloc_backend {
         let last = engine.next_block1(out).expect("b1");
         assert!(!last.block().more());
         assert!(last.complete());
+
+        let q_key = BlockKey::new(sample_token(&[0x34]), Endpoint::v4([192, 0, 2, 34], 5683));
+        let q_out = engine.start_q_block1(q_key, &body, 0).expect("q out");
+        let q0 = engine.next_q_block1(q_out).expect("q0");
+        assert_eq!(q0.block().num(), 0);
+        assert!(q0.block().more());
+        let q1 = engine.next_q_block1(q_out).expect("q1");
+        assert!(!q1.block().more());
+        assert!(q1.complete());
     }
 
     #[test]

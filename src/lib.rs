@@ -25,8 +25,10 @@
 //! Incoming / Outgoing Body Pool slots when `.block_wise(true)` (Token +
 //! remote [`Endpoint`]; see `design.md`). Incoming Q-Block1 / Q-Block2 use
 //! the same slots with a [`BlockTransfer::MAX_PAYLOADS`] window (RFC 9177
-//! §7.2 default 10). BERT, Q-Block transmit, and plugtest are out of scope
-//! here. OSCORE and DTLS are also out of scope.
+//! §7.2 default 10). Outgoing Q-Block1 / Q-Block2 issue up to that many
+//! outstanding blocks per window on the Outgoing Body Pool. BERT,
+//! missing-block recovery, and plugtest are out of scope here. OSCORE and
+//! DTLS are also out of scope.
 //!
 //! # Message
 //!
@@ -44,9 +46,9 @@
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
 //! [`ObserveInterest`] rows. Classic incoming Block1 / Block2, incoming
-//! Q-Block1 / Q-Block2, and outgoing Block1 / Block2 assemble or slice
-//! complete bodies in body-pool slots ([`BlockTransfer`]) when [`BodySlots`]
-//! is implemented. Optional
+//! Q-Block1 / Q-Block2, and outgoing Block1 / Block2 / Q-Block1 / Q-Block2
+//! assemble or slice complete bodies in body-pool slots ([`BlockTransfer`])
+//! when [`BodySlots`] is implemented. Optional
 //! format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!

@@ -630,6 +630,48 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
     fn next_block2(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         Err(BlockTransferError::NoBodyPools)
     }
+
+    fn start_q_block1(
+        &mut self,
+        _key: BlockKey,
+        _body: &[u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn next_q_block1(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn ack_q_block1(
+        &mut self,
+        _id: SlotId,
+        _num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn start_q_block2(
+        &mut self,
+        _key: BlockKey,
+        _body: &[u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn next_q_block2(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn ack_q_block2(
+        &mut self,
+        _id: SlotId,
+        _num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
 }
 
 impl<P: MemoryProfile> BodySlots for Memory<P, WithBodies<P>>
@@ -829,6 +871,48 @@ where
 
     fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock2)
+    }
+
+    fn start_q_block1(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .tx
+            .start_outgoing(key, BlockRole::OutgoingQBlock1, body, szx)
+    }
+
+    fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies.tx.next_outgoing(id, BlockRole::OutgoingQBlock1)
+    }
+
+    fn ack_q_block1(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .tx
+            .ack_outgoing(id, BlockRole::OutgoingQBlock1, num)
+    }
+
+    fn start_q_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .tx
+            .start_outgoing(key, BlockRole::OutgoingQBlock2, body, szx)
+    }
+
+    fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies.tx.next_outgoing(id, BlockRole::OutgoingQBlock2)
+    }
+
+    fn ack_q_block2(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .tx
+            .ack_outgoing(id, BlockRole::OutgoingQBlock2, num)
     }
 }
 

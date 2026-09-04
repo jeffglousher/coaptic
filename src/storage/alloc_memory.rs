@@ -635,6 +635,58 @@ impl BodySlots for AllocMemory {
             .ok_or(BlockTransferError::NoBodyPools)?
             .next_outgoing(id, BlockRole::OutgoingBlock2)
     }
+
+    fn start_q_block1(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .start_outgoing(key, BlockRole::OutgoingQBlock1, body, szx)
+    }
+
+    fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .next_outgoing(id, BlockRole::OutgoingQBlock1)
+    }
+
+    fn ack_q_block1(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .ack_outgoing(id, BlockRole::OutgoingQBlock1, num)
+    }
+
+    fn start_q_block2(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .start_outgoing(key, BlockRole::OutgoingQBlock2, body, szx)
+    }
+
+    fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .next_outgoing(id, BlockRole::OutgoingQBlock2)
+    }
+
+    fn ack_q_block2(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .ack_outgoing(id, BlockRole::OutgoingQBlock2, num)
+    }
 }
 
 impl ObserveSlots for AllocMemory {
@@ -823,7 +875,11 @@ impl AllocBodyPool {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        let transfer = BlockTransfer::outgoing(key, role, body.len(), szx, self.slot_bytes)?;
+        let transfer = if role.is_q_block() {
+            BlockTransfer::outgoing_q(key, role, body.len(), szx, self.slot_bytes)?
+        } else {
+            BlockTransfer::outgoing(key, role, body.len(), szx, self.slot_bytes)?
+        };
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
         let write_err = {
             let slot = &mut self.slots[id.index()];
@@ -856,7 +912,11 @@ impl AllocBodyPool {
         if transfer.role() != role {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        let (block, offset, len) = transfer.issue_outgoing()?;
+        let (block, offset, len) = if role.is_q_block() {
+            transfer.issue_q_outgoing()?
+        } else {
+            transfer.issue_outgoing()?
+        };
         Ok(OutgoingBlock::new(
             id,
             block,
@@ -864,6 +924,30 @@ impl AllocBodyPool {
             len,
             transfer.is_complete(),
         ))
+    }
+
+    fn ack_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.slots[id.index()]
+            .transfer
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (filled, complete) = transfer.ack_q_window(num)?;
+        Ok(BlockProgress::new(id, filled, complete))
     }
 }
 
@@ -928,6 +1012,15 @@ impl BodyOps for AllocBodyPool {
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         AllocBodyPool::next_outgoing(self, id, role)
+    }
+
+    fn ack_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        num: u32,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        AllocBodyPool::ack_outgoing(self, id, role, num)
     }
 }
 
