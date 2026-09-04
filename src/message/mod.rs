@@ -6,8 +6,9 @@
 //! [`empty_ack`] and [`empty_rst`] build the empty ACK / RST messages used to
 //! confirm or reject a CON. [`ParsedMessage::is_empty_ack`] /
 //! [`ParsedMessage::is_empty_rst`] detect them after decode.
-//! [`Transmission`] names RFC 7252 §4.8 defaults; retransmit algorithms are
-//! not implemented.
+//! [`Transmission`] names RFC 7252 §4.8 defaults and
+//! [`Transmission::initial_timeout_ms`] (caller jitter). Retransmit
+//! scheduling lives on [`crate::PendingCon`].
 //!
 //! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 and
 //! Block / Q-Block helpers) in any order and yields a slice for
@@ -386,9 +387,12 @@ pub const fn empty_rst(id: MessageId) -> Message<'static> {
     Message::empty_rst(id)
 }
 
-/// RFC 7252 §4.8 defaults. Retransmit, RTO, and NSTART algorithms are not implemented.
+/// RFC 7252 §4.8 defaults plus the initial-RTO helper.
 ///
-/// See `knowledge/rfcs/rfc7252.txt`.
+/// The core does not draw randomness. Callers pass jitter into
+/// [`Self::initial_timeout_ms`] (or `0` for the ACK_TIMEOUT floor).
+/// Scheduling is [`crate::PendingCon`] / [`crate::Engine::poll_retransmit`].
+/// See `knowledge/rfcs/rfc7252.txt` §4.2 / §4.8.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Transmission;
 
@@ -399,8 +403,25 @@ impl Transmission {
     pub const ACK_RANDOM_FACTOR_NUM: u16 = 3;
     /// `ACK_RANDOM_FACTOR` denominator (`3 / 2` = 1.5).
     pub const ACK_RANDOM_FACTOR_DEN: u16 = 2;
+    /// Extra milliseconds jitter may add (`ACK_TIMEOUT * (ACK_RANDOM_FACTOR - 1)`).
+    pub const ACK_RANDOM_SPAN_MS: u32 = Self::ACK_TIMEOUT_MS / Self::ACK_RANDOM_FACTOR_DEN as u32
+        * (Self::ACK_RANDOM_FACTOR_NUM - Self::ACK_RANDOM_FACTOR_DEN) as u32;
     /// `MAX_RETRANSMIT`.
     pub const MAX_RETRANSMIT: u8 = 4;
     /// `NSTART`.
     pub const NSTART: u8 = 1;
+
+    /// Initial timeout: `ACK_TIMEOUT` plus `min(jitter_ms, ACK_RANDOM_SPAN_MS)`.
+    ///
+    /// `jitter_ms = 0` is the RFC minimum. The core does not call an RNG;
+    /// the caller supplies jitter (or a deterministic value).
+    #[must_use]
+    pub const fn initial_timeout_ms(jitter_ms: u32) -> u32 {
+        let extra = if jitter_ms > Self::ACK_RANDOM_SPAN_MS {
+            Self::ACK_RANDOM_SPAN_MS
+        } else {
+            jitter_ms
+        };
+        Self::ACK_TIMEOUT_MS.saturating_add(extra)
+    }
 }

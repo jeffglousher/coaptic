@@ -18,6 +18,7 @@ use super::ObserveKey;
 use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
+use super::Retransmit;
 use super::SlotPool;
 use super::Storage;
 use super::block::{
@@ -27,6 +28,9 @@ use super::block::{
 use super::capacities::Capacities;
 use super::exchange::ExchangeStore;
 use super::occupancy::HeapOccupancy;
+use super::pending::{
+    PendingMark, PendingRto, next_due_slot, outstanding_pending, record_admission,
+};
 use super::slot::{SlotError, SlotId};
 use super::table::{DedupStore, ObserveStore};
 use crate::error::{BlockTransferError, BuildError};
@@ -137,7 +141,7 @@ struct AllocSlot {
     buf: Box<[u8]>,
     len: usize,
     endpoint: Option<Endpoint>,
-    pending_mid: Option<MessageId>,
+    pending: Option<PendingMark>,
 }
 
 struct AllocDatagramPool {
@@ -154,7 +158,7 @@ impl AllocDatagramPool {
                 buf: vec![0u8; bytes].into_boxed_slice(),
                 len: 0,
                 endpoint: None,
-                pending_mid: None,
+                pending: None,
             });
         }
         Self {
@@ -168,7 +172,7 @@ impl AllocDatagramPool {
         if let Some(slot) = self.slots.get_mut(id.index()) {
             slot.len = 0;
             slot.endpoint = None;
-            slot.pending_mid = None;
+            slot.pending = None;
         }
     }
 
@@ -222,13 +226,30 @@ impl AllocDatagramPool {
     }
 
     fn pending_mid(&self, id: SlotId) -> Option<MessageId> {
+        self.pending_mark(id).map(|m| m.message_id)
+    }
+
+    fn pending_rto(&self, id: SlotId) -> Option<PendingRto> {
+        self.pending_mark(id).map(|m| m.rto)
+    }
+
+    fn pending_mark(&self, id: SlotId) -> Option<PendingMark> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.slots.get(id.index())?.pending_mid
+        self.slots.get(id.index())?.pending
     }
 
     fn set_pending_mid(&mut self, id: SlotId, message_id: MessageId) -> Result<(), SlotError> {
+        self.set_pending(id, message_id, PendingRto::new(0, 0))
+    }
+
+    fn set_pending(
+        &mut self,
+        id: SlotId,
+        message_id: MessageId,
+        rto: PendingRto,
+    ) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < self.occ.slot_count() {
                 SlotError::NotOccupied
@@ -236,7 +257,7 @@ impl AllocDatagramPool {
                 SlotError::InvalidSlot
             });
         }
-        self.slots[id.index()].pending_mid = Some(message_id);
+        self.slots[id.index()].pending = Some(PendingMark::new(message_id, rto));
         Ok(())
     }
 
@@ -248,7 +269,7 @@ impl AllocDatagramPool {
                 SlotError::InvalidSlot
             });
         }
-        self.slots[id.index()].pending_mid = None;
+        self.slots[id.index()].pending = None;
         Ok(())
     }
 
@@ -362,9 +383,22 @@ impl PendingCons for AllocMemory {
         id: SlotId,
         endpoint: Endpoint,
         message_id: MessageId,
+        now_ms: u64,
+        jitter_ms: u32,
     ) -> Option<SlotId> {
+        if !self.tx.is_occupied(id) {
+            return None;
+        }
+        let existing = self.pending_con(id);
+        let outstanding =
+            outstanding_pending(self.tx.slot_count(), endpoint, |sid| self.pending_con(sid));
+        if !record_admission(existing, message_id, endpoint, outstanding)? {
+            return Some(id);
+        }
         self.tx.set_endpoint(id, endpoint).ok()?;
-        self.tx.set_pending_mid(id, message_id).ok()?;
+        self.tx
+            .set_pending(id, message_id, PendingRto::new(now_ms, jitter_ms))
+            .ok()?;
         Some(id)
     }
 
@@ -381,7 +415,23 @@ impl PendingCons for AllocMemory {
     fn pending_con(&self, id: SlotId) -> Option<PendingCon> {
         let message_id = self.tx.pending_mid(id)?;
         let endpoint = self.tx.endpoint(id)?;
-        Some(PendingCon::new(message_id, endpoint, id))
+        let rto = self.tx.pending_rto(id)?;
+        Some(PendingCon::new(message_id, endpoint, id).with_rto(rto))
+    }
+
+    fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        match due.mark {
+            Some(mark) => {
+                self.tx
+                    .set_pending(due.id, mark.message_id, mark.rto)
+                    .ok()?;
+            }
+            None => {
+                self.tx.clear_pending_mid(due.id).ok()?;
+            }
+        }
+        Some(due.event)
     }
 }
 

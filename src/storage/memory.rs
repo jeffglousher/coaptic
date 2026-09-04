@@ -14,6 +14,7 @@ use super::ObserveKey;
 use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
+use super::Retransmit;
 use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
@@ -21,6 +22,7 @@ use super::Storage;
 use super::block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, OutgoingBlock};
 use super::capacities::{Capacities, bytes_ok};
 use super::exchange::ExchangeStore;
+use super::pending::{PendingRto, next_due_slot, outstanding_pending, record_admission};
 use super::pool::DatagramBytes;
 use super::table::{DedupStore, ObserveStore};
 use crate::error::BlockTransferError;
@@ -367,16 +369,33 @@ where
 
 impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
 where
-    P::TxDatagram: DatagramBytes,
+    P::TxDatagram: DatagramBytes + SlotPool,
 {
     fn record_pending_con(
         &mut self,
         id: SlotId,
         endpoint: Endpoint,
         message_id: MessageId,
+        now_ms: u64,
+        jitter_ms: u32,
     ) -> Option<SlotId> {
+        if !self.tx.is_occupied(id) {
+            return None;
+        }
+        let existing = self.pending_con(id);
+        let outstanding =
+            outstanding_pending(self.tx.slot_count(), endpoint, |sid| self.pending_con(sid));
+        if !record_admission(existing, message_id, endpoint, outstanding)? {
+            return Some(id);
+        }
         DatagramBytes::set_endpoint(&mut self.tx, id, endpoint).ok()?;
-        DatagramBytes::set_pending_mid(&mut self.tx, id, message_id).ok()?;
+        DatagramBytes::set_pending(
+            &mut self.tx,
+            id,
+            message_id,
+            PendingRto::new(now_ms, jitter_ms),
+        )
+        .ok()?;
         Some(id)
     }
 
@@ -393,7 +412,21 @@ where
     fn pending_con(&self, id: SlotId) -> Option<PendingCon> {
         let message_id = DatagramBytes::pending_mid(&self.tx, id)?;
         let endpoint = DatagramBytes::endpoint(&self.tx, id)?;
-        Some(PendingCon::new(message_id, endpoint, id))
+        let rto = DatagramBytes::pending_rto(&self.tx, id)?;
+        Some(PendingCon::new(message_id, endpoint, id).with_rto(rto))
+    }
+
+    fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        match due.mark {
+            Some(mark) => {
+                DatagramBytes::set_pending(&mut self.tx, due.id, mark.message_id, mark.rto).ok()?;
+            }
+            None => {
+                DatagramBytes::clear_pending_mid(&mut self.tx, due.id).ok()?;
+            }
+        }
+        Some(due.event)
     }
 }
 
