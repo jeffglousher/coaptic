@@ -137,6 +137,12 @@ impl OutgoingBlock {
         self.len
     }
 
+    /// Whether this issued block has no payload bytes.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
     /// Whether this was the last block (M=0).
     #[must_use]
     pub const fn complete(self) -> bool {
