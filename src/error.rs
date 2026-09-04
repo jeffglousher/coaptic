@@ -9,6 +9,8 @@ pub enum BuildError {
     /// Builder sizes do not match the [`Storage`](crate::Storage) being moved in.
     SizeMismatch,
     /// Enabled body slot bytes are not a multiple of 1024 (max Block/Q-Block SZX).
+    ///
+    /// Same quantum as [`crate::BlockValue::SIZE_MAX`].
     BodyBytesNotMultipleOf1024,
     /// `.block_wise(false)` but storage or the builder includes body pools.
     UnexpectedBodyPools,
@@ -143,16 +145,20 @@ impl core::fmt::Display for EncodeError {
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}
 
-/// Failure to decode an option value as empty, opaque, uint, or string.
+/// Failure to decode an option value as empty, opaque, uint, string, or Block.
 ///
 /// Distinct from [`ParseError`]: wire decode keeps option values opaque.
-/// See `knowledge/rfcs/rfc7252.txt` §3.2.
+/// See `knowledge/rfcs/rfc7252.txt` §3.2 and `knowledge/rfcs/rfc7959.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueError {
     /// Bytes are not a UTF-8 string option value.
     InvalidUtf8,
     /// Integer does not fit the target width.
     UintOverflow,
+    /// Block/Q-Block SZX is not 0..=6, or the size is not a legal SZX size.
+    IllegalSzx,
+    /// Block/Q-Block NUM does not fit in 20 bits (3-byte option value).
+    BlockNumOverflow,
 }
 
 impl core::fmt::Display for ValueError {
@@ -160,6 +166,8 @@ impl core::fmt::Display for ValueError {
         match self {
             Self::InvalidUtf8 => f.write_str("option value is not UTF-8"),
             Self::UintOverflow => f.write_str("uint option value does not fit the target"),
+            Self::IllegalSzx => f.write_str("block SZX is not 0..=6"),
+            Self::BlockNumOverflow => f.write_str("block NUM does not fit in 20 bits"),
         }
     }
 }

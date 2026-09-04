@@ -6,7 +6,8 @@ use super::option::Opt;
 
 /// Fixed-capacity option list. Inserts stay sorted by option number.
 ///
-/// Push [`Opt`] values (including Table 4 helpers) in any order. Equal
+/// Push [`Opt`] values (including Table 4 and Block / Q-Block helpers) in any
+/// order. Equal
 /// numbers keep insertion order so repeatable options such as Uri-Path stay
 /// in the order they were pushed.
 ///
@@ -20,7 +21,8 @@ use super::option::Opt;
 /// [`encode`](crate::message::encode) call that borrows [`as_slice`](Self::as_slice).
 ///
 /// Uint values use [`EncodedUint`](crate::EncodedUint) held by the **caller**.
-/// Pass [`Opt::uint`] or a Table 4 helper such as [`Opt::content_format`].
+/// Pass [`Opt::uint`], a Table 4 helper such as [`Opt::content_format`], or
+/// [`Opt::block2`] after [`crate::BlockValue::encode`].
 /// The builder does not store `EncodedUint` itself (that would be
 /// self-referential).
 ///

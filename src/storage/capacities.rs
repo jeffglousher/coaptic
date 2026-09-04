@@ -4,6 +4,8 @@ use super::memory::MemoryProfile;
 use crate::error::BuildError;
 
 /// Byte multiple required for enabled body slots (max Block/Q-Block SZX).
+///
+/// Same quantum as [`crate::BlockValue::SIZE_MAX`].
 pub(crate) const BODY_BYTE_QUANTUM: usize = 1024;
 
 /// Runtime sizes for [`AllocMemory`](crate::AllocMemory) / [`EngineBuilder::build_alloc`](crate::EngineBuilder::build_alloc).

@@ -58,8 +58,18 @@ impl OptionNumber {
     pub const URI_QUERY: Self = Self(15);
     /// Accept (17).
     pub const ACCEPT: Self = Self(17);
+    /// Q-Block1 (19). RFC 9177; not in RFC 7252 Table 4.
+    pub const Q_BLOCK1: Self = Self(19);
     /// Location-Query (20).
     pub const LOCATION_QUERY: Self = Self(20);
+    /// Block2 (23). RFC 7959; not in RFC 7252 Table 4.
+    pub const BLOCK2: Self = Self(23);
+    /// Block1 (27). RFC 7959; not in RFC 7252 Table 4.
+    pub const BLOCK1: Self = Self(27);
+    /// Size2 (28). RFC 7959; not in RFC 7252 Table 4.
+    pub const SIZE2: Self = Self(28);
+    /// Q-Block2 (31). RFC 9177; not in RFC 7252 Table 4.
+    pub const Q_BLOCK2: Self = Self(31);
     /// Proxy-Uri (35).
     pub const PROXY_URI: Self = Self(35);
     /// Proxy-Scheme (39).
