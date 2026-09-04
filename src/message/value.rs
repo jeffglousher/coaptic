@@ -337,7 +337,7 @@ impl BlockValue {
     /// Packed Block / Q-Block uint. See `knowledge/rfcs/rfc7959.txt`.
     #[must_use]
     pub const fn as_uint(self) -> u32 {
-        (self.num << 4) | ((self.more as u32) << 3) | u32::from(self.szx)
+        (self.num << 4) | ((self.more as u32) << 3) | (self.szx as u32)
     }
 
     /// Encode as a uint option value (0–3 bytes; leading zeros omitted).
