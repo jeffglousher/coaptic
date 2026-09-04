@@ -24,9 +24,9 @@ use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, T
 
 /// Protocol engine, generic over [`Storage`].
 ///
-/// Storage engine: occupancy, acquire/release, rotating cursors, and classic
-/// Block1 / Block2 body-slot assembly when `S` implements [`BodySlots`].
-/// Q-Block multi-window, BERT, Observe notify, and RTO are not implemented.
+/// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
+/// incoming Q-Block body-slot assembly when `S` implements [`BodySlots`].
+/// Q-Block transmit, BERT, Observe notify, and RTO are not implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -42,9 +42,9 @@ use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, T
 /// a piggybacked ACK with a response code is. When `S` implements
 /// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
 /// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
-/// implements [`BodySlots`], incoming Block1 / Block2 assemble into the
-/// Incoming Body Pool and outgoing Block1 / Block2 slice the Outgoing Body
-/// Pool. Dedup,
+/// implements [`BodySlots`], incoming Block1 / Block2 / Q-Block1 / Q-Block2
+/// assemble into the Incoming Body Pool and outgoing Block1 / Block2 slice
+/// the Outgoing Body Pool. Dedup,
 /// pending CON, exchange matching, Observe interest, and body-slot
 /// transfers are different identities. Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
@@ -704,7 +704,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, true)
+        self.apply_incoming_rx(id, RxBlockOpt::Block1)
     }
 
     /// Admit a new incoming Block2 body when the first block arrives.
@@ -754,7 +754,108 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, false)
+        self.apply_incoming_rx(id, RxBlockOpt::Block2)
+    }
+
+    /// Admit a new incoming Q-Block1 body when the first window-0 block arrives.
+    ///
+    /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size1` is the
+    /// Size1 hint when present. See `design.md` and
+    /// `knowledge/rfcs/rfc9177.txt`.
+    pub fn admit_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.admit_q_block1(key, block, payload, size1)
+    }
+
+    /// Write one incoming Q-Block1 range into `id`.
+    ///
+    /// Accepts out-of-order NUMs in the current window. Rejects duplicates
+    /// and NUMs outside the window. Does not invent 4.08 policy.
+    pub fn write_q_block1(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.write_q_block1(id, block, payload)
+    }
+
+    /// Admit or continue incoming Q-Block1 for `key`.
+    pub fn apply_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.apply_q_block1(key, block, payload, size1)
+    }
+
+    /// Decode occupied RX `id` and [`Self::apply_q_block1`] using Q-Block1 + Token + endpoint.
+    ///
+    /// Identity is Token + Endpoint (same as classic Block). RFC 9177 Q-Block1
+    /// body match uses Request-Tag; that is not applied here. Missing Q-Block1
+    /// is [`BlockTransferError::MissingBlock`].
+    pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.apply_incoming_rx(id, RxBlockOpt::QBlock1)
+    }
+
+    /// Admit a new incoming Q-Block2 body when the first window-0 block arrives.
+    ///
+    /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size2` is the
+    /// Size2 hint when present. See `design.md` and
+    /// `knowledge/rfcs/rfc9177.txt`.
+    pub fn admit_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.admit_q_block2(key, block, payload, size2)
+    }
+
+    /// Write one incoming Q-Block2 range into `id`.
+    ///
+    /// Accepts out-of-order NUMs in the current window. Rejects duplicates
+    /// and NUMs outside the window. Does not invent 4.08 policy.
+    pub fn write_q_block2(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.write_q_block2(id, block, payload)
+    }
+
+    /// Admit or continue incoming Q-Block2 for `key`.
+    pub fn apply_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.apply_q_block2(key, block, payload, size2)
+    }
+
+    /// Decode occupied RX `id` and [`Self::apply_q_block2`] using Q-Block2 + Token + endpoint.
+    ///
+    /// Uses the first Q-Block2 option (repeatable recovery options are out of
+    /// scope). Missing Q-Block2 is [`BlockTransferError::MissingBlock`].
+    pub fn apply_q_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.apply_incoming_rx(id, RxBlockOpt::QBlock2)
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block1.
@@ -828,7 +929,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     fn apply_incoming_rx(
         &mut self,
         id: SlotId,
-        block1: bool,
+        which: RxBlockOpt,
     ) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -838,20 +939,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         let (token, block, expected, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
-            let block = if block1 {
-                match parsed.block1() {
-                    Some(Ok(b)) => b,
-                    Some(Err(e)) => return Err(e.into()),
-                    None => return Err(BlockTransferError::MissingBlock),
-                }
-            } else {
-                match parsed.block2() {
-                    Some(Ok(b)) => b,
-                    Some(Err(e)) => return Err(e.into()),
-                    None => return Err(BlockTransferError::MissingBlock),
-                }
+            let block = match which.read_block(&parsed) {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err(BlockTransferError::MissingBlock),
             };
-            let expected = if block1 {
+            let expected = if which.uses_size1() {
                 match parsed.size1() {
                     Some(Ok(n)) => Some(n),
                     Some(Err(e)) => return Err(e.into()),
@@ -871,10 +964,12 @@ impl<S: Storage + BodySlots> Engine<S> {
             tmp[..payload.len()].copy_from_slice(payload);
             (parsed.token(), block, expected, payload.len())
         };
-        if block1 {
-            self.apply_block1(BlockKey::new(token, endpoint), block, &tmp[..n], expected)
-        } else {
-            self.apply_block2(BlockKey::new(token, endpoint), block, &tmp[..n], expected)
+        let key = BlockKey::new(token, endpoint);
+        match which {
+            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp[..n], expected),
+            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp[..n], expected),
+            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp[..n], expected),
+            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp[..n], expected),
         }
     }
 
@@ -925,6 +1020,32 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.set_tx_len(tx_id, n)?;
         self.storage.set_tx_endpoint(tx_id, transfer.endpoint())?;
         Ok(issued)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RxBlockOpt {
+    Block1,
+    Block2,
+    QBlock1,
+    QBlock2,
+}
+
+impl RxBlockOpt {
+    fn uses_size1(self) -> bool {
+        matches!(self, Self::Block1 | Self::QBlock1)
+    }
+
+    fn read_block(
+        self,
+        parsed: &ParsedMessage<'_>,
+    ) -> Option<Result<BlockValue, crate::error::ValueError>> {
+        match self {
+            Self::Block1 => parsed.block1(),
+            Self::Block2 => parsed.block2(),
+            Self::QBlock1 => parsed.q_block1(),
+            Self::QBlock2 => parsed.q_block2().next(),
+        }
     }
 }
 

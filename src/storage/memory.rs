@@ -547,6 +547,64 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn admit_q_block1(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn write_q_block1(
+        &mut self,
+        _id: SlotId,
+        _block: BlockValue,
+        _payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn apply_q_block1(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn admit_q_block2(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn write_q_block2(
+        &mut self,
+        _id: SlotId,
+        _block: BlockValue,
+        _payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn apply_q_block2(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn start_block1(
         &mut self,
         _key: BlockKey,
@@ -671,6 +729,76 @@ where
         self.bodies
             .rx
             .apply_incoming(key, BlockRole::IncomingBlock2, block, payload, size2)
+    }
+
+    fn admit_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .rx
+            .admit_incoming(key, BlockRole::IncomingQBlock1, block, payload, size1)
+    }
+
+    fn write_q_block1(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .write_incoming(id, BlockRole::IncomingQBlock1, block, payload)
+    }
+
+    fn apply_q_block1(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size1: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .apply_incoming(key, BlockRole::IncomingQBlock1, block, payload, size1)
+    }
+
+    fn admit_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .rx
+            .admit_incoming(key, BlockRole::IncomingQBlock2, block, payload, size2)
+    }
+
+    fn write_q_block2(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .write_incoming(id, BlockRole::IncomingQBlock2, block, payload)
+    }
+
+    fn apply_q_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .apply_incoming(key, BlockRole::IncomingQBlock2, block, payload, size2)
     }
 
     fn start_block1(

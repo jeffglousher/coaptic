@@ -241,11 +241,12 @@ impl std::error::Error for SlotMessageError {
     }
 }
 
-/// Failure of a classic Block1 / Block2 body-slot transfer.
+/// Failure of a Block / Q-Block body-slot transfer.
 ///
 /// These are structured reports for the body-pool state machine. The library
 /// does not invent 4.02 / 4.08 / RST policy. See `design.md` (Incoming /
-/// Outgoing Body Slot) and `knowledge/rfcs/rfc7959.txt`.
+/// Outgoing Body Slot), `knowledge/rfcs/rfc7959.txt`, and
+/// `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockTransferError {
     /// Storage has no body pools (`.block_wise(false)`).
@@ -258,12 +259,16 @@ pub enum BlockTransferError {
     NoTransfer,
     /// Token or remote endpoint does not match the slot's transfer.
     IdentityMismatch,
-    /// Block1 / Block2 option is missing from the datagram.
+    /// Block1 / Block2 / Q-Block1 / Q-Block2 option is missing from the datagram.
     MissingBlock,
     /// NUM is below the next expected block (already filled).
     Overlap,
     /// NUM is above the next expected block (classic Block is in-order).
     Gap,
+    /// NUM is outside the current Q-Block `MAX_PAYLOADS` window.
+    OutsideWindow,
+    /// NUM is already received in this Q-Block transfer.
+    Duplicate,
     /// SZX differs from the SZX locked on the first block.
     SzxMismatch,
     /// Block range would exceed the body-slot byte capacity.
@@ -290,9 +295,13 @@ impl core::fmt::Display for BlockTransferError {
             Self::Slot(e) => write!(f, "{e}"),
             Self::NoTransfer => f.write_str("body slot has no block transfer"),
             Self::IdentityMismatch => f.write_str("block transfer identity does not match"),
-            Self::MissingBlock => f.write_str("Block1 or Block2 option is missing"),
+            Self::MissingBlock => {
+                f.write_str("Block1, Block2, Q-Block1, or Q-Block2 option is missing")
+            }
             Self::Overlap => f.write_str("block NUM overlaps an already filled range"),
             Self::Gap => f.write_str("block NUM skips the next expected block"),
+            Self::OutsideWindow => f.write_str("block NUM is outside the current Q-Block window"),
+            Self::Duplicate => f.write_str("block NUM is already received"),
             Self::SzxMismatch => f.write_str("block SZX does not match the transfer"),
             Self::Overflow => f.write_str("block exceeds body slot capacity"),
             Self::LengthInconsistent => f.write_str("completed length does not match Size1/Size2"),
