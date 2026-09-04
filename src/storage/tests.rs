@@ -1631,7 +1631,7 @@ fn q_block2_apply_from_rx_datagram() {
     let payload = b"q2-body";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
     let size2 = crate::encode_uint(payload.len() as u32);
-    let opts = [Opt::q_block2(&blk), Opt::size2(&size2)];
+    let opts = [Opt::size2(&size2), Opt::q_block2(&blk)];
     let msg = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(12))
         .with_token(token)
         .with_options(&opts)

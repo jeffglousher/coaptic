@@ -658,7 +658,7 @@ impl BlockTransfer {
 
         let contig = q
             .base
-            .checked_add(u32::from(q.mask.trailing_ones()))
+            .checked_add(q.mask.trailing_ones())
             .ok_or(BlockTransferError::Overflow)?;
         if let Some(final_num) = q.final_num {
             if contig > final_num {
