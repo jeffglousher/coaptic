@@ -1,4 +1,4 @@
-//! [`SlotId`] and sidecar peer metadata.
+//! [`SlotId`] and slot addressing errors.
 
 /// Identifier of one slot or table entry in a pool.
 ///
@@ -16,21 +16,6 @@ impl SlotId {
     pub const fn index(self) -> usize {
         self.0
     }
-}
-
-/// Sidecar peer identity stored next to a datagram slot, not in its byte buffer.
-///
-/// A datagram slot holds CoAP message bytes (the UDP payload). Address and port
-/// are metadata beside that buffer. This type is a placeholder until an
-/// `Endpoint` type is designed; it carries no address bytes today.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Peer {
-    _placeholder: (),
-}
-
-impl Peer {
-    /// Placeholder peer. Replace when `Endpoint` exists.
-    pub const PLACEHOLDER: Self = Self { _placeholder: () };
 }
 
 /// Failure when releasing or addressing a slot.

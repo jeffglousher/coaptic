@@ -2,6 +2,10 @@
 
 use super::Capacities;
 use super::DatagramSlots;
+use super::DedupEntry;
+use super::DedupKey;
+use super::DedupSlots;
+use super::Endpoint;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
@@ -15,9 +19,12 @@ use crate::message::{Message, ParsedMessage};
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
-/// against occupied datagram slots and record `set_len` on encode. Optional
-/// format and unrecognized-critical checks stay on [`ParsedMessage`]. This
-/// type does not invent 4.02 / RST policy.
+/// against occupied datagram slots and record `set_len` on encode.
+/// [`Self::write_rx`] copies bytes and sets the sidecar [`Endpoint`].
+/// When `S` implements [`DedupSlots`], insert / lookup / remove store
+/// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
+/// Optional format and unrecognized-critical checks stay on [`ParsedMessage`].
+/// This type does not invent 4.02 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
@@ -206,6 +213,81 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         self.storage.set_tx_len(id, n)?;
         Ok(n)
     }
+
+    /// Copy `bytes` into an acquired RX slot, record length, and set sidecar [`Endpoint`].
+    pub fn write_rx(
+        &mut self,
+        id: SlotId,
+        bytes: &[u8],
+        endpoint: Endpoint,
+    ) -> Result<usize, SlotError> {
+        copy_into_slot(self.storage.rx_payload_mut(id), bytes)?;
+        self.storage.set_rx_len(id, bytes.len())?;
+        self.storage.set_rx_endpoint(id, endpoint)?;
+        Ok(bytes.len())
+    }
+
+    /// Copy `bytes` into an acquired TX slot, record length, and set sidecar [`Endpoint`].
+    pub fn write_tx(
+        &mut self,
+        id: SlotId,
+        bytes: &[u8],
+        endpoint: Endpoint,
+    ) -> Result<usize, SlotError> {
+        copy_into_slot(self.storage.tx_payload_mut(id), bytes)?;
+        self.storage.set_tx_len(id, bytes.len())?;
+        self.storage.set_tx_endpoint(id, endpoint)?;
+        Ok(bytes.len())
+    }
+
+    /// Sidecar [`Endpoint`] for an occupied RX slot.
+    #[must_use]
+    pub fn rx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        self.storage.rx_endpoint(id)
+    }
+
+    /// Sidecar [`Endpoint`] for an occupied TX slot.
+    #[must_use]
+    pub fn tx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        self.storage.tx_endpoint(id)
+    }
+
+    /// Set RX sidecar [`Endpoint`]. Not written into the byte buffer.
+    pub fn set_rx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        self.storage.set_rx_endpoint(id, endpoint)
+    }
+
+    /// Set TX sidecar [`Endpoint`]. Not written into the byte buffer.
+    pub fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        self.storage.set_tx_endpoint(id, endpoint)
+    }
+}
+
+impl<S: Storage + DedupSlots> Engine<S> {
+    /// Insert a Dedup Table row, or return the existing slot if the key is present.
+    ///
+    /// `None` when the table is full and the key is not already stored. Scans
+    /// the configured capacity (O(n)).
+    pub fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
+        self.storage.insert_dedup(entry)
+    }
+
+    /// Occupied Dedup Table slot matching `key`, if any. O(n) in capacity.
+    #[must_use]
+    pub fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {
+        self.storage.lookup_dedup(key)
+    }
+
+    /// Release the Dedup Table slot matching `key`, if occupied. O(n) in capacity.
+    pub fn remove_dedup(&mut self, key: DedupKey) -> bool {
+        self.storage.remove_dedup(key)
+    }
+
+    /// Occupied Dedup Table payload at `id`.
+    #[must_use]
+    pub fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
+        self.storage.dedup_entry(id)
+    }
 }
 
 fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessageError> {
@@ -215,4 +297,13 @@ fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessag
 fn encode_occupied(buf: Option<&mut [u8]>, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
     crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?)
         .map_err(SlotMessageError::Encode)
+}
+
+fn copy_into_slot(buf: Option<&mut [u8]>, bytes: &[u8]) -> Result<(), SlotError> {
+    let buf = buf.ok_or(SlotError::NotOccupied)?;
+    if bytes.len() > buf.len() {
+        return Err(SlotError::LengthExceedsSlot);
+    }
+    buf[..bytes.len()].copy_from_slice(bytes);
+    Ok(())
 }

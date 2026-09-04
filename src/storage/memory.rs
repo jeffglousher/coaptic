@@ -1,12 +1,17 @@
 //! `no_std` [`Memory`] backend: typed arrays sized by [`MemoryProfile`].
 
 use super::DatagramSlots;
+use super::DedupEntry;
+use super::DedupKey;
+use super::DedupSlots;
+use super::Endpoint;
 use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::{Capacities, bytes_ok};
 use super::pool::DatagramBytes;
+use super::table::DedupStore;
 
 /// Named associated constants for the areas present in [`Memory`].
 ///
@@ -296,6 +301,43 @@ where
 
     fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
         DatagramBytes::set_len(&mut self.tx, id, len)
+    }
+
+    fn rx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        DatagramBytes::endpoint(&self.rx, id)
+    }
+
+    fn tx_endpoint(&self, id: SlotId) -> Option<Endpoint> {
+        DatagramBytes::endpoint(&self.tx, id)
+    }
+
+    fn set_rx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        DatagramBytes::set_endpoint(&mut self.rx, id, endpoint)
+    }
+
+    fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
+        DatagramBytes::set_endpoint(&mut self.tx, id, endpoint)
+    }
+}
+
+impl<P: MemoryProfile, B> DedupSlots for Memory<P, B>
+where
+    P::Dedup: DedupStore,
+{
+    fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
+        self.dedup.insert(entry)
+    }
+
+    fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {
+        self.dedup.lookup(key)
+    }
+
+    fn remove_dedup(&mut self, key: DedupKey) -> bool {
+        self.dedup.remove(key)
+    }
+
+    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
+        self.dedup.entry(id)
     }
 }
 

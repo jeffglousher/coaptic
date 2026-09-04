@@ -34,7 +34,7 @@ A datagram slot holds one CoAP message: the UDP payload. That is the CoAP header
 
 It does not hold Ethernet, IP, or UDP headers. The engine does not parse Ethernet. A normal socket `recvfrom` already stripped L2/L3/L4 headers.
 
-Peer address and port are sidecar metadata next to the slot, not bytes inside it.
+[`Endpoint`](../src/storage/endpoint.rs) (address and port) is sidecar metadata next to the slot, not bytes inside it.
 
 # Datagram slot bytes
 
@@ -89,6 +89,8 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `DatagramPool` | Pool of datagram slots (RX and TX are two pools) |
 | `BodyPool` | Pool of body slots when block-wise is enabled (RX and TX are two pools) |
 | `DedupTable` | Dedup table |
+| `Endpoint` | UDP peer sidecar next to a datagram slot |
+| `DedupKey` / `DedupEntry` | Dedup identity (Message ID + remote Endpoint) |
 | `ObserveTable` | Observe interest table |
 | `SlotId` | Slot identifier |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |

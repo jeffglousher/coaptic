@@ -13,9 +13,10 @@
 //! Architecture and the bounded-memory contract live in [`design.md`][design].
 //! Protocol behavior is defined by the IETF documents in [`knowledge/rfcs/`][rfcs].
 //! This crate does not restate wire format. There is no Ethernet handling: a
-//! datagram slot holds CoAP message bytes (UDP payload). [`Peer`] is sidecar
-//! metadata, currently a placeholder until `Endpoint` exists. OSCORE, DTLS,
-//! and plugtest harnesses are out of scope here.
+//! datagram slot holds CoAP message bytes (UDP payload). [`Endpoint`] is
+//! sidecar metadata (address and port) next to the slot. The Dedup Table
+//! stores [`DedupEntry`] rows keyed by Message ID and remote [`Endpoint`].
+//! OSCORE, DTLS, and plugtest harnesses are out of scope here.
 //!
 //! # Message
 //!
@@ -95,7 +96,7 @@ pub use message::{
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    BodyPool, Capacities, DatagramPool, DatagramSlots, DedupTable, Engine, EngineBuilder, Memory,
-    MemoryProfile, Missing, NoBodies, ObserveTable, Peer, Present, SlotError, SlotId, SlotPool,
-    Storage, WithBodies,
+    BodyPool, Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots,
+    DedupTable, Endpoint, Engine, EngineBuilder, Memory, MemoryProfile, Missing, NoBodies,
+    ObserveTable, Present, SlotError, SlotId, SlotPool, Storage, WithBodies,
 };
