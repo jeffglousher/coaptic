@@ -59,6 +59,7 @@ PATH_TYPES = {
     "ci": "Playbook",
     "review": "Policy",
     "okf-frontmatter": "Playbook",
+    "block-testing": "Playbook",
     "plugtest/requirements": "Playbook",
     "plugtest/base": "Test Descriptions",
     "plugtest/block": "Test Descriptions",

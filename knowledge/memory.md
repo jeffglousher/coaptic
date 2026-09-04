@@ -1,7 +1,7 @@
 ---
 type: Architecture
 title: Locked memory and API
-description: Locked datagram/body slot sizes, Storage trait, builder typestate, and crate names.
+description: Locked datagram/body slot sizes, block-wise builder switch, Storage trait, and crate names.
 resource: ../design.md
 tags: [architecture, memory, slots, storage]
 status: stable
@@ -12,13 +12,16 @@ sources:
   - id: rfc7252
     resource: /rfcs/rfc7252.md
     title: "RFC 7252 §4.6 Message Size"
+  - id: block-testing
+    resource: /block-testing.md
+    title: Block and Q-Block testing policy
 deterministic:
   by: "process:okf-frontmatter"
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:33:33Z"
   fields: [type, resource]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-03T21:11:50Z"
+  at: "2026-09-04T11:33:33Z"
 ---
 
 # Locked memory and API
@@ -43,7 +46,15 @@ Default datagram slot size is **1472** bytes. That is IPv4 UDP max on Ethernet (
 
 # Body slots
 
-Body slots are a separate complete-body capacity for block-wise transfer. Starting default **4096** bytes. Independent of datagram slot size.
+Body slots are a separate complete-body capacity for block-wise transfer. Independent of datagram slot size.
+
+Block-wise is an explicit builder typestate switch (`.block_wise(true)` / `.block_wise(false)`). Locked (Jeff, 2026-09-04).
+
+**Disabled:** Storage has **no body pools**. No body slot arrays. No body capacity knobs. Do not allocate body RAM when block-wise is off.
+
+**Enabled:** Size body capacity in **bytes**. The byte count must be a **multiple of 1024** (max Block/Q-Block SZX). Default enabled capacity is **4096** = 4 × 1024. Datagram default stays **1472**. Default is small; tests go bigger. Sweep policy: [Block testing](/block-testing.md).
+
+Do not use 0 body slots or 0 body bytes as “disabled.” Disabled means the pools are absent.
 
 # Storage
 
@@ -53,16 +64,16 @@ One engine, two backends. Logic (acquire / release / rotate) is written once aga
 Engine<S: Storage>
 ```
 
-- `no_std` default: `Memory<P: MemoryProfile>` owns six typed arrays. `MemoryProfile` is a trait with **named** associated constants, not a pile of positional const generics: RX/TX datagram slot counts and bytes, RX/TX body slot counts and bytes, dedup entries, observe entries. Ship `profiles::Default` (1472 dgram, 4096 body, modest slot counts) and `profiles::Constrained` (1152 dgram). Numbers: [Profiles](/profiles.md).
+- `no_std` default: `Memory<P: MemoryProfile>` owns typed arrays for the areas present in Storage. `MemoryProfile` is a trait with **named** associated constants, not a pile of positional const generics: RX/TX datagram slot counts and bytes, dedup entries, observe entries, and — **only when block-wise is enabled** — RX/TX body slot counts and bytes. Ship `profiles::Default` (1472 dgram; when enabled, 4096 body = 4 × 1024; modest slot counts) and `profiles::Constrained` (1152 dgram). Numbers: [Profiles](/profiles.md).
 - `alloc` feature: `AllocMemory` with runtime `Capacities`, one heap allocation at init, then no growth.
 
 Do not carve a byte slab.
 
-RX and TX are two pools of the same types (`DatagramPool`, `BodyPool`).
+RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools (`BodyPool`) exist only when block-wise is enabled.
 
 # Builder
 
-`EngineBuilder` is consuming, with a nats-style terminal `build()`. Typestate so `build()` exists only when all six areas are specified (via a profile or method-by-method). `build()` moves `Storage` in. `alloc` adds `build_alloc()` from `Capacities`. Size mismatch is a build error.
+`EngineBuilder` is consuming, with a nats-style terminal `build()`. Typestate so `build()` exists only when the required areas are specified (via a profile or method-by-method) and the block-wise switch is set. `.block_wise(false)` omits body pools from Storage. `.block_wise(true)` requires body capacity in bytes (multiple of 1024). `build()` moves `Storage` in. `alloc` adds `build_alloc()` from `Capacities`. Size mismatch is a build error. Enabled body bytes that are not a multiple of 1024 are a build error.
 
 # Names
 
@@ -70,17 +81,17 @@ RX and TX are two pools of the same types (`DatagramPool`, `BodyPool`).
 | --- | --- |
 | `Engine` | Protocol engine, generic over `Storage` |
 | `EngineBuilder` | Consuming typestate builder |
-| `Memory` | `no_std` backend: six typed arrays, profile-sized |
-| `MemoryProfile` | Named associated constants for the six areas |
+| `Memory` | `no_std` backend: typed arrays for areas present in Storage |
+| `MemoryProfile` | Named associated constants for those areas |
 | `AllocMemory` | `alloc` backend: one heap allocation, then no growth |
 | `Capacities` | Runtime sizes for `AllocMemory` / `build_alloc()` |
 | `Storage` | Trait both backends implement |
 | `DatagramPool` | Pool of datagram slots (RX and TX are two pools) |
-| `BodyPool` | Pool of body slots (RX and TX are two pools) |
+| `BodyPool` | Pool of body slots when block-wise is enabled (RX and TX are two pools) |
 | `DedupTable` | Dedup table |
 | `ObserveTable` | Observe interest table |
 | `SlotId` | Slot identifier |
-| `profiles::Default` | 1472 dgram, 4096 body, modest slot counts |
+| `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
 # Tests
