@@ -46,11 +46,29 @@ impl BlockKey {
 pub enum BlockRole {
     /// Incoming Block1: client → server request body.
     IncomingBlock1,
+    /// Incoming Block2: server → client response body.
+    IncomingBlock2,
+    /// Outgoing Block1: client → server request body.
+    OutgoingBlock1,
     /// Outgoing Block2: server → client response body.
     OutgoingBlock2,
 }
 
-/// Result of writing one incoming Block1 range into a body slot.
+impl BlockRole {
+    /// Incoming Block1 or incoming Block2 (RX body pool).
+    #[must_use]
+    pub const fn is_incoming(self) -> bool {
+        matches!(self, Self::IncomingBlock1 | Self::IncomingBlock2)
+    }
+
+    /// Outgoing Block1 or outgoing Block2 (TX body pool).
+    #[must_use]
+    pub const fn is_outgoing(self) -> bool {
+        matches!(self, Self::OutgoingBlock1 | Self::OutgoingBlock2)
+    }
+}
+
+/// Result of writing one incoming Block1 / Block2 range into a body slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockProgress {
     id: SlotId,
@@ -86,7 +104,7 @@ impl BlockProgress {
     }
 }
 
-/// One issued outgoing Block2 range. Bytes live in the body slot.
+/// One issued outgoing Block1 / Block2 range. Bytes live in the body slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OutgoingBlock {
     id: SlotId,
@@ -169,20 +187,27 @@ pub struct BlockTransfer {
 }
 
 impl BlockTransfer {
-    /// Incoming Block1 sidecar after the first accepted block.
-    pub fn incoming_block1(
+    /// Incoming sidecar after the first accepted block.
+    ///
+    /// `role` must be [`BlockRole::IncomingBlock1`] or
+    /// [`BlockRole::IncomingBlock2`]. Classic Block starts at NUM 0.
+    pub fn incoming(
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload_len: usize,
         capacity: usize,
         expected_len: Option<u32>,
     ) -> Result<Self, BlockTransferError> {
+        if !role.is_incoming() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
         if block.num() != 0 {
             return Err(BlockTransferError::Gap);
         }
         let mut transfer = Self {
             key,
-            role: BlockRole::IncomingBlock1,
+            role,
             num: 0,
             szx: block.szx(),
             more: block.more(),
@@ -195,13 +220,56 @@ impl BlockTransfer {
         Ok(transfer)
     }
 
-    /// Outgoing Block2 sidecar for a complete body already in the slot.
-    pub fn outgoing_block2(
+    /// Incoming Block1 sidecar after the first accepted block.
+    pub fn incoming_block1(
         key: BlockKey,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+        expected_len: Option<u32>,
+    ) -> Result<Self, BlockTransferError> {
+        Self::incoming(
+            key,
+            BlockRole::IncomingBlock1,
+            block,
+            payload_len,
+            capacity,
+            expected_len,
+        )
+    }
+
+    /// Incoming Block2 sidecar after the first accepted block.
+    pub fn incoming_block2(
+        key: BlockKey,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+        expected_len: Option<u32>,
+    ) -> Result<Self, BlockTransferError> {
+        Self::incoming(
+            key,
+            BlockRole::IncomingBlock2,
+            block,
+            payload_len,
+            capacity,
+            expected_len,
+        )
+    }
+
+    /// Outgoing sidecar for a complete body already in the slot.
+    ///
+    /// `role` must be [`BlockRole::OutgoingBlock1`] or
+    /// [`BlockRole::OutgoingBlock2`].
+    pub fn outgoing(
+        key: BlockKey,
+        role: BlockRole,
         body_len: usize,
         szx: u8,
         capacity: usize,
     ) -> Result<Self, BlockTransferError> {
+        if !role.is_outgoing() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
         let _ = BlockValue::size_from_szx(szx)?;
         if body_len > capacity {
             return Err(BlockTransferError::Overflow);
@@ -209,7 +277,7 @@ impl BlockTransfer {
         if let Ok(len) = u32::try_from(body_len) {
             Ok(Self {
                 key,
-                role: BlockRole::OutgoingBlock2,
+                role,
                 num: 0,
                 szx,
                 more: false,
@@ -221,6 +289,26 @@ impl BlockTransfer {
         } else {
             Err(BlockTransferError::Overflow)
         }
+    }
+
+    /// Outgoing Block1 sidecar for a complete body already in the slot.
+    pub fn outgoing_block1(
+        key: BlockKey,
+        body_len: usize,
+        szx: u8,
+        capacity: usize,
+    ) -> Result<Self, BlockTransferError> {
+        Self::outgoing(key, BlockRole::OutgoingBlock1, body_len, szx, capacity)
+    }
+
+    /// Outgoing Block2 sidecar for a complete body already in the slot.
+    pub fn outgoing_block2(
+        key: BlockKey,
+        body_len: usize,
+        szx: u8,
+        capacity: usize,
+    ) -> Result<Self, BlockTransferError> {
+        Self::outgoing(key, BlockRole::OutgoingBlock2, body_len, szx, capacity)
     }
 
     /// Lookup identity.
@@ -241,7 +329,7 @@ impl BlockTransfer {
         self.key.endpoint()
     }
 
-    /// Incoming Block1 or outgoing Block2.
+    /// Incoming or outgoing Block1 / Block2 role.
     #[must_use]
     pub const fn role(self) -> BlockRole {
         self.role
@@ -277,7 +365,7 @@ impl BlockTransfer {
         self.filled
     }
 
-    /// Whether the transfer has accepted M=0 or issued the last Block2.
+    /// Whether the transfer has accepted M=0 or issued the last outgoing block.
     #[must_use]
     pub const fn is_complete(self) -> bool {
         self.complete
@@ -296,7 +384,7 @@ impl BlockTransfer {
         payload_len: usize,
         capacity: usize,
     ) -> Result<usize, BlockTransferError> {
-        if self.role != BlockRole::IncomingBlock1 {
+        if !self.role.is_incoming() {
             return Err(BlockTransferError::IdentityMismatch);
         }
         if self.complete {
@@ -348,7 +436,7 @@ impl BlockTransfer {
 
     /// Issue the next in-order outgoing block. Returns `(block, offset, len)`.
     pub fn issue_outgoing(&mut self) -> Result<(BlockValue, usize, usize), BlockTransferError> {
-        if self.role != BlockRole::OutgoingBlock2 {
+        if !self.role.is_outgoing() {
             return Err(BlockTransferError::IdentityMismatch);
         }
         if self.complete {
@@ -391,6 +479,7 @@ pub(crate) trait BodyOps {
     fn admit_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
@@ -398,12 +487,14 @@ pub(crate) trait BodyOps {
     fn write_incoming(
         &mut self,
         id: SlotId,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
     ) -> Result<BlockProgress, BlockTransferError>;
     fn apply_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
@@ -411,10 +502,15 @@ pub(crate) trait BodyOps {
     fn start_outgoing(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError>;
-    fn next_outgoing(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError>;
+    fn next_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+    ) -> Result<OutgoingBlock, BlockTransferError>;
 }
 
 /// Copy `payload` into `buf` at `offset` and record the filled length.
@@ -548,6 +644,145 @@ mod tests {
         assert_eq!(
             BlockTransfer::outgoing_block2(key(), 4097, 6, 4096).expect_err("cap"),
             BlockTransferError::Overflow
+        );
+    }
+
+    #[test]
+    fn incoming_block2_single_and_multi() {
+        let t =
+            BlockTransfer::incoming_block2(key(), szx16(0, false), 8, 4096, None).expect("admit");
+        assert_eq!(t.role(), BlockRole::IncomingBlock2);
+        assert!(t.role().is_incoming());
+        assert!(!t.role().is_outgoing());
+        assert_eq!(t.num(), 0);
+        assert!(!t.more());
+        assert_eq!(t.filled(), 8);
+        assert!(t.is_complete());
+
+        let mut multi = BlockTransfer::incoming_block2(key(), szx16(0, true), 16, 4096, Some(40))
+            .expect("first");
+        assert_eq!(
+            multi.accept_incoming(szx16(1, true), 16, 4096).expect("2"),
+            16
+        );
+        assert_eq!(
+            multi
+                .accept_incoming(szx16(2, false), 8, 4096)
+                .expect("last"),
+            32
+        );
+        assert!(multi.is_complete());
+        assert_eq!(multi.filled(), 40);
+    }
+
+    #[test]
+    fn incoming_block2_rejects_gap_overlap_szx_overflow() {
+        assert_eq!(
+            BlockTransfer::incoming_block2(key(), szx16(1, false), 8, 4096, None)
+                .expect_err("num 1"),
+            BlockTransferError::Gap
+        );
+
+        let mut t =
+            BlockTransfer::incoming_block2(key(), szx16(0, true), 16, 4096, None).expect("first");
+        assert_eq!(
+            t.accept_incoming(szx16(2, true), 16, 4096)
+                .expect_err("gap"),
+            BlockTransferError::Gap
+        );
+        assert_eq!(
+            t.accept_incoming(szx16(0, true), 16, 4096)
+                .expect_err("overlap"),
+            BlockTransferError::Overlap
+        );
+        let szx1024 = BlockValue::from_size(1, true, 1024).expect("1024");
+        assert_eq!(
+            t.accept_incoming(szx1024, 1024, 4096).expect_err("szx"),
+            BlockTransferError::SzxMismatch
+        );
+
+        let big = BlockValue::from_size(0, true, 1024).expect("1024");
+        let mut full = BlockTransfer::incoming_block2(key(), big, 1024, 4096, None).expect("b0");
+        for n in 1..4 {
+            let b = BlockValue::from_size(n, true, 1024).expect("blk");
+            full.accept_incoming(b, 1024, 4096).expect("fit");
+        }
+        let extra = BlockValue::from_size(4, false, 1024).expect("overflow");
+        assert_eq!(
+            full.accept_incoming(extra, 1, 4096).expect_err("cap"),
+            BlockTransferError::Overflow
+        );
+    }
+
+    #[test]
+    fn incoming_size2_must_match_on_m0() {
+        let err = BlockTransfer::incoming_block2(key(), szx16(0, false), 8, 4096, Some(16))
+            .expect_err("short");
+        assert_eq!(err, BlockTransferError::LengthInconsistent);
+    }
+
+    #[test]
+    fn outgoing_block1_issues_in_order() {
+        let mut t = BlockTransfer::outgoing_block1(key(), 40, 0, 4096).expect("start");
+        assert_eq!(t.role(), BlockRole::OutgoingBlock1);
+        assert!(t.role().is_outgoing());
+        assert!(!t.role().is_incoming());
+        let (b0, off0, len0) = t.issue_outgoing().expect("b0");
+        assert_eq!((b0.num(), b0.more(), off0, len0), (0, true, 0, 16));
+        let (b1, off1, len1) = t.issue_outgoing().expect("b1");
+        assert_eq!((b1.num(), b1.more(), off1, len1), (1, true, 16, 16));
+        let (b2, off2, len2) = t.issue_outgoing().expect("b2");
+        assert_eq!((b2.num(), b2.more(), off2, len2), (2, false, 32, 8));
+        assert!(t.is_complete());
+        assert_eq!(
+            t.issue_outgoing().expect_err("done"),
+            BlockTransferError::AlreadyComplete
+        );
+    }
+
+    #[test]
+    fn outgoing_block1_rejects_body_past_capacity() {
+        assert_eq!(
+            BlockTransfer::outgoing_block1(key(), 4097, 6, 4096).expect_err("cap"),
+            BlockTransferError::Overflow
+        );
+    }
+
+    #[test]
+    fn constructors_reject_wrong_direction_role() {
+        assert_eq!(
+            BlockTransfer::incoming(
+                key(),
+                BlockRole::OutgoingBlock1,
+                szx16(0, false),
+                8,
+                4096,
+                None
+            )
+            .expect_err("out as in"),
+            BlockTransferError::IdentityMismatch
+        );
+        assert_eq!(
+            BlockTransfer::outgoing(key(), BlockRole::IncomingBlock2, 8, 0, 4096)
+                .expect_err("in as out"),
+            BlockTransferError::IdentityMismatch
+        );
+    }
+
+    #[test]
+    fn incoming_cannot_issue_outgoing_and_vice_versa() {
+        let mut incoming =
+            BlockTransfer::incoming_block2(key(), szx16(0, true), 16, 4096, None).expect("in");
+        assert_eq!(
+            incoming.issue_outgoing().expect_err("in"),
+            BlockTransferError::IdentityMismatch
+        );
+        let mut outgoing = BlockTransfer::outgoing_block1(key(), 16, 0, 4096).expect("out");
+        assert_eq!(
+            outgoing
+                .accept_incoming(szx16(0, false), 8, 4096)
+                .expect_err("out"),
+            BlockTransferError::IdentityMismatch
         );
     }
 }

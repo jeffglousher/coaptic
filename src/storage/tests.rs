@@ -1070,14 +1070,38 @@ fn assemble_classic_block1<S: Storage + BodySlots>(
     body: &[u8],
     size: u16,
 ) -> Result<super::BlockProgress, BlockTransferError> {
+    assemble_classic_incoming(engine, key, body, size, true)
+}
+
+/// Chop `body` into classic Block2 pieces of `size` and apply them.
+fn assemble_classic_block2<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    key: BlockKey,
+    body: &[u8],
+    size: u16,
+) -> Result<super::BlockProgress, BlockTransferError> {
+    assemble_classic_incoming(engine, key, body, size, false)
+}
+
+fn assemble_classic_incoming<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    key: BlockKey,
+    body: &[u8],
+    size: u16,
+    block1: bool,
+) -> Result<super::BlockProgress, BlockTransferError> {
     let mut offset = 0usize;
     let mut num = 0u32;
     loop {
         let end = core::cmp::min(offset.saturating_add(usize::from(size)), body.len());
         let more = end < body.len();
         let block = BlockValue::from_size(num, more, size).expect("legal size");
-        let progress =
-            engine.apply_block1(key, block, &body[offset..end], Some(body.len() as u32))?;
+        let expected = Some(body.len() as u32);
+        let progress = if block1 {
+            engine.apply_block1(key, block, &body[offset..end], expected)?
+        } else {
+            engine.apply_block2(key, block, &body[offset..end], expected)?
+        };
         if !more {
             return Ok(progress);
         }
@@ -1267,6 +1291,195 @@ fn block1_szx_mismatch_and_release() {
     assert!(engine.lookup_rx_body(key).is_none());
 }
 
+#[test]
+fn block2_single_block_body() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let body = b"hello";
+    let block = BlockValue::from_size(0, false, 16).expect("16");
+    let progress = engine
+        .apply_block2(key, block, body, Some(body.len() as u32))
+        .expect("single");
+    assert!(progress.complete());
+    assert_eq!(progress.filled(), 5);
+    assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+    let t = engine.rx_body_transfer(progress.id()).expect("sidecar");
+    assert_eq!(t.key(), key);
+    assert_eq!(t.role(), super::BlockRole::IncomingBlock2);
+    assert_eq!(t.szx(), 0);
+    assert!(!t.more());
+}
+
+#[test]
+fn block2_multi_block_szx16_and_szx1024() {
+    let mut engine = build_default_bodies();
+    let key16 = BlockKey::new(sample_token(&[3]), Endpoint::v4([192, 0, 2, 3], 5683));
+    let body16: [u8; 40] = core::array::from_fn(|i| i as u8);
+    let done = assemble_classic_block2(&mut engine, key16, &body16, 16).expect("16");
+    assert!(done.complete());
+    assert_eq!(engine.rx_body_payload(done.id()), Some(body16.as_slice()));
+
+    let key1024 = BlockKey::new(sample_token(&[4]), Endpoint::v4([192, 0, 2, 4], 5683));
+    let body1024: [u8; 2048] = core::array::from_fn(|i| (i % 251) as u8);
+    let done1024 = assemble_classic_block2(&mut engine, key1024, &body1024, 1024).expect("1024");
+    assert!(done1024.complete());
+    assert_eq!(
+        engine.rx_body_payload(done1024.id()),
+        Some(body1024.as_slice())
+    );
+}
+
+#[test]
+fn block2_capacity_overflow() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let chunk = [0x5au8; 1024];
+    for n in 0..4 {
+        let block = BlockValue::from_size(n, true, 1024).expect("1024");
+        engine
+            .apply_block2(key, block, &chunk, None)
+            .expect("fits in 4096");
+    }
+    let extra = BlockValue::from_size(4, false, 1024).expect("5th");
+    assert_eq!(
+        engine.apply_block2(key, extra, &chunk[..1], None),
+        Err(BlockTransferError::Overflow)
+    );
+}
+
+#[test]
+fn block2_out_of_order_num_rejected() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let first = BlockValue::from_size(0, true, 16).expect("0");
+    engine
+        .apply_block2(key, first, &[0u8; 16], None)
+        .expect("first");
+    let skip = BlockValue::from_size(2, true, 16).expect("2");
+    assert_eq!(
+        engine.apply_block2(key, skip, &[0u8; 16], None),
+        Err(BlockTransferError::Gap)
+    );
+    let replay = BlockValue::from_size(0, true, 16).expect("replay");
+    assert_eq!(
+        engine.apply_block2(key, replay, &[0u8; 16], None),
+        Err(BlockTransferError::Overlap)
+    );
+}
+
+#[test]
+fn block2_absent_when_block_wise_false() {
+    let mut engine = build_default();
+    let key = block_key();
+    let block = BlockValue::from_size(0, false, 16).expect("16");
+    assert_eq!(
+        engine.apply_block2(key, block, b"x", None),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert_eq!(
+        engine.start_block1(key, b"x", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert!(!engine.has_body_pools());
+}
+
+#[test]
+fn block2_apply_from_rx_datagram() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+    let token = sample_token(&[0xcd]);
+    let payload = b"abcdef";
+    let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
+    let size2 = crate::encode_uint(payload.len() as u32);
+    let opts = [Opt::block2(&blk), Opt::size2(&size2)];
+    let msg = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(7))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(payload);
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let progress = engine.apply_block2_rx(rx).expect("apply");
+    assert!(progress.complete());
+    assert_eq!(
+        engine.rx_body_payload(progress.id()),
+        Some(payload.as_slice())
+    );
+    assert_eq!(
+        engine.lookup_rx_body(BlockKey::new(token, ep)),
+        Some(progress.id())
+    );
+}
+
+#[test]
+fn block1_outgoing_slices_and_encodes() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 3) as u8);
+    let id = engine.start_block1(key, &body, 0).expect("start");
+    assert_eq!(engine.tx_body_payload(id), Some(body.as_slice()));
+    let t = engine.tx_body_transfer(id).expect("sidecar");
+    assert_eq!(t.role(), super::BlockRole::OutgoingBlock1);
+
+    let b0 = engine.next_block1(id).expect("b0");
+    assert_eq!(b0.block().num(), 0);
+    assert!(b0.block().more());
+    assert_eq!(
+        &engine.tx_body_payload(id).expect("body")[b0.offset()..b0.offset() + b0.len()],
+        &body[..16]
+    );
+
+    let tx = engine.acquire_tx().expect("tx");
+    let issued = engine
+        .encode_block1_tx(id, tx, Type::Confirmable, Code::PUT, MessageId::new(9))
+        .expect("encode b1");
+    assert_eq!(issued.block().num(), 1);
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(parsed.block1().expect("opt").expect("val").num(), 1);
+    assert_eq!(parsed.payload(), &body[16..32]);
+    assert_eq!(parsed.token(), key.token());
+    assert_eq!(engine.tx_endpoint(tx), Some(key.endpoint()));
+
+    let last = engine.next_block1(id).expect("last");
+    assert!(!last.block().more());
+    assert!(last.complete());
+    assert_eq!(last.len(), 8);
+    assert_eq!(
+        engine.next_block1(id),
+        Err(BlockTransferError::AlreadyComplete)
+    );
+    assert_eq!(
+        engine.next_block2(id),
+        Err(BlockTransferError::IdentityMismatch)
+    );
+
+    engine.release_tx_body(id).expect("abort/release");
+    assert!(engine.tx_body_transfer(id).is_none());
+}
+
+#[test]
+fn block2_szx_mismatch_and_release() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let first = BlockValue::from_size(0, true, 16).expect("16");
+    let id = engine
+        .admit_block2(key, first, &[0u8; 16], None)
+        .expect("admit");
+    let wrong = BlockValue::from_size(1, false, 1024).expect("1024");
+    assert_eq!(
+        engine.write_block2(id, wrong, &[0u8; 16]),
+        Err(BlockTransferError::SzxMismatch)
+    );
+    assert_eq!(
+        engine.write_block1(id, wrong, &[0u8; 16]),
+        Err(BlockTransferError::IdentityMismatch)
+    );
+    engine.release_rx_body(id).expect("release");
+    assert!(engine.rx_body_transfer(id).is_none());
+    assert!(engine.lookup_rx_body(key).is_none());
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -1388,6 +1601,27 @@ mod alloc_backend {
         assert_eq!(first.block().num(), 0);
         assert!(first.block().more());
         let last = engine.next_block2(out).expect("b1");
+        assert!(!last.block().more());
+        assert!(last.complete());
+    }
+
+    #[test]
+    fn alloc_block2_incoming_and_block1_outgoing_roundtrip() {
+        let mut engine = build_alloc(true);
+        let key = BlockKey::new(sample_token(&[0x33]), Endpoint::v4([192, 0, 2, 33], 5683));
+        let body: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let done = assemble_classic_block2(&mut engine, key, &body, 16).expect("in");
+        assert_eq!(engine.rx_body_payload(done.id()), Some(body.as_slice()));
+        assert_eq!(
+            engine.rx_body_transfer(done.id()).expect("role").role(),
+            super::BlockRole::IncomingBlock2
+        );
+
+        let out = engine.start_block1(key, &body, 0).expect("out");
+        let first = engine.next_block1(out).expect("b0");
+        assert_eq!(first.block().num(), 0);
+        assert!(first.block().more());
+        let last = engine.next_block1(out).expect("b1");
         assert!(!last.block().more());
         assert!(last.complete());
     }

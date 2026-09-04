@@ -1,7 +1,7 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
 use super::SlotPool;
-use super::block::{BlockKey, BlockProgress, BlockTransfer, OutgoingBlock, write_range};
+use super::block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, write_range};
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
@@ -373,19 +373,20 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         })
     }
 
-    /// Admit an incoming Block1 body: acquire a slot and write the first block.
+    /// Admit an incoming Block1 / Block2 body: acquire a slot and write the first block.
     ///
     /// Classic Block starts at NUM 0. Subsequent blocks use
-    /// [`Self::write_incoming`].
+    /// [`Self::write_incoming`]. `role` must be incoming.
     pub fn admit_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<SlotId, BlockTransferError> {
         let transfer =
-            BlockTransfer::incoming_block1(key, block, payload.len(), BYTES, expected_len)?;
+            BlockTransfer::incoming(key, role, block, payload.len(), BYTES, expected_len)?;
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
         let idx = id.index();
         if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, payload) {
@@ -396,10 +397,13 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Ok(id)
     }
 
-    /// Write the next in-order incoming Block1 range into `id`.
+    /// Write the next in-order incoming range into `id`.
+    ///
+    /// `role` must match the slot's transfer.
     pub fn write_incoming(
         &mut self,
         id: SlotId,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
     ) -> Result<BlockProgress, BlockTransferError> {
@@ -415,6 +419,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
             let transfer = self.transfers[idx]
                 .as_mut()
                 .ok_or(BlockTransferError::NoTransfer)?;
+            if transfer.role() != role {
+                return Err(BlockTransferError::IdentityMismatch);
+            }
             transfer.accept_incoming(block, payload.len(), BYTES)?
         };
         write_range(&mut self.bytes[idx], &mut self.lens[idx], offset, payload)?;
@@ -426,18 +433,19 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         ))
     }
 
-    /// Admit or continue an incoming Block1 transfer identified by `key`.
+    /// Admit or continue an incoming transfer identified by `key` and `role`.
     pub fn apply_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
         if let Some(id) = self.lookup(key) {
-            return self.write_incoming(id, block, payload);
+            return self.write_incoming(id, role, block, payload);
         }
-        let id = self.admit_incoming(key, block, payload, expected_len)?;
+        let id = self.admit_incoming(key, role, block, payload, expected_len)?;
         let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,
@@ -446,14 +454,17 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         ))
     }
 
-    /// Admit an outgoing Block2 body: acquire a slot and copy the complete body.
+    /// Admit an outgoing Block1 / Block2 body: acquire a slot and copy the complete body.
+    ///
+    /// `role` must be outgoing.
     pub fn start_outgoing(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        let transfer = BlockTransfer::outgoing_block2(key, body.len(), szx, BYTES)?;
+        let transfer = BlockTransfer::outgoing(key, role, body.len(), szx, BYTES)?;
         let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
         let idx = id.index();
         if let Err(e) = write_range(&mut self.bytes[idx], &mut self.lens[idx], 0, body) {
@@ -464,8 +475,14 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         Ok(id)
     }
 
-    /// Issue the next in-order outgoing Block2 range from `id`.
-    pub fn next_outgoing(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+    /// Issue the next in-order outgoing range from `id`.
+    ///
+    /// `role` must match the slot's transfer.
+    pub fn next_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < SLOTS {
                 SlotError::NotOccupied.into()
@@ -476,6 +493,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         let transfer = self.transfers[id.index()]
             .as_mut()
             .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
         let (block, offset, len) = transfer.issue_outgoing()?;
         Ok(OutgoingBlock::new(
             id,
@@ -515,43 +535,51 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
     fn admit_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<SlotId, BlockTransferError> {
-        BodyPool::admit_incoming(self, key, block, payload, expected_len)
+        BodyPool::admit_incoming(self, key, role, block, payload, expected_len)
     }
 
     fn write_incoming(
         &mut self,
         id: SlotId,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
     ) -> Result<BlockProgress, BlockTransferError> {
-        BodyPool::write_incoming(self, id, block, payload)
+        BodyPool::write_incoming(self, id, role, block, payload)
     }
 
     fn apply_incoming(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         block: BlockValue,
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        BodyPool::apply_incoming(self, key, block, payload, expected_len)
+        BodyPool::apply_incoming(self, key, role, block, payload, expected_len)
     }
 
     fn start_outgoing(
         &mut self,
         key: BlockKey,
+        role: BlockRole,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        BodyPool::start_outgoing(self, key, body, szx)
+        BodyPool::start_outgoing(self, key, role, body, szx)
     }
 
-    fn next_outgoing(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
-        BodyPool::next_outgoing(self, id)
+    fn next_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        BodyPool::next_outgoing(self, id, role)
     }
 }
 

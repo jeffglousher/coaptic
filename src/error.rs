@@ -278,7 +278,7 @@ pub enum BlockTransferError {
     Value(ValueError),
     /// Occupied datagram is not a well-formed CoAP message.
     Parse(ParseError),
-    /// Encoding a Block2 datagram failed.
+    /// Encoding a Block1 / Block2 datagram failed.
     Encode(EncodeError),
 }
 
