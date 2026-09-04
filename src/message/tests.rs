@@ -1,6 +1,9 @@
 //! Library unit tests for RFC 7252 decode/encode. Not plugtest.
 
-use super::value::{ContentFormat, MAX_AGE_DEFAULT, as_str, encode_uint};
+use super::value::{
+    ContentFormat, MAX_AGE_DEFAULT, OBSERVE_DEREGISTER, OBSERVE_REGISTER, as_str, encode_observe,
+    encode_uint,
+};
 use super::{
     Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Type, decode,
     encode,
@@ -300,13 +303,16 @@ fn unrecognized_critical_is_structured_not_policy() {
         Err(ParseError::UnrecognizedCritical(OptionNumber::new(23)))
     );
 
-    // Observe (6) is elective; not reported.
-    let opts = [Opt::new(OptionNumber::new(6), &[0x00])];
+    // Observe (6) is elective and not in RFC 7252 Table 4; not reported.
+    let opts = [Opt::observe_register()];
     let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(4)).with_options(&opts);
     let bytes = encode_to(&msg, &mut buf);
     let parsed = decode(bytes).expect("opaque parse");
+    assert!(!OptionNumber::OBSERVE.is_rfc7252());
+    assert!(!OptionNumber::OBSERVE.is_critical());
     assert_eq!(parsed.unrecognized_critical(), None);
-    parsed.check_rfc7252_options().expect("elective unknown");
+    parsed.check_rfc7252_options().expect("elective Observe");
+    parsed.check_rfc7252_formats().expect("not Table 4");
 }
 
 #[test]
@@ -370,6 +376,49 @@ fn parse_opts(opts: &[Opt<'_>]) -> (usize, [u8; 256]) {
     let mut buf = [0u8; 256];
     let n = encode(&msg, &mut buf).expect("encode");
     (n, buf)
+}
+
+#[test]
+fn observe_option_roundtrip_register_deregister_and_sequence() {
+    let register = [Opt::observe_register()];
+    let (n, buf) = parse_opts(&register);
+    let parsed = decode(&buf[..n]).expect("register decode");
+    assert_eq!(parsed.observe(), Some(Ok(OBSERVE_REGISTER)));
+    assert!(parsed.is_observe_register());
+    assert!(!parsed.is_observe_deregister());
+    parsed.check_rfc7252_options().expect("elective");
+    parsed.check_rfc7252_formats().expect("not Table 4");
+
+    let mut again = [0u8; 256];
+    let n2 = parsed.encode(&mut again).expect("re-encode");
+    assert_eq!(&buf[..n], &again[..n2]);
+
+    let deregister = [Opt::observe_deregister()];
+    let (n, buf) = parse_opts(&deregister);
+    let parsed = decode(&buf[..n]).expect("deregister decode");
+    assert_eq!(parsed.observe(), Some(Ok(OBSERVE_DEREGISTER)));
+    assert!(parsed.is_observe_deregister());
+    assert!(!parsed.is_observe_register());
+
+    let seq = encode_observe(0x010203);
+    let notify = [Opt::observe(&seq)];
+    let msg =
+        Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(1)).with_options(&notify);
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("encode notify");
+    let parsed = decode(&buf[..n]).expect("notify decode");
+    assert_eq!(parsed.observe(), Some(Ok(0x010203)));
+    assert!(!parsed.is_observe_register());
+    assert!(!parsed.is_observe_deregister());
+
+    let zero_seq = encode_observe(0);
+    let notify0 = [Opt::observe(&zero_seq)];
+    let msg =
+        Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(2)).with_options(&notify0);
+    let n = encode(&msg, &mut buf).expect("encode seq 0");
+    let parsed = decode(&buf[..n]).expect("seq 0");
+    assert_eq!(parsed.observe(), Some(Ok(0)));
+    assert!(!parsed.is_observe_register());
 }
 
 #[test]

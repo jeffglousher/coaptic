@@ -17,6 +17,17 @@ use super::option::{Opt, OptionNumber, Options};
 /// An empty Max-Age *value* is uint 0, which is not this default.
 pub const MAX_AGE_DEFAULT: u32 = 60;
 
+/// Observe register value on a GET (RFC 7641). See `knowledge/rfcs/rfc7641.txt`.
+pub const OBSERVE_REGISTER: u32 = 0;
+
+/// Observe deregister value on a GET (RFC 7641). See `knowledge/rfcs/rfc7641.txt`.
+pub const OBSERVE_DEREGISTER: u32 = 1;
+
+/// 24-bit mask for Observe notification sequence numbers (RFC 7641).
+///
+/// See `knowledge/rfcs/rfc7641.txt`.
+pub const OBSERVE_SEQUENCE_MASK: u32 = 0x00ff_ffff;
+
 /// RFC 7252 §3.2 option value format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OptionValueFormat {
@@ -143,6 +154,28 @@ pub fn decode_uint(bytes: &[u8]) -> Result<u32, ValueError> {
 /// Decode a uint option value that must fit in `u16`.
 pub fn decode_uint16(bytes: &[u8]) -> Result<u16, ValueError> {
     u16::try_from(decode_uint(bytes)?).map_err(|_| ValueError::UintOverflow)
+}
+
+/// Encode an Observe option value (uint, 0–3 bytes).
+///
+/// Register is [`OBSERVE_REGISTER`], deregister is [`OBSERVE_DEREGISTER`].
+/// Notification sequence numbers use the 24 least significant bits
+/// ([`OBSERVE_SEQUENCE_MASK`]). Reuses [`encode_uint`]. See
+/// `knowledge/rfcs/rfc7641.txt`.
+#[must_use]
+pub const fn encode_observe(n: u32) -> EncodedUint {
+    encode_uint(n & OBSERVE_SEQUENCE_MASK)
+}
+
+/// Decode an Observe option value.
+///
+/// Rejects more than 3 value bytes (RFC 7641 length). Otherwise reuses
+/// [`decode_uint`]. See `knowledge/rfcs/rfc7641.txt`.
+pub fn decode_observe(bytes: &[u8]) -> Result<u32, ValueError> {
+    if bytes.len() > 3 {
+        return Err(ValueError::UintOverflow);
+    }
+    decode_uint(bytes)
 }
 
 /// UTF-8 view of a string option value. Does not allocate.
@@ -360,6 +393,27 @@ impl<'a> Opt<'a> {
         Self::uint(OptionNumber::SIZE1, encoded)
     }
 
+    /// Observe (uint). `encoded` must outlive the [`Opt`].
+    ///
+    /// Register is 0, deregister is 1, notifications carry a sequence number.
+    /// See `knowledge/rfcs/rfc7641.txt`.
+    #[must_use]
+    pub const fn observe(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::OBSERVE, encoded)
+    }
+
+    /// Observe register (GET, value 0). Empty uint encoding.
+    #[must_use]
+    pub const fn observe_register() -> Self {
+        Self::empty(OptionNumber::OBSERVE)
+    }
+
+    /// Observe deregister (GET, value 1).
+    #[must_use]
+    pub const fn observe_deregister() -> Self {
+        Self::new(OptionNumber::OBSERVE, &[1])
+    }
+
     /// Whether the value is zero-length (present empty, not missing).
     #[must_use]
     pub const fn is_empty_value(self) -> bool {
@@ -551,6 +605,30 @@ impl<'a> ParsedMessage<'a> {
         self.get_option(OptionNumber::SIZE1).map(Opt::as_uint)
     }
 
+    /// Observe, if present.
+    ///
+    /// On a GET, 0 is register and 1 is deregister. In a response the value
+    /// is a notification sequence number. See `knowledge/rfcs/rfc7641.txt`.
+    #[must_use]
+    pub fn observe(self) -> Option<Result<u32, ValueError>> {
+        self.get_option(OptionNumber::OBSERVE)
+            .map(|opt| decode_observe(opt.value()))
+    }
+
+    /// GET with Observe register (value 0). Sequence 0 on a notification is not this.
+    #[must_use]
+    pub fn is_observe_register(self) -> bool {
+        self.code() == crate::message::Code::GET
+            && matches!(self.observe(), Some(Ok(OBSERVE_REGISTER)))
+    }
+
+    /// GET with Observe deregister (value 1). Sequence 1 on a notification is not this.
+    #[must_use]
+    pub fn is_observe_deregister(self) -> bool {
+        self.code() == crate::message::Code::GET
+            && matches!(self.observe(), Some(Ok(OBSERVE_DEREGISTER)))
+    }
+
     /// Whether If-None-Match is present (empty vs missing).
     #[must_use]
     pub fn if_none_match(self) -> bool {
@@ -598,7 +676,8 @@ impl<'a> ParsedMessage<'a> {
 #[cfg(test)]
 mod unit_tests {
     use super::{
-        ContentFormat, EncodedUint, OptionValueFormat, as_str, decode_uint, decode_uint16,
+        ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK,
+        OptionValueFormat, as_str, decode_observe, decode_uint, decode_uint16, encode_observe,
         encode_uint, option_value_format,
     };
     use crate::error::ValueError;
@@ -654,6 +733,33 @@ mod unit_tests {
         assert_eq!(
             EncodedUint::from(ContentFormat::LINK_FORMAT).as_bytes(),
             &[40]
+        );
+    }
+
+    #[test]
+    fn observe_uint_reuses_codec_and_masks_sequence() {
+        assert_eq!(encode_observe(OBSERVE_REGISTER).as_bytes(), &[] as &[u8]);
+        assert_eq!(encode_observe(OBSERVE_DEREGISTER).as_bytes(), &[1]);
+        assert_eq!(encode_observe(12).as_bytes(), &[12]);
+        assert_eq!(encode_observe(0x00ff_ffff).as_bytes(), &[0xff, 0xff, 0xff]);
+        assert_eq!(
+            encode_observe(0x0100_0000).as_bytes(),
+            encode_observe(0).as_bytes()
+        );
+        assert_eq!(encode_observe(0x0100_0001).as_bytes(), &[1]);
+        assert_eq!(OBSERVE_SEQUENCE_MASK, 0x00ff_ffff);
+
+        assert_eq!(decode_observe(&[]).expect("register"), 0);
+        assert_eq!(decode_observe(&[1]).expect("deregister"), 1);
+        assert_eq!(decode_observe(&[0, 1]).expect("leading zero"), 1);
+        assert_eq!(
+            decode_observe(&[0xff, 0xff, 0xff]).expect("24-bit"),
+            0x00ff_ffff
+        );
+        assert_eq!(decode_observe(&[1, 0, 0, 0]), Err(ValueError::UintOverflow));
+        assert_eq!(
+            decode_uint(&[1, 0, 0, 0]).expect("uint still 4 bytes"),
+            0x0100_0000
         );
     }
 

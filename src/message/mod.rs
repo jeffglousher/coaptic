@@ -13,7 +13,8 @@
 //! any order and yields a slice for [`Message::with_options`].
 //!
 //! [`value`] codecs interpret option values as empty, opaque, uint, or
-//! string. [`ParsedMessage::check_rfc7252_formats`] is optional and separate
+//! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
+//! Table 4. [`ParsedMessage::check_rfc7252_formats`] is optional and separate
 //! from wire decode and from [`ParsedMessage::check_rfc7252_options`].
 //!
 //! Wire format lives in `knowledge/rfcs/rfc7252.txt`. This module does not
@@ -33,8 +34,9 @@ pub use decode::{ParsedMessage, decode};
 pub use encode::{Message, encode};
 pub use option::{Opt, OptionNumber, Options};
 pub use value::{
-    ContentFormat, EncodedUint, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
-    decode_uint, decode_uint16, encode_uint,
+    ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK,
+    OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions, decode_observe, decode_uint,
+    decode_uint16, encode_observe, encode_uint,
 };
 
 pub use crate::error::{OptionsFull, ValueError};

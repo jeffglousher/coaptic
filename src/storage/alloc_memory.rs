@@ -12,6 +12,9 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::ObserveInterest;
+use super::ObserveKey;
+use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotPool;
@@ -20,7 +23,7 @@ use super::capacities::Capacities;
 use super::exchange::ExchangeStore;
 use super::occupancy::HeapOccupancy;
 use super::slot::{SlotError, SlotId};
-use super::table::DedupStore;
+use super::table::{DedupStore, ObserveStore};
 use crate::error::BuildError;
 use crate::message::MessageId;
 
@@ -32,7 +35,7 @@ pub struct AllocMemory {
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
     dedup: AllocDedupTable,
-    observe: AllocTable,
+    observe: AllocObserveTable,
     exchange: AllocExchangeTable,
     rx_body: Option<AllocBodyPool>,
     tx_body: Option<AllocBodyPool>,
@@ -62,7 +65,7 @@ impl AllocMemory {
             rx: AllocDatagramPool::new(capacities.rx_datagram_slots, capacities.rx_datagram_bytes),
             tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes),
             dedup: AllocDedupTable::new(capacities.dedup_entries),
-            observe: AllocTable::new(capacities.observe_entries),
+            observe: AllocObserveTable::new(capacities.observe_entries),
             exchange: AllocExchangeTable::new(capacities.tx_datagram_slots),
             rx_body,
             tx_body,
@@ -413,6 +416,28 @@ impl DedupSlots for AllocMemory {
     }
 }
 
+impl ObserveSlots for AllocMemory {
+    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        self.observe.insert(interest)
+    }
+
+    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+        self.observe.lookup(key)
+    }
+
+    fn remove_observe(&mut self, key: ObserveKey) -> bool {
+        self.observe.remove(key)
+    }
+
+    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        self.observe.take(key)
+    }
+
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+        self.observe.entry(id)
+    }
+}
+
 struct AllocBodyPool {
     slots: Box<[AllocSlot]>,
     slot_bytes: usize,
@@ -656,25 +681,79 @@ impl SlotPool for AllocDedupTable {
     }
 }
 
-struct AllocTable {
+struct AllocObserveTable {
+    entries: Box<[Option<ObserveInterest>]>,
     occ: HeapOccupancy,
 }
 
-impl AllocTable {
+impl AllocObserveTable {
     fn new(entries: usize) -> Self {
         Self {
+            entries: vec![None; entries].into_boxed_slice(),
             occ: HeapOccupancy::new(entries),
+        }
+    }
+
+    fn reset(&mut self, id: SlotId) {
+        if let Some(slot) = self.entries.get_mut(id.index()) {
+            *slot = None;
         }
     }
 }
 
-impl SlotPool for AllocTable {
+impl ObserveStore for AllocObserveTable {
+    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        if let Some(id) = self.lookup(interest.key()) {
+            return Some(id);
+        }
+        let id = self.occ.acquire()?;
+        self.entries[id.index()] = Some(interest);
+        Some(id)
+    }
+
+    fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.entry(id) {
+                Some(interest) if interest.key() == key => Some(id),
+                _ => None,
+            }
+        })
+    }
+
+    fn remove(&mut self, key: ObserveKey) -> bool {
+        match self.lookup(key) {
+            Some(id) => self.release(id).is_ok(),
+            None => false,
+        }
+    }
+
+    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        let id = self.lookup(key)?;
+        let interest = self.entry(id)?;
+        let _ = self.release(id);
+        Some(interest)
+    }
+
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get(id.index()).copied().flatten()
+    }
+}
+
+impl SlotPool for AllocObserveTable {
     fn acquire(&mut self) -> Option<SlotId> {
-        self.occ.acquire()
+        let id = self.occ.acquire()?;
+        self.reset(id);
+        Some(id)
     }
 
     fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.occ.release(id)
+        self.occ.release(id)?;
+        self.reset(id);
+        Ok(())
     }
 
     fn rotate(&mut self) {

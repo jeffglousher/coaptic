@@ -14,6 +14,9 @@ use super::ExchangeKey;
 use super::ExchangeTable;
 use super::Memory;
 use super::MemoryProfile;
+use super::ObserveInterest;
+use super::ObserveKey;
+use super::ObserveTable;
 use super::PendingCon;
 use super::SlotError;
 use super::SlotId;
@@ -22,7 +25,7 @@ use super::Storage;
 use super::WithBodies;
 use super::profiles;
 use crate::error::BuildError;
-use crate::message::{Code, Message, MessageId, Token, Type, empty_ack, empty_rst, encode};
+use crate::message::{Code, Message, MessageId, Opt, Token, Type, empty_ack, empty_rst, encode};
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
@@ -810,6 +813,234 @@ fn engine_piggybacked_wrong_mid_does_not_take() {
     assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
 }
 
+fn observe_get<'a>(token: Token, mid: u16, opts: &'a [Opt<'a>]) -> Message<'a> {
+    Message::new(Type::Confirmable, Code::GET, MessageId::new(mid))
+        .with_token(token)
+        .with_options(opts)
+}
+
+#[test]
+fn observe_hit_miss_wrong_endpoint() {
+    let mut table = ObserveTable::<2>::new();
+    let tok = sample_token(&[0x71]);
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let a = ObserveInterest::new(tok, ep);
+    let miss_tok = ObserveInterest::new(sample_token(&[0x72]), ep);
+    let miss_ep = ObserveInterest::new(tok, other);
+
+    assert_eq!(table.lookup(a.key()), None);
+    let id_a = table.insert(a).expect("insert");
+    assert_eq!(table.lookup(a.key()), Some(id_a));
+    assert_eq!(table.insert(a).expect("idempotent"), id_a);
+    assert_eq!(table.occupied_count(), 1);
+    assert_eq!(table.lookup(miss_tok.key()), None);
+    assert_eq!(table.lookup(miss_ep.key()), None);
+    assert_eq!(table.entry(id_a), Some(a));
+
+    assert!(table.remove(a.key()));
+    assert_eq!(table.lookup(a.key()), None);
+    assert!(!table.remove(a.key()));
+    let id_again = table.insert(a).expect("reinsert");
+    assert_eq!(id_again, id_a);
+    let taken = table.take(a.key()).expect("take");
+    assert_eq!(taken, a);
+    assert_eq!(table.lookup(a.key()), None);
+    assert!(table.take(a.key()).is_none());
+}
+
+#[test]
+fn observe_empty_token_is_a_valid_key() {
+    let mut table = ObserveTable::<2>::new();
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 1], 5684);
+    let empty = ObserveInterest::new(Token::EMPTY, ep);
+    let other_empty = ObserveInterest::new(Token::EMPTY, other);
+
+    let id = table.insert(empty).expect("empty token");
+    assert_eq!(table.lookup(ObserveKey::new(Token::EMPTY, ep)), Some(id));
+    assert_eq!(table.lookup(other_empty.key()), None);
+    assert_eq!(table.insert(empty).expect("idempotent empty"), id);
+    assert_eq!(table.occupied_count(), 1);
+
+    let id_other = table.insert(other_empty).expect("empty other endpoint");
+    assert_ne!(id, id_other);
+    assert_eq!(table.take(empty.key()).expect("take").token(), Token::EMPTY);
+    assert_eq!(table.lookup(empty.key()), None);
+}
+
+#[test]
+fn observe_capacity_saturation() {
+    let mut table = ObserveTable::<2>::new();
+    let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let a = ObserveInterest::new(sample_token(&[1]), ep);
+    let b = ObserveInterest::new(sample_token(&[2]), ep);
+    let extra = ObserveInterest::new(sample_token(&[3]), ep);
+
+    assert!(table.insert(a).is_some());
+    assert!(table.insert(b).is_some());
+    assert!(table.insert(extra).is_none());
+    assert_eq!(table.occupied_count(), 2);
+    assert!(table.take(a.key()).is_some());
+    assert!(table.insert(extra).is_some());
+}
+
+#[test]
+fn engine_observe_insert_lookup_remove_take() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([198, 51, 100, 7], 5683);
+    let tok = sample_token(&[0x09]);
+    let key = ObserveKey::new(tok, ep);
+    let interest = ObserveInterest::from(key);
+    assert_eq!(engine.lookup_observe(key), None);
+    let id = engine.insert_observe(interest).expect("insert");
+    assert_eq!(engine.lookup_observe(key), Some(id));
+    assert_eq!(engine.observe_interest(id), Some(interest));
+    assert!(engine.remove_observe(key));
+    assert_eq!(engine.lookup_observe(key), None);
+    engine.insert_observe(interest).expect("reinsert");
+    assert_eq!(engine.take_observe(key), Some(interest));
+    assert_eq!(engine.lookup_observe(key), None);
+}
+
+#[test]
+fn engine_observe_fills_to_capacity() {
+    let mut engine = build_default();
+    let n = profiles::Default::OBSERVE_ENTRIES;
+    let ep = Endpoint::v4([203, 0, 113, 1], 5683);
+    for i in 0..n {
+        let interest = ObserveInterest::new(sample_token(&[i as u8 + 1]), ep);
+        assert!(engine.insert_observe(interest).is_some());
+    }
+    let overflow = ObserveInterest::new(sample_token(&[0xff]), ep);
+    assert!(engine.insert_observe(overflow).is_none());
+    assert!(
+        engine
+            .lookup_observe(ObserveKey::new(sample_token(&[1]), ep))
+            .is_some()
+    );
+}
+
+#[test]
+fn engine_register_deregister_from_get() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 9], 5683);
+    let other = Endpoint::v4([203, 0, 113, 10], 5683);
+    let tok = sample_token(&[0xaa]);
+    let register_opts = [Opt::observe_register()];
+    let register = observe_get(tok, 0x4242, &register_opts);
+    let (buf, n) = encode_into(&register);
+    let parsed = crate::message::decode(&buf[..n]).expect("register");
+    assert!(parsed.is_observe_register());
+    let id = engine.register_observe(&parsed, ep).expect("register");
+    assert_eq!(engine.lookup_observe(ObserveKey::new(tok, ep)), Some(id));
+    assert_eq!(engine.register_observe(&parsed, ep), Some(id));
+    let id_other = engine.register_observe(&parsed, other).expect("other ep");
+    assert_ne!(id_other, id);
+
+    let deregister_opts = [Opt::observe_deregister()];
+    let deregister = observe_get(tok, 0x4343, &deregister_opts);
+    let (buf, n) = encode_into(&deregister);
+    let parsed = crate::message::decode(&buf[..n]).expect("deregister");
+    assert!(parsed.is_observe_deregister());
+    assert_eq!(engine.deregister_observe(&parsed, other), None);
+    assert!(engine.lookup_observe(ObserveKey::new(tok, other)).is_some());
+    let taken = engine.deregister_observe(&parsed, ep).expect("deregister");
+    assert_eq!(taken.token(), tok);
+    assert_eq!(taken.endpoint(), ep);
+    assert_eq!(engine.lookup_observe(ObserveKey::new(tok, ep)), None);
+    assert!(engine.deregister_observe(&parsed, ep).is_none());
+}
+
+#[test]
+fn engine_register_observe_rx_and_wrong_code_misses() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 10], 5683);
+    let tok = sample_token(&[0x01]);
+    let rx = engine.acquire_rx().expect("rx");
+    let register_opts = [Opt::observe_register()];
+    let register = observe_get(tok, 9, &register_opts);
+    let (buf, n) = encode_into(&register);
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let id = engine
+        .register_observe_rx(rx)
+        .expect("decode")
+        .expect("register");
+    assert_eq!(engine.observe_interest(id).expect("row").token(), tok);
+
+    let notify_opts = [Opt::observe_register()];
+    let notify = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(10))
+        .with_token(tok)
+        .with_options(&notify_opts);
+    let (buf, n) = encode_into(&notify);
+    let parsed = crate::message::decode(&buf[..n]).expect("notify");
+    assert!(!parsed.is_observe_register());
+    assert_eq!(engine.register_observe(&parsed, ep), None);
+
+    let rx2 = engine.acquire_rx().expect("rx2");
+    let deregister_opts = [Opt::observe_deregister()];
+    let deregister = observe_get(tok, 11, &deregister_opts);
+    let (buf, n) = encode_into(&deregister);
+    engine.write_rx(rx2, &buf[..n], ep).expect("write");
+    let taken = engine
+        .deregister_observe_rx(rx2)
+        .expect("decode")
+        .expect("take");
+    assert_eq!(taken.key(), ObserveKey::new(tok, ep));
+    assert_eq!(engine.lookup_observe(ObserveKey::new(tok, ep)), None);
+}
+
+#[test]
+fn engine_observe_distinct_from_exchange_dedup_and_pending_con() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 20], 5683);
+    let mid = MessageId::new(5);
+    let tok = sample_token(&[0x74]);
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine.record_pending_con(tx, ep, mid).expect("pending");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    let dedup = engine
+        .insert_dedup(DedupEntry::new(mid, ep))
+        .expect("dedup");
+    let observe = engine
+        .insert_observe(ObserveInterest::new(tok, ep))
+        .expect("observe");
+
+    let ack = empty_ack(mid);
+    let (buf, n) = encode_into(&ack);
+    let parsed_ack = crate::message::decode(&buf[..n]).expect("empty ack");
+    assert_eq!(engine.match_response(&parsed_ack, ep), None);
+    assert_eq!(engine.register_observe(&parsed_ack, ep), None);
+    assert_eq!(engine.match_empty_ack_rst(&parsed_ack, ep), Some(tx));
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    assert_eq!(
+        engine.lookup_observe(ObserveKey::new(tok, ep)),
+        Some(observe)
+    );
+    assert_eq!(engine.pending_con(tx), None);
+
+    let piggy = Message::new(Type::Acknowledgement, Code::CONTENT, mid).with_token(tok);
+    let (buf, n) = encode_into(&piggy);
+    let parsed = crate::message::decode(&buf[..n]).expect("piggy");
+    assert!(engine.match_response(&parsed, ep).is_some());
+    assert_eq!(engine.lookup_dedup(DedupKey::new(mid, ep)), Some(dedup));
+    assert_eq!(engine.lookup_exchange(ExchangeKey::new(tok, ep)), None);
+    assert_eq!(
+        engine.lookup_observe(ObserveKey::new(tok, ep)),
+        Some(observe)
+    );
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -949,6 +1180,27 @@ mod alloc_backend {
                 .insert_dedup(DedupEntry::new(MessageId::new(99), ep))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn alloc_observe_hit_miss_and_capacity() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 8], 5683);
+        let a = ObserveInterest::new(sample_token(&[1]), ep);
+        let id = engine.insert_observe(a).expect("insert");
+        assert_eq!(engine.lookup_observe(a.key()), Some(id));
+        assert_eq!(engine.insert_observe(a).expect("idempotent"), id);
+        for i in 1..profiles::Default::OBSERVE_ENTRIES {
+            let interest = ObserveInterest::new(sample_token(&[i as u8 + 1]), ep);
+            assert!(engine.insert_observe(interest).is_some());
+        }
+        assert!(
+            engine
+                .insert_observe(ObserveInterest::new(sample_token(&[0xff]), ep))
+                .is_none()
+        );
+        assert!(engine.take_observe(a.key()).is_some());
+        assert_eq!(engine.lookup_observe(a.key()), None);
     }
 
     #[test]

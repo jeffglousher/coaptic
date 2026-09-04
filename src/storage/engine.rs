@@ -9,6 +9,9 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::ObserveInterest;
+use super::ObserveKey;
+use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotError;
@@ -33,10 +36,12 @@ use crate::message::{Message, MessageId, ParsedMessage, Token};
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
-/// a piggybacked ACK with a response code is. Dedup, pending CON, and
-/// exchange matching are different identities. Optional format and
-/// unrecognized-critical checks stay on [`ParsedMessage`].
-/// This type does not invent 4.02 / RST policy.
+/// a piggybacked ACK with a response code is. When `S` implements
+/// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
+/// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). Dedup,
+/// pending CON, exchange matching, and Observe interest are different
+/// identities. Optional format and unrecognized-critical checks stay on
+/// [`ParsedMessage`]. This type does not invent 4.02 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
@@ -503,6 +508,108 @@ impl<S: Storage + Exchanges> Engine<S> {
             return None;
         }
         self.storage.take_exchange(key)
+    }
+}
+
+impl<S: Storage + ObserveSlots> Engine<S> {
+    /// Insert an Observe interest, or return the existing slot if the key is present.
+    ///
+    /// `None` when the table is full and the key is not already stored. Scans
+    /// the configured capacity (O(n)). Does not use Dedup, pending CON, or
+    /// exchange matching.
+    pub fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        self.storage.insert_observe(interest)
+    }
+
+    /// Occupied Observe slot matching `key`, if any. O(n) in capacity.
+    #[must_use]
+    pub fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+        self.storage.lookup_observe(key)
+    }
+
+    /// Release the Observe slot matching `key`, if occupied. O(n) in capacity.
+    pub fn remove_observe(&mut self, key: ObserveKey) -> bool {
+        self.storage.remove_observe(key)
+    }
+
+    /// Remove and return the Observe interest matching `key`, if any.
+    pub fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        self.storage.take_observe(key)
+    }
+
+    /// Occupied Observe payload at `id`.
+    #[must_use]
+    pub fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+        self.storage.observe_interest(id)
+    }
+
+    /// If `parsed` is a GET with Observe 0 (register), insert Token + Endpoint.
+    ///
+    /// Idempotent for the same Token and endpoint. `None` when the datagram
+    /// is not a register GET, or the table is full. Does not invent 4.02 /
+    /// RST policy.
+    pub fn register_observe(
+        &mut self,
+        parsed: &ParsedMessage<'_>,
+        endpoint: Endpoint,
+    ) -> Option<SlotId> {
+        if !parsed.is_observe_register() {
+            return None;
+        }
+        self.storage
+            .insert_observe(ObserveInterest::new(parsed.token(), endpoint))
+    }
+
+    /// If `parsed` is a GET with Observe 1 (deregister), take Token + Endpoint.
+    ///
+    /// `None` when the datagram is not a deregister GET, or no row matches.
+    pub fn deregister_observe(
+        &mut self,
+        parsed: &ParsedMessage<'_>,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        if !parsed.is_observe_deregister() {
+            return None;
+        }
+        self.storage
+            .take_observe(ObserveKey::new(parsed.token(), endpoint))
+    }
+
+    /// Decode occupied RX `id` and [`Self::register_observe`] using its sidecar endpoint.
+    pub fn register_observe_rx(&mut self, id: SlotId) -> Result<Option<SlotId>, SlotMessageError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let (token, is_register) = {
+            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            (parsed.token(), parsed.is_observe_register())
+        };
+        if !is_register {
+            return Ok(None);
+        }
+        Ok(self
+            .storage
+            .insert_observe(ObserveInterest::new(token, endpoint)))
+    }
+
+    /// Decode occupied RX `id` and [`Self::deregister_observe`] using its sidecar endpoint.
+    pub fn deregister_observe_rx(
+        &mut self,
+        id: SlotId,
+    ) -> Result<Option<ObserveInterest>, SlotMessageError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let (token, is_deregister) = {
+            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            (parsed.token(), parsed.is_observe_deregister())
+        };
+        if !is_deregister {
+            return Ok(None);
+        }
+        Ok(self.storage.take_observe(ObserveKey::new(token, endpoint)))
     }
 }
 

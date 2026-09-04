@@ -8,6 +8,9 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::ObserveInterest;
+use super::ObserveKey;
+use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
 use super::SlotError;
@@ -17,7 +20,7 @@ use super::Storage;
 use super::capacities::{Capacities, bytes_ok};
 use super::exchange::ExchangeStore;
 use super::pool::DatagramBytes;
-use super::table::DedupStore;
+use super::table::{DedupStore, ObserveStore};
 use crate::message::MessageId;
 
 /// Named associated constants for the areas present in [`Memory`].
@@ -430,6 +433,31 @@ where
 
     fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
         self.exchange.entry(id)
+    }
+}
+
+impl<P: MemoryProfile, B> ObserveSlots for Memory<P, B>
+where
+    P::Observe: ObserveStore,
+{
+    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        self.observe.insert(interest)
+    }
+
+    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+        self.observe.lookup(key)
+    }
+
+    fn remove_observe(&mut self, key: ObserveKey) -> bool {
+        self.observe.remove(key)
+    }
+
+    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        self.observe.take(key)
+    }
+
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+        self.observe.entry(id)
     }
 }
 

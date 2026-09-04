@@ -4,7 +4,7 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::MessageId;
+use crate::message::{MessageId, Token};
 
 /// Lookup identity for one Dedup Table row.
 ///
@@ -94,10 +94,90 @@ pub(crate) trait DedupStore {
     fn entry(&self, id: SlotId) -> Option<DedupEntry>;
 }
 
-/// Placeholder observe interest row. Protocol fields are not modeled yet.
-#[derive(Clone, Copy, Debug, Default)]
-struct ObserveEntry {
-    _opaque: (),
+/// Lookup identity for one Observe Interest Table row.
+///
+/// RFC 7641 keys the observer list by client endpoint and Token. Resource
+/// path is not part of that key. This is not Dedup (Message ID + Endpoint),
+/// not pending CON, and not [`super::ExchangeKey`] (same Token + Endpoint
+/// pair, different table). See `knowledge/rfcs/rfc7641.txt` and `design.md`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ObserveKey {
+    token: Token,
+    endpoint: Endpoint,
+}
+
+impl ObserveKey {
+    /// Identity for one Token at `endpoint`.
+    #[must_use]
+    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+        Self { token, endpoint }
+    }
+
+    /// Client Token.
+    #[must_use]
+    pub const fn token(self) -> Token {
+        self.token
+    }
+
+    /// Client endpoint.
+    #[must_use]
+    pub const fn endpoint(self) -> Endpoint {
+        self.endpoint
+    }
+}
+
+/// Occupied Observe Interest Table payload.
+///
+/// Long-lived relation state only. Notification bodies are not stored here.
+/// Timing, freshness, and fan-out are not modeled yet.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ObserveInterest {
+    key: ObserveKey,
+}
+
+impl ObserveInterest {
+    /// Interest row for `token` at `endpoint`.
+    #[must_use]
+    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+        Self {
+            key: ObserveKey::new(token, endpoint),
+        }
+    }
+
+    /// Lookup identity.
+    #[must_use]
+    pub const fn key(self) -> ObserveKey {
+        self.key
+    }
+
+    /// Client Token.
+    #[must_use]
+    pub const fn token(self) -> Token {
+        self.key.token()
+    }
+
+    /// Client endpoint.
+    #[must_use]
+    pub const fn endpoint(self) -> Endpoint {
+        self.key.endpoint()
+    }
+}
+
+impl From<ObserveKey> for ObserveInterest {
+    fn from(key: ObserveKey) -> Self {
+        Self { key }
+    }
+}
+
+/// Typed insert / lookup / remove / take on an Observe Interest Table.
+///
+/// Each operation scans the configured entry count (O(n) in capacity).
+pub(crate) trait ObserveStore {
+    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId>;
+    fn lookup(&self, key: ObserveKey) -> Option<SlotId>;
+    fn remove(&mut self, key: ObserveKey) -> bool;
+    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest>;
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest>;
 }
 
 /// Dedup table: compact duplicate history slots.
@@ -245,8 +325,12 @@ impl<const ENTRIES: usize> SlotPool for DedupTable<ENTRIES> {
 }
 
 /// Observe interest table: long-lived relation slots, not notification bodies.
+///
+/// Insert, lookup, remove, and take scan every configured entry (O(n) in
+/// capacity). Saturation returns `None` from insert; this type does not evict.
+/// [`Self::rotate`] still advances the occupancy cursor used by acquire.
 pub struct ObserveTable<const ENTRIES: usize> {
-    _entries: [ObserveEntry; ENTRIES],
+    entries: [Option<ObserveInterest>; ENTRIES],
     occ: Occupancy<ENTRIES>,
 }
 
@@ -255,8 +339,83 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            _entries: [ObserveEntry { _opaque: () }; ENTRIES],
+            entries: [None; ENTRIES],
             occ: Occupancy::new(),
+        }
+    }
+
+    /// Insert `interest`, or return the existing slot if the key is already present.
+    ///
+    /// Returns `None` when the table is full and the key is not already stored.
+    /// Scans the configured capacity (O(n)).
+    pub fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        if let Some(id) = self.lookup(interest.key()) {
+            return Some(id);
+        }
+        let id = self.occ.acquire()?;
+        self.entries[id.index()] = Some(interest);
+        Some(id)
+    }
+
+    /// Slot whose occupied payload matches `key`, if any.
+    ///
+    /// Scans the configured capacity (O(n)).
+    #[must_use]
+    pub fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+        (0..ENTRIES).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.entry(id) {
+                Some(interest) if interest.key() == key => Some(id),
+                _ => None,
+            }
+        })
+    }
+
+    /// Release the slot matching `key`, if occupied.
+    ///
+    /// Scans the configured capacity (O(n)).
+    pub fn remove(&mut self, key: ObserveKey) -> bool {
+        match self.lookup(key) {
+            Some(id) => self.release(id).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Remove and return the occupied payload matching `key`, if any.
+    ///
+    /// Scans the configured capacity (O(n)).
+    pub fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        let id = self.lookup(key)?;
+        let interest = self.entry(id)?;
+        let _ = self.release(id);
+        Some(interest)
+    }
+
+    /// Occupied payload at `id`.
+    #[must_use]
+    pub fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get(id.index()).copied().flatten()
+    }
+
+    /// Write payload into an already-acquired slot.
+    pub fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < ENTRIES {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.entries[id.index()] = Some(interest);
+        Ok(())
+    }
+
+    fn reset(&mut self, id: SlotId) {
+        if let Some(slot) = self.entries.get_mut(id.index()) {
+            *slot = None;
         }
     }
 }
@@ -267,13 +426,39 @@ impl<const ENTRIES: usize> Default for ObserveTable<ENTRIES> {
     }
 }
 
+impl<const ENTRIES: usize> ObserveStore for ObserveTable<ENTRIES> {
+    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+        ObserveTable::insert(self, interest)
+    }
+
+    fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+        ObserveTable::lookup(self, key)
+    }
+
+    fn remove(&mut self, key: ObserveKey) -> bool {
+        ObserveTable::remove(self, key)
+    }
+
+    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+        ObserveTable::take(self, key)
+    }
+
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+        ObserveTable::entry(self, id)
+    }
+}
+
 impl<const ENTRIES: usize> SlotPool for ObserveTable<ENTRIES> {
     fn acquire(&mut self) -> Option<SlotId> {
-        self.occ.acquire()
+        let id = self.occ.acquire()?;
+        self.reset(id);
+        Some(id)
     }
 
     fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.occ.release(id)
+        self.occ.release(id)?;
+        self.reset(id);
+        Ok(())
     }
 
     fn rotate(&mut self) {
