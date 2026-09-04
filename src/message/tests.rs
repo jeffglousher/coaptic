@@ -656,7 +656,12 @@ fn encode_tx_slot_and_decode_back() {
     let n = engine.encode_tx(id, &msg).expect("encode tx");
     assert!(n > 4);
     assert_eq!(
-        engine.storage().tx_datagram().payload(id).expect("len").len(),
+        engine
+            .storage()
+            .tx_datagram()
+            .payload(id)
+            .expect("len")
+            .len(),
         n
     );
 

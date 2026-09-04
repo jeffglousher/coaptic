@@ -194,22 +194,14 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     }
 
     /// Encode `msg` into an acquired RX slot and [`DatagramSlots::set_rx_len`].
-    pub fn encode_rx(
-        &mut self,
-        id: SlotId,
-        msg: &Message<'_>,
-    ) -> Result<usize, SlotMessageError> {
+    pub fn encode_rx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.rx_payload_mut(id), msg)?;
         self.storage.set_rx_len(id, n)?;
         Ok(n)
     }
 
     /// Encode `msg` into an acquired TX slot and [`DatagramSlots::set_tx_len`].
-    pub fn encode_tx(
-        &mut self,
-        id: SlotId,
-        msg: &Message<'_>,
-    ) -> Result<usize, SlotMessageError> {
+    pub fn encode_tx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.tx_payload_mut(id), msg)?;
         self.storage.set_tx_len(id, n)?;
         Ok(n)
@@ -220,9 +212,7 @@ fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessag
     crate::message::decode(bytes.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Parse)
 }
 
-fn encode_occupied(
-    buf: Option<&mut [u8]>,
-    msg: &Message<'_>,
-) -> Result<usize, SlotMessageError> {
-    crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Encode)
+fn encode_occupied(buf: Option<&mut [u8]>, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
+    crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?)
+        .map_err(SlotMessageError::Encode)
 }

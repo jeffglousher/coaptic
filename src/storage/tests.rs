@@ -273,7 +273,10 @@ mod alloc_backend {
         engine.encode_tx(id, &msg).expect("encode");
         let parsed = engine.decode_tx(id).expect("decode");
         assert_eq!(parsed.uri_path().next(), Some(Ok("heap")));
-        assert_eq!(parsed.content_format(), Some(Ok(crate::ContentFormat::JSON)));
+        assert_eq!(
+            parsed.content_format(),
+            Some(Ok(crate::ContentFormat::JSON))
+        );
     }
 
     #[test]

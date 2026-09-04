@@ -62,11 +62,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
     }
 
     /// Encode `msg` into the occupied slot and record the filled length.
-    pub fn encode(
-        &mut self,
-        id: SlotId,
-        msg: &Message<'_>,
-    ) -> Result<usize, SlotMessageError> {
+    pub fn encode(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
         let n = {
             let buf = self.payload_mut(id).ok_or(SlotError::NotOccupied)?;
             crate::message::encode(msg, buf).map_err(SlotMessageError::Encode)?
