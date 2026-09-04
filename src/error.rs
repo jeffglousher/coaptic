@@ -47,9 +47,10 @@ impl std::error::Error for BuildError {}
 
 /// Failure to decode a CoAP datagram.
 ///
-/// Wire-format failures are distinct from [`Self::UnrecognizedCritical`], which
-/// is a structured report for a caller that wants RFC 7252 known-option
-/// checking. [`crate::message::decode`] does not invent 4.02 / RST policy.
+/// Wire-format failures are distinct from [`Self::UnrecognizedCritical`] and
+/// [`Self::BadOptionFormat`], which are structured reports for optional
+/// RFC 7252 checks. [`crate::message::decode`] does not invent 4.02 / RST
+/// policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParseError {
     /// Buffer shorter than the 4-byte header.
@@ -78,6 +79,14 @@ pub enum ParseError {
     /// not by [`crate::message::decode`]. The caller chooses the protocol
     /// response.
     UnrecognizedCritical(OptionNumber),
+    /// A known RFC 7252 option has a value that does not match its Table 4
+    /// format.
+    ///
+    /// Returned by [`crate::message::ParsedMessage::check_rfc7252_formats`],
+    /// not by [`crate::message::decode`] or
+    /// [`crate::message::ParsedMessage::check_rfc7252_options`]. The caller
+    /// chooses the protocol response.
+    BadOptionFormat(OptionNumber),
 }
 
 impl core::fmt::Display for ParseError {
@@ -95,6 +104,9 @@ impl core::fmt::Display for ParseError {
             Self::PayloadMarkerWithoutPayload => f.write_str("payload marker without payload"),
             Self::UnrecognizedCritical(n) => {
                 write!(f, "unrecognized critical option {}", n.get())
+            }
+            Self::BadOptionFormat(n) => {
+                write!(f, "RFC 7252 option {} has the wrong format", n.get())
             }
         }
     }
@@ -129,3 +141,27 @@ impl core::fmt::Display for EncodeError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}
+
+/// Failure to decode an option value as empty, opaque, uint, or string.
+///
+/// Distinct from [`ParseError`]: wire decode keeps option values opaque.
+/// See `knowledge/rfcs/rfc7252.txt` §3.2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValueError {
+    /// Bytes are not a UTF-8 string option value.
+    InvalidUtf8,
+    /// Integer does not fit the target width.
+    UintOverflow,
+}
+
+impl core::fmt::Display for ValueError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidUtf8 => f.write_str("option value is not UTF-8"),
+            Self::UintOverflow => f.write_str("uint option value does not fit the target"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ValueError {}

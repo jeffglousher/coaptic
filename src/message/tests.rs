@@ -1,8 +1,11 @@
 //! Library unit tests for RFC 7252 decode/encode. Not plugtest.
 
-use super::{Code, Message, MessageId, Opt, OptionNumber, Token, Type, decode, encode};
+use super::value::{ContentFormat, MAX_AGE_DEFAULT, as_str, encode_uint};
+use super::{
+    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, Token, Type, decode, encode,
+};
 use crate::MemoryProfile;
-use crate::error::{EncodeError, ParseError};
+use crate::error::{EncodeError, ParseError, ValueError};
 use crate::profiles;
 use crate::storage::{EngineBuilder, Memory, SlotPool};
 
@@ -332,4 +335,263 @@ fn decode_from_datagram_pool_slot() {
 #[test]
 fn default_datagram_slot_is_1472() {
     assert_eq!(profiles::Default::RX_DATAGRAM_BYTES, 1472);
+}
+
+fn parse_opts(opts: &[Opt<'_>]) -> (usize, [u8; 256]) {
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(1)).with_options(opts);
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("encode");
+    (n, buf)
+}
+
+#[test]
+fn helpers_roundtrip_uri_path_segments() {
+    let opts = [Opt::uri_path("sensors"), Opt::uri_path("temp")];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    let mut got = ["", ""];
+    let mut i = 0;
+    for seg in parsed.uri_path() {
+        got[i] = seg.expect("utf-8");
+        i += 1;
+    }
+    assert_eq!(&got[..i], &["sensors", "temp"]);
+    parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn helpers_content_format_examples() {
+    for (cf, raw) in [
+        (ContentFormat::TEXT_PLAIN, &[] as &[u8]),
+        (ContentFormat::LINK_FORMAT, &[40u8] as &[u8]),
+        (ContentFormat::JSON, &[50u8] as &[u8]),
+        (ContentFormat::OCTET_STREAM, &[42u8] as &[u8]),
+    ] {
+        let encoded = cf.encode();
+        assert_eq!(encoded.as_bytes(), raw);
+        let opts = [Opt::content_format(&encoded)];
+        let (n, buf) = parse_opts(&opts);
+        let parsed = decode(&buf[..n]).expect("decode");
+        assert_eq!(parsed.content_format(), Some(Ok(cf)));
+        parsed.check_rfc7252_formats().expect("formats");
+    }
+}
+
+#[test]
+fn empty_vs_missing_if_none_match_and_max_age() {
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(1));
+    let (n, buf) = {
+        let mut buf = [0u8; 32];
+        let n = encode(&msg, &mut buf).expect("encode");
+        (n, buf)
+    };
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert!(!parsed.if_none_match());
+    assert!(parsed.max_age().is_none());
+    assert_eq!(MAX_AGE_DEFAULT, 60);
+
+    let zero = encode_uint(0);
+    let opts = [Opt::if_none_match(), Opt::max_age(&zero)];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert!(parsed.if_none_match());
+    assert_eq!(parsed.max_age(), Some(Ok(0)));
+    let inm = parsed
+        .get_option(OptionNumber::IF_NONE_MATCH)
+        .expect("present");
+    assert!(inm.is_empty_value());
+    parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn uint_helpers_uri_port_accept_size1() {
+    let port = encode_uint(5683);
+    let accept = ContentFormat::JSON.encode();
+    let size = encode_uint(4096);
+    let opts = [
+        Opt::uri_port(&port),
+        Opt::accept(&accept),
+        Opt::size1(&size),
+    ];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert_eq!(parsed.uri_port(), Some(Ok(5683)));
+    assert_eq!(parsed.accept(), Some(Ok(ContentFormat::JSON)));
+    assert_eq!(parsed.size1(), Some(Ok(4096)));
+}
+
+#[test]
+fn opaque_if_match_and_etag() {
+    let opts = [Opt::if_match(b""), Opt::etag(b"abc")];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    let matches: [&[u8]; 1] = {
+        let mut out = [&b""[..]; 1];
+        let mut i = 0;
+        for v in parsed.if_match() {
+            out[i] = v;
+            i += 1;
+        }
+        assert_eq!(i, 1);
+        out
+    };
+    assert_eq!(matches[0], b"");
+    let tags: [&[u8]; 1] = {
+        let mut out = [&b""[..]; 1];
+        let mut i = 0;
+        for v in parsed.etag() {
+            out[i] = v;
+            i += 1;
+        }
+        assert_eq!(i, 1);
+        out
+    };
+    assert_eq!(tags[0], b"abc");
+    parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn string_helpers_host_query_location_proxy() {
+    let opts = [
+        Opt::uri_host("example.com"),
+        Opt::location_path("loc"),
+        Opt::uri_path("a"),
+        Opt::uri_query("k=v"),
+        Opt::location_query("q=1"),
+        Opt::proxy_uri("coap://example.com/x"),
+        Opt::proxy_scheme("coap"),
+    ];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert_eq!(parsed.uri_host(), Some(Ok("example.com")));
+    assert_eq!(parsed.uri_query().next(), Some(Ok("k=v")));
+    assert_eq!(parsed.location_path().next(), Some(Ok("loc")));
+    assert_eq!(parsed.location_query().next(), Some(Ok("q=1")));
+    assert_eq!(parsed.proxy_uri(), Some(Ok("coap://example.com/x")));
+    assert_eq!(parsed.proxy_scheme(), Some(Ok("coap")));
+}
+
+#[test]
+fn reject_bad_utf8_on_string_helpers() {
+    let opts = [Opt::new(OptionNumber::URI_PATH, &[0xff, 0xfe])];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("opaque decode still works");
+    assert_eq!(parsed.uri_path().next(), Some(Err(ValueError::InvalidUtf8)));
+    assert_eq!(as_str(&[0xff]), Err(ValueError::InvalidUtf8));
+}
+
+#[test]
+fn format_check_rejects_known_wrong_format_not_policy() {
+    let bad_path = [Opt::new(OptionNumber::URI_PATH, &[0xff])];
+    let (n, buf) = parse_opts(&bad_path);
+    let parsed = decode(&buf[..n]).expect("opaque decode");
+    parsed.check_rfc7252_options().expect("known option");
+    assert_eq!(
+        parsed.check_rfc7252_formats(),
+        Err(ParseError::BadOptionFormat(OptionNumber::URI_PATH))
+    );
+
+    let long_cf = [Opt::new(OptionNumber::CONTENT_FORMAT, &[0, 0, 50])];
+    let (n, buf) = parse_opts(&long_cf);
+    let parsed = decode(&buf[..n]).expect("opaque decode");
+    assert_eq!(parsed.content_format(), Some(Ok(ContentFormat::JSON)));
+    assert_eq!(
+        parsed.check_rfc7252_formats(),
+        Err(ParseError::BadOptionFormat(OptionNumber::CONTENT_FORMAT))
+    );
+
+    let nonempty_inm = [Opt::new(OptionNumber::IF_NONE_MATCH, b"x")];
+    let (n, buf) = parse_opts(&nonempty_inm);
+    let parsed = decode(&buf[..n]).expect("opaque decode");
+    assert!(parsed.if_none_match());
+    assert_eq!(
+        parsed.check_rfc7252_formats(),
+        Err(ParseError::BadOptionFormat(OptionNumber::IF_NONE_MATCH))
+    );
+
+    let empty_etag = [Opt::etag(b"")];
+    let (n, buf) = parse_opts(&empty_etag);
+    let parsed = decode(&buf[..n]).expect("opaque decode");
+    assert_eq!(
+        parsed.check_rfc7252_formats(),
+        Err(ParseError::BadOptionFormat(OptionNumber::ETAG))
+    );
+
+    let empty_host = [Opt::uri_host("")];
+    let (n, buf) = parse_opts(&empty_host);
+    let parsed = decode(&buf[..n]).expect("opaque decode");
+    assert_eq!(
+        parsed.check_rfc7252_formats(),
+        Err(ParseError::BadOptionFormat(OptionNumber::URI_HOST))
+    );
+}
+
+#[test]
+fn format_check_ignores_unknown_and_accepts_leading_zero_uint() {
+    let padded = EncodedUint::new(50);
+    assert_eq!(padded.as_bytes(), &[50]);
+    let opts = [
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[0, 50]),
+        Opt::new(OptionNumber::new(23), &[0x02]),
+    ];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    parsed.check_rfc7252_formats().expect("length 2 is legal");
+    assert_eq!(
+        parsed.check_rfc7252_options(),
+        Err(ParseError::UnrecognizedCritical(OptionNumber::new(23)))
+    );
+}
+
+#[test]
+fn generic_format_constructors_and_opt_accessors() {
+    let n = encode_uint(14);
+    let opts = [
+        Opt::opaque(OptionNumber::ETAG, b"tag"),
+        Opt::empty(OptionNumber::IF_NONE_MATCH),
+        Opt::string(OptionNumber::URI_PATH, "x"),
+        Opt::uint(OptionNumber::MAX_AGE, &n),
+    ];
+    let (len, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..len]).expect("decode");
+    let path = parsed.get_option(OptionNumber::URI_PATH).expect("path");
+    assert_eq!(path.as_str(), Ok("x"));
+    let age = parsed.get_option(OptionNumber::MAX_AGE).expect("age");
+    assert_eq!(age.as_uint(), Ok(14));
+    parsed.check_rfc7252_formats().expect("formats");
+}
+
+#[test]
+fn helpers_compose_with_engine_datagram_slot() {
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("storage build");
+
+    let id = engine.acquire_rx().expect("rx slot");
+    let cf = ContentFormat::JSON.encode();
+    let opts = [Opt::uri_path("slot"), Opt::content_format(&cf)];
+    let msg =
+        Message::new(Type::Confirmable, Code::GET, MessageId::new(0x3333)).with_options(&opts);
+
+    let n = {
+        let slot = engine
+            .storage_mut()
+            .rx_datagram_mut()
+            .payload_mut(id)
+            .expect("occupied");
+        encode(&msg, slot).expect("encode into slot")
+    };
+    engine
+        .storage_mut()
+        .rx_datagram_mut()
+        .set_len(id, n)
+        .expect("set_len");
+
+    let bytes = engine.storage().rx_datagram().payload(id).expect("filled");
+    let parsed = decode(bytes).expect("decode slot bytes");
+    assert_eq!(parsed.uri_path().next(), Some(Ok("slot")));
+    assert_eq!(parsed.content_format(), Some(Ok(ContentFormat::JSON)));
+    parsed.check_rfc7252_formats().expect("formats");
 }

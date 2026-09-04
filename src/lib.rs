@@ -22,10 +22,20 @@
 //! [`decode`] parses a UDP payload into [`ParsedMessage`], a borrowed view
 //! (header, [`Token`], option iterator, payload). [`encode`] writes a
 //! [`Message`] into a caller buffer. Round-trip is byte-stable for canonical
-//! option encoding. Critical unrecognized options are a structured
-//! [`ParseError::UnrecognizedCritical`] via
-//! [`ParsedMessage::check_rfc7252_options`]; the library does not invent
-//! 4.02 / RST policy.
+//! option encoding.
+//!
+//! Option *values* stay opaque at the wire layer. [`message::value`] encodes
+//! and decodes RFC 7252 empty / opaque / uint / string values (uint uses a
+//! stack buffer; string decode is a `&str` view). Named [`Opt`] constructors
+//! and [`ParsedMessage`] accessors cover Table 4 options. Two optional
+//! checks, neither used by [`decode`]:
+//!
+//! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
+//!   ([`ParseError::UnrecognizedCritical`])
+//! - [`ParsedMessage::check_rfc7252_formats`] — known option, wrong format
+//!   ([`ParseError::BadOptionFormat`])
+//!
+//! The library does not invent 4.02 / RST policy.
 //!
 //! # Storage backends
 //!
@@ -70,10 +80,11 @@ pub mod storage;
 
 pub use storage::profiles;
 
-pub use error::{BuildError, EncodeError, ParseError};
+pub use error::{BuildError, EncodeError, ParseError, ValueError};
 pub use message::{
-    Code, Header, Message, MessageId, Opt, OptionNumber, Options, ParsedMessage, Token, Type,
-    decode, encode,
+    Code, ContentFormat, EncodedUint, Header, Message, MessageId, Opt, OptionNumber,
+    OptionValueFormat, Options, ParsedMessage, Token, Type, decode, decode_uint, decode_uint16,
+    encode, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
