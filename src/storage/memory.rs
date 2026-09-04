@@ -18,7 +18,7 @@ use super::SlotError;
 use super::SlotId;
 use super::SlotPool;
 use super::Storage;
-use super::block::{BlockKey, BlockProgress, BlockTransfer, BodyOps, OutgoingBlock};
+use super::block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, OutgoingBlock};
 use super::capacities::{Capacities, bytes_ok};
 use super::exchange::ExchangeStore;
 use super::pool::DatagramBytes;
@@ -518,6 +518,48 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn admit_block2(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn write_block2(
+        &mut self,
+        _id: SlotId,
+        _block: BlockValue,
+        _payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn apply_block2(
+        &mut self,
+        _key: BlockKey,
+        _block: BlockValue,
+        _payload: &[u8],
+        _size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn start_block1(
+        &mut self,
+        _key: BlockKey,
+        _body: &[u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn next_block1(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn start_block2(
         &mut self,
         _key: BlockKey,
@@ -568,7 +610,9 @@ where
         payload: &[u8],
         size1: Option<u32>,
     ) -> Result<SlotId, BlockTransferError> {
-        self.bodies.rx.admit_incoming(key, block, payload, size1)
+        self.bodies
+            .rx
+            .admit_incoming(key, BlockRole::IncomingBlock1, block, payload, size1)
     }
 
     fn write_block1(
@@ -577,7 +621,9 @@ where
         block: BlockValue,
         payload: &[u8],
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.bodies.rx.write_incoming(id, block, payload)
+        self.bodies
+            .rx
+            .write_incoming(id, BlockRole::IncomingBlock1, block, payload)
     }
 
     fn apply_block1(
@@ -587,7 +633,59 @@ where
         payload: &[u8],
         size1: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.bodies.rx.apply_incoming(key, block, payload, size1)
+        self.bodies
+            .rx
+            .apply_incoming(key, BlockRole::IncomingBlock1, block, payload, size1)
+    }
+
+    fn admit_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .rx
+            .admit_incoming(key, BlockRole::IncomingBlock2, block, payload, size2)
+    }
+
+    fn write_block2(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .write_incoming(id, BlockRole::IncomingBlock2, block, payload)
+    }
+
+    fn apply_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.bodies
+            .rx
+            .apply_incoming(key, BlockRole::IncomingBlock2, block, payload, size2)
+    }
+
+    fn start_block1(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .tx
+            .start_outgoing(key, BlockRole::OutgoingBlock1, body, szx)
+    }
+
+    fn next_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
     fn start_block2(
@@ -596,11 +694,13 @@ where
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.bodies.tx.start_outgoing(key, body, szx)
+        self.bodies
+            .tx
+            .start_outgoing(key, BlockRole::OutgoingBlock2, body, szx)
     }
 
     fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
-        self.bodies.tx.next_outgoing(id)
+        self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock2)
     }
 }
 

@@ -2,6 +2,7 @@
 
 ## 2026-09-04
 
+* **Update**: Classic Block client directions on the same `BlockTransfer` / `BodySlots` model: incoming Block2 (admit/write/apply/`apply_block2_rx`) and outgoing Block1 (start/`next_block1`/`encode_block1_tx`). Same in-order / SZX-lock / overflow rules as incoming Block1 and outgoing Block2. No Q-Block window, BERT, or SZX×1–25 harness. No `design.md` change.
 * **Update**: Classic Block1 / Block2 body assembly into existing Incoming / Outgoing Body Pool slots (`BlockTransfer` sidecar: Token + remote Endpoint, NUM/SZX/More, next NUM, bytes filled). Incoming Block1 admit/write/complete/release and outgoing Block2 start/next/encode. No Q-Block window, BERT, or SZX×1–25 harness. No `design.md` change.
 * **Update**: Block-wise option codecs at the library layer: Block1 (27) / Block2 (23) / Size2 (28) from RFC 7959 and Q-Block1 (19) / Q-Block2 (31) from RFC 9177. `BlockValue` is NUM/M/SZX encode/decode (Q-Block shares the bitfields). Not in RFC 7252 Table 4; `is_rfc7252` unchanged. No body reassembly. Enabled body slots remain a multiple of 1024 (max SZX). No `design.md` change.
 * **Update**: RFC 7641 Observe at the library + table layer: option 6 uint codec (`encode_observe` / `decode_observe`, register 0 / deregister 1 / 24-bit sequence), typed `ObserveKey` / `ObserveInterest` rows (Token + remote Endpoint) in the existing `ObserveTable`, and Engine register/deregister glue. Not in RFC 7252 Table 4; elective. No notification scheduler. No `design.md` change.

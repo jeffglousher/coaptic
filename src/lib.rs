@@ -41,9 +41,10 @@
 //! seventh area and not the Dedup Table. Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
-//! [`ObserveInterest`] rows. Classic incoming Block1 / outgoing Block2
-//! assemble or slice complete bodies in body-pool slots ([`BlockTransfer`])
-//! when [`BodySlots`] is implemented. Optional format/critical checks
+//! [`ObserveInterest`] rows. Classic incoming Block1 / Block2 and outgoing
+//! Block1 / Block2 assemble or slice complete bodies in body-pool slots
+//! ([`BlockTransfer`]) when [`BodySlots`] is implemented. Optional
+//! format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
 //! Option *values* stay opaque at the wire layer. [`message::value`] encodes

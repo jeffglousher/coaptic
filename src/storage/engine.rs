@@ -42,8 +42,9 @@ use crate::message::{BlockValue, Code, Message, MessageId, Opt, ParsedMessage, T
 /// a piggybacked ACK with a response code is. When `S` implements
 /// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
 /// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
-/// implements [`BodySlots`], incoming Block1 assembles into the Incoming
-/// Body Pool and outgoing Block2 slices the Outgoing Body Pool. Dedup,
+/// implements [`BodySlots`], incoming Block1 / Block2 assemble into the
+/// Incoming Body Pool and outgoing Block1 / Block2 slice the Outgoing Body
+/// Pool. Dedup,
 /// pending CON, exchange matching, Observe interest, and body-slot
 /// transfers are different identities. Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
@@ -632,13 +633,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.tx_body_payload(id)
     }
 
-    /// Incoming Block1 sidecar on `id`.
+    /// Incoming Block1 / Block2 sidecar on `id`.
     #[must_use]
     pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.storage.rx_body_transfer(id)
     }
 
-    /// Outgoing Block2 sidecar on `id`.
+    /// Outgoing Block1 / Block2 sidecar on `id`.
     #[must_use]
     pub fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.storage.tx_body_transfer(id)
@@ -703,29 +704,91 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
-        let (token, block, size1, n) = {
-            let parsed =
-                crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
-            let block = match parsed.block1() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Err(e.into()),
-                None => return Err(BlockTransferError::MissingBlock),
-            };
-            let size1 = match parsed.size1() {
-                Some(Ok(n)) => Some(n),
-                Some(Err(e)) => return Err(e.into()),
-                None => None,
-            };
-            let payload = parsed.payload();
-            if payload.len() > tmp.len() {
-                return Err(BlockTransferError::PayloadLength);
-            }
-            tmp[..payload.len()].copy_from_slice(payload);
-            (parsed.token(), block, size1, payload.len())
-        };
-        self.apply_block1(BlockKey::new(token, endpoint), block, &tmp[..n], size1)
+        self.apply_incoming_rx(id, true)
+    }
+
+    /// Admit a new incoming Block2 body when the first block arrives.
+    ///
+    /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
+    /// `size2` is the Size2 hint when present. See `design.md` and
+    /// `knowledge/rfcs/rfc7959.txt`.
+    pub fn admit_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.admit_block2(key, block, payload, size2)
+    }
+
+    /// Write the next in-order incoming Block2 range into `id`.
+    ///
+    /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
+    /// Size2. Does not invent 4.08 policy.
+    pub fn write_block2(
+        &mut self,
+        id: SlotId,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.write_block2(id, block, payload)
+    }
+
+    /// Admit or continue incoming Block2 for `key`.
+    pub fn apply_block2(
+        &mut self,
+        key: BlockKey,
+        block: BlockValue,
+        payload: &[u8],
+        size2: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        self.storage.apply_block2(key, block, payload, size2)
+    }
+
+    /// Decode occupied RX `id` and [`Self::apply_block2`] using Block2 + Token + endpoint.
+    ///
+    /// Copies the datagram payload into the body slot (datagram RX stays
+    /// separate). Missing Block2 is [`BlockTransferError::MissingBlock`].
+    pub fn apply_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.apply_incoming_rx(id, false)
+    }
+
+    /// Copy a complete body into an Outgoing Body Slot and start Block1.
+    pub fn start_block1(
+        &mut self,
+        key: BlockKey,
+        body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_block1(key, body, szx)
+    }
+
+    /// Issue the next in-order outgoing Block1 range. Bytes stay in the body slot.
+    pub fn next_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_block1(id)
+    }
+
+    /// Issue the next Block1 and encode it into occupied TX `tx_id`.
+    ///
+    /// Token and remote endpoint come from the body-slot sidecar. The caller
+    /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    pub fn encode_block1_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_block1(body_id)?;
+        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), true)
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block2.
@@ -759,6 +822,74 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block2(body_id)?;
+        self.finish_outgoing_tx(issued, body_id, tx_id, (ty, code, message_id), false)
+    }
+
+    fn apply_incoming_rx(
+        &mut self,
+        id: SlotId,
+        block1: bool,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
+        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
+        let (token, block, expected, n) = {
+            let parsed =
+                crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
+            let block = if block1 {
+                match parsed.block1() {
+                    Some(Ok(b)) => b,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Err(BlockTransferError::MissingBlock),
+                }
+            } else {
+                match parsed.block2() {
+                    Some(Ok(b)) => b,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Err(BlockTransferError::MissingBlock),
+                }
+            };
+            let expected = if block1 {
+                match parsed.size1() {
+                    Some(Ok(n)) => Some(n),
+                    Some(Err(e)) => return Err(e.into()),
+                    None => None,
+                }
+            } else {
+                match parsed.size2() {
+                    Some(Ok(n)) => Some(n),
+                    Some(Err(e)) => return Err(e.into()),
+                    None => None,
+                }
+            };
+            let payload = parsed.payload();
+            if payload.len() > tmp.len() {
+                return Err(BlockTransferError::PayloadLength);
+            }
+            tmp[..payload.len()].copy_from_slice(payload);
+            (parsed.token(), block, expected, payload.len())
+        };
+        if block1 {
+            self.apply_block1(BlockKey::new(token, endpoint), block, &tmp[..n], expected)
+        } else {
+            self.apply_block2(BlockKey::new(token, endpoint), block, &tmp[..n], expected)
+        }
+    }
+
+    fn finish_outgoing_tx(
+        &mut self,
+        issued: OutgoingBlock,
+        body_id: SlotId,
+        tx_id: SlotId,
+        header: (Type, Code, MessageId),
+        block1: bool,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let (ty, code, message_id) = header;
         let transfer = self
             .storage
             .tx_body_transfer(body_id)
@@ -777,7 +908,11 @@ impl<S: Storage + BodySlots> Engine<S> {
         }
         tmp[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
         let encoded = issued.block().encode();
-        let opts = [Opt::block2(&encoded)];
+        let opts = if block1 {
+            [Opt::block1(&encoded)]
+        } else {
+            [Opt::block2(&encoded)]
+        };
         let msg = Message::new(ty, code, message_id)
             .with_token(transfer.token())
             .with_options(&opts)
