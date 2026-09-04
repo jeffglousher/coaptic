@@ -266,7 +266,9 @@ fn engine_write_rx_associates_endpoint() {
 
     engine.release_rx(id).expect("release");
     assert_eq!(engine.rx_endpoint(id), None);
-    let reused = engine.acquire_rx().expect("reuse");
+    while engine.acquire_rx().is_some() {}
+    engine.release_rx(id).expect("free the written slot");
+    let reused = engine.acquire_rx().expect("reuse same slot");
     assert_eq!(reused, id);
     assert_eq!(engine.rx_endpoint(reused), None);
 }
