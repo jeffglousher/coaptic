@@ -923,8 +923,8 @@ impl<'a> ParsedMessage<'a> {
 mod unit_tests {
     use super::{
         BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
-        OBSERVE_SEQUENCE_MASK, OptionValueFormat, as_str, decode_block, decode_observe, decode_uint,
-        decode_uint16, encode_block, encode_observe, encode_uint, option_value_format,
+        OBSERVE_SEQUENCE_MASK, OptionValueFormat, as_str, decode_block, decode_observe,
+        decode_uint, decode_uint16, encode_block, encode_observe, encode_uint, option_value_format,
     };
     use crate::error::ValueError;
     use crate::message::OptionNumber;

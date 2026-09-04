@@ -507,8 +507,8 @@ fn block_options_builder_sorts_with_table4() {
         ]
     );
 
-    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
-        .with_options(opts.as_slice());
+    let msg =
+        Message::new(Type::Confirmable, Code::GET, MessageId::new(1)).with_options(opts.as_slice());
     assert_roundtrip(&msg);
 }
 
