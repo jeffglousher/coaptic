@@ -1,8 +1,12 @@
 //! `no_std` [`Memory`] backend: typed arrays sized by [`MemoryProfile`].
 
+use super::DatagramSlots;
+use super::SlotError;
+use super::SlotId;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::{Capacities, bytes_ok};
+use super::pool::DatagramBytes;
 
 /// Named associated constants for the areas present in [`Memory`].
 ///
@@ -262,6 +266,36 @@ impl<P: MemoryProfile> Storage for Memory<P, WithBodies<P>> {
 
     fn tx_body(&mut self) -> Option<&mut dyn SlotPool> {
         Some(&mut self.bodies.tx)
+    }
+}
+
+impl<P: MemoryProfile, B> DatagramSlots for Memory<P, B>
+where
+    P::RxDatagram: DatagramBytes,
+    P::TxDatagram: DatagramBytes,
+{
+    fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {
+        DatagramBytes::payload(&self.rx, id)
+    }
+
+    fn tx_payload(&self, id: SlotId) -> Option<&[u8]> {
+        DatagramBytes::payload(&self.tx, id)
+    }
+
+    fn rx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        DatagramBytes::payload_mut(&mut self.rx, id)
+    }
+
+    fn tx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        DatagramBytes::payload_mut(&mut self.tx, id)
+    }
+
+    fn set_rx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        DatagramBytes::set_len(&mut self.rx, id, len)
+    }
+
+    fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        DatagramBytes::set_len(&mut self.tx, id, len)
     }
 }
 

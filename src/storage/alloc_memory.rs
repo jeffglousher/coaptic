@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::DatagramSlots;
 use super::SlotPool;
 use super::Storage;
 use super::capacities::Capacities;
@@ -111,9 +112,7 @@ impl Storage for AllocMemory {
 }
 
 struct AllocSlot {
-    #[allow(dead_code)]
     buf: Box<[u8]>,
-    #[allow(dead_code)]
     len: usize,
     #[allow(dead_code)]
     peer: Peer,
@@ -148,6 +147,36 @@ impl AllocDatagramPool {
             slot.peer = Peer::PLACEHOLDER;
         }
     }
+
+    fn payload(&self, id: SlotId) -> Option<&[u8]> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        let slot = self.slots.get(id.index())?;
+        Some(&slot.buf[..slot.len])
+    }
+
+    fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        Some(self.slots.get_mut(id.index())?.buf.as_mut())
+    }
+
+    fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        if len > self.slot_bytes {
+            return Err(SlotError::LengthExceedsSlot);
+        }
+        self.slots[id.index()].len = len;
+        Ok(())
+    }
 }
 
 impl SlotPool for AllocDatagramPool {
@@ -181,6 +210,32 @@ impl SlotPool for AllocDatagramPool {
 
     fn cursor(&self) -> usize {
         self.occ.cursor()
+    }
+}
+
+impl DatagramSlots for AllocMemory {
+    fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.rx.payload(id)
+    }
+
+    fn tx_payload(&self, id: SlotId) -> Option<&[u8]> {
+        self.tx.payload(id)
+    }
+
+    fn rx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        self.rx.payload_mut(id)
+    }
+
+    fn tx_payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
+        self.tx.payload_mut(id)
+    }
+
+    fn set_rx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        self.rx.set_len(id, len)
+    }
+
+    fn set_tx_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError> {
+        self.tx.set_len(id, len)
     }
 }
 

@@ -1,15 +1,23 @@
 //! [`Engine`]: acquire / release / rotate against [`Storage`].
 
 use super::Capacities;
+use super::DatagramSlots;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
+use crate::error::SlotMessageError;
+use crate::message::{Message, ParsedMessage};
 
 /// Protocol engine, generic over [`Storage`].
 ///
 /// Storage engine: occupancy, acquire/release, and rotating cursors.
-/// Protocol state machines are not implemented. Decode and encode a
-/// datagram with [`crate::message`]; this type does not parse bytes.
+/// Protocol state machines are not implemented.
+///
+/// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
+/// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
+/// against occupied datagram slots and record `set_len` on encode. Optional
+/// format and unrecognized-critical checks stay on [`ParsedMessage`]. This
+/// type does not invent 4.02 / RST policy.
 ///
 /// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
@@ -169,4 +177,52 @@ impl<S: Storage> Engine<S> {
     pub fn rx_body_cursor(&mut self) -> Option<usize> {
         self.storage.rx_body().map(|pool| pool.cursor())
     }
+}
+
+impl<S: Storage + DatagramSlots> Engine<S> {
+    /// Decode the occupied RX datagram with [`crate::message::decode`].
+    ///
+    /// Does not run [`ParsedMessage::check_rfc7252_options`] or
+    /// [`ParsedMessage::check_rfc7252_formats`].
+    pub fn decode_rx(&self, id: SlotId) -> Result<ParsedMessage<'_>, SlotMessageError> {
+        decode_occupied(self.storage.rx_payload(id))
+    }
+
+    /// Decode the occupied TX datagram with [`crate::message::decode`].
+    pub fn decode_tx(&self, id: SlotId) -> Result<ParsedMessage<'_>, SlotMessageError> {
+        decode_occupied(self.storage.tx_payload(id))
+    }
+
+    /// Encode `msg` into an acquired RX slot and [`DatagramSlots::set_rx_len`].
+    pub fn encode_rx(
+        &mut self,
+        id: SlotId,
+        msg: &Message<'_>,
+    ) -> Result<usize, SlotMessageError> {
+        let n = encode_occupied(self.storage.rx_payload_mut(id), msg)?;
+        self.storage.set_rx_len(id, n)?;
+        Ok(n)
+    }
+
+    /// Encode `msg` into an acquired TX slot and [`DatagramSlots::set_tx_len`].
+    pub fn encode_tx(
+        &mut self,
+        id: SlotId,
+        msg: &Message<'_>,
+    ) -> Result<usize, SlotMessageError> {
+        let n = encode_occupied(self.storage.tx_payload_mut(id), msg)?;
+        self.storage.set_tx_len(id, n)?;
+        Ok(n)
+    }
+}
+
+fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessageError> {
+    crate::message::decode(bytes.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Parse)
+}
+
+fn encode_occupied(
+    buf: Option<&mut [u8]>,
+    msg: &Message<'_>,
+) -> Result<usize, SlotMessageError> {
+    crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Encode)
 }
