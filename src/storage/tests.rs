@@ -842,7 +842,7 @@ fn observe_hit_miss_wrong_endpoint() {
     assert_eq!(table.lookup(a.key()), None);
     assert!(!table.remove(a.key()));
     let id_again = table.insert(a).expect("reinsert");
-    assert_eq!(id_again, id_a);
+    assert_eq!(table.entry(id_again), Some(a));
     let taken = table.take(a.key()).expect("take");
     assert_eq!(taken, a);
     assert_eq!(table.lookup(a.key()), None);
@@ -938,18 +938,26 @@ fn engine_register_deregister_from_get() {
     let id_other = engine.register_observe(&parsed, other).expect("other ep");
     assert_ne!(id_other, id);
 
+    let unused = Endpoint::v4([203, 0, 113, 11], 5683);
     let deregister_opts = [Opt::observe_deregister()];
     let deregister = observe_get(tok, 0x4343, &deregister_opts);
     let (buf, n) = encode_into(&deregister);
     let parsed = crate::message::decode(&buf[..n]).expect("deregister");
     assert!(parsed.is_observe_deregister());
-    assert_eq!(engine.deregister_observe(&parsed, other), None);
+    assert_eq!(engine.deregister_observe(&parsed, unused), None);
     assert!(engine.lookup_observe(ObserveKey::new(tok, other)).is_some());
     let taken = engine.deregister_observe(&parsed, ep).expect("deregister");
     assert_eq!(taken.token(), tok);
     assert_eq!(taken.endpoint(), ep);
     assert_eq!(engine.lookup_observe(ObserveKey::new(tok, ep)), None);
     assert!(engine.deregister_observe(&parsed, ep).is_none());
+    assert_eq!(
+        engine
+            .deregister_observe(&parsed, other)
+            .expect("other still registered")
+            .endpoint(),
+        other
+    );
 }
 
 #[test]
