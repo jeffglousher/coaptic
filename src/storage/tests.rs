@@ -425,6 +425,90 @@ fn body_access_pin_blocks_release() {
     pool.release(id).expect("release");
 }
 
+fn write_rx_sample(engine: &mut Engine<Memory<profiles::Default>>, mid: u16) -> SlotId {
+    let id = engine.acquire_rx().expect("rx");
+    let (buf, n) = sample_datagram(mid);
+    engine
+        .write_rx(id, &buf[..n], Endpoint::v4([192, 0, 2, 80], 5683))
+        .expect("write rx");
+    id
+}
+
+#[test]
+fn progress_idle() {
+    let mut engine = build_default();
+    let outcome = engine.progress(0);
+    assert!(outcome.is_idle());
+    assert_eq!(outcome, crate::Progress::idle());
+    assert_eq!(outcome.retransmit(), None);
+    assert_eq!(outcome.rx_ready(), None);
+    assert_eq!(outcome.observe_notify(), None);
+    assert_eq!(outcome.qblock_recover(), None);
+    assert_eq!(engine.rx_occupied(), 0);
+    assert_eq!(engine.tx_occupied(), 0);
+}
+
+#[test]
+fn progress_retransmit_due() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 81], 5683);
+    let tx = record_pending_at(&mut engine, ep, 21, 0, 0);
+    let timeout = Transmission::ACK_TIMEOUT_MS;
+    let idle = engine.progress(u64::from(timeout) - 1);
+    assert_eq!(idle.retransmit(), None);
+    assert!(idle.rx_ready().is_none());
+    let outcome = engine.progress(u64::from(timeout));
+    match outcome.retransmit().expect("due") {
+        Retransmit::Due(pending) => {
+            assert_eq!(pending.tx_slot(), tx);
+            assert_eq!(pending.rto().attempts(), 1);
+        }
+        Retransmit::GiveUp(_) => panic!("first timeout is a retransmit"),
+    }
+    assert!(outcome.rx_ready().is_none());
+    assert!(engine.pending_con(tx).is_some());
+    engine.release_tx(tx).expect("caller still owns tx");
+}
+
+#[test]
+fn progress_does_not_release_pinned_rx() {
+    let mut engine = build_default();
+    let pinned = write_rx_sample(&mut engine, 0x5001);
+    let ready = write_rx_sample(&mut engine, 0x5002);
+    engine
+        .storage_mut()
+        .rx_datagram_mut()
+        .pin(pinned)
+        .expect("pin");
+    assert!(engine.rx_is_pinned(pinned));
+    let outcome = engine.progress(0);
+    assert_eq!(outcome.rx_ready(), Some(ready));
+    assert!(engine.storage_mut().rx_datagram().is_occupied(pinned));
+    assert!(engine.rx_is_pinned(pinned));
+    assert_eq!(engine.release_rx(pinned), Err(SlotError::Pinned));
+    engine
+        .storage_mut()
+        .rx_datagram_mut()
+        .unpin(pinned)
+        .expect("unpin");
+    engine.release_rx(pinned).expect("release after unpin");
+    engine.release_rx(ready).expect("release ready");
+}
+
+#[test]
+fn progress_rotating_rx_fairness() {
+    let mut engine = build_default();
+    let a = write_rx_sample(&mut engine, 0x5101);
+    let b = write_rx_sample(&mut engine, 0x5102);
+    let first = engine.progress(0).rx_ready().expect("first visit");
+    let second = engine.progress(0).rx_ready().expect("second visit");
+    assert_ne!(first, second);
+    assert!(first == a || first == b);
+    assert!(second == a || second == b);
+    engine.release_rx(a).expect("release a");
+    engine.release_rx(b).expect("release b");
+}
+
 #[test]
 fn engine_set_tx_endpoint() {
     let mut engine = build_default();
@@ -2159,6 +2243,21 @@ mod alloc_backend {
         }
         assert!(!engine.rx_is_pinned(id));
         engine.release_rx(id).expect("release after drop");
+    }
+
+    #[test]
+    fn alloc_progress_idle_and_rx_ready() {
+        let mut engine = build_alloc(false);
+        assert!(engine.progress(0).is_idle());
+        let (buf, n) = sample_datagram(0x5201);
+        let id = engine.acquire_rx().expect("rx");
+        engine
+            .write_rx(id, &buf[..n], Endpoint::v4([192, 0, 2, 82], 5683))
+            .expect("write");
+        let outcome = engine.progress(0);
+        assert_eq!(outcome.rx_ready(), Some(id));
+        assert!(engine.storage_mut().rx_datagram().is_occupied(id));
+        engine.release_rx(id).expect("release");
     }
 
     #[test]
