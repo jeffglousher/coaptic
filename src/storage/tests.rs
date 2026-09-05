@@ -291,6 +291,141 @@ fn engine_write_rx_associates_endpoint() {
 }
 
 #[test]
+fn access_pin_blocks_release() {
+    let mut pool = DatagramPool::<2, 32>::new();
+    let id = pool.acquire().expect("acquire");
+    pool.pin(id).expect("pin");
+    assert!(pool.is_pinned(id));
+    assert_eq!(pool.release(id), Err(SlotError::Pinned));
+    assert!(pool.is_occupied(id));
+    pool.unpin(id).expect("unpin");
+    pool.release(id).expect("release after unpin");
+    assert!(!pool.is_occupied(id));
+}
+
+#[test]
+fn access_drop_unpins() {
+    let mut pool = DatagramPool::<2, 32>::new();
+    let id = pool.acquire().expect("acquire");
+    let (buf, n) = sample_datagram(0x2222);
+    pool.write(id, &buf[..n], Endpoint::v4([192, 0, 2, 1], 5683))
+        .expect("write");
+    {
+        let access = pool.access(id).expect("access");
+        assert_eq!(access.id(), id);
+        assert!(access.is_pinned());
+        assert_eq!(&access[..], &buf[..n]);
+    }
+    assert!(!pool.is_pinned(id));
+    pool.release(id).expect("release after drop");
+}
+
+#[test]
+fn double_access_is_exclusive() {
+    let mut pool = DatagramPool::<2, 32>::new();
+    let id = pool.acquire().expect("acquire");
+    pool.pin(id).expect("first pin");
+    assert_eq!(pool.access(id).err(), Some(SlotError::Pinned));
+    assert_eq!(pool.access_mut(id).err(), Some(SlotError::Pinned));
+    pool.unpin(id).expect("unpin");
+    let access = pool.access(id).expect("access after unpin");
+    drop(access);
+    let _again = pool.access(id).expect("second access after drop");
+}
+
+#[test]
+fn access_requires_occupied() {
+    let mut pool = DatagramPool::<2, 32>::new();
+    let free = SlotId::from_index(0);
+    assert_eq!(pool.access(free).err(), Some(SlotError::NotOccupied));
+    assert_eq!(
+        pool.access(SlotId::from_index(8)).err(),
+        Some(SlotError::InvalidSlot)
+    );
+    let id = pool.acquire().expect("acquire");
+    pool.release(id).expect("release");
+    assert_eq!(pool.access(id).err(), Some(SlotError::NotOccupied));
+}
+
+#[test]
+fn engine_access_rx_and_tx_mut() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 9], 5683);
+    let (buf, n) = sample_datagram(0x3333);
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write rx");
+    {
+        let access = engine.access_rx(rx).expect("access rx");
+        assert_eq!(access.id(), rx);
+        assert_eq!(&access[..], &buf[..n]);
+        assert!(access.is_pinned());
+    }
+    assert!(!engine.rx_is_pinned(rx));
+    engine.release_rx(rx).expect("release rx after drop");
+
+    let tx = engine.acquire_tx().expect("tx");
+    {
+        let mut access = engine.access_tx_mut(tx).expect("access tx");
+        assert_eq!(access.id(), tx);
+        assert!(access.capacity() >= n);
+        access.bytes_mut()[..n].copy_from_slice(&buf[..n]);
+        access.set_len(n).expect("set_len");
+        assert_eq!(access.payload(), &buf[..n]);
+    }
+    assert!(!engine.tx_is_pinned(tx));
+    let parsed = engine.decode_tx(tx).expect("decode written tx");
+    assert_eq!(parsed.message_id(), MessageId::new(0x3333));
+    engine.release_tx(tx).expect("release tx after drop");
+}
+
+#[test]
+fn engine_access_body() {
+    let mut engine = build_default_bodies();
+    let rx = engine.acquire_rx_body().expect("rx body");
+    {
+        let access = engine.access_rx_body(rx).expect("access rx body");
+        assert_eq!(access.id(), rx);
+        assert!(access.is_empty());
+    }
+    assert!(!engine.rx_body_is_pinned(rx));
+    engine.release_rx_body(rx).expect("release rx body");
+
+    let tx = engine.acquire_tx_body().expect("tx body");
+    {
+        let mut access = engine.access_tx_body_mut(tx).expect("access tx body");
+        access.bytes_mut()[..4].copy_from_slice(&[1, 2, 3, 4]);
+        access.set_len(4).expect("set_len");
+        assert_eq!(access.payload(), &[1, 2, 3, 4]);
+    }
+    assert!(!engine.tx_body_is_pinned(tx));
+    assert_eq!(engine.tx_body_payload(tx), Some(&[1, 2, 3, 4][..]));
+    engine.release_tx_body(tx).expect("release tx body");
+}
+
+#[test]
+fn engine_access_free_slot_fails() {
+    let mut engine = build_default();
+    let id = SlotId::from_index(0);
+    assert_eq!(engine.access_rx(id).err(), Some(SlotError::NotOccupied));
+    assert_eq!(engine.access_tx_mut(id).err(), Some(SlotError::NotOccupied));
+    let mut bodies = build_default_bodies();
+    assert_eq!(
+        bodies.access_rx_body(id).err(),
+        Some(SlotError::NotOccupied)
+    );
+}
+
+#[test]
+fn body_access_pin_blocks_release() {
+    let mut pool = super::BodyPool::<2, 1024>::new();
+    let id = pool.acquire().expect("acquire");
+    pool.pin(id).expect("pin");
+    assert_eq!(pool.release(id), Err(SlotError::Pinned));
+    pool.unpin(id).expect("unpin");
+    pool.release(id).expect("release");
+}
+
+#[test]
 fn engine_set_tx_endpoint() {
     let mut engine = build_default();
     let id = engine.acquire_tx().expect("tx");
@@ -2009,6 +2144,21 @@ mod alloc_backend {
             .block_wise(block_wise)
             .build_alloc(caps)
             .expect("build_alloc")
+    }
+
+    #[test]
+    fn alloc_access_rx_drop_unpins() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 21], 5683);
+        let (buf, n) = sample_datagram(0x4444);
+        let id = engine.acquire_rx().expect("rx");
+        engine.write_rx(id, &buf[..n], ep).expect("write");
+        {
+            let access = engine.access_rx(id).expect("access");
+            assert_eq!(&access[..], &buf[..n]);
+        }
+        assert!(!engine.rx_is_pinned(id));
+        engine.release_rx(id).expect("release after drop");
     }
 
     #[test]

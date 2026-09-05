@@ -27,6 +27,11 @@ pub enum SlotError {
     NotOccupied,
     /// A fill length exceeded the slot byte capacity.
     LengthExceedsSlot,
+    /// Application [`crate::Access`] still pins this slot.
+    ///
+    /// Release is refused until the access is dropped. Rotate does not evict
+    /// and is not blocked. See `design.md` §Application memory access.
+    Pinned,
 }
 
 impl core::fmt::Display for SlotError {
@@ -35,6 +40,7 @@ impl core::fmt::Display for SlotError {
             Self::InvalidSlot => f.write_str("slot id is outside the pool"),
             Self::NotOccupied => f.write_str("slot is not occupied"),
             Self::LengthExceedsSlot => f.write_str("length exceeds slot bytes"),
+            Self::Pinned => f.write_str("slot is pinned by application access"),
         }
     }
 }

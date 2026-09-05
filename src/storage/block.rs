@@ -7,8 +7,10 @@
 //! BERT, missing-block recovery, and RTO are out of scope. See
 //! `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
 
+use super::Access;
+use super::AccessMut;
 use super::endpoint::Endpoint;
-use super::slot::SlotId;
+use super::slot::{SlotError, SlotId};
 use crate::error::BlockTransferError;
 use crate::message::{BlockValue, Token};
 
@@ -1018,6 +1020,8 @@ pub(crate) trait BodyOps {
         role: BlockRole,
         num: u32,
     ) -> Result<BlockProgress, BlockTransferError>;
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 
 /// Copy `payload` into `buf` at `offset` and record the filled length.

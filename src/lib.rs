@@ -40,7 +40,9 @@
 //! yields a non-decreasing slice for [`Message::with_options`].
 //!
 //! [`Engine`] can decode an occupied RX/TX datagram slot and encode a
-//! [`Message`] into an acquired slot (`set_len` included). Empty ACK/RST
+//! [`Message`] into an acquired slot (`set_len` included). Temporary
+//! [`Access`] / [`AccessMut`] pins an occupied RX/TX datagram or body
+//! slot against release (`design.md` §Application memory access). Empty ACK/RST
 //! constructors and [`ParsedMessage`] detectors live in [`message`].
 //! [`message::Ids`] is a wrapping Message ID counter; [`Token::mint`] takes
 //! caller entropy ([`message::TokenSource`]; the core does not call an OS
@@ -130,10 +132,10 @@ pub use message::{
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyPool, BodySlots, Capacities,
-    DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable, Endpoint, Engine,
-    EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory, MemoryProfile,
-    Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable, OutgoingBlock,
-    PendingCon, PendingCons, PendingRto, Present, Retransmit, SlotError, SlotId, SlotPool, Storage,
-    WithBodies,
+    Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyPool, BodySlots,
+    Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable,
+    Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory,
+    MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable,
+    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Retransmit, SlotError, SlotId,
+    SlotPool, Storage, WithBodies,
 };

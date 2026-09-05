@@ -1,5 +1,7 @@
 //! [`Engine`]: acquire / release / rotate against [`Storage`].
 
+use super::Access;
+use super::AccessMut;
 use super::BodySlots;
 use super::Capacities;
 use super::DatagramSlots;
@@ -50,7 +52,9 @@ use crate::message::{
 /// assemble into the Incoming Body Pool and outgoing Block1 / Block2 /
 /// Q-Block1 / Q-Block2 slice the Outgoing Body Pool. Dedup,
 /// pending CON, exchange matching, Observe interest, and body-slot
-/// transfers are different identities. Optional format and
+/// transfers are different identities. Temporary [`Access`] / [`AccessMut`]
+/// pins an occupied datagram or body slot against release (`design.md`
+/// §Application memory access). Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
 /// not invent 4.02 / 4.08 / 2.31 / RST policy.
 ///
@@ -212,6 +216,36 @@ impl<S: Storage> Engine<S> {
     pub fn rx_body_cursor(&mut self) -> Option<usize> {
         self.storage.rx_body().map(|pool| pool.cursor())
     }
+
+    /// Whether RX datagram `id` is pinned by a live [`Access`].
+    #[must_use]
+    pub fn rx_is_pinned(&mut self, id: SlotId) -> bool {
+        self.storage.rx_datagram().is_pinned(id)
+    }
+
+    /// Whether TX datagram `id` is pinned by a live [`Access`] or [`AccessMut`].
+    #[must_use]
+    pub fn tx_is_pinned(&mut self, id: SlotId) -> bool {
+        self.storage.tx_datagram().is_pinned(id)
+    }
+
+    /// Whether RX body `id` is pinned. `false` when body pools are absent.
+    #[must_use]
+    pub fn rx_body_is_pinned(&mut self, id: SlotId) -> bool {
+        self.storage
+            .rx_body()
+            .map(|pool| pool.is_pinned(id))
+            .unwrap_or(false)
+    }
+
+    /// Whether TX body `id` is pinned. `false` when body pools are absent.
+    #[must_use]
+    pub fn tx_body_is_pinned(&mut self, id: SlotId) -> bool {
+        self.storage
+            .tx_body()
+            .map(|pool| pool.is_pinned(id))
+            .unwrap_or(false)
+    }
 }
 
 impl<S: Storage + DatagramSlots> Engine<S> {
@@ -288,6 +322,24 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     /// Set TX sidecar [`Endpoint`]. Not written into the byte buffer.
     pub fn set_tx_endpoint(&mut self, id: SlotId, endpoint: Endpoint) -> Result<(), SlotError> {
         self.storage.set_tx_endpoint(id, endpoint)
+    }
+
+    /// Read access to an occupied RX datagram. Pins `id` until dropped.
+    ///
+    /// Release of `id` returns [`SlotError::Pinned`] while the guard is live.
+    /// See `design.md` §Application memory access.
+    pub fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.storage.access_rx(id)
+    }
+
+    /// Read access to an occupied TX datagram. Pins `id` until dropped.
+    pub fn access_tx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.storage.access_tx(id)
+    }
+
+    /// Write access to an occupied TX datagram buffer. Pins `id` until dropped.
+    pub fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.storage.access_tx_mut(id)
     }
 }
 
@@ -642,6 +694,16 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 }
 
 impl<S: Storage + BodySlots> Engine<S> {
+    /// Read access to an occupied incoming body. Pins `id` until dropped.
+    pub fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.storage.access_rx_body(id)
+    }
+
+    /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.
+    pub fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.storage.access_tx_body_mut(id)
+    }
+
     /// Filled incoming body bytes, if `id` is occupied.
     #[must_use]
     pub fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
