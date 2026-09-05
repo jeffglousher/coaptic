@@ -88,7 +88,7 @@ fn main() {
     let _ = progress.qblock_recover();
 
     let mut buf = [0u8; 1472];
-    let n = match client.recv(&mut buf).expect("client recv") {
+    let n = match DatagramIo::recv(&mut client, &mut buf).expect("client recv") {
         Some((n, _)) => n,
         None => panic!("client expected a response"),
     };
