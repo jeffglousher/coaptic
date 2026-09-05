@@ -623,6 +623,7 @@ where
     Ok(Call::new(token, dest))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn complete_client<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -775,6 +776,7 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
         && transfer.window_base() > 0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_block2_continue<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -808,6 +810,7 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_q_block2_continue<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,

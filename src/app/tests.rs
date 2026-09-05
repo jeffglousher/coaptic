@@ -1076,20 +1076,11 @@ fn client_path_too_long_is_error() {
 }
 
 /// Send queues into recv so one App is both client and server (Block2 / Q-Block2).
+#[derive(Default)]
 struct Pipe {
     slots: [Option<(Endpoint, [u8; WIRE], usize)>; 8],
     head: usize,
     len: usize,
-}
-
-impl Default for Pipe {
-    fn default() -> Self {
-        Self {
-            slots: [None; 8],
-            head: 0,
-            len: 0,
-        }
-    }
 }
 
 impl DatagramIo for Pipe {
