@@ -39,8 +39,8 @@ mod memory;
 mod occupancy;
 mod pending;
 mod pool;
-mod progress;
 pub mod profiles;
+mod progress;
 mod slot;
 mod table;
 
