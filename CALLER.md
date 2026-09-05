@@ -4,7 +4,7 @@ coaptic is a library, not a daemon or socket stack. The core never sends on the 
 
 ## Two paths
 
-**App (happy path).** [`App`](src/app/mod.rs) is a routing façade: recv / progress / route / handler / reply / send / release. Handlers are `fn(Request<'_>) -> Reply`. You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).route(…).bind(io)`) and the clock (`now_ms` into [`App::poll`](src/app/mod.rs)). You do not touch slots to expose a GET or PUT. `App` does **not** own a global mutable shared bag; domain data that outlives a request (GPIO, sensor firmware, …) stays outside coaptic ([`design.md`](design.md) §Application memory access).
+**App (happy path).** [`App`](src/app/mod.rs) is a routing façade: recv / progress / route / handler / response / send / release. Handlers are `fn(Request<'_>) -> Response`: borrowed request fields (`payload()`, path, token, options, `body()` when Block1 assembled) and an owned [`Response`](src/app/response.rs) (`content` / `content_copy`). You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).route(…).bind(io)`) and the clock (`now_ms` into [`App::poll`](src/app/mod.rs)). You do not touch slots to expose a GET or PUT; [`Request`](src/app/request.rs) does not expose `SlotId`. `App` does **not** own a global mutable shared bag; domain data that outlives a request (GPIO, sensor firmware, …) stays outside coaptic ([`design.md`](design.md) §Application memory access). The reactor owns per-slot state machines inside `poll`.
 
 **Engine (advanced / reactor).** Per-slot state machines plus [`progress`](src/storage/progress.rs) ship protocol mechanics (pending CON/RTO, BlockTransfer, ObserveInterest, Dedup, Exchange). Slots, [`Access`](src/storage/access.rs), Observe notify, Block / Q-Block, and custom RST / 4.xx policy stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
 
@@ -39,14 +39,14 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 ## Resource and If-Match
 
-- **App:** [`AppBuilder::route`](src/app/mod.rs) binds a [`MethodRouter`](src/app/routing.rs) (`get` / `put` / `post` / `delete` / `fetch`, plus `patch` / `ipatch`) on Uri-Path segments. Handlers are `fn(Request<'_>) -> Reply` (or a type that becomes [`Reply`](src/app/reply.rs) via [`IntoReply`](src/app/reply.rs)). Unknown path is 4.04; path exists but the method is unbound is 4.05. Do not put a shared mutable `Sensors { led_on }` bag in `App`.
+- **App:** [`AppBuilder::route`](src/app/mod.rs) binds a [`MethodRouter`](src/app/routing.rs) (`get` / `put` / `post` / `delete` / `fetch`, plus `patch` / `ipatch`) on Uri-Path segments. Handlers are `fn(Request<'_>) -> Response` (or a type that becomes [`Response`](src/app/response.rs) via [`IntoResponse`](src/app/response.rs)). Unknown path is 4.04; path exists but the method is unbound is 4.05. Do not put a shared mutable `Sensors { led_on }` bag in `App`.
 - **Engine:** resource selection is still application-owned ([`design.md`](design.md) §Application memory access).
-- `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST). `Reply::precondition_failed` is the 4.12 builder.
+- `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST). `Response::precondition_failed` is the 4.12 builder. `Request::precondition` is the same classifier on the handler view.
 - FETCH / PATCH / iPATCH are named codes; the router binds them if you register `.fetch` / `.patch` / `.ipatch`.
 
 ## Encode + Access loops
 
-**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, request dispatch, piggybacked ACK, and slot release are inside. Observe notify and Q-Block recover are not sent on this path yet (Phase 2); use `App::engine_mut` if you need them now.
+**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, Block1 assembly, request dispatch, piggybacked ACK, `encode_tx`, and slot release are inside. Block-wise TX body, Observe notify, and Q-Block recover are not sent on this path yet (Phase 2); use `App::engine_mut` if you need them now.
 
 **Engine** (advanced):
 

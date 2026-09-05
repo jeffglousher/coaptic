@@ -1,28 +1,36 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
-use super::{Reply, Request, Site, get, post};
+use super::{Request, Response, Site, get, post, put};
 use crate::app::App;
 use crate::message::{
-    Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode,
-    encode,
+    BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token,
+    Type, decode, encode,
 };
 use crate::storage::{DatagramIo, Endpoint, profiles};
 
-fn get_temp(_req: Request<'_>) -> Reply {
-    Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+fn get_temp(_req: Request<'_>) -> Response {
+    Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_led(_: Request<'_>) -> Reply {
+fn get_led(_: Request<'_>) -> Response {
     // Demo payload. Real LED state is firmware-owned, not an App bag.
-    Reply::content(b"off")
+    Response::content(b"off")
 }
 
-fn put_led(_req: Request<'_>) -> Reply {
-    Reply::changed()
+fn put_led(_req: Request<'_>) -> Response {
+    Response::changed()
 }
 
-fn post_led(_: Request<'_>) -> Reply {
-    Reply::changed()
+fn post_led(_: Request<'_>) -> Response {
+    Response::changed()
+}
+
+fn put_body(req: Request<'_>) -> Response {
+    if req.has_body() {
+        Response::changed().payload_copy(req.body().unwrap_or(&[]))
+    } else {
+        Response::changed().payload_copy(req.payload())
+    }
 }
 
 #[derive(Default)]
@@ -261,14 +269,12 @@ fn site_dispatch_table() {
 
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
-    let req =
-        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::CONTENT);
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
-    let req =
-        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::CONTENT);
     assert_eq!(site.dispatch(req).payload(), b"off");
 }
@@ -279,8 +285,7 @@ fn route_path_splits_static_uri() {
     site.route_path("/sensors/temp", get(get_temp));
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
-    let req =
-        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::CONTENT);
 }
 
@@ -292,28 +297,22 @@ fn replacing_route_changes_handler() {
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
-    let req =
-        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::METHOD_NOT_ALLOWED);
 
     let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
-    let req =
-        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::CHANGED);
 }
 
-fn slot0() -> crate::SlotId {
-    crate::storage::SlotId::from_index(0)
-}
-
 #[test]
-fn reply_builders() {
-    assert_eq!(Reply::changed().code(), Code::CHANGED);
-    assert_eq!(Reply::not_found().code(), Code::NOT_FOUND);
-    assert_eq!(Reply::method_not_allowed().code(), Code::METHOD_NOT_ALLOWED);
-    assert_eq!(Reply::content(b"x").payload(), b"x");
-    let cf = Reply::content(b"x")
+fn response_builders() {
+    assert_eq!(Response::changed().code(), Code::CHANGED);
+    assert_eq!(Response::not_found().code(), Code::NOT_FOUND);
+    assert_eq!(Response::method_not_allowed().code(), Code::METHOD_NOT_ALLOWED);
+    assert_eq!(Response::content(b"x").payload(), b"x");
+    let cf = Response::content(b"x")
         .content_format(ContentFormat::LINK_FORMAT)
         .max_age(60)
         .observe(3)
@@ -322,6 +321,89 @@ fn reply_builders() {
     assert_eq!(cf.max_age_secs(), Some(60));
     assert_eq!(cf.observe_seq(), Some(3));
     assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
+}
+
+#[test]
+fn request_view_has_path_token_and_no_body() {
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
+    assert_eq!(req.path(), &["sensors", "temp"][..]);
+    assert_eq!(req.token(), Token::new(&[0xA1]).expect("token"));
+    assert!(!req.has_body());
+    assert!(req.body().is_none());
+    assert!(req.payload().is_empty());
+    assert!(req.content_format().is_none());
+    assert!(req.uri_query().next().is_none());
+}
+
+fn encode_req_block1(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+    num: u32,
+    more: bool,
+    size: u16,
+    mid: u16,
+) -> ([u8; 256], usize) {
+    let token = Token::new(&[0xA1]).expect("token");
+    let mut opts = OptionsBuilder::<8>::new();
+    for segment in path {
+        opts.push(Opt::uri_path(segment)).expect("path");
+    }
+    let block = BlockValue::from_size(num, more, size).expect("block");
+    let encoded = block.encode();
+    opts.push(Opt::block1(&encoded)).expect("block1");
+    let msg = Message::new(Type::Confirmable, code, MessageId::new(mid))
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("encode");
+    (buf, n)
+}
+
+#[test]
+fn block1_incomplete_is_continue() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let payload = [0xABu8; 16];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+}
+
+#[test]
+fn block1_complete_exposes_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let first = [b'A'; 16];
+    let second = *b"REST";
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &first, 0, true, 16, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &second, 1, false, 16, 0x1002);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CHANGED);
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"AAAAAAAAAAAAAAAAREST");
 }
 
 #[test]

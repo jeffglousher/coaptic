@@ -1,4 +1,4 @@
-//! Method routers and handler fns (`Request` → `Reply`).
+//! Method routers and handler fns (`Request` → `Response`).
 //!
 //! Taste is Axum (`get(h).put(p)`) and Ohkami (per-method bits on one path).
 //! Stored handlers are fn pointers — no boxes, no allocator, no `unsafe`.
@@ -11,13 +11,13 @@
 
 use crate::message::Code;
 
-use super::reply::Reply;
 use super::request::Request;
+use super::response::Response;
 
 /// Function pointer stored in a [`MethodRouter`].
 ///
-/// Default handlers are relatively stateless: `Request` → [`Reply`].
-pub type HandlerFn = fn(Request<'_>) -> Reply;
+/// Default handlers are relatively stateless: `Request` → [`Response`].
+pub type HandlerFn = fn(Request<'_>) -> Response;
 
 /// Per-path method table (Ohkami-style bits; Axum-style `.get().put()` chain).
 ///
@@ -87,10 +87,10 @@ impl MethodRouter {
         self
     }
 
-    pub(crate) fn call(&self, method: Method, req: Request<'_>) -> Reply {
+    pub(crate) fn call(&self, method: Method, req: Request<'_>) -> Response {
         match self.handlers[method.index()] {
             Some(handler) => handler(req),
-            None => Reply::method_not_allowed(),
+            None => Response::method_not_allowed(),
         }
     }
 }

@@ -1,32 +1,43 @@
 //! Approachable CoAP app: a routing façade over request/response.
 //!
-//! [`App::poll`] is one loop step: recv, progress, route, handler, send,
-//! release. The reactor ([`Engine`] / [`Progress`](crate::Progress))
-//! ships protocol mechanics on per-slot state machines (pending CON/RTO,
-//! BlockTransfer, ObserveInterest, Dedup, Exchange). This module is not a
-//! seventh memory area and does **not** own a global mutable shared bag.
+//! Memory areas become handler items inside [`App::poll`]:
 //!
-//! Default handlers are relatively stateless: `fn(Request<'_>) -> Reply`.
+//! ```text
+//! RX slot (+ body) --view--> Request
+//! handler(Request) -> Response
+//! Response --encode--> TX slot (+ body)
+//! ```
+//!
+//! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
+//! `payload()`, and `body()` when Block1 has assembled). [`Response`] is
+//! owned intent (`content` / `content_copy` / `changed` / `not_found`).
+//! Borrows last only for the handler call; `poll` encodes and then releases.
+//! The reactor ([`Engine`] / [`Progress`](crate::Progress)) owns per-slot
+//! state machines under the hood (pending CON/RTO, BlockTransfer,
+//! ObserveInterest, Dedup, Exchange). This module is not a seventh memory
+//! area and does **not** own a global mutable shared bag.
+//!
+//! Default handlers are relatively stateless: `fn(Request<'_>) -> Response`.
 //! Application domain data that outlives a request is application-owned
 //! outside `App` ([`design.md`][design] §Application memory access) — a GPIO
 //! write lives in firmware, not in an Axum-style `AppState`.
 //!
 //! ```
 //! use coaptic::{
-//!     App, ContentFormat, DatagramIo, Endpoint, Reply, Request, get, profiles,
+//!     App, ContentFormat, DatagramIo, Endpoint, Request, Response, get, profiles,
 //! };
 //!
-//! fn get_temp(_req: Request<'_>) -> Reply {
-//!     Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+//! fn get_temp(_req: Request<'_>) -> Response {
+//!     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 //! }
 //!
-//! fn get_led(_: Request<'_>) -> Reply {
+//! fn get_led(_: Request<'_>) -> Response {
 //!     // Demo payload. Real LED state is firmware-owned, not an App bag.
-//!     Reply::content(b"off")
+//!     Response::content(b"off")
 //! }
 //!
-//! fn put_led(_req: Request<'_>) -> Reply {
-//!     Reply::changed()
+//! fn put_led(_req: Request<'_>) -> Response {
+//!     Response::changed()
 //! }
 //!
 //! # struct NullIo;
@@ -54,8 +65,8 @@
 //!
 //! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
 
-mod reply;
 mod request;
+mod response;
 mod routing;
 mod site;
 
@@ -64,9 +75,9 @@ mod tests;
 
 use core::marker::PhantomData;
 
-use crate::error::{BuildError, SlotMessageError};
+use crate::error::{BlockTransferError, BuildError, SlotMessageError};
 use crate::message::{
-    EncodedUint, Message, NoResponse, Opt, OptionsBuilder, Type, decode, encode_uint,
+    Code, EncodedUint, Message, NoResponse, Opt, OptionsBuilder, Type, decode, encode_uint,
 };
 use crate::storage::{
     BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine, EngineBuilder, Memory,
@@ -74,8 +85,8 @@ use crate::storage::{
     Storage, WithBodies,
 };
 
-pub use reply::{INLINE_PAYLOAD, IntoReply, Reply};
 pub use request::{MAX_PATH_SEGMENTS, Request};
+pub use response::{INLINE_PAYLOAD, IntoResponse, Response};
 pub use routing::{
     HandlerFn, Method, MethodRouter, delete, fetch, get, ipatch, patch, post, put, split_path,
 };
@@ -91,9 +102,12 @@ enum EngineSlot<P: MemoryProfile> {
 
 /// CoAP app: profile memory + transport + a bounded [`Site`].
 ///
-/// `N` is the maximum number of routes (default 8). Increase with
+/// Handlers see a borrowed [`Request`] and return an owned [`Response`].
+/// The reactor owns per-slot state machines inside [`App::poll`]. `N` is
+/// the maximum number of routes (default 8). Increase with
 /// [`AppBuilder::routes`] (`App::<_, _, 16>` after bind). `App` does not
-/// own a global mutable shared application bag.
+/// own a global mutable shared application bag. Engine remains the
+/// advanced escape hatch ([`App::engine_mut`]).
 pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usize = DEFAULT_ROUTES>
 {
     engine: EngineSlot<P>,
@@ -277,15 +291,19 @@ where
 {
     /// One loop step: recv, progress, route, handler, send, release.
     ///
+    /// Handlers receive a borrowed [`Request`] and return an owned
+    /// [`Response`]. `poll` writes that intent with `encode_tx`. Block-wise
+    /// TX body start is Phase 2. Incoming Block1 is assembled so
+    /// [`Request::body`] can borrow the complete body; an incomplete Block1
+    /// is answered with 2.31 and does not run the handler. Q-Block1 inbound,
+    /// Observe notify, Observe expiry, and Q-Block recover stay on
+    /// [`Engine`] (Phase 2 / [`Self::engine_mut`]).
+    ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`].
     ///
     /// Incoming requests are dispatched through the site (4.04 / 4.05
     /// when no match). CON is answered with a piggybacked ACK.
-    ///
-    /// Observe notify, Observe expiry, and Q-Block recover are **not**
-    /// sent here yet (Phase 2). [`Engine::progress`] still surfaces them;
-    /// handle those through [`Self::engine_mut`] if you need them now.
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(engine, &mut self.io, &self.site, now_ms),
@@ -365,6 +383,28 @@ where
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum InboundBody {
+    None,
+    Continue,
+    IncompleteEntity,
+    Complete(SlotId),
+}
+
+fn assemble_block1<Mem>(engine: &mut Engine<Mem>, rx: SlotId) -> InboundBody
+where
+    Mem: Storage + DatagramSlots + BodySlots,
+{
+    match engine.apply_block1_rx(rx) {
+        Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
+        Ok(_) => InboundBody::Continue,
+        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
+            InboundBody::None
+        }
+        Err(_) => InboundBody::IncompleteEntity,
+    }
+}
+
 fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -372,7 +412,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons,
+    Mem: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {
@@ -421,36 +461,77 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
-    let meta = SendReply {
+    let meta = SendResponse {
         dest: peer,
         ty: parsed.ty(),
         mid: parsed.message_id(),
         token: parsed.token(),
         no_response,
     };
-    let outcome = match Request::from_decoded(parsed, peer, rx) {
-        Ok(request) => {
-            let reply = site.dispatch(request);
-            send_reply(engine, io, meta, &reply)
+
+    let assembled = assemble_block1(engine, rx);
+    match assembled {
+        InboundBody::Continue => {
+            let outcome = send_response(
+                engine,
+                io,
+                meta,
+                &Response::new(Code::CONTINUE),
+            );
+            let _ = engine.release_rx(rx);
+            return outcome;
         }
-        Err(request::PathError::BadUtf8) => send_reply(engine, io, meta, &Reply::bad_request()),
-        Err(request::PathError::TooLong) => send_reply(engine, io, meta, &Reply::not_found()),
+        InboundBody::IncompleteEntity => {
+            let outcome = send_response(
+                engine,
+                io,
+                meta,
+                &Response::new(Code::REQUEST_ENTITY_INCOMPLETE),
+            );
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        InboundBody::None | InboundBody::Complete(_) => {}
+    }
+
+    let response = {
+        let parsed = match engine.decode_rx(rx) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                let _ = engine.release_rx(rx);
+                return Err(Error::Message(e));
+            }
+        };
+        let body = match assembled {
+            InboundBody::Complete(id) => engine.rx_body_payload(id),
+            InboundBody::None | InboundBody::Continue | InboundBody::IncompleteEntity => None,
+        };
+        match Request::from_decoded(parsed, peer, body) {
+            Ok(request) => site.dispatch(request),
+            Err(request::PathError::BadUtf8) => Response::bad_request(),
+            Err(request::PathError::TooLong) => Response::not_found(),
+        }
     };
+
+    let outcome = send_response(engine, io, meta, &response);
+    if let InboundBody::Complete(id) = assembled {
+        let _ = engine.release_rx_body(id);
+    }
     let _ = engine.release_rx(rx);
     outcome
 }
 
-fn send_reply<S, T>(
+fn send_response<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendReply,
-    reply: &Reply,
+    meta: SendResponse,
+    response: &Response,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots,
     T: DatagramIo,
 {
-    if meta.no_response.suppresses(reply.code()) {
+    if meta.no_response.suppresses(response.code()) {
         return Ok(());
     }
 
@@ -464,16 +545,16 @@ where
         return Err(Error::Saturated);
     };
 
-    let cf = reply.format().map(crate::ContentFormat::encode);
-    let max_age = reply.max_age_secs().map(EncodedUint::new);
-    let observe = reply
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let max_age = response.max_age_secs().map(EncodedUint::new);
+    let observe = response
         .observe_seq()
         .map(|seq| encode_uint(seq & 0x00ff_ffff));
     let mut opts = OptionsBuilder::<4>::new();
     if let Some(ref encoded) = observe {
         let _ = opts.push(Opt::observe(encoded));
     }
-    if let Some(etag) = reply.etag_bytes() {
+    if let Some(etag) = response.etag_bytes() {
         let _ = opts.push(Opt::etag(etag));
     }
     if let Some(ref encoded) = cf {
@@ -483,10 +564,10 @@ where
         let _ = opts.push(Opt::max_age(encoded));
     }
 
-    let msg = Message::new(ty, reply.code(), meta.mid)
+    let msg = Message::new(ty, response.code(), meta.mid)
         .with_token(meta.token)
         .with_options(opts.as_slice())
-        .with_payload(reply.payload());
+        .with_payload(response.payload());
 
     if let Err(e) = engine.encode_tx(tx, &msg) {
         let _ = engine.release_tx(tx);
@@ -502,7 +583,7 @@ where
     Ok(())
 }
 
-struct SendReply {
+struct SendResponse {
     dest: Endpoint,
     ty: Type,
     mid: crate::message::MessageId,

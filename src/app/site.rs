@@ -2,7 +2,7 @@
 
 use crate::message::ContentFormat;
 
-use super::reply::Reply;
+use super::response::Response;
 use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
 use super::routing::{Method, MethodRouter, split_path};
 
@@ -111,23 +111,23 @@ impl<const N: usize> Site<N> {
 
     /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
     #[must_use]
-    pub fn dispatch(&self, request: Request<'_>) -> Reply {
+    pub fn dispatch(&self, request: Request<'_>) -> Response {
         for entry in self.entries.iter().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
             }
             return match request.method() {
                 Some(method) => entry.methods.call(method, request),
-                None => Reply::method_not_allowed(),
+                None => Response::method_not_allowed(),
             };
         }
         if self.well_known && path_is_well_known(request.path()) {
             return match request.method() {
                 Some(Method::Get) => link_format(self),
-                _ => Reply::method_not_allowed(),
+                _ => Response::method_not_allowed(),
             };
         }
-        Reply::not_found()
+        Response::not_found()
     }
 }
 
@@ -151,8 +151,8 @@ fn path_is_well_known(path: &[&str]) -> bool {
     path == WELL_KNOWN
 }
 
-fn link_format<const N: usize>(site: &Site<N>) -> Reply {
-    let mut buf = [0u8; super::reply::INLINE_PAYLOAD];
+fn link_format<const N: usize>(site: &Site<N>) -> Response {
+    let mut buf = [0u8; super::response::INLINE_PAYLOAD];
     let mut n = 0usize;
     let mut first = true;
     for entry in site.entries.iter().flatten() {
@@ -168,7 +168,7 @@ fn link_format<const N: usize>(site: &Site<N>) -> Reply {
             break;
         }
     }
-    Reply::content_copy(&buf[..n]).content_format(ContentFormat::LINK_FORMAT)
+    Response::content_copy(&buf[..n]).content_format(ContentFormat::LINK_FORMAT)
 }
 
 fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {

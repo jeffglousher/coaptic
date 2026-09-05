@@ -1,4 +1,4 @@
-//! Taste of [`coaptic::App`]: stateless routes, one `poll` loop.
+//! Taste of [`coaptic::App`]: stateless `Request` → `Response`, one `poll` loop.
 //!
 //! ```text
 //! cargo run --example coap_server --features std
@@ -7,27 +7,28 @@
 //! Client GET `/sensors/temp` → 2.05 Content. PUT `/leds/0` → 2.04 Changed
 //! (no in-App LED bag; real LED state is firmware-owned). GET `/leds/0` →
 //! demo payload. `/.well-known/core` is link-format from registered paths.
-//! Engine slots stay off the happy path (`CALLER.md`).
+//! Handlers see borrowed `Request` fields and return owned `Response`.
+//! Engine slot identifiers stay off this path (`CALLER.md`).
 
 use std::net::UdpSocket;
 use std::time::Instant;
 
 use coaptic::{
-    App, Code, ContentFormat, DatagramIo, Endpoint, Ids, Opt, OptionsBuilder, ParsedMessage, Reply,
-    Request, Token, decode, encode, get, profiles,
+    App, Code, ContentFormat, DatagramIo, Endpoint, Ids, Opt, OptionsBuilder, ParsedMessage,
+    Request, Response, Token, decode, encode, get, profiles,
 };
 
-fn get_temp(_req: Request<'_>) -> Reply {
-    Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+fn get_temp(_req: Request<'_>) -> Response {
+    Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_led(_: Request<'_>) -> Reply {
+fn get_led(_: Request<'_>) -> Response {
     // Demo payload. Real LED state is firmware-owned, not an App bag.
-    Reply::content(b"off")
+    Response::content(b"off")
 }
 
-fn put_led(_req: Request<'_>) -> Reply {
-    Reply::changed()
+fn put_led(_req: Request<'_>) -> Response {
+    Response::changed()
 }
 
 fn now_ms(origin: Instant) -> u64 {
