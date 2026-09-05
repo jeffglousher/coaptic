@@ -1,12 +1,16 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
-use super::{Request, Response, Site, get, post, put};
+use super::{Error, Request, Response, Site, get, post, put};
 use crate::app::App;
+use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token,
     Type, decode, encode,
 };
 use crate::storage::{DatagramIo, Endpoint, profiles};
+
+const LARGE: [u8; 2000] = [b'A'; 2000];
+const WIRE: usize = 1472;
 
 fn get_temp(_req: Request<'_>) -> Response {
     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
@@ -31,6 +35,10 @@ fn put_body(req: Request<'_>) -> Response {
     } else {
         Response::changed().payload_copy(req.payload())
     }
+}
+
+fn get_large(_: Request<'_>) -> Response {
+    Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
 }
 
 #[derive(Default)]
@@ -108,6 +116,7 @@ struct LastReply {
     payload: [u8; 64],
     payload_len: usize,
     content_format: Option<ContentFormat>,
+    block2: Option<BlockValue>,
 }
 
 fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
@@ -122,6 +131,7 @@ fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
         payload,
         payload_len,
         content_format: parsed.content_format().and_then(Result::ok),
+        block2: parsed.block2().and_then(Result::ok),
     }
 }
 
@@ -139,6 +149,7 @@ fn get_sensors_temp_is_content() {
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"21.5");
     assert_eq!(parsed.content_format, Some(ContentFormat::TEXT_PLAIN));
+    assert!(parsed.block2.is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -422,4 +433,168 @@ fn block_wise_bind_uses_body_pools() {
         crate::app::EngineMut::BlockWise(_) => {}
         crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
     }
+}
+
+struct WideLoopback {
+    inbox: Option<(Endpoint, [u8; WIRE], usize)>,
+    sends: [[u8; WIRE]; 4],
+    send_lens: [usize; 4],
+    send_n: usize,
+}
+
+impl Default for WideLoopback {
+    fn default() -> Self {
+        Self {
+            inbox: None,
+            sends: [[0; WIRE]; 4],
+            send_lens: [0; 4],
+            send_n: 0,
+        }
+    }
+}
+
+impl DatagramIo for WideLoopback {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((ep, bytes, n)) = self.inbox.take() else {
+            return Ok(None);
+        };
+        if n > buf.len() {
+            return Err("short buf");
+        }
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, _dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > WIRE {
+            return Err("too long");
+        }
+        if self.send_n >= self.sends.len() {
+            return Err("send log full");
+        }
+        let i = self.send_n;
+        self.sends[i][..bytes.len()].copy_from_slice(bytes);
+        self.send_lens[i] = bytes.len();
+        self.send_n += 1;
+        Ok(bytes.len())
+    }
+}
+
+fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; WIRE], usize) {
+    let token = Token::new(&[0xA1]).expect("token");
+    let mut opts = OptionsBuilder::<8>::new();
+    for segment in path {
+        opts.push(Opt::uri_path(segment)).expect("path");
+    }
+    for opt in extra {
+        opts.push(*opt).expect("extra");
+    }
+    let msg = Message::new(Type::Confirmable, code, MessageId::new(mid))
+        .with_token(token)
+        .with_options(opts.as_slice());
+    let mut buf = [0u8; WIRE];
+    let n = encode(&msg, &mut buf).expect("encode");
+    (buf, n)
+}
+
+fn last_wide(app: &App<profiles::Default, WideLoopback>) -> crate::ParsedMessage<'_> {
+    let n = app.transport().send_n;
+    assert!(n > 0, "expected a send");
+    decode(&app.transport().sends[n - 1][..app.transport().send_lens[n - 1]]).expect("decode")
+}
+
+#[test]
+fn large_get_ships_block2_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["large"], get(get_large))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    {
+        let first = last_wide(&app);
+        assert_eq!(first.code(), Code::CONTENT);
+        assert_eq!(
+            first.content_format().and_then(Result::ok),
+            Some(ContentFormat::OCTET_STREAM)
+        );
+        let block = first.block2().expect("Block2").expect("val");
+        assert_eq!(block.num(), 0);
+        assert!(block.more());
+        assert_eq!(block.szx(), BlockValue::SZX_MAX);
+        assert_eq!(first.payload(), &LARGE[..1024]);
+    }
+
+    let next = BlockValue::from_size(1, false, 1024)
+        .expect("num 1")
+        .encode();
+    let extra = [Opt::block2(&next)];
+    let (wire, n) = encode_wide(Code::GET, &["large"], &extra, 0x1002);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("poll");
+    let second = last_wide(&app);
+    let block = second.block2().expect("Block2").expect("val");
+    assert_eq!(block.num(), 1);
+    assert!(!block.more());
+    assert_eq!(second.payload(), &LARGE[1024..]);
+}
+
+#[test]
+fn large_get_without_body_pools_fails_clearly() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["large"], get(get_large))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    assert_eq!(
+        app.poll(0),
+        Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::BufferTooSmall
+        )))
+    );
+}
+
+#[test]
+fn large_get_q_block2_issues_a_window() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let q = BlockValue::from_size(0, false, 1024).expect("q").encode();
+    let extra = [Opt::q_block2(&q)];
+    let (wire, n) = encode_wide(Code::GET, &["large"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["large"], get(get_large))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(app.transport().send_n, 2);
+
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).expect("first");
+    assert_eq!(first.ty(), Type::Acknowledgement);
+    let q0 = first.q_block2().next().expect("Q-Block2").expect("val");
+    assert_eq!(q0.num(), 0);
+    assert!(q0.more());
+    assert_eq!(first.payload(), &LARGE[..1024]);
+    assert_eq!(first.size2().and_then(Result::ok), Some(2000));
+
+    let second = decode(&app.transport().sends[1][..app.transport().send_lens[1]]).expect("second");
+    assert_eq!(second.ty(), Type::NonConfirmable);
+    let q1 = second.q_block2().next().expect("Q-Block2").expect("val");
+    assert_eq!(q1.num(), 1);
+    assert!(!q1.more());
+    assert_eq!(second.payload(), &LARGE[1024..]);
 }

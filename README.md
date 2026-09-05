@@ -11,7 +11,7 @@ Happy-path types live at the crate root (`App`, `Request`, `Response`, `get` / `
 ```text
 RX slot (+ body) --view--> Request
 handler(Request) -> Response
-Response --encode--> TX slot (+ body)
+Response --encode--> TX slot (+ TX body when the payload needs Block2)
 ```
 
 ### `coaptic::app`
@@ -23,8 +23,8 @@ Response --encode--> TX slot (+ body)
 - `Site` — fixed table of fn-pointer routers (`App<_, _, N>`, default 8)
 - `Response` — no handler lifetime; `'static` payload or a small inline copy
 - `.well_known_core()` — RFC 6690 link-format from registered paths
-- `App::poll(now_ms)` — recv, progress, route, handler, send, release
-- Engine remains reachable as `app.engine_mut()` (Q-Block, Observe, custom policy)
+- `App::poll(now_ms)` — recv, progress, route, handler, send, release; large `Response` payloads use the TX body (Block2 / Q-Block2)
+- Engine remains reachable as `app.engine_mut()` (Observe notify, Q-Block recover, custom policy)
 
 ### `coaptic::message`
 

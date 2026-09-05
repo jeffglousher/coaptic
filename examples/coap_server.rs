@@ -6,16 +6,19 @@
 //!
 //! Client GET `/sensors/temp` → 2.05 Content. PUT `/leds/0` → 2.04 Changed
 //! (no in-App LED bag; real LED state is firmware-owned). GET `/leds/0` →
-//! demo payload. `/.well-known/core` is link-format from registered paths.
-//! Handlers see borrowed `Request` fields and return owned `Response`.
-//! Engine slot identifiers stay off this path (`CALLER.md`).
+//! demo payload. GET `/large` → a payload that does not fit one datagram,
+//! shipped as outgoing Block2 from a TX body. `/.well-known/core` is
+//! link-format from registered paths. Handlers see borrowed `Request`
+//! fields and return owned `Response`. Engine slot identifiers stay off
+//! this path (`CALLER.md`).
 
 use std::net::UdpSocket;
 use std::time::Instant;
 
 use coaptic::{
-    App, Code, ContentFormat, DatagramIo, Endpoint, Ids, Opt, OptionsBuilder, ParsedMessage,
-    Request, Response, Token, decode, encode, get, profiles,
+    App, BlockValue, Code, ContentFormat, DatagramIo, EncodedUint, Endpoint, Ids, Message,
+    MessageId, Opt, OptionsBuilder, ParsedMessage, Request, Response, Token, Type, decode, encode,
+    get, profiles,
 };
 
 fn get_temp(_req: Request<'_>) -> Response {
@@ -29,6 +32,12 @@ fn get_led(_: Request<'_>) -> Response {
 
 fn put_led(_req: Request<'_>) -> Response {
     Response::changed()
+}
+
+const LARGE: [u8; 2000] = [b'A'; 2000];
+
+fn get_large(_: Request<'_>) -> Response {
+    Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
 }
 
 fn now_ms(origin: Instant) -> u64 {
@@ -49,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .block_wise(true)
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
+        .route(&["large"], get(get_large))
         .well_known_core()
         .bind(socket)?;
 
@@ -75,11 +85,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     expect_reply(
         &mut client,
         Code::CONTENT,
-        Some(b"</sensors/temp>,</leds/0>"),
+        Some(b"</sensors/temp>,</leds/0>,</large>"),
     )?;
 
-    eprintln!("coap_server: 2.05 \"21.5\"; PUT led Changed; GET demo off; well-known/core");
+    fetch_large(&mut client, &mut app, server_ep, origin)?;
+
+    eprintln!(
+        "coap_server: 2.05 \"21.5\"; PUT led Changed; GET demo off; well-known/core; GET /large Block2"
+    );
     Ok(())
+}
+
+fn fetch_large<T: DatagramIo>(
+    client: &mut T,
+    app: &mut App<profiles::Default, UdpSocket>,
+    server: Endpoint,
+    origin: Instant,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    T::Error: core::fmt::Debug + std::error::Error + 'static,
+{
+    let token = Token::mint(2, &[0xC0, 0xA1]).expect("token");
+    send_path(client, server, token, 0x2100, &["large"], None);
+    app.poll(now_ms(origin))?;
+    let (n0, more) = recv_block(client, 0)?;
+    assert!(more);
+    assert_eq!(n0, 1024);
+
+    let next = BlockValue::from_size(1, false, 1024)
+        .expect("num 1")
+        .encode();
+    send_path(client, server, token, 0x2101, &["large"], Some(next));
+    app.poll(now_ms(origin))?;
+    let (n1, more) = recv_block(client, 1)?;
+    assert!(!more);
+    assert_eq!(n0 + n1, LARGE.len());
+    Ok(())
+}
+
+fn send_path<T: DatagramIo>(
+    client: &mut T,
+    server: Endpoint,
+    token: Token,
+    mid: u16,
+    path: &[&str],
+    block2: Option<EncodedUint>,
+) where
+    T::Error: core::fmt::Debug,
+{
+    let mut opts = OptionsBuilder::<4>::new();
+    for segment in path {
+        opts.push(Opt::uri_path(segment)).expect("path room");
+    }
+    if let Some(ref encoded) = block2 {
+        opts.push(Opt::block2(encoded)).expect("block2");
+    }
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(mid))
+        .with_token(token)
+        .with_options(opts.as_slice());
+    let mut wire = [0u8; 1472];
+    let n = encode(&msg, &mut wire).expect("encode");
+    client.send(server, &wire[..n]).expect("client send");
+}
+
+fn recv_block<T: DatagramIo>(
+    client: &mut T,
+    want_num: u32,
+) -> Result<(usize, bool), Box<dyn std::error::Error>>
+where
+    T::Error: core::fmt::Debug + std::error::Error + 'static,
+{
+    let mut buf = [0u8; 1472];
+    let n = match DatagramIo::recv(client, &mut buf)? {
+        Some((n, _)) => n,
+        None => return Err("client expected a Block2 response".into()),
+    };
+    let parsed: ParsedMessage<'_> = decode(&buf[..n])?;
+    assert_eq!(parsed.code(), Code::CONTENT);
+    let block = parsed.block2().expect("Block2").expect("val");
+    assert_eq!(block.num(), want_num);
+    Ok((parsed.payload().len(), block.more()))
 }
 
 fn send_client<T: DatagramIo>(
