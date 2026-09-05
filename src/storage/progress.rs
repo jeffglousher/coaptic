@@ -3,18 +3,20 @@
 //! See `design.md` §Reference progress contract, Bounded progress, and
 //! Ownership by progress domain.
 
+use super::BodySlots;
 use super::DatagramSlots;
 use super::Engine;
 use super::ObserveSlots;
 use super::PendingCons;
+use super::QBlockRecover;
 use super::Retransmit;
 use super::SlotId;
 use super::Storage;
 
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
-/// Idle when [`Self::is_idle`]. Q-Block missing-block recovery is a later
-/// PR; [`Self::qblock_recover`] stays `None` here.
+/// Idle when [`Self::is_idle`]. Q-Block missing-block recovery is at most
+/// one [`QBlockRecover`] from a rotating Incoming Body Pool step.
 ///
 /// See `design.md` §Reference progress contract.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -22,11 +24,11 @@ pub struct Progress {
     retransmit: Option<Retransmit>,
     rx_ready: Option<SlotId>,
     observe_notify: Option<SlotId>,
-    qblock_recover: Option<SlotId>,
+    qblock_recover: Option<QBlockRecover>,
 }
 
 impl Progress {
-    /// No retransmit, no RX slot, and no later-PR domain work.
+    /// No retransmit, no RX slot, and no later-domain work.
     #[must_use]
     pub const fn idle() -> Self {
         Self {
@@ -78,16 +80,21 @@ impl Progress {
         self.observe_notify
     }
 
-    /// Q-Block missing-block recovery. Always `None` until that PR.
+    /// One incoming Q-Block recover opportunity, if any.
     ///
-    /// See `design.md` §Ownership by progress domain.
+    /// At most one per pass, from a rotating Incoming Body Pool step. The
+    /// caller encodes a recover request (repeatable Q-Block2) or owns any
+    /// 4.08 (Q-Block1). This pass does not send, acquire TX, or invent 4.08
+    /// / 2.31 / RST. `.block_wise(false)` stays `None`. See
+    /// `design.md` §Ownership by progress domain and
+    /// `knowledge/rfcs/rfc9177.txt`.
     #[must_use]
-    pub const fn qblock_recover(self) -> Option<SlotId> {
+    pub const fn qblock_recover(self) -> Option<QBlockRecover> {
         self.qblock_recover
     }
 }
 
-impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots> Engine<S> {
+impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine<S> {
     /// One bounded progress invocation.
     ///
     /// Caller supplies `now_ms` (no OS clock). Each call:
@@ -97,11 +104,11 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots> Engine<S> {
     ///    that is not pinned. The cursor resumes after that slot.
     /// 3. Observe notify — at most one pending interest from the Observe
     ///    table cursor ([`Progress::observe_notify`]).
-    /// 4. Q-Block missing-block recovery — stub
-    ///    ([`Progress::qblock_recover`] is `None`).
+    /// 4. Q-Block missing-block recovery — at most one incoming window
+    ///    hole ([`Progress::qblock_recover`]).
     ///
     /// Does not allocate, grow storage, or send on the wire. Does not release
-    /// pinned slots. Does not invent 4.02 / RST / 2.31 policy.
+    /// pinned slots. Does not invent 4.02 / RST / 2.31 / 4.08 policy.
     ///
     /// See `design.md` §Reference progress contract / Bounded progress /
     /// Ownership by progress domain.
@@ -112,7 +119,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots> Engine<S> {
             retransmit,
             rx_ready,
             observe_notify: progress_observe(self),
-            qblock_recover: progress_qblock(),
+            qblock_recover: progress_qblock(self),
         }
     }
 }
@@ -155,9 +162,50 @@ fn progress_observe<S: Storage + ObserveSlots>(engine: &mut Engine<S>) -> Option
     }
 }
 
-/// Q-Block missing-block recovery. Later PR; see `design.md` Block/Q-Block progress.
-const fn progress_qblock() -> Option<SlotId> {
-    None
+/// First incoming Q-Block window with known holes, starting at the body cursor.
+///
+/// Advances the Incoming Body Pool cursor past that slot so the next call
+/// does not restart at slot zero. Does not acquire TX or encode a recover
+/// request. Absent body pools (`None` from [`Storage::rx_body`]) yield
+/// `None`.
+fn progress_qblock<S: Storage + BodySlots>(engine: &mut Engine<S>) -> Option<QBlockRecover> {
+    let n = engine.storage_mut().rx_body()?.slot_count();
+    if n == 0 {
+        return None;
+    }
+    let start = engine.storage_mut().rx_body()?.cursor();
+    let mut found = None;
+    for offset in 0..n {
+        let id = SlotId::from_index((start + offset) % n);
+        let Some(transfer) = engine.rx_body_transfer(id) else {
+            continue;
+        };
+        let Some((missing_num, hole_mask)) = transfer.q_holes() else {
+            continue;
+        };
+        found = Some((
+            offset,
+            QBlockRecover::new(
+                id,
+                transfer.key(),
+                transfer.role(),
+                missing_num,
+                hole_mask,
+                transfer.window_base(),
+                transfer.szx(),
+            ),
+        ));
+        break;
+    }
+    match found {
+        Some((offset, recover)) => {
+            for _ in 0..=offset {
+                engine.rotate_rx_body();
+            }
+            Some(recover)
+        }
+        None => None,
+    }
 }
 
 /// First occupied, unpinned RX slot starting at the rotating cursor.

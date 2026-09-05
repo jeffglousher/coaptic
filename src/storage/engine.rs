@@ -21,10 +21,13 @@ use super::Retransmit;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
-use super::block::{BlockKey, BlockProgress, BlockTransfer, OutgoingBlock};
+use super::block::{
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, QBlockRecover,
+};
 use crate::error::{BlockTransferError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, Message, MessageId, Opt, ParsedMessage, Token, Type, encode_uint,
+    BlockValue, Code, EncodedUint, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
+    Type, encode_uint,
 };
 
 /// Protocol engine, generic over [`Storage`].
@@ -32,7 +35,8 @@ use crate::message::{
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
 /// Q-Block body-slot assembly when `S` implements [`BodySlots`].
 /// [`Self::progress`] is one bounded pass (`design.md` §Reference progress
-/// contract). BERT and Q-Block missing-block recovery are not implemented.
+/// contract), including at most one incoming Q-Block recover. BERT is not
+/// implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -44,7 +48,8 @@ use crate::message::{
 /// pending on the TX datagram sidecar (RTO included) and matched against
 /// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
 /// [`Self::progress`] polls that once, takes one rotating unpinned RX
-/// step, and surfaces at most one pending Observe notify per call.
+/// step, surfaces at most one pending Observe notify, and at most one
+/// incoming Q-Block recover per call.
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
@@ -945,8 +950,9 @@ impl<S: Storage + BodySlots> Engine<S> {
 
     /// Decode occupied RX `id` and [`Self::apply_q_block2`] using Q-Block2 + Token + endpoint.
     ///
-    /// Uses the first Q-Block2 option (repeatable recovery options are out of
-    /// scope). Missing Q-Block2 is [`BlockTransferError::MissingBlock`].
+    /// Uses the first Q-Block2 option. Repeatable recover-request options
+    /// are for the outgoing reissue hook, not this assemble path. Missing
+    /// Q-Block2 is [`BlockTransferError::MissingBlock`].
     pub fn apply_q_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1172,6 +1178,169 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         self.ack_outgoing_rx(body_id, rx_id, RxBlockOpt::QBlock2)
+    }
+
+    /// Reissue one Q-Block1 payload from outgoing body `id`.
+    ///
+    /// RFC 9177 §4.3: the client retransmits a missing payload using the same
+    /// NUM, SZX, and M. Does not change window state. Does not invent 4.08.
+    pub fn reissue_q_block1(
+        &self,
+        id: SlotId,
+        num: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.reissue_q_outgoing(id, BlockRole::OutgoingQBlock1, num)
+    }
+
+    /// Reissue one Q-Block2 payload from outgoing body `id`.
+    ///
+    /// RFC 9177 §4.4: the server retransmits a missing payload from the
+    /// complete body still in the slot. Does not change window state. The
+    /// caller walks repeatable Q-Block2 recover options (or a 4.08 NUM list)
+    /// and calls this once per NUM. Does not invent 4.08 / 2.31.
+    pub fn reissue_q_block2(
+        &self,
+        id: SlotId,
+        num: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.reissue_q_outgoing(id, BlockRole::OutgoingQBlock2, num)
+    }
+
+    /// Reissue one Q-Block1 payload and encode it into occupied TX `tx_id`.
+    ///
+    /// Token, Size1, and endpoint come from the body sidecar. Request-Tag is
+    /// caller-owned. The caller supplies type, code, and Message ID.
+    pub fn encode_q_block1_reissue_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+        num: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.reissue_q_block1(body_id, num)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::QBlock1,
+        )
+    }
+
+    /// Reissue one Q-Block2 payload and encode it into occupied TX `tx_id`.
+    ///
+    /// Token, Size2, and endpoint come from the body sidecar. ETag is
+    /// caller-owned. The caller supplies type, code, and Message ID.
+    pub fn encode_q_block2_reissue_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+        num: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.reissue_q_block2(body_id, num)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::QBlock2,
+        )
+    }
+
+    /// Encode an incoming Q-Block2 recover request into occupied TX `tx_id`.
+    ///
+    /// Writes one Q-Block2 option per known hole (ascending NUM, M unset;
+    /// RFC 9177 §4.1 / §4.4 repeatable recover). Token and endpoint come from
+    /// the incoming body sidecar. The caller supplies type, code, and Message
+    /// ID (typically GET / FETCH). Does not include Observe (RFC 9177 §4.5).
+    /// Incoming Q-Block1 recover is not encoded here — the caller owns any
+    /// 4.08. Does not invent response codes.
+    pub fn encode_q_block2_recover_tx(
+        &mut self,
+        recover: QBlockRecover,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+    ) -> Result<usize, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        if recover.role() != BlockRole::IncomingQBlock2 {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let transfer = self
+            .storage
+            .rx_body_transfer(recover.id())
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.key() != recover.key() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        const N: usize = BlockTransfer::MAX_PAYLOADS as usize;
+        let mut encoded = [EncodedUint::new(0); N];
+        let mut count = 0usize;
+        let mut i = 0u32;
+        while i < u32::from(BlockTransfer::MAX_PAYLOADS) {
+            if recover.hole_mask() & (1u16 << i) != 0 {
+                let num = recover.window_base() + i;
+                encoded[count] = BlockValue::new(num, false, recover.szx())?.encode();
+                count += 1;
+            }
+            i += 1;
+        }
+        if count == 0 {
+            return Err(BlockTransferError::Gap);
+        }
+        let mut opts = OptionsBuilder::<N>::new();
+        for item in encoded.iter().take(count) {
+            opts.push(Opt::q_block2(item))
+                .map_err(|_| BlockTransferError::Overflow)?;
+        }
+        let msg = Message::new(ty, code, message_id)
+            .with_token(transfer.token())
+            .with_options(opts.as_slice());
+        let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
+            SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
+            SlotMessageError::Parse(p) => BlockTransferError::Parse(p),
+            SlotMessageError::Encode(enc) => BlockTransferError::Encode(enc),
+        })?;
+        self.storage.set_tx_len(tx_id, n)?;
+        self.storage.set_tx_endpoint(tx_id, transfer.endpoint())?;
+        Ok(n)
+    }
+
+    fn reissue_q_outgoing(
+        &self,
+        id: SlotId,
+        role: BlockRole,
+        num: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        let transfer = self
+            .storage
+            .tx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (block, offset, len) = transfer.reissue_q_outgoing(num)?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
     }
 
     fn apply_incoming_rx(

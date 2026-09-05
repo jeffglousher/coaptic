@@ -20,9 +20,10 @@
 //! Temporary application [`Access`] / [`AccessMut`] pins an occupied
 //! datagram or body slot against [`SlotPool::release`] (`design.md`
 //! §Application memory access). [`Engine::progress`] is one bounded
-//! pass: pending CON retransmit poll, one rotating unpinned RX step, and
-//! one rotating Observe notify (`design.md` §Reference progress contract).
-//! Q-Block missing-block recovery is a later PR.
+//! pass: pending CON retransmit poll, one rotating unpinned RX step, one
+//! rotating Observe notify, and at most one incoming Q-Block recover
+//! (`design.md` §Reference progress contract). They do not invent 4.08 /
+//! 2.31 / RST policy.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -51,7 +52,7 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
-pub use block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock};
+pub use block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, QBlockRecover};
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
 pub use endpoint::Endpoint;
