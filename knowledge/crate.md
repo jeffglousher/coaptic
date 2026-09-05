@@ -42,6 +42,8 @@ generated:
 | License | MIT OR Apache-2.0 |
 | Visibility | private until a first public go |
 
-Own slot and table types in this crate. Do not add `heapless` as the architecture.
+Own slot and table types in this crate. Do not add `heapless` as the architecture. Zero crate dependencies.
 
-See [Architecture](/architecture.md).
+Message codec, bounded storage (`Endpoint`, `Access`, `Progress`, `QBlockRecover`), optional `alloc`. Not published to crates.io.
+
+See [Architecture](/architecture.md) and the external-reviewer brief [`REVIEW.md`](../REVIEW.md).

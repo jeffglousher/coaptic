@@ -4,7 +4,7 @@ Agents and humans are the same kind of contributor. Either may author. Either ma
 
 ## Docs
 
-Public docs live in rustdoc (`//!` / `///`). Do not narrate protocol or architecture in `//` comments. Point rustdoc at `design.md` and `knowledge/rfcs/`.
+Public docs live in rustdoc (`//!` / `///`). Do not narrate protocol or architecture in `//` comments. Point rustdoc at `design.md` and `knowledge/rfcs/`. External-reviewer brief: `REVIEW.md`. UDP peer sidecar is `Endpoint` (not `Peer`).
 
 ## History
 
@@ -32,6 +32,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
 cargo test
 cargo doc --no-deps --all-features
+```
+
+When you touch `knowledge/`:
+
+```bash
+python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate
 ```
 
 ## Skills and knowledge

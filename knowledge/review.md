@@ -24,4 +24,6 @@ generated:
 - Public docs live in rustdoc (`//!` / `///`). Do not narrate protocol or architecture in `//` comments. Point rustdoc at `design.md` and `knowledge/rfcs/`.
 - Git is the history. Delete deprecated files, leftover names, and "for later" shims from the tree. Old commits remain.
 
+External-reviewer brief (what the crate is, six areas, done vs deferred, how to check): [`REVIEW.md`](../REVIEW.md).
+
 See [CI](/ci.md) for squash and PR-only checks.

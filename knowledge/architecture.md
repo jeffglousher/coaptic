@@ -32,6 +32,10 @@ Six core-managed memory areas. Progress is bounded and rotating. Inventory: [Mem
 
 Change those two together when architecture facts change. Update this concept if those facts change.
 
+# Crate names
+
+Locked names: [Memory](/memory.md). UDP peer sidecar is `Endpoint` (not `Peer`). Application pin is `Access` / `AccessMut`. One bounded pass is `Engine::progress` → `Progress`. Incoming Q-Block holes surface as `QBlockRecover`.
+
 # Boundary
 
 Protocol behavior stays in [`knowledge/rfcs/`](/rfcs/index.md). This concept does not restate wire format.

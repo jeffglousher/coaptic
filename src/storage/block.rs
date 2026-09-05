@@ -5,8 +5,9 @@
 //! messages stay in ordinary datagram slots. Incoming and outgoing Q-Block1 /
 //! Q-Block2 use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10).
 //! Incoming window holes surface as [`QBlockRecover`]; outgoing reissue reads
-//! the complete body without changing window state. BERT and RTO stay out of
-//! scope. See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
+//! the complete body without changing window state. BERT stays out of scope.
+//! CON RTO lives on [`super::PendingCon`], not on this sidecar.
+//! See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
 
 use super::Access;
 use super::AccessMut;

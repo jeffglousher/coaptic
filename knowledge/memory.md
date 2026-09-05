@@ -88,22 +88,26 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `Storage` | Trait both backends implement |
 | `DatagramPool` | Pool of datagram slots (RX and TX are two pools) |
 | `BodyPool` | Pool of body slots when block-wise is enabled (RX and TX are two pools) |
-| `BlockTransfer` / `BlockKey` | Classic Block1/Block2 sidecar on a body slot (Token + remote Endpoint); incoming Block1/Block2 and outgoing Block1/Block2 |
+| `BlockTransfer` / `BlockKey` | Block/Q-Block sidecar on a body slot (Token + remote Endpoint); classic and windowed paths |
+| `QBlockRecover` | Incoming Q-Block hole from one `Engine::progress` pass (rotating RX body cursor) |
 | `BodySlots` | Typed admit / write / complete / slice access to body pools |
 | `DedupTable` | Dedup table |
-| `Endpoint` | UDP peer sidecar next to a datagram slot |
+| `Endpoint` | UDP peer sidecar next to a datagram slot (not `Peer`) |
 | `DedupKey` / `DedupEntry` | Dedup identity (Message ID + remote Endpoint) |
+| `PendingCon` / `PendingRto` | TX-sidecar pending CON + caller-clock RTO |
+| `ExchangeKey` / `ExchangeEntry` | Token + remote Endpoint request/response matching |
 | `ObserveTable` | Observe interest table |
 | `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify and 24-bit sequence on the row |
 | `SlotId` | Slot identifier |
+| `Ids` / `TokenSource` | Wrapping Message ID counter; caller-entropy Token mint (no OS RNG) |
 | `Access` / `AccessMut` | Temporary application borrow of occupied datagram or body bytes; pin bit refuses `release` until drop |
-| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX + rotating Observe notify; Q-Block recover later) |
+| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX + rotating Observe notify + at most one `QBlockRecover`) |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
 # Tests
 
-Named here; implement later.
+Named coverage in `src/storage/tests.rs` and `src/message/tests.rs` (not a plugtest harness).
 
 - build mismatch
 - acquire-until-full then saturation
@@ -122,3 +126,4 @@ Named here; implement later.
 - progress observe rotating fairness
 - progress observe deregister clears
 - observe sequence wrap
+- progress Q-Block recover gap / fairness / absent when block-wise off
