@@ -1,31 +1,41 @@
-//! [`Request`]: decoded inbound request with path and peer.
+//! [`Request`]: borrowed view of inbound work the reactor already holds.
 
-use crate::message::{Code, MessageId, ParsedMessage, Token, Type};
-use crate::storage::{Endpoint, SlotId};
+use crate::error::ValueError;
+use crate::message::{
+    BlockValue, Code, ContentFormat, HopLimit, MessageId, NoResponse, Opt, OptionNumber, Options,
+    ParsedMessage, Precondition, Token, Type,
+};
+use crate::message::{OpaqueOptions, StringOptions};
+use crate::storage::Endpoint;
 
 use super::routing::Method;
 
 /// Maximum Uri-Path segments stored on a [`Request`] or a site entry.
 pub const MAX_PATH_SEGMENTS: usize = 8;
 
-/// Decoded request a handler sees.
+/// Borrowed view of one inbound request.
 ///
-/// [`SlotId`] is available as [`Self::slot_id`] for Engine-level work.
-/// Ordinary handlers do not need it.
+/// Handlers see path, method, token, message ID, peer, option accessors, and
+/// [`Self::payload`] (this datagram). When Block1 has assembled a complete
+/// body on the RX body area, [`Self::body`] / [`Self::has_body`] borrow those
+/// bytes. Ordinary handlers do not see Engine slot identifiers.
+///
+/// Borrows are valid only for the handler call. [`App::poll`](super::App::poll)
+/// encodes the [`Response`](super::Response) and then releases.
 #[derive(Clone, Copy, Debug)]
 pub struct Request<'a> {
     message: ParsedMessage<'a>,
     path: Path<'a>,
     peer: Endpoint,
     method: Option<Method>,
-    slot: SlotId,
+    body: Option<&'a [u8]>,
 }
 
 impl<'a> Request<'a> {
     pub(crate) fn from_decoded(
         message: ParsedMessage<'a>,
         peer: Endpoint,
-        slot: SlotId,
+        body: Option<&'a [u8]>,
     ) -> Result<Self, PathError> {
         let path = Path::from_message(&message)?;
         let method = Method::from_code(message.code());
@@ -34,7 +44,7 @@ impl<'a> Request<'a> {
             path,
             peer,
             method,
-            slot,
+            body,
         })
     }
 
@@ -62,13 +72,31 @@ impl<'a> Request<'a> {
         self.peer
     }
 
-    /// Request payload (empty if the 0xFF marker is absent).
+    /// This datagram's payload (empty if the 0xFF marker is absent).
+    ///
+    /// For a Block1 fragment this is the current block, not the assembled
+    /// body. See [`Self::body`].
     #[must_use]
     pub const fn payload(&self) -> &'a [u8] {
         self.message.payload()
     }
 
-    /// Token (echo this on the reply).
+    /// Complete assembled request body, if Block1 filled an RX body area.
+    ///
+    /// `None` when this datagram is not a completed block-wise body.
+    /// The slice borrows body-area memory for this handler call only.
+    #[must_use]
+    pub const fn body(&self) -> Option<&'a [u8]> {
+        self.body
+    }
+
+    /// Whether [`Self::body`] is present (including an empty complete body).
+    #[must_use]
+    pub const fn has_body(&self) -> bool {
+        self.body.is_some()
+    }
+
+    /// Token (echo this on the response).
     #[must_use]
     pub const fn token(&self) -> Token {
         self.message.token()
@@ -86,16 +114,136 @@ impl<'a> Request<'a> {
         self.message.ty()
     }
 
-    /// Full decoded datagram. Advanced: options, Observe, Block, …
+    /// Options in wire order.
+    #[must_use]
+    pub const fn options(&self) -> Options<'a> {
+        self.message.options()
+    }
+
+    /// First option with `number`, if any.
+    #[must_use]
+    pub fn get_option(&self, number: OptionNumber) -> Option<Opt<'a>> {
+        self.message.get_option(number)
+    }
+
+    /// Uri-Host, if present.
+    #[must_use]
+    pub fn uri_host(&self) -> Option<Result<&'a str, ValueError>> {
+        self.message.uri_host()
+    }
+
+    /// Uri-Port, if present.
+    #[must_use]
+    pub fn uri_port(&self) -> Option<Result<u16, ValueError>> {
+        self.message.uri_port()
+    }
+
+    /// Uri-Query values in wire order.
+    #[must_use]
+    pub fn uri_query(&self) -> StringOptions<'a> {
+        self.message.uri_query()
+    }
+
+    /// Content-Format, if present.
+    #[must_use]
+    pub fn content_format(&self) -> Option<Result<ContentFormat, ValueError>> {
+        self.message.content_format()
+    }
+
+    /// Accept, if present.
+    #[must_use]
+    pub fn accept(&self) -> Option<Result<ContentFormat, ValueError>> {
+        self.message.accept()
+    }
+
+    /// Observe value, if present.
+    #[must_use]
+    pub fn observe(&self) -> Option<Result<u32, ValueError>> {
+        self.message.observe()
+    }
+
+    /// GET or FETCH with Observe register (value 0).
+    #[must_use]
+    pub fn is_observe_register(&self) -> bool {
+        self.message.is_observe_register()
+    }
+
+    /// GET or FETCH with Observe deregister (value 1).
+    #[must_use]
+    pub fn is_observe_deregister(&self) -> bool {
+        self.message.is_observe_deregister()
+    }
+
+    /// ETag values in wire order.
+    #[must_use]
+    pub fn etag(&self) -> OpaqueOptions<'a> {
+        self.message.etag()
+    }
+
+    /// If-Match values in wire order.
+    #[must_use]
+    pub fn if_match(&self) -> OpaqueOptions<'a> {
+        self.message.if_match()
+    }
+
+    /// Whether If-None-Match is present.
+    #[must_use]
+    pub fn if_none_match(&self) -> bool {
+        self.message.if_none_match()
+    }
+
+    /// Classify If-Match / If-None-Match. The library does not invent 4.12.
+    #[must_use]
+    pub fn precondition(&self, exists: bool, etag: Option<&[u8]>) -> Precondition {
+        self.message.precondition(exists, etag)
+    }
+
+    /// Block1, if present.
+    #[must_use]
+    pub fn block1(&self) -> Option<Result<BlockValue, ValueError>> {
+        self.message.block1()
+    }
+
+    /// Q-Block1, if present.
+    #[must_use]
+    pub fn q_block1(&self) -> Option<Result<BlockValue, ValueError>> {
+        self.message.q_block1()
+    }
+
+    /// Size1, if present.
+    #[must_use]
+    pub fn size1(&self) -> Option<Result<u32, ValueError>> {
+        self.message.size1()
+    }
+
+    /// Request-Tag values in wire order.
+    #[must_use]
+    pub fn request_tag(&self) -> OpaqueOptions<'a> {
+        self.message.request_tag()
+    }
+
+    /// Echo value, if present.
+    #[must_use]
+    pub fn echo(&self) -> Option<&'a [u8]> {
+        self.message.echo()
+    }
+
+    /// Hop-Limit, if present.
+    #[must_use]
+    pub fn hop_limit(&self) -> Option<Result<HopLimit, ValueError>> {
+        self.message.hop_limit()
+    }
+
+    /// No-Response, if present.
+    #[must_use]
+    pub fn no_response(&self) -> Option<Result<NoResponse, ValueError>> {
+        self.message.no_response()
+    }
+
+    /// Full decoded datagram. Advanced: remaining options, Block2, …
     #[must_use]
     pub const fn message(&self) -> ParsedMessage<'a> {
         self.message
-    }
-
-    /// RX slot that holds this datagram. Advanced: Engine pin / body / Observe.
-    #[must_use]
-    pub const fn slot_id(&self) -> SlotId {
-        self.slot
     }
 }
 

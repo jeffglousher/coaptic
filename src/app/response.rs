@@ -1,8 +1,8 @@
-//! [`Reply`]: owned response builders that [`App`](super::App) encodes.
+//! [`Response`]: owned intent that [`App`](super::App) encodes into TX.
 
 use crate::message::{Code, ContentFormat};
 
-/// Bytes copied into a [`Reply`] when the payload is not `'static`.
+/// Bytes copied into a [`Response`] when the payload is not `'static`.
 pub const INLINE_PAYLOAD: usize = 128;
 
 #[derive(Clone, Copy, Debug)]
@@ -15,34 +15,38 @@ enum Payload {
     },
 }
 
-/// Conversion into a [`Reply`].
+/// Conversion into a [`Response`].
 ///
-/// Stored handlers are [`fn(Request<'_>) -> Reply`](super::HandlerFn).
+/// Stored handlers are [`fn(Request<'_>) -> Response`](super::HandlerFn).
 /// Implement this if a wrapper type should become a response.
-pub trait IntoReply {
+pub trait IntoResponse {
     /// Build the response.
-    fn into_reply(self) -> Reply;
+    fn into_response(self) -> Response;
 }
 
-impl IntoReply for Reply {
-    fn into_reply(self) -> Reply {
+impl IntoResponse for Response {
+    fn into_response(self) -> Response {
         self
     }
 }
 
-/// Outgoing response. No lifetime — `'static` payloads or a small inline copy.
+/// Owned response intent. No lifetime — `'static` payload or a small inline copy.
 ///
-/// [`App::poll`](super::App::poll) encodes this into a TX slot and sends it.
+/// Handlers return this. [`App::poll`](super::App::poll) writes it into a TX
+/// datagram (`encode_tx`) and sends. Block-wise TX body start
+/// (`start_block2` / Q-Block2) is Phase 2: a payload that does not fit one
+/// datagram is still encoded as a single message today. The reactor owns
+/// per-slot state machines inside that loop.
 ///
 /// ```
-/// use coaptic::{ContentFormat, Reply};
+/// use coaptic::{ContentFormat, Response};
 ///
-/// let reply = Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN);
-/// assert_eq!(reply.code(), coaptic::Code::CONTENT);
-/// assert_eq!(reply.payload(), b"21.5");
+/// let response = Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN);
+/// assert_eq!(response.code(), coaptic::Code::CONTENT);
+/// assert_eq!(response.payload(), b"21.5");
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct Reply {
+pub struct Response {
     code: Code,
     payload: Payload,
     content_format: Option<ContentFormat>,
@@ -52,7 +56,7 @@ pub struct Reply {
     observe: Option<u32>,
 }
 
-impl Reply {
+impl Response {
     /// Response with `code` and no payload.
     #[must_use]
     pub const fn new(code: Code) -> Self {
