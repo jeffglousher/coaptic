@@ -155,7 +155,7 @@ impl<'a> ProblemDetails<'a> {
     ///
     /// [`ProblemError::Invalid`] when the bytes are not a non-empty definite
     /// CBOR map, or a value for a known key has the wrong type.
-    pub fn decode(bytes: &[u8]) -> Result<Self, ProblemError> {
+    pub fn decode(bytes: &'a [u8]) -> Result<Self, ProblemError> {
         let mut at = 0usize;
         let (major, n) = read_head(bytes, &mut at)?;
         if major != MAJOR_MAP || n == 0 {
@@ -316,7 +316,7 @@ fn read_int(bytes: &[u8], at: &mut usize) -> Result<i64, ProblemError> {
     let (major, n) = read_head(bytes, at)?;
     match major {
         MAJOR_UINT if n <= i64::MAX as u64 => Ok(n as i64),
-        MAJOR_NINT if n <= (i64::MAX as u64) - 1 => Ok(-1 - (n as i64)),
+        MAJOR_NINT if n < i64::MAX as u64 => Ok(-1 - (n as i64)),
         _ => Err(ProblemError::Invalid),
     }
 }
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn long_text_uses_one_byte_length() {
         let title = "Request Entity Incomplete";
-        assert_eq!(title.len(), 27);
+        assert_eq!(title.len(), 25);
         let mut buf = [0u8; 48];
         let n = ProblemDetails::new(Code::REQUEST_ENTITY_INCOMPLETE)
             .title(title)
@@ -480,7 +480,7 @@ mod tests {
             .expect("encode");
         assert_eq!(buf[0], 0xa2);
         assert_eq!(buf[1], 0x20);
-        assert_eq!(&buf[2..4], &[0x78, 27]);
+        assert_eq!(&buf[2..4], &[0x78, 25]);
         let parsed = ProblemDetails::decode(&buf[..n]).expect("decode");
         assert_eq!(
             parsed.response_code(),
