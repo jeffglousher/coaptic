@@ -715,6 +715,13 @@ fn echo_is_opaque_and_not_rfc7252() {
             .as_slice(),
         &long
     );
+
+    let size = encode_uint(8);
+    let after_size1 = [Opt::size1(&size), Opt::echo(b"ab")];
+    let (n, buf) = parse_opts(&after_size1);
+    let parsed = decode(&buf[..n]).expect("delta");
+    assert_eq!(parsed.size1(), Some(Ok(8)));
+    assert_eq!(parsed.echo(), Some(&b"ab"[..]));
 }
 
 #[test]

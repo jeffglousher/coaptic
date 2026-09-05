@@ -1672,6 +1672,141 @@ fn engine_echo_freshness_missing_and_event_equality() {
 }
 
 #[test]
+fn engine_echo_preemptive_challenge_via_rx() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([198, 51, 100, 1], 5683);
+    let mid = MessageId::new(0x21);
+    let tok = sample_token(&[0x21]);
+    let echo = Echo::mint(100, b"pre").expect("mint");
+
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+
+    let opts = [Opt::echo(echo.as_slice())];
+    let content = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(tok)
+        .with_options(&opts);
+    let (buf, n) = encode_into(&content);
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let matched = engine.match_response_rx(rx).expect("match").expect("hit");
+    assert_eq!(matched.challenge(), Some(echo));
+    assert_eq!(matched.challenge_for(ep), Some(echo));
+}
+
+#[test]
+fn engine_echo_empty_option_is_not_stored() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([198, 51, 100, 2], 5683);
+    let mid = MessageId::new(3);
+    let tok = sample_token(&[0x03]);
+    let empty = [Opt::echo(&[])];
+    let req = Message::new(Type::Confirmable, Code::PUT, mid)
+        .with_token(tok)
+        .with_options(&empty);
+    let tx = engine.acquire_tx().expect("tx");
+    engine.encode_tx(tx, &req).expect("encode");
+    let recorded = engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    assert_eq!(recorded.echo(), None);
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo(&parsed),
+        Err(crate::error::ValueError::EchoLength)
+    );
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 1, 5),
+        EchoFreshness::Invalid
+    );
+}
+
+#[test]
+fn two_engine_echo_time_freshness_then_stale() {
+    let mut client = build_default();
+    let mut server = build_default();
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    const FRESH_MS: u64 = 5;
+
+    let mid = MessageId::new(0x41);
+    let tok = sample_token(&[0x41]);
+    let req = Message::new(Type::Confirmable, Code::PUT, mid).with_token(tok);
+    let ctx = client.acquire_tx().expect("ctx");
+    client.encode_tx(ctx, &req).expect("encode");
+    client
+        .record_request(ctx, server_ep)
+        .expect("record")
+        .expect("request");
+
+    let (req_buf, req_n) = encode_into(&req);
+    let srx = server.acquire_rx().expect("srx");
+    server
+        .write_rx(srx, &req_buf[..req_n], client_ep)
+        .expect("write");
+    let parsed = server.decode_rx(srx).expect("decode");
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 9, FRESH_MS),
+        EchoFreshness::Missing
+    );
+    let challenge = Echo::mint(9, b"Chulhu!").expect("mint");
+    let challenge_opts = [Opt::echo(challenge.as_slice())];
+    let unauthorized = Message::new(Type::Acknowledgement, Code::UNAUTHORIZED, mid)
+        .with_token(tok)
+        .with_options(&challenge_opts);
+    let stx = server.acquire_tx().expect("stx");
+    server.encode_tx(stx, &unauthorized).expect("4.01");
+
+    let (chal_buf, chal_n) = encode_into(&unauthorized);
+    let crx = client.acquire_rx().expect("crx");
+    client
+        .write_rx(crx, &chal_buf[..chal_n], server_ep)
+        .expect("write");
+    let matched = client.match_response_rx(crx).expect("match").expect("hit");
+    assert_eq!(matched.challenge_for(server_ep), Some(challenge));
+    assert_eq!(matched.challenge_for(client_ep), None);
+
+    let retry_mid = MessageId::new(0x42);
+    let retry_tok = sample_token(&[0x42]);
+    let retry_echo = matched.challenge_for(server_ep).expect("bound");
+    let retry_opts = [Opt::echo(retry_echo.as_slice())];
+    let retry = Message::new(Type::Confirmable, Code::PUT, retry_mid)
+        .with_token(retry_tok)
+        .with_options(&retry_opts);
+    let ctx2 = client.acquire_tx().expect("ctx2");
+    client.encode_tx(ctx2, &retry).expect("retry");
+    client
+        .record_request(ctx2, server_ep)
+        .expect("record retry")
+        .expect("request");
+
+    let (retry_buf, retry_n) = encode_into(&retry);
+    let srx2 = server.acquire_rx().expect("srx2");
+    server
+        .write_rx(srx2, &retry_buf[..retry_n], client_ep)
+        .expect("write");
+    let parsed = server.decode_rx(srx2).expect("decode retry");
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 10, FRESH_MS),
+        EchoFreshness::Fresh
+    );
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 15, FRESH_MS),
+        EchoFreshness::Stale
+    );
+}
+
+#[test]
 fn engine_record_request_rejects_empty_ack() {
     let mut engine = build_default();
     let ep = Endpoint::v4([192, 0, 2, 30], 5683);
