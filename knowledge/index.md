@@ -5,7 +5,8 @@ okf_version: "0.2"
 # Project
 
 * [coaptic crate](crate.md) - Stand-alone `no_std` CoAP engine crate. Locked name `coaptic`.
-* [External review](../REVIEW.md) - What the crate is, six areas, done vs deferred vs not planned, how to check.
+* [External review](../REVIEW.md) - What the crate is, six areas, done vs deferred vs not planned, 0.1 API freeze, how to check.
+* [Caller contract](../CALLER.md) - What the caller must own (send, clock, jitter, RST/4.xx, resource/If-Match, Encode+Access).
 * [Review policy](review.md) - Agents and humans are equal authors and reviewers.
 * [OKF frontmatter](okf-frontmatter.md) - Three-pass concept frontmatter (extract → enrich → validate).
 

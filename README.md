@@ -4,7 +4,9 @@ Stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded
 
 ## Crate surface
 
-Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`.
+Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`. That split is the **0.1 API freeze** ([`REVIEW.md`](REVIEW.md) §0.1 API surface freeze): do not balloon crate-root re-exports; no drive-by renames.
+
+The caller owns send, clock, jitter, RST / 4.xx policy, resource / If-Match decisions, and Encode+Access loops. Checklist: [`CALLER.md`](CALLER.md).
 
 ### `coaptic::message`
 
@@ -40,7 +42,8 @@ Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progre
 
 | Doc | Role |
 | --- | --- |
-| [REVIEW.md](REVIEW.md) | External-reviewer brief |
+| [REVIEW.md](REVIEW.md) | External-reviewer brief; 0.1 API freeze |
+| [CALLER.md](CALLER.md) | What the caller must own |
 | [design.md](design.md) | Canonical architecture and progress contract |
 | [knowledge/](knowledge/) | OKF bundle: memory names, profiles, plugtest, RFCs |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor entry |

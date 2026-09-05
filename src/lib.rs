@@ -3,7 +3,8 @@
 //! Crate-root types are the happy path ([`Engine`], [`Memory`], [`Endpoint`],
 //! [`Progress`], [`Access`], [`Ids`], keyed rows, Block/Q-Block types, main
 //! errors). Typestate markers, raw tables/pools, and backend traits live in
-//! [`storage`] / [`message`]. Repo map: `README.md`. Reviewer brief:
+//! [`storage`] / [`message`]. That split is the 0.1 API freeze (`REVIEW.md`).
+//! Caller contract: `CALLER.md`. Repo map: `README.md`. Reviewer brief:
 //! `REVIEW.md`. Architecture: [`design.md`][design]. Protocol: [`knowledge/rfcs/`][rfcs].
 //! This rustdoc does not restate wire format.
 //!
