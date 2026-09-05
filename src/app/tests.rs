@@ -7,7 +7,7 @@ use crate::message::{
     BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token,
     Type, decode, encode,
 };
-use crate::storage::{DatagramIo, Endpoint, ObserveKey, profiles};
+use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
@@ -362,6 +362,18 @@ fn request_view_has_path_token_and_no_body() {
     assert!(req.uri_query().next().is_none());
 }
 
+struct BlockReq<'a> {
+    code: Code,
+    path: &'a [&'a str],
+    payload: &'a [u8],
+    num: u32,
+    more: bool,
+    size: u16,
+    mid: u16,
+    size1: Option<u32>,
+    q_block: bool,
+}
+
 fn encode_req_block1(
     code: Code,
     path: &[&str],
@@ -371,21 +383,59 @@ fn encode_req_block1(
     size: u16,
     mid: u16,
 ) -> ([u8; 256], usize) {
+    encode_block_req(BlockReq {
+        code,
+        path,
+        payload,
+        num,
+        more,
+        size,
+        mid,
+        size1: None,
+        q_block: false,
+    })
+}
+
+fn encode_block_req(req: BlockReq<'_>) -> ([u8; 256], usize) {
     let token = Token::new(&[0xA1]).expect("token");
     let mut opts = OptionsBuilder::<8>::new();
-    for segment in path {
+    for segment in req.path {
         opts.push(Opt::uri_path(segment)).expect("path");
     }
-    let block = BlockValue::from_size(num, more, size).expect("block");
+    let size1_enc = req.size1.map(crate::encode_uint);
+    if let Some(ref encoded) = size1_enc {
+        opts.push(Opt::size1(encoded)).expect("size1");
+    }
+    let block = BlockValue::from_size(req.num, req.more, req.size).expect("block");
     let encoded = block.encode();
-    opts.push(Opt::block1(&encoded)).expect("block1");
-    let msg = Message::new(Type::Confirmable, code, MessageId::new(mid))
+    if req.q_block {
+        opts.push(Opt::q_block1(&encoded)).expect("q-block1");
+    } else {
+        opts.push(Opt::block1(&encoded)).expect("block1");
+    }
+    let msg = Message::new(Type::Confirmable, req.code, MessageId::new(req.mid))
         .with_token(token)
         .with_options(opts.as_slice())
-        .with_payload(payload);
+        .with_payload(req.payload);
     let mut buf = [0u8; 256];
     let n = encode(&msg, &mut buf).expect("encode");
     (buf, n)
+}
+
+const LED_PATH: &[&str] = &["leds", "0"];
+
+fn q_block1(payload: &[u8], num: u32, more: bool, mid: u16, size1: u32) -> BlockReq<'_> {
+    BlockReq {
+        code: Code::PUT,
+        path: LED_PATH,
+        payload,
+        num,
+        more,
+        size: 16,
+        mid,
+        size1: Some(size1),
+        q_block: true,
+    }
 }
 
 #[test]
@@ -432,6 +482,155 @@ fn block1_complete_exposes_body() {
         &parsed.payload[..parsed.payload_len],
         b"AAAAAAAAAAAAAAAAREST"
     );
+}
+
+#[test]
+fn qblock1_incomplete_is_continue() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let payload = [0xABu8; 16];
+    let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+}
+
+#[test]
+fn qblock1_complete_exposes_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let first = [b'A'; 16];
+    let second = *b"REST";
+    let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 20));
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    let (wire, n) = encode_block_req(q_block1(&second, 1, false, 0x1002, 20));
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CHANGED);
+    assert_eq!(
+        &parsed.payload[..parsed.payload_len],
+        b"AAAAAAAAAAAAAAAAREST"
+    );
+}
+
+#[test]
+fn qblock1_holes_are_request_entity_incomplete() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let first = [0x11u8; 16];
+    let last = [0x33u8; 8];
+    let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 40));
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    let (wire, n) = encode_block_req(q_block1(&last, 2, false, 0x1002, 40));
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    app.transport_mut().inbox = None;
+    app.transport_mut().last_send = None;
+    app.poll(2).expect("recover");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::NonConfirmable);
+    assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
+}
+
+#[test]
+fn qblock1_apply_error_is_request_entity_incomplete() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let payload = [0xABu8; 16];
+    let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1002, 32));
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("duplicate");
+    assert_eq!(last_reply(&app).code, Code::REQUEST_ENTITY_INCOMPLETE);
+}
+
+#[test]
+fn qblock2_recover_sent_from_poll() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).expect("token");
+    let key = BlockKey::new(token, peer);
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 7) as u8);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .bind(Loopback::default())
+        .expect("bind");
+    match app.engine_mut() {
+        crate::app::EngineMut::BlockWise(engine) => {
+            engine
+                .apply_q_block2(
+                    key,
+                    BlockValue::from_size(0, true, 16).expect("0"),
+                    &body[..16],
+                    Some(40),
+                )
+                .expect("0");
+            engine
+                .apply_q_block2(
+                    key,
+                    BlockValue::from_size(2, false, 16).expect("2"),
+                    &body[32..],
+                    Some(40),
+                )
+                .expect("2");
+        }
+        crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
+    }
+    app.poll(0).expect("poll recover");
+    let (_, bytes, n) = app.transport().last_send.expect("sent recover");
+    let parsed = decode(&bytes[..n]).expect("decode recover");
+    assert_eq!(parsed.ty(), Type::NonConfirmable);
+    assert_eq!(parsed.code(), Code::GET);
+    assert_eq!(parsed.token(), token);
+    let mut nums = [0u32; 2];
+    let mut count = 0usize;
+    for item in parsed.q_block2() {
+        let v = item.expect("val");
+        assert!(!v.more());
+        nums[count] = v.num();
+        count += 1;
+    }
+    assert_eq!(&nums[..count], &[1]);
+    assert!(parsed.observe().is_none());
 }
 
 #[test]

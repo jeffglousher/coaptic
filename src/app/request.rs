@@ -16,9 +16,9 @@ pub const MAX_PATH_SEGMENTS: usize = 8;
 /// Borrowed view of one inbound request.
 ///
 /// Handlers see path, method, token, message ID, peer, option accessors, and
-/// [`Self::payload`] (this datagram). When Block1 has assembled a complete
-/// body on the RX body area, [`Self::body`] / [`Self::has_body`] borrow those
-/// bytes. Ordinary handlers do not see Engine slot identifiers.
+/// [`Self::payload`] (this datagram). When Block1 / Q-Block1 has assembled
+/// a complete body on the RX body area, [`Self::body`] / [`Self::has_body`]
+/// borrow those bytes. Ordinary handlers do not see Engine slot identifiers.
 ///
 /// Borrows are valid only for the handler call. [`App::poll`](super::App::poll)
 /// encodes the [`Response`](super::Response) and then releases.
@@ -81,7 +81,7 @@ impl<'a> Request<'a> {
         self.message.payload()
     }
 
-    /// Complete assembled request body, if Block1 filled an RX body area.
+    /// Complete assembled request body, if Block1 / Q-Block1 filled an RX body area.
     ///
     /// `None` when this datagram is not a completed block-wise body.
     /// The slice borrows body-area memory for this handler call only.

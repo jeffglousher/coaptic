@@ -9,8 +9,9 @@
 //! ```
 //!
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
-//! `payload()`, and `body()` when Block1 has assembled). [`Response`] is
-//! owned intent (`content` / `content_copy` / `changed` / `not_found`).
+//! `payload()`, and `body()` when Block1 / Q-Block1 has assembled).
+//! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
+//! `not_found`).
 //! Borrows last only for the handler call; `poll` encodes and then releases.
 //! The reactor ([`Engine`] / [`Progress`](crate::Progress)) owns per-slot
 //! state machines under the hood (pending CON/RTO, BlockTransfer,
@@ -64,8 +65,11 @@
 //! [`.observe`](Response::observe) registers on the Engine table. Send later
 //! representations with [`App::notify`]. Optional
 //! [`MethodRouter::observe`](MethodRouter::observe) supplies a snapshot
-//! when `poll` sees `observe_notify`. Engine / [`DatagramIo`] remain the
-//! advanced path (`CALLER.md`, `ERGONOMICS.md`). Escape: [`App::engine_mut`].
+//! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
+//! and incoming Q-Block1 assembly reuse Engine body helpers. Engine /
+//! [`DatagramIo`] remain the advanced path (`CALLER.md`, `ERGONOMICS.md`)
+//! for [`Access`](crate::Access), custom RST / 4.xx, and BERT edges.
+//! Escape: [`App::engine_mut`].
 //!
 //! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
 
@@ -87,8 +91,8 @@ use crate::message::{
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
     EngineBuilder, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey, ObserveResource,
-    ObserveSlots, OutgoingBlock, PendingCons, Present, Retransmit, SlotError, SlotId, Storage,
-    WithBodies,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError,
+    SlotId, Storage, WithBodies,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -309,11 +313,14 @@ where
     /// into a TX body area and shipped as outgoing Block2, or Q-Block2
     /// when the request carried Q-Block2. Subsequent client Block2 /
     /// Q-Block2 Continue requests reuse that body; the handler does not
-    /// see [`SlotId`]. Incoming Block1 is assembled so [`Request::body`]
-    /// can borrow the complete body; an incomplete Block1 is answered
-    /// with 2.31 and does not run the handler. When block-wise is off, a
-    /// payload that does not fit one datagram fails clearly (no silent
-    /// heap).
+    /// see [`SlotId`]. Incoming Block1 / Q-Block1 is assembled so
+    /// [`Request::body`] can borrow the complete body; an incomplete
+    /// transfer is answered with 2.31 and does not run the handler. Apply
+    /// errors and progress-driven Q-Block1 holes are 4.08. When
+    /// `progress` yields a Q-Block2 [`QBlockRecover`], `poll` encodes
+    /// repeatable Q-Block2 recover (NON GET) and `send_tx`. When
+    /// block-wise is off, a payload that does not fit one datagram fails
+    /// clearly (no silent heap).
     ///
     /// Observe: a successful GET/FETCH with Observe=0 whose [`Response`]
     /// includes an Observe sequence (or whose route has
@@ -322,8 +329,8 @@ where
     /// client-OFF rows are dropped. When `progress` yields `observe_notify`
     /// and the route has an [`ObserveSource`], that snapshot is encoded
     /// (ordinary TX or first-block Block2). Caller-built notifications use
-    /// [`Self::notify`]. Q-Block recover stays on [`Engine`]
-    /// ([`Self::engine_mut`]).
+    /// [`Self::notify`]. Custom RST / 4.xx, [`Access`](crate::Access), and
+    /// BERT edges stay on [`Engine`] ([`Self::engine_mut`]).
     ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`].
@@ -470,7 +477,9 @@ where
         }
     }
 
-    let _ = progress.qblock_recover();
+    if let Some(recover) = progress.qblock_recover() {
+        send_qblock_recover(engine, io, ids, recover)?;
+    }
     Ok(())
 }
 
@@ -482,17 +491,74 @@ enum InboundBody {
     Complete(SlotId),
 }
 
-fn assemble_block1<Mem>(engine: &mut Engine<Mem>, rx: SlotId) -> InboundBody
+fn assemble_inbound_body<Mem>(engine: &mut Engine<Mem>, rx: SlotId) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
 {
     match engine.apply_block1_rx(rx) {
+        Ok(progress) if progress.complete() => return InboundBody::Complete(progress.id()),
+        Ok(_) => return InboundBody::Continue,
+        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
+        Err(_) => return InboundBody::IncompleteEntity,
+    }
+    match engine.apply_q_block1_rx(rx) {
         Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
         Ok(_) => InboundBody::Continue,
         Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
             InboundBody::None
         }
         Err(_) => InboundBody::IncompleteEntity,
+    }
+}
+
+fn send_qblock_recover<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut Ids,
+    recover: QBlockRecover,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + BodySlots,
+    T: DatagramIo,
+{
+    match recover.role() {
+        BlockRole::IncomingQBlock2 => {
+            let Some(tx) = engine.acquire_tx() else {
+                return Err(Error::Saturated);
+            };
+            if let Err(e) = engine.encode_q_block2_recover_tx(
+                recover,
+                tx,
+                Type::NonConfirmable,
+                Code::GET,
+                ids.next(),
+            ) {
+                let _ = engine.release_tx(tx);
+                return Err(Error::Block(e));
+            }
+            let send = engine.send_tx(io, tx);
+            let _ = engine.release_tx(tx);
+            send?;
+            Ok(())
+        }
+        BlockRole::IncomingQBlock1 => {
+            let meta = SendResponse {
+                dest: recover.key().endpoint(),
+                ty: Type::NonConfirmable,
+                mid: ids.next(),
+                token: recover.key().token(),
+                no_response: NoResponse::DEFAULT,
+                block2: None,
+                q_block2: None,
+            };
+            send_response(
+                engine,
+                io,
+                meta,
+                &Response::new(Code::REQUEST_ENTITY_INCOMPLETE),
+            )
+        }
+        _ => Ok(()),
     }
 }
 
@@ -570,7 +636,7 @@ where
         q_block2,
     };
 
-    let assembled = assemble_block1(engine, rx);
+    let assembled = assemble_inbound_body(engine, rx);
     match assembled {
         InboundBody::Continue => {
             let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE));
@@ -1241,7 +1307,7 @@ pub enum Error<E> {
     Message(SlotMessageError),
     /// TX pool is full. The RX datagram was released.
     Saturated,
-    /// Outgoing Block2 / Q-Block2 body start or issue failed.
+    /// Block / Q-Block body start, issue, or recover encode failed.
     Block(BlockTransferError),
 }
 

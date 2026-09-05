@@ -20,7 +20,7 @@ Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --featur
 | If-Match / If-None-Match | Present | `src/message/precondition.rs::Precondition`; 4.12 policy **Absent** |
 | FETCH / PATCH / iPATCH | Present (codes only) | `src/message/mod.rs::Code::FETCH`, `PATCH`, `IPATCH`; method policy **Absent** |
 | Named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 | Present (codes only) | `src/message/mod.rs::Code::CONTINUE` and siblings |
-| **App façade** | Present | `src/app/mod.rs::App`; `App::profile` / `block_wise` / `route` / `bind`; `get` / `put` method routers; `fn(Request<'_>) -> Response`; `Response`; `App::poll` (including outgoing Block2 / Q-Block2 from a large `Response`); Observe register / `App::notify` / `ObserveSource`; `well_known_core` |
+| **App façade** | Present | `src/app/mod.rs::App`; `App::profile` / `block_wise` / `route` / `bind`; `get` / `put` method routers; `fn(Request<'_>) -> Response`; `Response`; `App::poll` (outgoing Block2 / Q-Block2, incoming Block1 / Q-Block1, Q-Block2 recover); Observe register / `App::notify` / `ObserveSource`; `well_known_core` |
 | Engine / Memory / builder | Present | `src/storage/engine.rs::Engine`; `src/storage/memory.rs::Memory`; `src/storage/builder.rs::EngineBuilder` |
 | `Endpoint` sidecar | Present | `src/storage/endpoint.rs::Endpoint` |
 | **Transport bind** | Present | `src/storage/io.rs::DatagramIo`; `Engine::recv_from`, `Engine::send_tx`; `std::net::UdpSocket` impl under `std` |
@@ -91,7 +91,7 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 - `check_rfc7252_options` is Table 4 only: Observe / Block look “unrecognized critical.”
 - Dedup is MID+endpoint history, not a response cache.
 - `Token::mint` / `Ids` / jitter / `now_ms` stay caller-owned (not on `DatagramIo`).
-- Q-Block recover is not inside `App::poll` (use `App::engine_mut`). Observe notify is (`App::notify` or `ObserveSource`).
+- Q-Block2 recover and Q-Block1 assembly are inside `App::poll`. Custom RST / 4.xx, [`Access`](src/storage/access.rs), and BERT edges still use `App::engine_mut`.
 
 **What a 0.1 integrator trips on**
 
