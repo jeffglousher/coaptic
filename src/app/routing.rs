@@ -37,7 +37,7 @@ pub struct MethodRouter {
 const METHOD_COUNT: usize = 7;
 
 impl MethodRouter {
-    /// No methods. Unknown method on a matching path is 4.05.
+    /// No methods. Unknown method on a matching path is 4.05 (RFC 9290 CBOR).
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -113,7 +113,7 @@ impl MethodRouter {
     pub(crate) fn call(&self, method: Method, req: Request<'_>) -> Response {
         match self.handlers[method.index()] {
             Some(handler) => handler(req),
-            None => Response::method_not_allowed(),
+            None => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
         }
     }
 }

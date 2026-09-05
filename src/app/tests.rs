@@ -4,8 +4,8 @@ use super::{Error, Request, Response, Site, get, post, put};
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token,
-    Type, decode, encode,
+    BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
+    ProblemDetails, Token, Type, decode, encode,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -174,7 +174,12 @@ fn unknown_path_is_not_found() {
         last_send: None,
     });
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::NOT_FOUND);
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::NOT_FOUND);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(details.response_code(), Some(Code::NOT_FOUND));
+    assert_eq!(details.title_text(), Some("Not Found"));
 }
 
 #[test]
@@ -186,7 +191,12 @@ fn wrong_method_is_not_allowed() {
         last_send: None,
     });
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::METHOD_NOT_ALLOWED);
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::METHOD_NOT_ALLOWED);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(details.response_code(), Some(Code::METHOD_NOT_ALLOWED));
+    assert_eq!(details.title_text(), Some("Method Not Allowed"));
 }
 
 #[test]
@@ -346,6 +356,17 @@ fn response_builders() {
     assert_eq!(cf.max_age_secs(), Some(60));
     assert_eq!(cf.observe_seq(), Some(3));
     assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
+
+    let problem = Response::problem(Code::BAD_REQUEST)
+        .title("Bad Request")
+        .detail("Uri-Path is not UTF-8");
+    assert_eq!(problem.code(), Code::BAD_REQUEST);
+    assert_eq!(problem.format(), Some(ContentFormat::PROBLEM_DETAILS));
+    let details = problem.problem_details().expect("problem");
+    assert_eq!(details.response_code(), Some(Code::BAD_REQUEST));
+    assert_eq!(details.title_text(), Some("Bad Request"));
+    assert_eq!(details.detail_text(), Some("Uri-Path is not UTF-8"));
+    assert!(Response::not_found().problem_details().is_none());
 }
 
 #[test]
@@ -559,6 +580,13 @@ fn qblock1_holes_are_request_entity_incomplete() {
     let parsed = last_reply(&app);
     assert_eq!(parsed.ty, Type::NonConfirmable);
     assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(
+        details.response_code(),
+        Some(Code::REQUEST_ENTITY_INCOMPLETE)
+    );
+    assert_eq!(details.title_text(), Some("Request Entity Incomplete"));
 }
 
 #[test]
@@ -581,7 +609,9 @@ fn qblock1_apply_error_is_request_entity_incomplete() {
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(1).expect("duplicate");
-    assert_eq!(last_reply(&app).code, Code::REQUEST_ENTITY_INCOMPLETE);
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! [`Response`]: owned intent that [`App`](super::App) encodes into TX.
 
-use crate::message::{Code, ContentFormat};
+use crate::message::{Code, ContentFormat, ProblemDetails};
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
 pub const INLINE_PAYLOAD: usize = 128;
@@ -169,6 +169,77 @@ impl Response {
         Self::new(Code::SERVICE_UNAVAILABLE)
     }
 
+    /// Client or server error with RFC 9290 concise problem details (CBOR).
+    ///
+    /// Sets Content-Format to [`ContentFormat::PROBLEM_DETAILS`] (257) and a
+    /// CBOR map that includes `response-code` (−4) equal to `code`. Title
+    /// and detail are optional ([`Self::title`], [`Self::detail`]). Named
+    /// builders such as [`Self::not_found`] stay empty; call this when a
+    /// structured body is wanted. [`App`](super::App) uses this for
+    /// generated 4.04 / 4.05 / 4.08.
+    ///
+    /// Override the Content-Format with [`Self::content_format`] only when
+    /// the peer asked for something else.
+    ///
+    /// ```
+    /// use coaptic::message::ProblemDetails;
+    /// use coaptic::{Code, ContentFormat, Response};
+    ///
+    /// let response = Response::problem(Code::NOT_FOUND).title("Not Found");
+    /// assert_eq!(response.code(), Code::NOT_FOUND);
+    /// assert_eq!(response.format(), Some(ContentFormat::PROBLEM_DETAILS));
+    /// let details = ProblemDetails::decode(response.payload()).expect("cbor");
+    /// assert_eq!(details.response_code(), Some(Code::NOT_FOUND));
+    /// assert_eq!(details.title_text(), Some("Not Found"));
+    /// ```
+    #[must_use]
+    pub fn problem(code: Code) -> Self {
+        Self::new(code).with_problem(None, None)
+    }
+
+    /// Set the RFC 9290 title (−1) and keep (or set) problem-details CBOR.
+    #[must_use]
+    pub fn title(self, title: &str) -> Self {
+        let mut detail_buf = [0u8; INLINE_PAYLOAD];
+        let detail = copy_problem_field(self.problem_field(Field::Detail), &mut detail_buf);
+        self.with_problem(Some(title), detail)
+    }
+
+    /// Set the RFC 9290 detail (−2) and keep (or set) problem-details CBOR.
+    #[must_use]
+    pub fn detail(self, detail: &str) -> Self {
+        let mut title_buf = [0u8; INLINE_PAYLOAD];
+        let title = copy_problem_field(self.problem_field(Field::Title), &mut title_buf);
+        self.with_problem(title, Some(detail))
+    }
+
+    /// Decode the payload as RFC 9290 problem details when the Content-Format
+    /// is [`ContentFormat::PROBLEM_DETAILS`].
+    #[must_use]
+    pub fn problem_details(&self) -> Option<ProblemDetails<'_>> {
+        if self.content_format != Some(ContentFormat::PROBLEM_DETAILS) {
+            return None;
+        }
+        ProblemDetails::decode(self.payload()).ok()
+    }
+
+    fn problem_field(&self, field: Field) -> Option<&str> {
+        let parsed = ProblemDetails::decode(self.payload()).ok()?;
+        match field {
+            Field::Title => parsed.title_text(),
+            Field::Detail => parsed.detail_text(),
+        }
+    }
+
+    fn with_problem(mut self, title: Option<&str>, detail: Option<&str>) -> Self {
+        self.content_format = Some(
+            self.content_format
+                .unwrap_or(ContentFormat::PROBLEM_DETAILS),
+        );
+        self.payload = encode_problem_payload(self.code, title, detail);
+        self
+    }
+
     /// Set Content-Format.
     #[must_use]
     pub const fn content_format(mut self, format: ContentFormat) -> Self {
@@ -275,4 +346,42 @@ impl Response {
     pub const fn observe_seq(&self) -> Option<u32> {
         self.observe
     }
+}
+
+#[derive(Clone, Copy)]
+enum Field {
+    Title,
+    Detail,
+}
+
+fn copy_problem_field<'a>(src: Option<&str>, buf: &'a mut [u8]) -> Option<&'a str> {
+    let text = src?;
+    if text.len() > buf.len() {
+        return None;
+    }
+    buf[..text.len()].copy_from_slice(text.as_bytes());
+    core::str::from_utf8(&buf[..text.len()]).ok()
+}
+
+fn encode_problem_payload(code: Code, title: Option<&str>, detail: Option<&str>) -> Payload {
+    let attempts = [(title, detail), (title, None), (None, None)];
+    let mut buf = [0u8; INLINE_PAYLOAD];
+    for (title, detail) in attempts {
+        let mut details = ProblemDetails::new(code);
+        if let Some(title) = title {
+            details = details.title(title);
+        }
+        if let Some(detail) = detail {
+            details = details.detail(detail);
+        }
+        if let Ok(n) = details.encode(&mut buf) {
+            let mut bytes = [0u8; INLINE_PAYLOAD];
+            bytes[..n].copy_from_slice(&buf[..n]);
+            return Payload::Inline {
+                bytes,
+                len: n as u16,
+            };
+        }
+    }
+    Payload::Empty
 }

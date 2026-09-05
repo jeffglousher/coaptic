@@ -42,6 +42,11 @@
 //! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
 //! - [`ParsedMessage::check_rfc7252_formats`] — known option, wrong format
 //!
+//! [`ProblemDetails`](message::ProblemDetails) encodes RFC 9290 concise
+//! problem details (CBOR; Content-Format 257). [`Response::problem`] is the
+//! App-facing builder. App-generated 4.04 / 4.05 / 4.08 use it. Echo 4.01
+//! and other Engine-path 4.xx stay caller-opt-in.
+//!
 //! The library does not invent 4.02 / RST policy.
 //!
 //! # Storage and progress
@@ -82,7 +87,7 @@
 //! [`App::poll`]. Handlers are `fn(Request<'_>) -> Response`: borrowed
 //! request fields (`payload()`, path, token, options, `body()` when
 //! Block1 / Q-Block1 assembled) and an owned [`Response`] (`content` /
-//! `content_copy`). Large responses use the TX body area (Block2, or
+//! `content_copy` / [`Response::problem`] for RFC 9290 CBOR). Large responses use the TX body area (Block2, or
 //! Q-Block2 when the request asked for it) without exposing `SlotId`.
 //! Observe register / deregister, [`App::notify`](app::App::notify), and
 //! poll-time notify via [`ObserveSource`](app::ObserveSource) use the

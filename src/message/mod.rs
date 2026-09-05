@@ -25,6 +25,7 @@
 //! Request-Tag and Echo (RFC 9175) are opaque. Hop-Limit (RFC 8768) and
 //! No-Response (RFC 7967) reuse uint. None of those numbers are in Table 4.
 //! [`ParsedMessage::precondition`] classifies If-Match / If-None-Match.
+//! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR).
 //! [`ParsedMessage::check_rfc7252_formats`] is
 //! optional and separate from wire decode and from
 //! [`ParsedMessage::check_rfc7252_options`].
@@ -41,6 +42,7 @@ mod id;
 mod no_response;
 mod option;
 mod precondition;
+mod problem;
 pub mod value;
 
 #[cfg(test)]
@@ -55,6 +57,7 @@ pub use id::{Ids, TokenSource};
 pub use no_response::NoResponse;
 pub use option::{Opt, OptionNumber, Options};
 pub use precondition::Precondition;
+pub use problem::{ProblemDetails, ProblemError};
 pub use value::{
     BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
     OBSERVE_SEQUENCE_MASK, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,

@@ -243,6 +243,8 @@ impl ContentFormat {
     pub const EXI: Self = Self(47);
     /// `application/json`.
     pub const JSON: Self = Self(50);
+    /// `application/concise-problem-details+cbor` (RFC 9290).
+    pub const PROBLEM_DETAILS: Self = Self(257);
 
     /// Wrap a raw Content-Format ID.
     #[must_use]
@@ -1122,6 +1124,8 @@ mod unit_tests {
             EncodedUint::from(ContentFormat::LINK_FORMAT).as_bytes(),
             &[40]
         );
+        assert_eq!(ContentFormat::PROBLEM_DETAILS.get(), 257);
+        assert_eq!(ContentFormat::PROBLEM_DETAILS.encode().as_bytes(), &[1, 1]);
     }
 
     #[test]
