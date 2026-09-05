@@ -64,11 +64,25 @@ python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate
 
 CI (`fmt`, `clippy`, `test`, `doc`, `okf`) is PR-only (`pull_request` to `main` plus `workflow_dispatch`). No push-to-main CI.
 
-## Plugtest
+## Validation harness
 
 Vendored ETSI TDs and the coaptic mapping live in [knowledge/plugtest/](knowledge/plugtest/). Combinatorial SZX sweep policy: [knowledge/block-testing.md](knowledge/block-testing.md).
 
-An in-crate harness is not on `main` yet. Draft: [PR #27](https://github.com/jeffglousher/coaptic/pull/27).
+In-repo harness (integration tests; `std` is fine there; no extra Cargo deps; no sockets / DTLS):
+
+```text
+cargo test --test block_sweep
+cargo test --test block_sweep --all-features
+cargo test --test plugtest
+cargo test --test plugtest catalog
+cargo test --test plugtest td_coap_core
+cargo test --test plugtest td_coap_block
+cargo test --test plugtest td_coap_obs
+cargo test --test plugtest td_coap_link
+cargo test --test plugtest inventory -- --nocapture
+```
+
+`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. `inventory` prints RUN vs SKIP for every vendored TD id (`dtls` / `6lowpan` and OBS_04 / OBS_05 are skipped with reasons). See rustdoc §Validation harness.
 
 ## Architecture (short)
 

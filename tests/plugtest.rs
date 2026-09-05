@@ -1,0 +1,135 @@
+//! In-scope ETSI CoAP#4 plugtest harness (in-memory Engine pair).
+//!
+//! Two [`coaptic::Engine`]s exchange datagram bytes (no sockets, no DTLS).
+//! TD identifiers come from `knowledge/plugtest/td-coap4/*.yml` — this file
+//! does not invent ids. Deferred suites (`dtls`, `6lowpan`) are skipped
+//! with a reason. Observe Max-Age / client-OFF TDs are skipped because the
+//! six-area engine has no extra lifetime timer pool.
+//!
+//! ```text
+//! cargo test --test plugtest
+//! cargo test --test plugtest catalog
+//! cargo test --test plugtest td_coap_core
+//! ```
+//!
+//! See `knowledge/plugtest/requirements.md`.
+
+#![allow(clippy::too_many_lines)]
+
+#[path = "plugtest/catalog.rs"]
+mod catalog;
+mod harness;
+
+#[path = "plugtest/block.rs"]
+mod block;
+#[path = "plugtest/core.rs"]
+mod core;
+#[path = "plugtest/link.rs"]
+mod link;
+#[path = "plugtest/obs.rs"]
+mod obs;
+
+/// Vendored YAML keys match the hand-maintained lists (no invented TDs).
+#[test]
+fn catalog_matches_vendored_yaml() {
+    catalog::assert_ids_match_yaml();
+}
+
+#[test]
+fn td_coap_core_all() {
+    for id in catalog::CORE {
+        match catalog::skip_reason(id) {
+            Some(reason) => panic!("{id} is CORE and must run (skip={reason})"),
+            None => core::run(id),
+        }
+    }
+}
+
+#[test]
+fn td_coap_block_all() {
+    for id in catalog::BLOCK {
+        match catalog::skip_reason(id) {
+            Some(reason) => panic!("{id} is BLOCK and must run (skip={reason})"),
+            None => block::run(id),
+        }
+    }
+}
+
+#[test]
+fn td_coap_obs_all() {
+    for id in catalog::OBS {
+        match catalog::skip_reason(id) {
+            Some(reason) => eprintln!("skip {id}: {reason}"),
+            None => obs::run(id),
+        }
+    }
+}
+
+#[test]
+fn td_coap_link_all() {
+    for id in catalog::LINK {
+        match catalog::skip_reason(id) {
+            Some(reason) => panic!("{id} is LINK and must run (skip={reason})"),
+            None => link::run(id),
+        }
+    }
+}
+
+#[test]
+fn deferred_dtls_skipped() {
+    for id in catalog::DTLS {
+        let reason = catalog::skip_reason(id).expect("DTLS must skip");
+        assert!(reason.contains("DTLS"), "{id}: {reason}");
+    }
+}
+
+#[test]
+fn deferred_6lowpan_skipped() {
+    let yaml = include_str!("../knowledge/plugtest/td-coap4/6lowpan.yml");
+    for id in catalog::extract_td_ids(yaml) {
+        let reason = catalog::skip_reason(id).unwrap_or_else(|| panic!("{id} must skip"));
+        assert!(reason.contains("6LoWPAN"), "{id}: {reason}");
+    }
+}
+
+/// Inventory printed for humans (`cargo test --test plugtest inventory -- --nocapture`).
+#[test]
+fn inventory() {
+    catalog::assert_ids_match_yaml();
+    let mut ran = 0usize;
+    let mut skipped = 0usize;
+    let mut lines = Vec::new();
+    for (suite, ids) in [
+        ("CORE", catalog::CORE),
+        ("BLOCK", catalog::BLOCK),
+        ("OBS", catalog::OBS),
+        ("LINK", catalog::LINK),
+        ("DTLS", catalog::DTLS),
+    ] {
+        for id in ids {
+            match catalog::skip_reason(id) {
+                Some(reason) => {
+                    skipped += 1;
+                    lines.push(format!("SKIP  {suite} {id}  ({reason})"));
+                }
+                None => {
+                    ran += 1;
+                    lines.push(format!("RUN   {suite} {id}"));
+                }
+            }
+        }
+    }
+    let lowpan = catalog::extract_td_ids(include_str!(
+        "../knowledge/plugtest/td-coap4/6lowpan.yml"
+    ));
+    skipped += lowpan.len();
+    lines.push(format!(
+        "SKIP  6LOWPAN {} TDs (deferred: 6LoWPAN not implemented)",
+        lowpan.len()
+    ));
+    eprintln!(
+        "plugtest inventory: {ran} run, {skipped} skip\n{}",
+        lines.join("\n")
+    );
+    assert!(ran >= 24 + 6 + 9, "CORE+BLOCK+LINK must all run");
+}

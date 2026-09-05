@@ -6,7 +6,7 @@ license: MIT OR Apache-2.0
 
 # Plugtest
 
-Read [knowledge/plugtest/](../../../knowledge/plugtest/) first, especially [requirements](../../../knowledge/plugtest/requirements.md). An in-crate harness is not on `main` yet (draft PR #27); this bundle is the mapping and vendored TDs.
+Read [knowledge/plugtest/](../../../knowledge/plugtest/) first, especially [requirements](../../../knowledge/plugtest/requirements.md). In-repo harness: `cargo test --test block_sweep` and `cargo test --test plugtest` (inventory prints RUN vs SKIP).
 
 - Implement in-scope TDs from the vendored YAML (`base`, `block`, `link`). Do not invent TD identifiers.
 - Map each TD to the local RFC copies in `knowledge/rfcs/`. Open the `.txt`, not a rewrite.
