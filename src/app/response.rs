@@ -1,9 +1,15 @@
-//! [`Response`]: owned intent that [`App`](super::App) encodes into TX.
+//! [`Response`]: owned intent that [`App`](super::App) encodes into TX,
+//! and the owned snapshot [`App::take_response`](super::App::take_response)
+//! yields for a completed client [`Call`](super::Call).
 
-use crate::message::{Code, ContentFormat, ProblemDetails};
+use crate::message::{Code, ContentFormat, MessageId, ProblemDetails, Token, Type};
+use crate::storage::Endpoint;
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
 pub const INLINE_PAYLOAD: usize = 128;
+
+/// Complete assembled client body copied into a [`Response`] (shipped profile RX body).
+pub const RESPONSE_BODY: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
 enum Payload {
@@ -30,7 +36,8 @@ impl IntoResponse for Response {
     }
 }
 
-/// Owned response intent. No lifetime — `'static` payload or a small inline copy.
+/// Owned response: handler intent, or a client snapshot from
+/// [`App::take_response`](super::App::take_response).
 ///
 /// Handlers return this. [`App::poll`](super::App::poll) writes a payload
 /// that fits one datagram with `encode_tx`. A larger payload (within the
@@ -38,6 +45,13 @@ impl IntoResponse for Response {
 /// as outgoing Block2, or Q-Block2 when that is the request's transfer.
 /// Handlers do not opt in and do not see slot identifiers. The reactor
 /// owns per-slot state machines inside that loop.
+///
+/// A completed client exchange is the same type: [`Self::code`] /
+/// [`Self::payload`] / [`Self::body`] / [`Self::problem_details`] (and
+/// [`Self::ty`] / [`Self::token`] / [`Self::peer`] when the snapshot
+/// carried them). [`Self::payload`] is this datagram (truncated at
+/// [`INLINE_PAYLOAD`]). [`Self::body`] is the assembled Block2 /
+/// Q-Block2 body when present (truncated at [`RESPONSE_BODY`]).
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};
@@ -55,6 +69,13 @@ pub struct Response {
     etag_len: u8,
     max_age: Option<u32>,
     observe: Option<u32>,
+    ty: Option<Type>,
+    token: Option<Token>,
+    mid: Option<MessageId>,
+    peer: Option<Endpoint>,
+    body: [u8; RESPONSE_BODY],
+    body_len: u16,
+    has_body: bool,
 }
 
 impl Response {
@@ -69,6 +90,13 @@ impl Response {
             etag_len: 0,
             max_age: None,
             observe: None,
+            ty: None,
+            token: None,
+            mid: None,
+            peer: None,
+            body: [0u8; RESPONSE_BODY],
+            body_len: 0,
+            has_body: false,
         }
     }
 
@@ -182,8 +210,7 @@ impl Response {
     /// the peer asked for something else.
     ///
     /// ```
-    /// use coaptic::message::ProblemDetails;
-    /// use coaptic::{Code, ContentFormat, Response};
+    /// use coaptic::{Code, ContentFormat, ProblemDetails, Response};
     ///
     /// let response = Response::problem(Code::NOT_FOUND).title("Not Found");
     /// assert_eq!(response.code(), Code::NOT_FOUND);
@@ -345,6 +372,75 @@ impl Response {
     #[must_use]
     pub const fn observe_seq(&self) -> Option<u32> {
         self.observe
+    }
+
+    /// CON / NON / ACK / RST on a client snapshot, if [`App::take_response`](super::App::take_response)
+    /// populated it.
+    #[must_use]
+    pub const fn ty(&self) -> Option<Type> {
+        self.ty
+    }
+
+    /// Token on a client snapshot, if populated (same as [`Call::token`](super::Call::token)).
+    #[must_use]
+    pub const fn token(&self) -> Option<Token> {
+        self.token
+    }
+
+    /// Message ID of the matched datagram on a client snapshot, if populated.
+    #[must_use]
+    pub const fn message_id(&self) -> Option<MessageId> {
+        self.mid
+    }
+
+    /// Remote endpoint that sent a client-snapshot response, if populated.
+    #[must_use]
+    pub const fn peer(&self) -> Option<Endpoint> {
+        self.peer
+    }
+
+    /// Complete assembled response body, if Block2 / Q-Block2 filled an RX body area.
+    ///
+    /// `None` when this is handler intent or a single-datagram client
+    /// snapshot. Truncated at [`RESPONSE_BODY`] (Default / Constrained RX body bytes).
+    #[must_use]
+    pub fn body(&self) -> Option<&[u8]> {
+        if self.has_body {
+            Some(&self.body[..usize::from(self.body_len)])
+        } else {
+            None
+        }
+    }
+
+    /// Whether [`Self::body`] is present (including an empty complete body).
+    #[must_use]
+    pub const fn has_body(&self) -> bool {
+        self.has_body
+    }
+
+    pub(crate) fn from_client(
+        code: Code,
+        ty: Type,
+        token: Token,
+        mid: MessageId,
+        peer: Endpoint,
+        payload: &[u8],
+        content_format: Option<ContentFormat>,
+    ) -> Self {
+        let mut response = Self::new(code).payload_copy(payload);
+        response.content_format = content_format;
+        response.ty = Some(ty);
+        response.token = Some(token);
+        response.mid = Some(mid);
+        response.peer = Some(peer);
+        response
+    }
+
+    pub(crate) fn copy_body(&mut self, src: &[u8]) {
+        let n = src.len().min(RESPONSE_BODY);
+        self.body[..n].copy_from_slice(&src[..n]);
+        self.body_len = n as u16;
+        self.has_body = true;
     }
 }
 

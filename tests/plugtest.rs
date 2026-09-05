@@ -1,6 +1,6 @@
 //! In-scope ETSI CoAP#4 plugtest harness (in-memory Engine pair).
 //!
-//! Two [`coaptic::Engine`]s exchange datagram bytes (no sockets, no DTLS).
+//! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no DTLS).
 //! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
 //! does not invent ids. The deferred `dtls` suite and the not-planned
 //! `6lowpan` suite are skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated

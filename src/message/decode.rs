@@ -121,7 +121,7 @@ impl<'a> ParsedMessage<'a> {
     }
 }
 
-/// Parse one CoAP datagram (UDP payload). Does not require [`crate::Engine`].
+/// Parse one CoAP datagram (UDP payload). Does not require [`crate::storage::Engine`].
 ///
 /// Options are accepted as opaque number + value. Optional checks:
 /// [`ParsedMessage::check_rfc7252_options`] (unrecognized critical) and

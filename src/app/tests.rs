@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
-    ProblemDetails, Token, Type, decode, encode,
+    ProblemDetails, Token, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -261,7 +261,7 @@ fn no_response_suppresses_success() {
         Code::GET,
         &["sensors", "temp"],
         &[],
-        Some(u32::from(crate::NoResponse::SUPPRESS_2)),
+        Some(u32::from(crate::message::NoResponse::SUPPRESS_2)),
     );
     let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
@@ -314,11 +314,28 @@ fn site_dispatch_table() {
 #[test]
 fn route_path_splits_static_uri() {
     let mut site = Site::<4>::new();
-    site.route_path("/sensors/temp", get(get_temp));
+    site.route("sensors/temp", get(get_temp));
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
     assert_eq!(site.dispatch(req).code(), Code::CONTENT);
+}
+
+#[test]
+fn route_slash_path_ignores_leading_slash() {
+    let mut site = Site::<4>::new();
+    site.route("/leds/0", get(get_led));
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
+    assert_eq!(site.dispatch(req).code(), Code::CONTENT);
+}
+
+#[test]
+#[should_panic(expected = "empty segment")]
+fn route_rejects_empty_segments() {
+    let mut site = Site::<4>::new();
+    site.route("sensors//temp", get(get_temp));
 }
 
 #[test]
@@ -423,7 +440,7 @@ fn encode_block_req(req: BlockReq<'_>) -> ([u8; 256], usize) {
     for segment in req.path {
         opts.push(Opt::uri_path(segment)).expect("path");
     }
-    let size1_enc = req.size1.map(crate::encode_uint);
+    let size1_enc = req.size1.map(encode_uint);
     if let Some(ref encoded) = size1_enc {
         opts.push(Opt::size1(encoded)).expect("size1");
     }
@@ -739,7 +756,7 @@ fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; 
     (buf, n)
 }
 
-fn last_wide(app: &App<profiles::Default, WideLoopback>) -> crate::ParsedMessage<'_> {
+fn last_wide(app: &App<profiles::Default, WideLoopback>) -> crate::message::ParsedMessage<'_> {
     let n = app.transport().send_n;
     assert!(n > 0, "expected a send");
     decode(&app.transport().sends[n - 1][..app.transport().send_lens[n - 1]]).expect("decode")
@@ -995,18 +1012,18 @@ fn client_get_round_trip_without_slot_id() {
         .to(peer)
         .send(0)
         .expect("send");
-    assert!(app.take_reply(call).is_none());
+    assert!(app.take_response(call).is_none());
     app.poll(0).expect("server handle");
-    assert!(app.take_reply(call).is_none());
+    assert!(app.take_response(call).is_none());
     app.poll(0).expect("client match");
-    let reply = app.take_reply(call).expect("matched");
-    assert_eq!(reply.code(), Code::CONTENT);
-    assert_eq!(reply.payload(), b"21.5");
-    assert_eq!(reply.content_format(), Some(ContentFormat::TEXT_PLAIN));
-    assert_eq!(reply.token(), call.token());
-    assert_eq!(reply.peer(), peer);
-    assert_eq!(reply.ty(), Type::Acknowledgement);
-    assert!(app.take_reply(call).is_none());
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"21.5");
+    assert_eq!(response.format(), Some(ContentFormat::TEXT_PLAIN));
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(response.peer(), Some(peer));
+    assert_eq!(response.ty(), Some(Type::Acknowledgement));
+    assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -1024,9 +1041,9 @@ fn client_put_round_trip_without_slot_id() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let reply = app.take_reply(call).expect("matched");
-    assert_eq!(reply.code(), Code::CHANGED);
-    assert_eq!(reply.payload(), b"on");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CHANGED);
+    assert_eq!(response.payload(), b"on");
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -1043,10 +1060,10 @@ fn client_non_get_matches() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let reply = app.take_reply(call).expect("matched");
-    assert_eq!(reply.code(), Code::CONTENT);
-    assert_eq!(reply.payload(), b"21.5");
-    assert_eq!(reply.ty(), Type::NonConfirmable);
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"21.5");
+    assert_eq!(response.ty(), Some(Type::NonConfirmable));
 }
 
 #[test]
@@ -1056,9 +1073,9 @@ fn client_get_unknown_path_is_problem_details() {
     let call = app.get(&["nope"]).to(peer).send(0).expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let reply = app.take_reply(call).expect("matched");
-    assert_eq!(reply.code(), Code::NOT_FOUND);
-    let details = reply.problem_details().expect("cbor");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::NOT_FOUND);
+    let details = response.problem_details().expect("cbor");
     assert_eq!(details.response_code(), Some(Code::NOT_FOUND));
     assert_eq!(details.title_text(), Some("Not Found"));
 }
@@ -1127,11 +1144,14 @@ fn pipe_app() -> App<profiles::Default, Pipe> {
         .expect("bind")
 }
 
-fn poll_until_reply(app: &mut App<profiles::Default, Pipe>, call: crate::Call) -> crate::Reply {
+fn poll_until_response(
+    app: &mut App<profiles::Default, Pipe>,
+    call: crate::Call,
+) -> crate::Response {
     for t in 0u64..8 {
         app.poll(t).expect("poll");
-        if let Some(reply) = app.take_reply(call) {
-            return reply;
+        if let Some(response) = app.take_response(call) {
+            return response;
         }
     }
     panic!("client Block2/Q-Block2 did not complete");
@@ -1142,14 +1162,14 @@ fn client_get_block2_assembles_body_without_slot_id() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = pipe_app();
     let call = app.get(&["large"]).to(peer).send(0).expect("send");
-    let reply = poll_until_reply(&mut app, call);
-    assert_eq!(reply.code(), Code::CONTENT);
-    assert_eq!(reply.content_format(), Some(ContentFormat::OCTET_STREAM));
-    assert!(reply.has_body());
-    assert_eq!(reply.body().expect("assembled"), &LARGE[..]);
-    assert_eq!(reply.token(), call.token());
-    assert_eq!(reply.peer(), peer);
-    assert!(app.take_reply(call).is_none());
+    let response = poll_until_response(&mut app, call);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::OCTET_STREAM));
+    assert!(response.has_body());
+    assert_eq!(response.body().expect("assembled"), &LARGE[..]);
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(response.peer(), Some(peer));
+    assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -1164,10 +1184,40 @@ fn client_get_q_block2_assembles_body_without_slot_id() {
         .q_block2()
         .send(0)
         .expect("send");
-    let reply = poll_until_reply(&mut app, call);
-    assert_eq!(reply.code(), Code::CONTENT);
-    assert!(reply.has_body());
-    assert_eq!(reply.body().expect("assembled"), &LARGE[..]);
+    let response = poll_until_response(&mut app, call);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert!(response.has_body());
+    assert_eq!(response.body().expect("assembled"), &LARGE[..]);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_get_slash_path_round_trip() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let call = app.get("sensors/temp").to(peer).send(0).expect("send");
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"21.5");
+}
+
+#[test]
+fn client_empty_path_segment_is_error() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let err = app
+        .get("sensors//temp")
+        .to(peer)
+        .send(0)
+        .expect_err("empty");
+    assert_eq!(err, Error::Path);
+    let err = app
+        .get(&["sensors", "", "temp"])
+        .to(peer)
+        .send(0)
+        .expect_err("empty slice");
+    assert_eq!(err, Error::Path);
 }

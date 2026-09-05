@@ -3,14 +3,14 @@
 use crate::message::OptionNumber;
 use crate::storage::SlotError;
 
-/// Failure to construct an [`Engine`](crate::Engine).
+/// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
-    /// Builder sizes do not match the [`Storage`](crate::Storage) being moved in.
+    /// Builder sizes do not match the [`Storage`](crate::storage::Storage) being moved in.
     SizeMismatch,
     /// Enabled body slot bytes are not a multiple of 1024 (max Block/Q-Block SZX).
     ///
-    /// Same quantum as [`crate::BlockValue::SIZE_MAX`].
+    /// Same quantum as [`crate::message::BlockValue::SIZE_MAX`].
     BodyBytesNotMultipleOf1024,
     /// `.block_wise(false)` but storage or the builder includes body pools.
     UnexpectedBodyPools,
@@ -191,7 +191,7 @@ impl core::fmt::Display for ValueError {
 #[cfg(feature = "std")]
 impl std::error::Error for ValueError {}
 
-/// [`OptionsBuilder`](crate::OptionsBuilder) has no free slot.
+/// [`OptionsBuilder`](crate::message::OptionsBuilder) has no free slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OptionsFull;
 

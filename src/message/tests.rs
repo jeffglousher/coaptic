@@ -86,7 +86,7 @@ fn roundtrip_empty_rst() {
 #[test]
 fn empty_ack_rst_constructors_wire_bytes() {
     let mut buf = [0u8; 8];
-    let ack = crate::empty_ack(MessageId::new(0x00ab));
+    let ack = crate::message::empty_ack(MessageId::new(0x00ab));
     assert_eq!(ack.ty(), Type::Acknowledgement);
     assert!(ack.code().is_empty());
     assert_eq!(encode_to(&ack, &mut buf), &[0x60, 0x00, 0x00, 0xab]);
@@ -95,7 +95,7 @@ fn empty_ack_rst_constructors_wire_bytes() {
     assert!(parsed.is_empty_ack_or_rst());
     assert!(!parsed.is_empty_rst());
 
-    let rst = crate::empty_rst(MessageId::new(7));
+    let rst = crate::message::empty_rst(MessageId::new(7));
     assert_eq!(rst.ty(), Type::Reset);
     assert_eq!(encode_to(&rst, &mut buf), &[0x70, 0x00, 0x00, 0x07]);
     let parsed = decode(&[0x70, 0x00, 0x00, 0x07]).expect("rst");
@@ -362,10 +362,10 @@ fn code_helpers() {
     assert!(Code::CONTINUE.is_success());
     assert!(Code::REQUEST_ENTITY_INCOMPLETE.is_client_error());
     assert_eq!(
-        crate::ObserveTransmission::CONFIRM_INTERVAL_MS,
+        crate::message::ObserveTransmission::CONFIRM_INTERVAL_MS,
         24 * 60 * 60 * 1_000
     );
-    assert_eq!(crate::ObserveTransmission::NON_TIMEOUT_MS, 3_000);
+    assert_eq!(crate::message::ObserveTransmission::NON_TIMEOUT_MS, 3_000);
     assert_eq!((Code::GET.class(), Code::GET.detail()), (0, 1));
     assert_eq!(Type::Confirmable.to_bits(), 0);
     assert_eq!(Type::from_bits(2), Some(Type::Acknowledgement));

@@ -280,7 +280,7 @@ pub trait ObserveSlots {
 ///
 /// Present only when block-wise is enabled. [`Memory`] without body pools and
 /// `AllocMemory` built with `.block_wise(false)` return `None` /
-/// [`crate::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 /
+/// [`crate::error::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Incoming Body Pool; outgoing Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Outgoing Body Pool.
 pub trait BodySlots {

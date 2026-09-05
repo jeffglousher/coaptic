@@ -230,28 +230,3 @@ impl Method {
         }
     }
 }
-
-/// Split a `'static` URI-Path (`"/sensors/temp"`) into Uri-Path segments.
-///
-/// Leading `/` is ignored. Empty segments are dropped. Writes into `out`
-/// and returns the count.
-///
-/// # Panics
-///
-/// If the path has more segments than `out.len()`.
-pub fn split_path(path: &'static str, out: &mut [&'static str]) -> usize {
-    let mut n = 0;
-    for segment in path.trim_start_matches('/').split('/') {
-        if segment.is_empty() {
-            continue;
-        }
-        assert!(
-            n < out.len(),
-            "URI-Path has more than {} segments; shorten the path or raise MAX_PATH_SEGMENTS",
-            out.len()
-        );
-        out[n] = segment;
-        n += 1;
-    }
-    n
-}

@@ -118,7 +118,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         }
     }
 
-    /// Send occupied TX `id` through `io`. Pins [`crate::Access`] for the call.
+    /// Send occupied TX `id` through `io`. Pins [`Access`](crate::storage::Access) for the call.
     ///
     /// Does not release the slot (pending CON / give-up still apply). Does
     /// not invent RST / 4.xx / No-Response policy.

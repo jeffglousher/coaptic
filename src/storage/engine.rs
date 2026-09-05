@@ -375,11 +375,11 @@ impl<S: Storage + DedupSlots> Engine<S> {
 impl<S: Storage + PendingCons> Engine<S> {
     /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
     ///
-    /// Initializes RTO from [`crate::Transmission`] using caller `now_ms`
+    /// Initializes RTO from [`crate::message::Transmission`] using caller `now_ms`
     /// and `jitter_ms` (no OS clock; `0` jitter is the ACK_TIMEOUT floor).
     /// Sets the TX sidecar endpoint. `None` when the slot is free or out of
     /// range, or when outstanding pending CONs to `endpoint` already equal
-    /// [`crate::Transmission::NSTART`]. Idempotent for the same MID and
+    /// [`crate::message::Transmission::NSTART`]. Idempotent for the same MID and
     /// endpoint on `id` (RTO is not reset). Does not use the Dedup Table.
     pub fn record_pending_con(
         &mut self,
@@ -693,7 +693,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// `con_mid` `Some` is CON (resets the 24-hour confirm clock; NSTART hold
     /// until [`Self::ack_observe_con`]). `None` is NON (starts the 24-hour
     /// clock if unset; NSTART hold for
-    /// [`crate::ObserveTransmission::NON_TIMEOUT_MS`]). `None` return when
+    /// [`crate::message::ObserveTransmission::NON_TIMEOUT_MS`]). `None` return when
     /// no row matches, or when the endpoint already has NSTART outstanding
     /// notifications and this row is not the holder. Idempotent when this
     /// row already holds the same CON Message ID. Does not encode, send, or

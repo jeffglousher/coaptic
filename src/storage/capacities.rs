@@ -5,12 +5,12 @@ use crate::error::BuildError;
 
 /// Byte multiple required for enabled body slots (max Block/Q-Block SZX).
 ///
-/// Same quantum as [`crate::BlockValue::SIZE_MAX`].
+/// Same quantum as [`crate::message::BlockValue::SIZE_MAX`].
 pub(crate) const BODY_BYTE_QUANTUM: usize = 1024;
 
-/// Runtime sizes for [`AllocMemory`](crate::AllocMemory) / [`EngineBuilder::build_alloc`](crate::EngineBuilder::build_alloc).
+/// Runtime sizes for [`AllocMemory`](crate::storage::AllocMemory) / [`EngineBuilder::build_alloc`](crate::storage::EngineBuilder::build_alloc).
 ///
-/// Also the size report from [`Storage::capacities`](crate::Storage::capacities).
+/// Also the size report from [`Storage::capacities`](crate::storage::Storage::capacities).
 /// Body fields are `None` when Storage has no body pools.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Capacities {

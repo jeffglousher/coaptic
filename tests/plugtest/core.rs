@@ -1,9 +1,8 @@
 //! In-memory Engine-pair drivers for `TD_COAP_CORE_*`.
 
-use coaptic::{
-    Code, ContentFormat, DedupEntry, Message, Opt, Retransmit, Token, Transmission, Type,
-    empty_ack, empty_rst,
-};
+use coaptic::message::{Message, Opt, Token, Transmission, Type, empty_ack, empty_rst};
+use coaptic::storage::{DedupEntry, Retransmit};
+use coaptic::{Code, ContentFormat};
 
 use crate::harness::{Pair, path_is, uri_query};
 

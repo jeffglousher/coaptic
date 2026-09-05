@@ -1,9 +1,10 @@
 //! In-memory Engine-pair drivers for `TD_COAP_OBS_*` (RFC 7641).
 
-use coaptic::{
-    Code, ContentFormat, ObserveExpiry, ObserveInterest, ObserveKey, Opt, Retransmit, SlotId,
-    Token, Transmission, Type, empty_ack, empty_rst, encode_observe, encode_uint,
+use coaptic::message::{
+    Opt, Token, Transmission, Type, empty_ack, empty_rst, encode_observe, encode_uint,
 };
+use coaptic::storage::{ObserveExpiry, ObserveInterest, ObserveKey, Retransmit, SlotId};
+use coaptic::{Code, ContentFormat};
 
 use crate::catalog;
 use crate::harness::{Pair, block_at, block_key, path_is, patterned_body};
@@ -40,7 +41,7 @@ fn register(
     ty: Type,
     token: Token,
     path: &[&str],
-) -> (coaptic::MessageId, SlotId) {
+) -> (coaptic::message::MessageId, SlotId) {
     let extra = [Opt::observe_register()];
     let (tx, mid) = pair.client_request(ty, Code::GET, token, path, &extra, &[]);
     let rx = pair.exchange_client(tx);

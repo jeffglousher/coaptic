@@ -110,7 +110,7 @@ impl<P: MemoryProfile> WithBodies<P> {
 /// Body accessors exist only on the [`WithBodies`] variant:
 ///
 /// ```compile_fail
-/// fn no_body_method(m: &coaptic::Memory<coaptic::profiles::Default>) {
+/// fn no_body_method(m: &coaptic::storage::Memory<coaptic::profiles::Default>) {
 ///     let _ = m.rx_body();
 /// }
 /// ```

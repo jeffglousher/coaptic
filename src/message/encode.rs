@@ -51,7 +51,7 @@ impl<'a> Message<'a> {
 
     /// CON skeleton: `code`, `id`, and `token`. No options or payload.
     ///
-    /// Does not require [`crate::Engine`]. Pair with [`super::Ids`] to mint `id`.
+    /// Does not require [`crate::storage::Engine`]. Pair with [`super::Ids`] to mint `id`.
     #[must_use]
     pub const fn con(code: Code, id: MessageId, token: Token) -> Self {
         Self::new(Type::Confirmable, code, id).with_token(token)
@@ -59,7 +59,7 @@ impl<'a> Message<'a> {
 
     /// NON skeleton: `code`, `id`, and `token`. No options or payload.
     ///
-    /// Does not require [`crate::Engine`]. Pair with [`super::Ids`] to mint `id`.
+    /// Does not require [`crate::storage::Engine`]. Pair with [`super::Ids`] to mint `id`.
     #[must_use]
     pub const fn non(code: Code, id: MessageId, token: Token) -> Self {
         Self::new(Type::NonConfirmable, code, id).with_token(token)
@@ -128,7 +128,7 @@ impl<'a> Message<'a> {
     }
 }
 
-/// Encode `msg` into `buf`. Does not require [`crate::Engine`].
+/// Encode `msg` into `buf`. Does not require [`crate::storage::Engine`].
 pub fn encode(msg: &Message<'_>, buf: &mut [u8]) -> Result<usize, EncodeError> {
     if msg.code.is_empty()
         && (!msg.token.is_empty() || !msg.options.is_empty() || !msg.payload.is_empty())
