@@ -1,64 +1,62 @@
-//! Bounded table of owned [`Resource`](super::Resource) instances.
+//! Bounded table of [`MethodRouter`](super::MethodRouter) routes.
 
 use crate::message::ContentFormat;
 
 use super::reply::Reply;
 use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
-use super::resource::Method;
-use super::resource_dyn::ResourceDyn;
+use super::routing::{Method, MethodRouter, split_path};
 
-/// Default number of owned resources in a [`Site`] / [`App`](super::App).
-pub const DEFAULT_RESOURCES: usize = 8;
+/// Default number of routes in a [`Site`] / [`App`](super::App).
+pub const DEFAULT_ROUTES: usize = 8;
 
 const WELL_KNOWN: &[&str] = &[".well-known", "core"];
 
-struct Entry {
+struct Entry<S> {
     path: Path<'static>,
-    resource: ResourceDyn,
+    methods: MethodRouter<S>,
 }
 
-/// Fixed table of path → owned resource.
+/// Fixed table of path → method router.
 ///
-/// `N` is the maximum number of instances (default 8). One `Led` that
-/// implements GET and PUT occupies one slot. This is application state,
-/// not an Engine memory area.
-pub struct Site<const N: usize = DEFAULT_RESOURCES> {
-    entries: [Option<Entry>; N],
+/// `N` is the maximum number of paths (default 8). GET+PUT on one path
+/// occupies one slot. Application state lives on [`App`](super::App), not
+/// here. This is not an Engine memory area.
+pub struct Site<S, const N: usize = DEFAULT_ROUTES> {
+    entries: [Option<Entry<S>>; N],
     len: usize,
     well_known: bool,
 }
 
-impl<const N: usize> Site<N> {
+impl<S, const N: usize> Site<S, N> {
     /// Empty site.
     #[must_use]
     pub const fn new() -> Self {
-        const NONE: Option<Entry> = None;
         Self {
-            entries: [NONE; N],
+            entries: [const { None }; N],
             len: 0,
             well_known: false,
         }
     }
 
-    /// Number of registered resources.
+    /// Number of registered routes.
     #[must_use]
     pub const fn len(&self) -> usize {
         self.len
     }
 
-    /// Whether no resources are registered.
+    /// Whether no routes are registered.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Whether a further [`Self::at`] would panic (unless it replaces a path).
+    /// Whether a further [`Self::route`] would panic (unless it replaces a path).
     #[must_use]
     pub const fn is_full(&self) -> bool {
         self.len >= N
     }
 
-    /// Maximum instances (`N`).
+    /// Maximum routes (`N`).
     #[must_use]
     pub const fn capacity(&self) -> usize {
         N
@@ -71,46 +69,55 @@ impl<const N: usize> Site<N> {
     }
 
     /// Serve `/.well-known/core` from registered paths (RFC 6690 link-format).
-    pub fn well_known_core(&mut self) -> &mut Self {
+    pub const fn well_known_core(&mut self) -> &mut Self {
         self.well_known = true;
         self
     }
 
-    /// Move `resource` onto `segments`. Replaces an existing path.
+    /// Bind `methods` on `segments`. Replaces an existing path.
     ///
     /// # Panics
     ///
     /// If the table is full and `segments` is a new path, or if the path has
     /// more than [`MAX_PATH_SEGMENTS`] segments.
-    pub fn at<R: super::Resource>(&mut self, segments: &[&'static str], resource: R) -> &mut Self {
+    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter<S>) -> &mut Self {
         let path = expect_path(segments);
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
-                entry.resource = ResourceDyn::new(resource);
+                entry.methods = methods;
                 return self;
             }
         }
         assert!(
             self.len < N,
-            "site is full ({N} resources); bind with .resources::<M>() for a larger M"
+            "site is full ({N} routes); bind with .routes::<M>() for a larger M"
         );
-        self.entries[self.len] = Some(Entry {
-            path,
-            resource: ResourceDyn::new(resource),
-        });
+        self.entries[self.len] = Some(Entry { path, methods });
         self.len += 1;
         self
     }
 
-    /// Match `request`: method hook, else 4.05 if the path exists, else 4.04.
+    /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
+    ///
+    /// # Panics
+    ///
+    /// Same as [`Self::route`], plus if `path` has more than
+    /// [`MAX_PATH_SEGMENTS`] segments.
+    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter<S>) -> &mut Self {
+        let mut segments = [""; MAX_PATH_SEGMENTS];
+        let n = split_path(path, &mut segments);
+        self.route(&segments[..n], methods)
+    }
+
+    /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
     #[must_use]
-    pub fn dispatch(&mut self, request: &Request<'_>) -> Reply {
+    pub fn dispatch(&mut self, state: &mut S, request: Request<'_>) -> Reply {
         for entry in self.entries.iter_mut().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
             }
             return match request.method() {
-                Some(method) => entry.resource.call(method, request),
+                Some(method) => entry.methods.call(method, state, request),
                 None => Reply::method_not_allowed(),
             };
         }
@@ -124,7 +131,7 @@ impl<const N: usize> Site<N> {
     }
 }
 
-impl<const N: usize> Default for Site<N> {
+impl<S, const N: usize> Default for Site<S, N> {
     fn default() -> Self {
         Self::new()
     }
@@ -144,7 +151,7 @@ fn path_is_well_known(path: &[&str]) -> bool {
     path == WELL_KNOWN
 }
 
-fn link_format<const N: usize>(site: &Site<N>) -> Reply {
+fn link_format<S, const N: usize>(site: &Site<S, N>) -> Reply {
     let mut buf = [0u8; super::reply::INLINE_PAYLOAD];
     let mut n = 0usize;
     let mut first = true;

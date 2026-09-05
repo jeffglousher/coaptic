@@ -3,12 +3,12 @@
 use crate::message::{Code, MessageId, ParsedMessage, Token, Type};
 use crate::storage::{Endpoint, SlotId};
 
-use super::resource::Method;
+use super::routing::Method;
 
 /// Maximum Uri-Path segments stored on a [`Request`] or a site entry.
 pub const MAX_PATH_SEGMENTS: usize = 8;
 
-/// Decoded request a [`Resource`](super::Resource) sees.
+/// Decoded request a handler sees.
 ///
 /// [`SlotId`] is available as [`Self::slot_id`] for Engine-level work.
 /// Ordinary handlers do not need it.

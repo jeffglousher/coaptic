@@ -1,11 +1,11 @@
-//! Taste of [`coaptic::App`]: owned resources, one `poll` loop.
+//! Taste of [`coaptic::App`]: routes, [`State`], one `poll` loop.
 //!
 //! ```text
 //! cargo run --example coap_server --features std
 //! ```
 //!
 //! Client GET `/sensors/temp` → 2.05 Content. PUT `/leds/0` then GET
-//! reflects instance state. `/.well-known/core` is link-format from
+//! reflects shared state. `/.well-known/core` is link-format from
 //! registered paths. Engine slots stay off the happy path (`CALLER.md`).
 
 use std::net::UdpSocket;
@@ -13,33 +13,26 @@ use std::time::Instant;
 
 use coaptic::{
     App, Code, ContentFormat, DatagramIo, Endpoint, Ids, Opt, OptionsBuilder, ParsedMessage, Reply,
-    Request, Resource, Token, decode, encode, profiles,
+    Request, State, Token, decode, encode, get, profiles,
 };
 
-struct Temp {
-    celsius: i16,
+struct Sensors {
+    temp_c: i16,
+    led_on: bool,
 }
 
-impl Resource for Temp {
-    fn get(&mut self, _req: &Request<'_>) -> Reply {
-        let _ = self.celsius;
-        Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
-    }
+fn get_temp(State(s): State<&mut Sensors>, _req: Request<'_>) -> Reply {
+    let _ = s.temp_c;
+    Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-struct Led {
-    on: bool,
+fn get_led(State(s): State<&mut Sensors>, _: Request<'_>) -> Reply {
+    Reply::content(if s.led_on { b"on" } else { b"off" })
 }
 
-impl Resource for Led {
-    fn get(&mut self, _: &Request<'_>) -> Reply {
-        Reply::content(if self.on { b"on" } else { b"off" })
-    }
-
-    fn put(&mut self, req: &Request<'_>) -> Reply {
-        self.on = req.payload() == b"1";
-        Reply::changed()
-    }
+fn put_led(State(s): State<&mut Sensors>, req: Request<'_>) -> Reply {
+    s.led_on = req.payload() == b"1";
+    Reply::changed()
 }
 
 fn now_ms(origin: Instant) -> u64 {
@@ -58,11 +51,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::profile::<profiles::Default>()
         .block_wise(true)
+        .state(Sensors {
+            temp_c: 215,
+            led_on: false,
+        })
+        .route(&["sensors", "temp"], get(get_temp))
+        .route(&["leds", "0"], get(get_led).put(put_led))
+        .well_known_core()
         .bind(socket)?;
-
-    app.at(&["sensors", "temp"], Temp { celsius: 215 })
-        .at(&["leds", "0"], Led { on: false })
-        .well_known_core();
 
     send_client(&mut client, server_ep, Code::GET, &["sensors", "temp"], &[]);
     app.poll(now_ms(origin))?;
