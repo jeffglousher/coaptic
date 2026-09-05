@@ -141,13 +141,5 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_6LoWPAN_") {
         return Some("deferred: 6LoWPAN not implemented");
     }
-    match id {
-        "TD_COAP_OBS_04" => Some(
-            "Observe Max-Age deregistration is application lifetime; Engine has no Max-Age timer on ObserveInterest",
-        ),
-        "TD_COAP_OBS_05" => Some(
-            "server detection of client-OFF needs an observer lifetime timer; Engine does not invent that pool",
-        ),
-        _ => None,
-    }
+    None
 }

@@ -6,6 +6,7 @@
 use super::BodySlots;
 use super::DatagramSlots;
 use super::Engine;
+use super::ObserveExpiry;
 use super::ObserveSlots;
 use super::PendingCons;
 use super::QBlockRecover;
@@ -16,7 +17,8 @@ use super::Storage;
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
 /// Idle when [`Self::is_idle`]. Q-Block missing-block recovery is at most
-/// one [`QBlockRecover`] from a rotating Incoming Body Pool step.
+/// one [`QBlockRecover`] from a rotating Incoming Body Pool step. Observe
+/// lifetime expiry is at most one [`ObserveExpiry`].
 ///
 /// See `design.md` §Reference progress contract.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -24,6 +26,7 @@ pub struct Progress {
     retransmit: Option<Retransmit>,
     rx_ready: Option<SlotId>,
     observe_notify: Option<SlotId>,
+    observe_expired: Option<ObserveExpiry>,
     qblock_recover: Option<QBlockRecover>,
 }
 
@@ -35,6 +38,7 @@ impl Progress {
             retransmit: None,
             rx_ready: None,
             observe_notify: None,
+            observe_expired: None,
             qblock_recover: None,
         }
     }
@@ -45,6 +49,7 @@ impl Progress {
         self.retransmit.is_none()
             && self.rx_ready.is_none()
             && self.observe_notify.is_none()
+            && self.observe_expired.is_none()
             && self.qblock_recover.is_none()
     }
 
@@ -80,6 +85,20 @@ impl Progress {
         self.observe_notify
     }
 
+    /// One Observe interest whose colocated lifetime is due, if any.
+    ///
+    /// [`Engine::refresh_observe_max_age`] sets Max-Age or CON-wait.
+    /// This pass surfaces at most one due row (rotating, fair), clears that
+    /// lifetime and pending, and leaves the row occupied. The caller drops
+    /// it or stops notifying. Does not send RST or invent 4.02. A
+    /// [`Retransmit::GiveUp`] for a matching CON notify makes that row due
+    /// before this poll. See `design.md` §Bounded state-machine lifetime
+    /// and `knowledge/rfcs/rfc7641.txt`.
+    #[must_use]
+    pub const fn observe_expired(self) -> Option<ObserveExpiry> {
+        self.observe_expired
+    }
+
     /// One incoming Q-Block recover opportunity, if any.
     ///
     /// At most one per pass, from a rotating Incoming Body Pool step. The
@@ -102,9 +121,12 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// 1. [`Self::poll_retransmit`] — at most one due CON (`Due` / `GiveUp`).
     /// 2. One rotating RX step from the pool cursor: first occupied slot
     ///    that is not pinned. The cursor resumes after that slot.
-    /// 3. Observe notify — at most one pending interest from the Observe
+    /// 3. Observe lifetime — at most one due Max-Age / client-OFF row
+    ///    ([`Progress::observe_expired`]). A [`Retransmit::GiveUp`] for a
+    ///    matching CON notify makes that row due first.
+    /// 4. Observe notify — at most one pending interest from the Observe
     ///    table cursor ([`Progress::observe_notify`]).
-    /// 4. Q-Block missing-block recovery — at most one incoming window
+    /// 5. Q-Block missing-block recovery — at most one incoming window
     ///    hole ([`Progress::qblock_recover`]).
     ///
     /// Does not allocate, grow storage, or send on the wire. Does not release
@@ -114,11 +136,16 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// Ownership by progress domain.
     pub fn progress(&mut self, now_ms: u64) -> Progress {
         let retransmit = self.poll_retransmit(now_ms);
+        if let Some(Retransmit::GiveUp(pending)) = retransmit {
+            let _ = self.mark_observe_unacked_due(pending.message_id(), pending.endpoint(), now_ms);
+        }
         let rx_ready = next_unpinned_rx(self);
+        let observe_expired = self.poll_observe_lifetime(now_ms);
         Progress {
             retransmit,
             rx_ready,
             observe_notify: progress_observe(self),
+            observe_expired,
             qblock_recover: progress_qblock(self),
         }
     }

@@ -3,8 +3,8 @@
 //! Two [`coaptic::Engine`]s exchange datagram bytes (no sockets, no DTLS).
 //! TD identifiers come from `knowledge/plugtest/td-coap4/*.yml` — this file
 //! does not invent ids. Deferred suites (`dtls`, `6lowpan`) are skipped
-//! with a reason. Observe Max-Age / client-OFF TDs are skipped because the
-//! six-area engine has no extra lifetime timer pool.
+//! with a reason. Observe Max-Age / client-OFF TDs run on the colocated
+//! `ObserveInterest` lifetime (no seventh area).
 //!
 //! ```text
 //! cargo test --test plugtest
@@ -134,5 +134,5 @@ fn inventory() {
         "plugtest inventory: {ran} run, {skipped} skip\n{}",
         lines.join("\n")
     );
-    assert!(ran >= 24 + 6 + 9, "CORE+BLOCK+LINK must all run");
+    assert!(ran >= 24 + 6 + 13 + 9, "CORE+BLOCK+OBS+LINK must all run");
 }

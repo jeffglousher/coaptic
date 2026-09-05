@@ -12,7 +12,8 @@
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
 //! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
-//! key). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
+//! key). Max-Age / CON-wait lifetime is colocated on the row
+//! ([`ObserveLifetime`]). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
 //! sidecar on body-pool slots when block-wise is enabled (incoming
 //! Block1/Block2, outgoing Block1/Block2). Incoming and outgoing
 //! Q-Block1 / Q-Block2 reuse the same slots with a `MAX_PAYLOADS` window.
@@ -21,7 +22,8 @@
 //! datagram or body slot against [`SlotPool::release`] (`design.md`
 //! §Application memory access). [`Engine::progress`] is one bounded
 //! pass: pending CON retransmit poll, one rotating unpinned RX step, one
-//! rotating Observe notify, and at most one incoming Q-Block recover
+//! rotating Observe notify, at most one Observe lifetime expiry, and at
+//! most one incoming Q-Block recover
 //! (`design.md` §Reference progress contract). They do not invent 4.08 /
 //! 2.31 / RST policy.
 //!
@@ -63,7 +65,10 @@ pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};
 pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
-pub use table::{DedupEntry, DedupKey, DedupTable, ObserveInterest, ObserveKey, ObserveTable};
+pub use table::{
+    DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
+    ObserveTable,
+};
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///
@@ -224,8 +229,9 @@ pub trait DedupSlots {
 /// Insert, lookup, remove, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the profile observe-entry count. [`Memory`] and
 /// [`AllocMemory`] implement this so [`Engine`] can store
-/// [`ObserveInterest`] values in the existing table slots. Pending notify
-/// and the 24-bit sequence stay on the row; bodies are not stored here.
+/// [`ObserveInterest`] values in the existing table slots. Pending notify,
+/// the 24-bit sequence, and optional Max-Age / CON-wait lifetime stay on
+/// the row; bodies are not stored here.
 pub trait ObserveSlots {
     /// Insert `interest`, or return the existing slot if the key is present.
     ///

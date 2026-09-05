@@ -126,29 +126,122 @@ impl ObserveKey {
     }
 }
 
+/// Colocated Max-Age / CON-wait deadline on an [`ObserveInterest`] row.
+///
+/// Absolute `due_ms` in the caller `now_ms` domain (same posture as
+/// [`super::PendingRto`]). The core has no OS clock. See
+/// `knowledge/rfcs/rfc7641.txt` and Max-Age in `knowledge/rfcs/rfc7252.txt`.
+/// `design.md` §Bounded state-machine lifetime.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ObserveLifetime {
+    /// Freshness deadline from a caller-supplied Max-Age (typically client).
+    MaxAge {
+        /// Absolute millisecond time when this deadline fires.
+        due_ms: u64,
+    },
+    /// CON notification waiting for an empty ACK (server client-OFF).
+    Unacked {
+        /// Absolute millisecond time when this deadline fires.
+        due_ms: u64,
+        /// Message ID of the outstanding CON notification.
+        message_id: MessageId,
+    },
+}
+
+impl ObserveLifetime {
+    /// [`Self::MaxAge`] due at `now_ms + max_age_secs * 1000`.
+    #[must_use]
+    pub const fn max_age(now_ms: u64, max_age_secs: u32) -> Self {
+        Self::MaxAge {
+            due_ms: max_age_due_ms(now_ms, max_age_secs),
+        }
+    }
+
+    /// [`Self::Unacked`] due at `now_ms + max_age_secs * 1000`.
+    #[must_use]
+    pub const fn unacked(now_ms: u64, max_age_secs: u32, message_id: MessageId) -> Self {
+        Self::Unacked {
+            due_ms: max_age_due_ms(now_ms, max_age_secs),
+            message_id,
+        }
+    }
+
+    /// Absolute millisecond time when this deadline fires (`now_ms` domain).
+    #[must_use]
+    pub const fn due_ms(self) -> u64 {
+        match self {
+            Self::MaxAge { due_ms } | Self::Unacked { due_ms, .. } => due_ms,
+        }
+    }
+
+    /// Outstanding CON Message ID, if this is [`Self::Unacked`].
+    #[must_use]
+    pub const fn con_mid(self) -> Option<MessageId> {
+        match self {
+            Self::MaxAge { .. } => None,
+            Self::Unacked { message_id, .. } => Some(message_id),
+        }
+    }
+
+    /// Whether `now_ms` is at or past [`Self::due_ms`].
+    #[must_use]
+    pub const fn is_due(self, now_ms: u64) -> bool {
+        now_ms >= self.due_ms()
+    }
+}
+
+const fn max_age_due_ms(now_ms: u64, max_age_secs: u32) -> u64 {
+    now_ms.saturating_add((max_age_secs as u64).saturating_mul(1_000))
+}
+
+/// One Observe interest whose colocated lifetime is due.
+///
+/// The row stays occupied. The caller drops it or stops notifying. The core
+/// does not send RST or invent 4.02. See `knowledge/rfcs/rfc7641.txt`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObserveExpiry {
+    /// [`ObserveLifetime::MaxAge`] elapsed.
+    MaxAge(SlotId),
+    /// [`ObserveLifetime::Unacked`] elapsed (CON notify without ACK).
+    ClientOff(SlotId),
+}
+
+impl ObserveExpiry {
+    /// Observe table slot that is due.
+    #[must_use]
+    pub const fn slot(self) -> SlotId {
+        match self {
+            Self::MaxAge(id) | Self::ClientOff(id) => id,
+        }
+    }
+}
+
 /// Occupied Observe Interest Table payload.
 ///
-/// Relation identity plus small pending/coalescing state and the last
-/// library-assigned 24-bit notification sequence. Notification bodies are
-/// not stored here. See `design.md` §Observe Interest Table and
+/// Relation identity plus small pending/coalescing state, the last
+/// library-assigned 24-bit notification sequence, and optional Max-Age /
+/// CON-wait lifetime. Notification bodies are not stored here. See
+/// `design.md` §Observe Interest Table / Bounded state-machine lifetime and
 /// `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveInterest {
     key: ObserveKey,
     seq: u32,
     pending: bool,
+    lifetime: Option<ObserveLifetime>,
 }
 
 impl ObserveInterest {
     /// Interest row for `token` at `endpoint`.
     ///
-    /// Sequence starts at 0 and is not pending.
+    /// Sequence starts at 0, is not pending, and has no lifetime.
     #[must_use]
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new(token, endpoint),
             seq: 0,
             pending: false,
+            lifetime: None,
         }
     }
 
@@ -189,10 +282,44 @@ impl ObserveInterest {
     #[must_use]
     pub const fn with_seq(self, seq: u32) -> Self {
         Self {
-            key: self.key,
             seq: seq & OBSERVE_SEQUENCE_MASK,
-            pending: self.pending,
+            ..self
         }
+    }
+
+    /// Colocated Max-Age / CON-wait lifetime, if set.
+    #[must_use]
+    pub const fn lifetime(self) -> Option<ObserveLifetime> {
+        self.lifetime
+    }
+
+    /// Replace the colocated lifetime (or clear it with `None`).
+    #[must_use]
+    pub const fn with_lifetime(self, lifetime: Option<ObserveLifetime>) -> Self {
+        Self { lifetime, ..self }
+    }
+
+    /// Whether `now_ms` is at or past a colocated lifetime deadline.
+    #[must_use]
+    pub const fn is_lifetime_due(self, now_ms: u64) -> bool {
+        match self.lifetime {
+            Some(life) => life.is_due(now_ms),
+            None => false,
+        }
+    }
+
+    /// If the colocated lifetime is due, clear it and pending, return it.
+    ///
+    /// Surfaces once. The row stays occupied. See
+    /// `knowledge/rfcs/rfc7641.txt`.
+    pub fn take_expired(&mut self, now_ms: u64) -> Option<ObserveLifetime> {
+        let life = self.lifetime?;
+        if !life.is_due(now_ms) {
+            return None;
+        }
+        self.lifetime = None;
+        self.pending = false;
+        Some(life)
     }
 
     /// Mark this row as needing one notification.

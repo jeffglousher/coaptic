@@ -17,8 +17,10 @@ use super::ExchangeKey;
 use super::ExchangeTable;
 use super::Memory;
 use super::MemoryProfile;
+use super::ObserveExpiry;
 use super::ObserveInterest;
 use super::ObserveKey;
+use super::ObserveLifetime;
 use super::ObserveTable;
 use super::PendingCon;
 use super::PendingRto;
@@ -451,6 +453,7 @@ fn progress_idle() {
     assert_eq!(outcome.retransmit(), None);
     assert_eq!(outcome.rx_ready(), None);
     assert_eq!(outcome.observe_notify(), None);
+    assert_eq!(outcome.observe_expired(), None);
     assert_eq!(outcome.qblock_recover(), None);
     assert_eq!(engine.rx_occupied(), 0);
     assert_eq!(engine.tx_occupied(), 0);
@@ -616,6 +619,140 @@ fn observe_sequence_wrap() {
     assert_eq!(engine.signal_observe(key), Some(id));
     assert_eq!(engine.progress(0).observe_notify(), Some(id));
     assert_eq!(engine.observe_interest(id).expect("wrapped").seq(), 0);
+}
+
+#[test]
+fn observe_lifetime_max_age_due_and_once() {
+    let mut interest =
+        ObserveInterest::new(sample_token(&[0x81]), Endpoint::v4([203, 0, 113, 50], 5683));
+    let life = ObserveLifetime::max_age(1_000, 5);
+    assert_eq!(life.due_ms(), 6_000);
+    assert!(!life.is_due(5_999));
+    assert!(life.is_due(6_000));
+    assert_eq!(life.con_mid(), None);
+    interest = interest.with_lifetime(Some(life));
+    assert!(!interest.is_lifetime_due(5_999));
+    assert_eq!(interest.take_expired(5_999), None);
+    assert_eq!(interest.take_expired(6_000), Some(life));
+    assert!(interest.lifetime().is_none());
+    assert_eq!(interest.take_expired(6_000), None);
+
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 50], 5683);
+    let key = ObserveKey::new(sample_token(&[0x82]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key))
+        .expect("insert");
+    assert_eq!(engine.refresh_observe_max_age(key, 0, 5, None), Some(id));
+    assert_eq!(
+        engine.observe_interest(id).expect("row").lifetime(),
+        Some(ObserveLifetime::max_age(0, 5))
+    );
+    assert_eq!(engine.progress(4_999).observe_expired(), None);
+    assert_eq!(
+        engine.progress(5_000).observe_expired(),
+        Some(ObserveExpiry::MaxAge(id))
+    );
+    let row = engine.observe_interest(id).expect("still occupied");
+    assert!(row.lifetime().is_none());
+    assert!(!row.is_pending());
+    assert_eq!(engine.progress(5_000).observe_expired(), None);
+    assert_eq!(engine.take_observe(key), Some(row));
+}
+
+#[test]
+fn observe_lifetime_unacked_ack_clears_and_give_up_expires() {
+    let mid = MessageId::new(0x9101);
+    let life = ObserveLifetime::unacked(0, 2, mid);
+    assert_eq!(life.due_ms(), 2_000);
+    assert_eq!(life.con_mid(), Some(mid));
+
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 51], 5683);
+    let key = ObserveKey::new(sample_token(&[0x83]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key))
+        .expect("insert");
+    assert_eq!(
+        engine.refresh_observe_max_age(key, 0, 2, Some(mid)),
+        Some(id)
+    );
+    assert_eq!(engine.ack_observe_con(MessageId::new(0x0001), ep), None);
+    assert_eq!(
+        engine.ack_observe_con(mid, Endpoint::v4([203, 0, 113, 9], 5683)),
+        None
+    );
+    assert_eq!(engine.ack_observe_con(mid, ep), Some(id));
+    assert!(
+        engine
+            .observe_interest(id)
+            .expect("acked")
+            .lifetime()
+            .is_none()
+    );
+    assert_eq!(engine.progress(2_000).observe_expired(), None);
+
+    let mid2 = MessageId::new(0x9102);
+    assert_eq!(
+        engine.refresh_observe_max_age(key, 0, 1_000, Some(mid2)),
+        Some(id)
+    );
+    assert_eq!(engine.signal_observe(key), Some(id));
+    let tx = record_pending_at(&mut engine, ep, 0x9102, 0, 0);
+    let mut now = 0u64;
+    let mut timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    for _ in 0..Transmission::MAX_RETRANSMIT {
+        now += timeout;
+        match engine.poll_retransmit(now).expect("due") {
+            Retransmit::Due(_) => timeout *= 2,
+            Retransmit::GiveUp(_) => panic!("give-up too early"),
+        }
+    }
+    now += timeout;
+    let outcome = engine.progress(now);
+    match outcome.retransmit().expect("give up") {
+        Retransmit::GiveUp(pending) => assert_eq!(pending.tx_slot(), tx),
+        Retransmit::Due(_) => panic!("expected give-up"),
+    }
+    assert_eq!(
+        outcome.observe_expired(),
+        Some(ObserveExpiry::ClientOff(id))
+    );
+    assert_eq!(outcome.observe_notify(), None);
+    let row = engine.observe_interest(id).expect("surfaced");
+    assert!(row.lifetime().is_none());
+    assert!(!row.is_pending());
+    engine.release_tx(tx).expect("release tx");
+}
+
+#[test]
+fn observe_lifetime_rotating_fairness() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 52], 5683);
+    let a_key = ObserveKey::new(sample_token(&[0x91]), ep);
+    let b_key = ObserveKey::new(sample_token(&[0x92]), ep);
+    let a = engine
+        .insert_observe(ObserveInterest::from(a_key))
+        .expect("a");
+    let b = engine
+        .insert_observe(ObserveInterest::from(b_key))
+        .expect("b");
+    assert_eq!(engine.refresh_observe_max_age(a_key, 0, 1, None), Some(a));
+    assert_eq!(engine.refresh_observe_max_age(b_key, 0, 1, None), Some(b));
+    let first = engine
+        .progress(1_000)
+        .observe_expired()
+        .expect("first")
+        .slot();
+    let second = engine
+        .progress(1_000)
+        .observe_expired()
+        .expect("second")
+        .slot();
+    assert_ne!(first, second);
+    assert!(first == a || first == b);
+    assert!(second == a || second == b);
+    assert_eq!(engine.progress(1_000).observe_expired(), None);
 }
 
 #[test]
@@ -2607,6 +2744,22 @@ mod alloc_backend {
         assert_eq!(engine.progress(0).observe_notify(), Some(id));
         assert_eq!(engine.observe_interest(id).expect("row").seq(), 1);
         assert!(!engine.observe_interest(id).expect("row").is_pending());
+    }
+
+    #[test]
+    fn alloc_progress_observe_max_age_expires() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 84], 5683);
+        let key = ObserveKey::new(sample_token(&[0x84]), ep);
+        let id = engine
+            .insert_observe(ObserveInterest::from(key))
+            .expect("insert");
+        assert_eq!(engine.refresh_observe_max_age(key, 0, 3, None), Some(id));
+        assert!(engine.progress(2_999).observe_expired().is_none());
+        assert_eq!(
+            engine.progress(3_000).observe_expired(),
+            Some(ObserveExpiry::MaxAge(id))
+        );
     }
 
     #[test]
