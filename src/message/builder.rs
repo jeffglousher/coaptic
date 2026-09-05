@@ -20,16 +20,15 @@ use super::option::Opt;
 /// outlive this builder and any [`Message`](crate::message::Message) or
 /// [`encode`](crate::message::encode) call that borrows [`as_slice`](Self::as_slice).
 ///
-/// Uint values use [`EncodedUint`](crate::EncodedUint) held by the **caller**.
+/// Uint values use [`EncodedUint`](crate::message::EncodedUint) held by the **caller**.
 /// Pass [`Opt::uint`], a Table 4 helper such as [`Opt::content_format`], or
-/// [`Opt::block2`] after [`crate::BlockValue::encode`].
+/// [`Opt::block2`] after [`crate::message::BlockValue::encode`].
 /// The builder does not store `EncodedUint` itself (that would be
 /// self-referential).
 ///
 /// ```
-/// use coaptic::{
-///     Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, Type,
-/// };
+/// use coaptic::message::{Message, MessageId, Opt, OptionsBuilder, Type};
+/// use coaptic::{Code, ContentFormat};
 ///
 /// let cf = ContentFormat::JSON.encode();
 /// let mut opts = OptionsBuilder::<4>::new();
@@ -37,7 +36,7 @@ use super::option::Opt;
 /// opts.push(Opt::uri_path("temp")).expect("room");
 /// let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
 ///     .with_options(opts.as_slice());
-/// assert_eq!(msg.options()[0].number(), coaptic::OptionNumber::URI_PATH);
+/// assert_eq!(msg.options()[0].number(), coaptic::message::OptionNumber::URI_PATH);
 /// ```
 #[derive(Clone, Debug)]
 pub struct OptionsBuilder<'a, const N: usize> {

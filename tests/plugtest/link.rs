@@ -3,7 +3,8 @@
 //! Link-format catalog and filtering live in the harness application, not
 //! in Engine. The two Engines exchange the GET / `.well-known/core` bytes.
 
-use coaptic::{Code, ContentFormat, Opt, Type};
+use coaptic::message::{Opt, Type};
+use coaptic::{Code, ContentFormat};
 
 use crate::harness::{Pair, path_is, uri_query};
 

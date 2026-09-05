@@ -5,14 +5,12 @@
 //! is not the ceiling.
 #![allow(dead_code)]
 
+use coaptic::message::{BlockValue, Ids, Message, MessageId, Opt, OptionsBuilder, Token, Type};
 use coaptic::storage::{
-    BodyPool, DatagramPool, DedupTable, ExchangeTable, Memory, MemoryProfile, ObserveTable,
-    WithBodies,
+    BlockKey, BodyPool, DatagramPool, DedupTable, Engine, EngineBuilder, ExchangeTable, Memory,
+    MemoryProfile, ObserveTable, SlotId, WithBodies,
 };
-use coaptic::{
-    BlockKey, BlockValue, Code, ContentFormat, Endpoint, Engine, EngineBuilder, Ids, Message,
-    MessageId, Opt, OptionsBuilder, SlotId, Token, Type,
-};
+use coaptic::{Code, ContentFormat, Endpoint};
 
 /// Body capacity for the sweep: 32 × 1024 (25 × 1024 must fit).
 pub const SWEEP_BODY_BYTES: usize = 32 * 1024;
@@ -281,7 +279,7 @@ fn deliver(
 
 /// Collect Uri-Path segments (fail on non-UTF-8).
 #[must_use]
-pub fn uri_path(parsed: coaptic::ParsedMessage<'_>) -> Vec<String> {
+pub fn uri_path(parsed: coaptic::message::ParsedMessage<'_>) -> Vec<String> {
     parsed
         .uri_path()
         .map(|item| item.expect("Uri-Path UTF-8").to_owned())
@@ -290,7 +288,7 @@ pub fn uri_path(parsed: coaptic::ParsedMessage<'_>) -> Vec<String> {
 
 /// Collect Uri-Query values (fail on non-UTF-8).
 #[must_use]
-pub fn uri_query(parsed: coaptic::ParsedMessage<'_>) -> Vec<String> {
+pub fn uri_query(parsed: coaptic::message::ParsedMessage<'_>) -> Vec<String> {
     parsed
         .uri_query()
         .map(|item| item.expect("Uri-Query UTF-8").to_owned())
@@ -299,7 +297,7 @@ pub fn uri_query(parsed: coaptic::ParsedMessage<'_>) -> Vec<String> {
 
 /// Whether Uri-Path equals `segs`.
 #[must_use]
-pub fn path_is(parsed: coaptic::ParsedMessage<'_>, segs: &[&str]) -> bool {
+pub fn path_is(parsed: coaptic::message::ParsedMessage<'_>, segs: &[&str]) -> bool {
     uri_path(parsed) == segs
 }
 

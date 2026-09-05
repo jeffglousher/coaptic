@@ -14,10 +14,10 @@
 
 mod harness;
 
-use coaptic::{
-    BlockKey, BlockTransfer, BlockTransferError, BlockValue, BodyTag, Code, Endpoint, MessageId,
-    Token, Type,
-};
+use coaptic::error::BlockTransferError;
+use coaptic::message::{BlockValue, MessageId, Token, Type};
+use coaptic::storage::{BlockKey, BlockTransfer, BodyTag};
+use coaptic::{Code, Endpoint};
 use harness::{
     BLOCK_COUNTS, SWEEP_BODY_BYTES, SZX_SIZES, block_at, block_slice, build_engine, patterned_body,
     release_bodies,
@@ -386,7 +386,7 @@ fn overflow_beyond_sweep_capacity_fails_loudly() {
 #[cfg(feature = "alloc")]
 #[test]
 fn alloc_memory_holds_25_by_1024() {
-    use coaptic::{AllocMemory, Capacities, Engine, EngineBuilder};
+    use coaptic::storage::{AllocMemory, Capacities, Engine, EngineBuilder};
 
     let caps = Capacities {
         rx_datagram_slots: 8,

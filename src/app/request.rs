@@ -13,6 +13,93 @@ use super::routing::Method;
 /// Maximum Uri-Path segments stored on a [`Request`] or a site entry.
 pub const MAX_PATH_SEGMENTS: usize = 8;
 
+/// Failure to turn a bind or client path into Uri-Path segments.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathError {
+    /// A Uri-Path option value is not UTF-8.
+    BadUtf8,
+    /// More than [`MAX_PATH_SEGMENTS`] segments.
+    TooLong,
+    /// An empty segment (`""`, `"sensors//temp"`, or a trailing `/`).
+    EmptySegment,
+}
+
+/// Convert a bind/client path into Uri-Path segments without allocating.
+///
+/// Accepts `&[&'static str]` (and `&[&'static str; N]`), or a `'static`
+/// slash-separated string (`"sensors/temp"`). Leading `/` is ignored.
+/// Empty segments are rejected.
+pub trait IntoPath {
+    /// Fill `out` with Uri-Path segments. Returns the count.
+    fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError>;
+}
+
+impl IntoPath for &[&'static str] {
+    fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+        path_from_segments(self, out)
+    }
+}
+
+impl<const N: usize> IntoPath for &[&'static str; N] {
+    fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+        path_from_segments(self, out)
+    }
+}
+
+impl IntoPath for &'static str {
+    fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+        split_path(self, out)
+    }
+}
+
+/// Split a `'static` URI-Path (`"sensors/temp"` or `"/sensors/temp"`) into
+/// Uri-Path segments.
+///
+/// Leading `/` is ignored. A remaining empty string is the root (zero
+/// segments). Empty segments (`"sensors//temp"`, trailing `/`) are
+/// [`PathError::EmptySegment`]. More segments than `out.len()` is
+/// [`PathError::TooLong`].
+pub fn split_path(path: &'static str, out: &mut [&'static str]) -> Result<usize, PathError> {
+    let rest = path.trim_start_matches('/');
+    if rest.is_empty() {
+        return Ok(0);
+    }
+    let mut n = 0;
+    for segment in rest.split('/') {
+        if segment.is_empty() {
+            return Err(PathError::EmptySegment);
+        }
+        if n >= out.len() {
+            return Err(PathError::TooLong);
+        }
+        out[n] = segment;
+        n += 1;
+    }
+    Ok(n)
+}
+
+fn path_from_segments(
+    segments: &[&'static str],
+    out: &mut [&'static str],
+) -> Result<usize, PathError> {
+    if segments.len() > out.len() {
+        return Err(PathError::TooLong);
+    }
+    for (i, segment) in segments.iter().enumerate() {
+        if segment.is_empty() {
+            return Err(PathError::EmptySegment);
+        }
+        out[i] = *segment;
+    }
+    Ok(segments.len())
+}
+
+pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathError> {
+    let mut segs = [""; MAX_PATH_SEGMENTS];
+    let n = path.fill_path(&mut segs)?;
+    Path::from_segments(&segs[..n])
+}
+
 /// Borrowed view of one inbound request.
 ///
 /// Handlers see path, method, token, message ID, peer, option accessors, and
@@ -254,12 +341,6 @@ pub(crate) struct Path<'a> {
     len: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PathError {
-    BadUtf8,
-    TooLong,
-}
-
 impl<'a> Path<'a> {
     pub(crate) const fn empty() -> Self {
         Self {
@@ -274,6 +355,9 @@ impl<'a> Path<'a> {
         }
         let mut path = Self::empty();
         for (i, segment) in segments.iter().enumerate() {
+            if segment.is_empty() {
+                return Err(PathError::EmptySegment);
+            }
             path.segs[i] = segment;
         }
         path.len = segments.len() as u8;

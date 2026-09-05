@@ -27,7 +27,7 @@ pub enum SlotError {
     NotOccupied,
     /// A fill length exceeded the slot byte capacity.
     LengthExceedsSlot,
-    /// Application [`crate::Access`] still pins this slot.
+    /// Application [`crate::storage::Access`] still pins this slot.
     ///
     /// Release is refused until the access is dropped. Rotate does not evict
     /// and is not blocked.

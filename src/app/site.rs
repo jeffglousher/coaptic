@@ -3,9 +3,9 @@
 use crate::message::{Code, ContentFormat};
 use crate::storage::ObserveResource;
 
-use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
+use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, Request, path_from_into};
 use super::response::Response;
-use super::routing::{Method, MethodRouter, ObserveSource, split_path};
+use super::routing::{Method, MethodRouter, ObserveSource};
 
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
@@ -75,14 +75,17 @@ impl<const N: usize> Site<N> {
         self
     }
 
-    /// Bind `methods` on `segments`. Replaces an existing path.
+    /// Bind `methods` on Uri-Path `path`. Replaces an existing path.
+    ///
+    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`
+    /// (leading `/` ignored). Empty segments are rejected.
     ///
     /// # Panics
     ///
-    /// If the table is full and `segments` is a new path, or if the path has
-    /// more than [`MAX_PATH_SEGMENTS`] segments.
-    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter) -> &mut Self {
-        let path = expect_path(segments);
+    /// If the table is full and `path` is new, if the path has more than
+    /// [`MAX_PATH_SEGMENTS`] segments, or if a segment is empty.
+    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
+        let path = expect_path(path);
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
                 entry.methods = methods;
@@ -100,14 +103,13 @@ impl<const N: usize> Site<N> {
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
     ///
+    /// Same as [`Self::route`] with a slash-separated string.
+    ///
     /// # Panics
     ///
-    /// Same as [`Self::route`], plus if `path` has more than
-    /// [`MAX_PATH_SEGMENTS`] segments.
+    /// Same as [`Self::route`].
     pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
-        let mut segments = [""; MAX_PATH_SEGMENTS];
-        let n = split_path(path, &mut segments);
-        self.route(&segments[..n], methods)
+        self.route(path, methods)
     }
 
     /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
@@ -161,12 +163,15 @@ impl<const N: usize> Default for Site<N> {
     }
 }
 
-fn expect_path(segments: &[&'static str]) -> Path<'static> {
-    match Path::from_segments(segments) {
+fn expect_path(path: impl IntoPath) -> Path<'static> {
+    match path_from_into(path) {
         Ok(path) => path,
         Err(PathError::TooLong) => panic!(
             "URI-Path has more than {MAX_PATH_SEGMENTS} segments; shorten the path or raise MAX_PATH_SEGMENTS"
         ),
+        Err(PathError::EmptySegment) => {
+            panic!("URI-Path has an empty segment; omit extra slashes")
+        }
         Err(PathError::BadUtf8) => unreachable!("static &str is UTF-8"),
     }
 }

@@ -1,7 +1,7 @@
 //! CoAP messages: header, token, options, and payload.
 //!
 //! [`decode`] and [`encode`] operate on a datagram buffer (the UDP payload).
-//! They do not require [`crate::Engine`].
+//! They do not require [`crate::storage::Engine`].
 //!
 //! [`empty_ack`] and [`empty_rst`] build the empty ACK / RST messages used to
 //! confirm or reject a CON. [`ParsedMessage::is_empty_ack`] /
@@ -10,9 +10,9 @@
 //! [`Token::mint_from`] copy caller entropy ([`TokenSource`]). The core
 //! does not call an OS RNG. [`Message::con`] / [`Message::non`] and
 //! [`Ids::request`] build a CON/NON skeleton (next MID + token) with no
-//! [`crate::Engine`]. [`Transmission`] names RFC 7252 §4.8 defaults and
+//! [`crate::storage::Engine`]. [`Transmission`] names RFC 7252 §4.8 defaults and
 //! [`Transmission::initial_timeout_ms`] (caller jitter). Retransmit
-//! scheduling lives on [`crate::PendingCon`].
+//! scheduling lives on [`crate::storage::PendingCon`].
 //!
 //! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 and
 //! Block / Q-Block helpers) in any order and yields a slice for
@@ -488,7 +488,7 @@ pub const fn empty_rst(id: MessageId) -> Message<'static> {
 ///
 /// The core does not draw randomness. Callers pass jitter into
 /// [`Self::initial_timeout_ms`] (or `0` for the ACK_TIMEOUT floor).
-/// Scheduling is [`crate::PendingCon`] / [`crate::Engine::poll_retransmit`].
+/// Scheduling is [`crate::storage::PendingCon`] / [`crate::storage::Engine::poll_retransmit`].
 /// See `knowledge/rfcs/rfc7252.txt` §4.2 / §4.8.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Transmission;
@@ -525,7 +525,7 @@ impl Transmission {
 
 /// RFC 7641 §4.5 / §4.5.1 notification transmission constants.
 ///
-/// Colocated on [`crate::ObserveInterest`]. The core does not send and does
+/// Colocated on [`crate::storage::ObserveInterest`]. The core does not send and does
 /// not invent RST / 4.02 policy. See `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObserveTransmission;

@@ -9,8 +9,8 @@
 //!
 //! Outgoing (get/put) --encode--> TX slot
 //! poll matches Token + endpoint (Exchange table)
-//! RX datagram --copy--> Reply
-//! Block2 / Q-Block2 --apply--> RX body --copy--> Reply::body()
+//! RX datagram --copy--> Response
+//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
 //! ```
 //!
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
@@ -18,7 +18,7 @@
 //! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
 //! `not_found` / [`Response::problem`]).
 //! Borrows last only for the handler call; `poll` encodes and then releases.
-//! The reactor ([`Engine`] / [`Progress`](crate::Progress)) owns per-slot
+//! The reactor ([`Engine`] / [`Progress`](crate::storage::Progress)) owns per-slot
 //! state machines under the hood (pending CON/RTO, BlockTransfer,
 //! ObserveInterest, Dedup, Exchange). This module is not a seventh memory
 //! area and does **not** own a global mutable shared bag.
@@ -30,8 +30,9 @@
 //! (`now_ms` into [`App::poll`]), and that domain state.
 //!
 //! ```
+//! use coaptic::storage::DatagramIo;
 //! use coaptic::{
-//!     App, ContentFormat, DatagramIo, Endpoint, Request, Response, get, profiles,
+//!     App, ContentFormat, Endpoint, Request, Response, get, profiles,
 //! };
 //!
 //! fn get_temp(_req: Request<'_>) -> Response {
@@ -57,8 +58,8 @@
 //! # }
 //! let mut app = App::profile::<profiles::Default>()
 //!     .block_wise(true)
-//!     .route(&["sensors", "temp"], get(get_temp))
-//!     .route(&["leds", "0"], get(get_led).put(put_led))
+//!     .route("sensors/temp", get(get_temp))
+//!     .route("leds/0", get(get_led).put(put_led))
 //!     .well_known_core()
 //!     .bind(NullIo)
 //!     .unwrap();
@@ -74,15 +75,15 @@
 //! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
 //! and incoming Q-Block1 assembly reuse Engine body helpers. Engine /
 //! [`DatagramIo`] remain the advanced path
-//! for [`Access`](crate::Access), custom RST / 4.xx, and BERT edges.
+//! for [`Access`](crate::storage::Access), custom RST / 4.xx, and BERT edges.
 //! Escape: [`App::engine_mut`].
 //!
 //! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
 //! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
-//! via the Exchange table. [`App::take_reply`] is a [`Reply`] (code /
-//! payload, and [`Reply::body`] when Block2 / Q-Block2 assembled). No
+//! via the Exchange table. [`App::take_response`] is a [`Response`] (code /
+//! payload, and [`Response::body`] when Block2 / Q-Block2 assembled). No
 //! `SlotId`. The caller owns the destination endpoint and must take
-//! replies. Tokens and Message IDs are App counters (no OS RNG).
+//! responses. Tokens and Message IDs are App counters (no OS RNG).
 //! Observe client stays Engine-only.
 mod client;
 mod request;
@@ -110,12 +111,11 @@ use crate::storage::{
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
-pub use client::{Call, Outgoing, REPLY_BODY, Reply};
-pub use request::{MAX_PATH_SEGMENTS, Request};
-pub use response::{INLINE_PAYLOAD, IntoResponse, Response};
+pub use client::{Call, Outgoing};
+pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
+pub use response::{INLINE_PAYLOAD, IntoResponse, RESPONSE_BODY, Response};
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
-    split_path,
 };
 pub use site::{DEFAULT_ROUTES, Site};
 
@@ -194,10 +194,12 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
         }
     }
 
-    /// Bind `methods` on Uri-Path `segments`.
+    /// Bind `methods` on Uri-Path `path`.
+    ///
+    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
     #[must_use]
-    pub fn route(mut self, segments: &[&'static str], methods: MethodRouter) -> Self {
-        self.site.route(segments, methods);
+    pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
+        self.site.route(path, methods);
         self
     }
 
@@ -259,9 +261,11 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
 }
 
 impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
-    /// Bind `methods` on Uri-Path `segments`.
-    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter) -> &mut Self {
-        self.site.route(segments, methods);
+    /// Bind `methods` on Uri-Path `path`.
+    ///
+    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
+    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
+        self.site.route(path, methods);
         self
     }
 
@@ -349,7 +353,7 @@ where
     /// client-OFF rows are dropped. When `progress` yields `observe_notify`
     /// and the route has an [`ObserveSource`], that snapshot is encoded
     /// (ordinary TX or first-block Block2). Caller-built notifications use
-    /// [`Self::notify`]. Custom RST / 4.xx, [`Access`](crate::Access), and
+    /// [`Self::notify`]. Custom RST / 4.xx, [`Access`](crate::storage::Access), and
     /// BERT edges stay on [`Engine`] ([`Self::engine_mut`]).
     ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
@@ -362,11 +366,11 @@ where
     /// body is wanted). CON is answered with a piggybacked ACK.
     ///
     /// Outbound: a response whose Token and peer match an outstanding
-    /// [`Call`] is copied into a [`Reply`] for [`Self::take_reply`]. A
+    /// [`Call`] is copied into a [`Response`] for [`Self::take_response`]. A
     /// piggybacked ACK releases the pending CON. A separate CON response
     /// is acknowledged with an empty ACK. Retransmit give-up drops the
-    /// Exchange (take_reply stays `None`). Block2 / Q-Block2 fragments
-    /// assemble in the RX body area; [`Reply::body`] is the complete
+    /// Exchange (`take_response` stays `None`). Block2 / Q-Block2 fragments
+    /// assemble in the RX body area; [`Response::body`] is the complete
     /// body. Classic Block2 Continue and Q-Block2 window Continue are
     /// sent from `poll` without exposing [`SlotId`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
@@ -725,7 +729,7 @@ where
                 let plan = ObservePlan::from_request(site, &request);
                 (site.dispatch(request), plan)
             }
-            Err(request::PathError::BadUtf8) => (
+            Err(request::PathError::BadUtf8 | request::PathError::EmptySegment) => (
                 Response::problem(Code::BAD_REQUEST).title("Bad Request"),
                 ObservePlan::idle(),
             ),

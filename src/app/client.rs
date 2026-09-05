@@ -1,13 +1,13 @@
-//! Outbound App request: encode TX, match Exchange, take a [`Reply`].
+//! Outbound App request: encode TX, match Exchange, take a [`Response`].
 //!
 //! ```text
 //! Outgoing --encode--> TX slot
 //! poll matches Token + endpoint (Exchange table)
-//! RX datagram --copy--> Reply
-//! Block2 / Q-Block2 --apply--> RX body --copy--> Reply::body()
+//! RX datagram --copy--> Response
+//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
 //! ```
 //!
-//! [`Call`] is Token plus peer — not a [`SlotId`](crate::SlotId). [`App::poll`](super::App::poll)
+//! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId). [`App::poll`](super::App::poll)
 //! advances this alongside site routing on the same Engine and socket.
 //! Classic Block2 Continue and Q-Block2 window Continue reuse the path
 //! recorded at [`Outgoing::send`]. Q-Block2 recover stays on `poll`.
@@ -15,23 +15,20 @@
 use crate::error::BlockTransferError;
 use crate::message::{
     BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage,
-    ProblemDetails, Token, Type,
+    Token, Type,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeKey,
     Exchanges, Missing, PendingCons, Present, SlotId, Storage,
 };
 
-use super::request::{MAX_PATH_SEGMENTS, Path, PathError};
-use super::response::INLINE_PAYLOAD;
+use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
+use super::response::{INLINE_PAYLOAD, Response};
 use super::{App, Error, Method};
-
-/// Complete assembled client body copied into [`Reply`] (shipped profile RX body).
-pub const REPLY_BODY: usize = 4096;
 
 /// Outstanding client exchange (Token + destination).
 ///
-/// Identity for [`App::take_reply`](super::App::take_reply). Not a slot.
+/// Identity for [`App::take_response`](super::App::take_response). Not a slot.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Call {
     token: Token,
@@ -56,113 +53,8 @@ impl Call {
     }
 }
 
-/// Matched client response. Code and payload; no [`SlotId`](crate::SlotId).
-///
-/// [`App::poll`](super::App::poll) copies the last RX datagram into
-/// [`Self::payload`] (truncated at [`INLINE_PAYLOAD`], same cap as
-/// [`Response`](super::Response)) and releases that datagram slot.
-/// When Block2 / Q-Block2 assembly completes, the RX body stays in the
-/// Engine until [`App::take_reply`](super::App::take_reply), which copies
-/// it into [`Self::body`] (truncated at [`REPLY_BODY`]).
-#[derive(Clone, Copy, Debug)]
-pub struct Reply {
-    code: Code,
-    ty: Type,
-    token: Token,
-    mid: MessageId,
-    peer: Endpoint,
-    payload: [u8; INLINE_PAYLOAD],
-    payload_len: u16,
-    content_format: Option<ContentFormat>,
-    body: [u8; REPLY_BODY],
-    body_len: u16,
-    has_body: bool,
-}
-
-impl Reply {
-    fn copy_body(&mut self, src: &[u8]) {
-        let n = src.len().min(REPLY_BODY);
-        self.body[..n].copy_from_slice(&src[..n]);
-        self.body_len = n as u16;
-        self.has_body = true;
-    }
-
-    /// Response code.
-    #[must_use]
-    pub const fn code(&self) -> Code {
-        self.code
-    }
-
-    /// CON / NON / ACK / RST on the matched datagram.
-    #[must_use]
-    pub const fn ty(&self) -> Type {
-        self.ty
-    }
-
-    /// Token (same as [`Call::token`]).
-    #[must_use]
-    pub const fn token(&self) -> Token {
-        self.token
-    }
-
-    /// Message ID of the matched datagram.
-    #[must_use]
-    pub const fn message_id(&self) -> MessageId {
-        self.mid
-    }
-
-    /// Remote endpoint that sent the response.
-    #[must_use]
-    pub const fn peer(&self) -> Endpoint {
-        self.peer
-    }
-
-    /// This datagram's payload (truncated at [`INLINE_PAYLOAD`]).
-    ///
-    /// For a Block2 / Q-Block2 fragment this is the last block, not the
-    /// assembled body. See [`Self::body`].
-    #[must_use]
-    pub fn payload(&self) -> &[u8] {
-        &self.payload[..usize::from(self.payload_len)]
-    }
-
-    /// Complete assembled response body, if Block2 / Q-Block2 filled an RX body area.
-    ///
-    /// `None` when the matched datagram was not a completed block-wise body.
-    /// Truncated at [`REPLY_BODY`] (Default / Constrained RX body bytes).
-    #[must_use]
-    pub fn body(&self) -> Option<&[u8]> {
-        if self.has_body {
-            Some(&self.body[..usize::from(self.body_len)])
-        } else {
-            None
-        }
-    }
-
-    /// Whether [`Self::body`] is present (including an empty complete body).
-    #[must_use]
-    pub const fn has_body(&self) -> bool {
-        self.has_body
-    }
-
-    /// Content-Format, if the response carried a well-formed option.
-    #[must_use]
-    pub const fn content_format(&self) -> Option<ContentFormat> {
-        self.content_format
-    }
-
-    /// RFC 9290 problem details when Content-Format is 257.
-    #[must_use]
-    pub fn problem_details(&self) -> Option<ProblemDetails<'_>> {
-        if self.content_format != Some(ContentFormat::PROBLEM_DETAILS) {
-            return None;
-        }
-        ProblemDetails::decode(self.payload()).ok()
-    }
-}
-
-/// How many completed [`Reply`] values [`App`](super::App) holds.
-pub(crate) const REPLY_INBOX: usize = 4;
+/// How many completed client [`Response`] values [`App`](super::App) holds.
+pub(crate) const RESPONSE_INBOX: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
 struct ReplyMeta {
@@ -194,20 +86,16 @@ impl ReplyMeta {
         }
     }
 
-    fn into_reply(self) -> Reply {
-        Reply {
-            code: self.code,
-            ty: self.ty,
-            token: self.token,
-            mid: self.mid,
-            peer: self.peer,
-            payload: self.payload,
-            payload_len: self.payload_len,
-            content_format: self.content_format,
-            body: [0u8; REPLY_BODY],
-            body_len: 0,
-            has_body: false,
-        }
+    fn into_response(self) -> Response {
+        Response::from_client(
+            self.code,
+            self.ty,
+            self.token,
+            self.mid,
+            self.peer,
+            &self.payload[..usize::from(self.payload_len)],
+            self.content_format,
+        )
     }
 }
 
@@ -221,14 +109,14 @@ struct InboxRow {
 /// Bounded completed-reply table (not a seventh memory area).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientInbox {
-    rows: [Option<InboxRow>; REPLY_INBOX],
+    rows: [Option<InboxRow>; RESPONSE_INBOX],
     evict: u8,
 }
 
 impl ClientInbox {
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; REPLY_INBOX],
+            rows: [None; RESPONSE_INBOX],
             evict: 0,
         }
     }
@@ -241,18 +129,18 @@ impl ClientInbox {
         let i = usize::from(self.evict);
         let evicted = self.rows[i].take().and_then(|row| row.body);
         self.rows[i] = Some(InboxRow { call, meta, body });
-        self.evict = u8::try_from((i + 1) % REPLY_INBOX).unwrap_or(0);
+        self.evict = u8::try_from((i + 1) % RESPONSE_INBOX).unwrap_or(0);
         evicted
     }
 
-    fn take(&mut self, call: Call) -> Option<(Reply, Option<SlotId>)> {
+    fn take(&mut self, call: Call) -> Option<(Response, Option<SlotId>)> {
         let i = self.rows.iter().position(|row| {
             row.as_ref()
                 .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
         })?;
         self.rows[i]
             .take()
-            .map(|row| (row.meta.into_reply(), row.body))
+            .map(|row| (row.meta.into_response(), row.body))
     }
 }
 
@@ -267,14 +155,14 @@ struct LiveCall {
 /// Path / type for an outstanding client request (Block2 Continue).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientLives {
-    rows: [Option<LiveCall>; REPLY_INBOX],
+    rows: [Option<LiveCall>; RESPONSE_INBOX],
     evict: u8,
 }
 
 impl ClientLives {
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; REPLY_INBOX],
+            rows: [None; RESPONSE_INBOX],
             evict: 0,
         }
     }
@@ -294,7 +182,7 @@ impl ClientLives {
         }
         let i = usize::from(self.evict);
         self.rows[i] = Some(live);
-        self.evict = u8::try_from((i + 1) % REPLY_INBOX).unwrap_or(0);
+        self.evict = u8::try_from((i + 1) % RESPONSE_INBOX).unwrap_or(0);
     }
 
     fn get(&self, call: Call) -> Option<LiveCall> {
@@ -320,7 +208,8 @@ impl ClientLives {
 /// [`.send`](Self::send). Default type is CON.
 ///
 /// ```
-/// # use coaptic::{App, DatagramIo, Endpoint, profiles};
+/// # use coaptic::storage::DatagramIo;
+/// # use coaptic::{App, Endpoint, profiles};
 /// # struct NullIo;
 /// # impl DatagramIo for NullIo {
 /// #     type Error = &'static str;
@@ -334,9 +223,9 @@ impl ClientLives {
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-/// let call = app.get(&["sensors", "temp"]).to(peer).send(0).unwrap();
+/// let call = app.get("sensors/temp").to(peer).send(0).unwrap();
 /// app.poll(0).unwrap();
-/// let _ = app.take_reply(call);
+/// let _ = app.take_response(call);
 /// ```
 pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing>
 where
@@ -360,56 +249,57 @@ where
     /// CON GET builder. Next: [`Outgoing::to`].
     ///
     /// Distinct from the site router [`get`](super::get).
+    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
     #[must_use]
-    pub fn get(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Delete, path)
     }
 
     /// CON FETCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::IPatch, path)
     }
 
     /// CON request builder for `method`. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn request(&mut self, method: Method, path: &[&'static str]) -> Outgoing<'_, P, T, N> {
+    pub fn request(&mut self, method: Method, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         Outgoing {
             app: self,
             code: method.code(),
             ty: Type::Confirmable,
             dest: None,
-            path: Path::from_segments(path),
+            path: path_from_into(path),
             payload: &[],
             content_format: None,
             q_block2: false,
@@ -424,20 +314,20 @@ where
     crate::storage::Memory<P>: crate::storage::BodySlots,
     crate::storage::Memory<P, crate::storage::WithBodies<P>>: crate::storage::BodySlots,
 {
-    /// Take the matched [`Reply`] for `call`, if [`App::poll`](Self::poll) has completed it.
+    /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll) has completed it.
     ///
     /// When Block2 / Q-Block2 assembled, copies the RX body into
-    /// [`Reply::body`] and releases that body slot.
-    pub fn take_reply(&mut self, call: Call) -> Option<Reply> {
-        let (mut reply, body) = self.inbox.take(call)?;
+    /// [`Response::body`] and releases that body slot.
+    pub fn take_response(&mut self, call: Call) -> Option<Response> {
+        let (mut response, body) = self.inbox.take(call)?;
         self.lives.remove(call);
         if let Some(id) = body {
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
-                reply.copy_body(bytes);
+                response.copy_body(bytes);
             }
             release_rx_body(&mut self.engine, id);
         }
-        Some(reply)
+        Some(response)
     }
 }
 
@@ -501,7 +391,7 @@ where
     /// Encode the request, record the Exchange, and send.
     ///
     /// `now_ms` starts CON RTO (caller clock; jitter is 0). Returns a [`Call`]
-    /// for [`App::take_reply`](App::take_reply). Tokens and Message IDs are
+    /// for [`App::take_response`](App::take_response). Tokens and Message IDs are
     /// App counters — this crate does not call an OS RNG.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         let dest = self.dest.expect("typestate: to() was called");

@@ -2,6 +2,8 @@
 
 A bounded `no_std` CoAP engine with an approachable `App` face. Slots and tables sit under the hood; there is no global App State.
 
+Crate-root types are the happy path (`App`, `Request`, `Response`, `Call`, `Outgoing`, method routers, `Endpoint`, `profiles`, `Code`, `ContentFormat`, `Method`, `ProblemDetails`, bind/poll/send errors). Engine slots, tables, and `DatagramIo` live in `storage`; codecs and tokens live in `message`.
+
 ## Sketch
 
 ```text
@@ -11,7 +13,7 @@ Response --encode--> TX slot (+ body)
 
 Outgoing (get/put) --encode--> TX slot
 poll matches Token + endpoint
-RX --copy--> Reply
+RX --copy--> Response
 ```
 
 ```rust
@@ -22,16 +24,16 @@ fn get_temp(_req: Request<'_>) -> Response {
 }
 
 let mut app = App::profile::<profiles::Default>()
-    .route(&["sensors", "temp"], get(get_temp))
+    .route("sensors/temp", get(get_temp))
     .bind(io)?;
 app.poll(now_ms)?;
 
-let call = app.get(&["sensors", "temp"]).to(peer).send(now_ms)?;
+let call = app.get("sensors/temp").to(peer).send(now_ms)?;
 app.poll(now_ms)?;
-let reply = app.take_reply(call);
+let response = app.take_response(call);
 ```
 
-Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release, and matches outbound exchanges. You own the socket, the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
+`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release, and matches outbound exchanges. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
 
 ## Features
 

@@ -1,8 +1,8 @@
 //! In-memory Engine-pair drivers for `TD_COAP_BLOCK_*` (classic Block, RFC 7959).
 
-use coaptic::{
-    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, SlotId, Token, Type,
-};
+use coaptic::message::{BlockValue, Message, MessageId, Opt, OptionsBuilder, Token, Type};
+use coaptic::storage::SlotId;
+use coaptic::{Code, ContentFormat};
 
 use crate::harness::{
     Pair, block_at, block_key, block_slice, code_continue, path_is, patterned_body,

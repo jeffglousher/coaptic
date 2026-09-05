@@ -2,6 +2,7 @@
 
 use super::BlockKey;
 use super::BlockRole;
+use super::BlockTransfer;
 use super::BodySlots;
 use super::BodyTag;
 #[cfg(feature = "alloc")]
@@ -37,7 +38,7 @@ use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK,
     ObserveTransmission, Opt, Token, Transmission, Type, empty_ack, empty_rst, encode,
-    encode_observe,
+    encode_observe, encode_uint,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -96,7 +97,7 @@ fn pool_suite<S: Storage>(engine: &mut Engine<S>, rx_slots: usize) {
         // Drain by walking possible ids.
         let n = engine.storage_mut().rx_datagram().slot_count();
         for i in 0..n {
-            let id = crate::SlotId::from_index(i);
+            let id = SlotId::from_index(i);
             let _ = engine.release_rx(id);
         }
     }
@@ -104,7 +105,7 @@ fn pool_suite<S: Storage>(engine: &mut Engine<S>, rx_slots: usize) {
     while engine.rx_occupied() > 0 {
         let n = engine.storage_mut().rx_datagram().slot_count();
         for i in 0..n {
-            let id = crate::SlotId::from_index(i);
+            let id = SlotId::from_index(i);
             let _ = engine.release_rx(id);
         }
     }
@@ -147,7 +148,7 @@ fn block_wise_false_has_no_body_pools() {
     assert!(engine.acquire_rx_body().is_none());
     assert!(engine.acquire_tx_body().is_none());
     assert_eq!(
-        engine.release_rx_body(crate::SlotId::from_index(0)),
+        engine.release_rx_body(SlotId::from_index(0)),
         Err(SlotError::InvalidSlot)
     );
 
@@ -452,7 +453,7 @@ fn progress_idle() {
     let mut engine = build_default();
     let outcome = engine.progress(0);
     assert!(outcome.is_idle());
-    assert_eq!(outcome, crate::Progress::idle());
+    assert_eq!(outcome, crate::storage::Progress::idle());
     assert_eq!(outcome.retransmit(), None);
     assert_eq!(outcome.rx_ready(), None);
     assert_eq!(outcome.observe_notify(), None);
@@ -2359,7 +2360,7 @@ fn block1_apply_from_rx_datagram() {
     let token = sample_token(&[0xab]);
     let payload = b"abcdef";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
-    let size1 = crate::encode_uint(payload.len() as u32);
+    let size1 = encode_uint(payload.len() as u32);
     let opts = [Opt::block1(&blk), Opt::size1(&size1)];
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(7))
         .with_token(token)
@@ -2501,7 +2502,7 @@ fn bert_apply_from_rx_and_encode_with_request_tag() {
         *b = (i % 199) as u8;
     }
     let blk = BlockValue::bert(0, false).expect("bert").encode();
-    let size1 = crate::encode_uint(payload.len() as u32);
+    let size1 = encode_uint(payload.len() as u32);
     let opts = [
         Opt::block1(&blk),
         Opt::size1(&size1),
@@ -2740,7 +2741,7 @@ fn block2_apply_from_rx_datagram() {
     let token = sample_token(&[0xcd]);
     let payload = b"abcdef";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
-    let size2 = crate::encode_uint(payload.len() as u32);
+    let size2 = encode_uint(payload.len() as u32);
     let opts = [Opt::block2(&blk), Opt::size2(&size2)];
     let msg = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(7))
         .with_token(token)
@@ -2874,7 +2875,7 @@ fn q_block1_duplicate_and_outside_window() {
         engine.apply_q_block1(key, first, &[0u8; 16], None),
         Err(BlockTransferError::Duplicate)
     );
-    let outside = BlockValue::from_size(u32::from(crate::BlockTransfer::MAX_PAYLOADS), true, 16)
+    let outside = BlockValue::from_size(u32::from(BlockTransfer::MAX_PAYLOADS), true, 16)
         .expect("next window");
     assert_eq!(
         engine.apply_q_block1(key, outside, &[0u8; 16], None),
@@ -2886,12 +2887,12 @@ fn q_block1_duplicate_and_outside_window() {
 fn q_block2_two_windows_complete() {
     let mut engine = build_default_bodies();
     let key = BlockKey::new(sample_token(&[0x31]), Endpoint::v4([192, 0, 2, 31], 5683));
-    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS) + 1;
+    let last = u32::from(BlockTransfer::MAX_PAYLOADS) + 1;
     let expected = (last as usize) * 16 + 8;
     let body: [u8; 184] = core::array::from_fn(|i| (i % 251) as u8);
     assert_eq!(body.len(), expected);
 
-    for n in 0..crate::BlockTransfer::MAX_PAYLOADS {
+    for n in 0..BlockTransfer::MAX_PAYLOADS {
         let off = usize::from(n) * 16;
         let block = BlockValue::from_size(u32::from(n), true, 16).expect("w0");
         engine
@@ -2901,10 +2902,7 @@ fn q_block2_two_windows_complete() {
     let t = engine
         .rx_body_transfer(engine.lookup_rx_body(key).expect("id"))
         .expect("sidecar");
-    assert_eq!(
-        t.window_base(),
-        u32::from(crate::BlockTransfer::MAX_PAYLOADS)
-    );
+    assert_eq!(t.window_base(), u32::from(BlockTransfer::MAX_PAYLOADS));
     assert_eq!(t.role(), BlockRole::IncomingQBlock2);
 
     let final_off = (last as usize) * 16;
@@ -2912,9 +2910,8 @@ fn q_block2_two_windows_complete() {
     engine
         .apply_q_block2(key, last_block, &body[final_off..], Some(expected as u32))
         .expect("final");
-    let mid =
-        BlockValue::from_size(u32::from(crate::BlockTransfer::MAX_PAYLOADS), true, 16).expect("10");
-    let mid_off = usize::from(crate::BlockTransfer::MAX_PAYLOADS) * 16;
+    let mid = BlockValue::from_size(u32::from(BlockTransfer::MAX_PAYLOADS), true, 16).expect("10");
+    let mid_off = usize::from(BlockTransfer::MAX_PAYLOADS) * 16;
     let done = engine
         .apply_q_block2(
             key,
@@ -2958,7 +2955,7 @@ fn q_block1_apply_from_rx_datagram() {
     let token = sample_token(&[0xb1]);
     let payload = b"q-block";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
-    let size1 = crate::encode_uint(payload.len() as u32);
+    let size1 = encode_uint(payload.len() as u32);
     let opts = [Opt::q_block1(&blk), Opt::size1(&size1)];
     let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(11))
         .with_token(token)
@@ -2987,7 +2984,7 @@ fn q_block2_apply_from_rx_datagram() {
     let token = sample_token(&[0xb2]);
     let payload = b"q2-body";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
-    let size2 = crate::encode_uint(payload.len() as u32);
+    let size2 = encode_uint(payload.len() as u32);
     let opts = [Opt::size2(&size2), Opt::q_block2(&blk)];
     let msg = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(12))
         .with_token(token)
@@ -3009,7 +3006,7 @@ fn q_block2_apply_from_rx_datagram() {
 fn q_block1_outgoing_full_window_advance_and_encode() {
     let mut engine = build_default_bodies();
     let key = block_key();
-    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS);
+    let last = u32::from(BlockTransfer::MAX_PAYLOADS);
     let body_len = (last as usize) * 16 + 8;
     let body: [u8; 168] = core::array::from_fn(|i| (i % 251) as u8);
     assert_eq!(body.len(), body_len);
@@ -3020,7 +3017,7 @@ fn q_block1_outgoing_full_window_advance_and_encode() {
     assert!(t.is_q_block());
     assert_eq!(engine.tx_body_payload(id), Some(body.as_slice()));
 
-    for n in 0..crate::BlockTransfer::MAX_PAYLOADS {
+    for n in 0..BlockTransfer::MAX_PAYLOADS {
         let issued = engine.next_q_block1(id).expect("window");
         assert_eq!(issued.block().num(), u32::from(n));
         assert!(issued.block().more());
@@ -3044,7 +3041,7 @@ fn q_block1_outgoing_full_window_advance_and_encode() {
     );
 
     engine
-        .ack_q_block1(id, u32::from(crate::BlockTransfer::MAX_PAYLOADS) - 1)
+        .ack_q_block1(id, u32::from(BlockTransfer::MAX_PAYLOADS) - 1)
         .expect("continue");
     let t = engine.tx_body_transfer(id).expect("advanced");
     assert_eq!(t.window_base(), last);
@@ -3076,7 +3073,7 @@ fn q_block1_outgoing_full_window_advance_and_encode() {
 fn q_block2_outgoing_window_advance_and_complete() {
     let mut engine = build_default_bodies();
     let key = BlockKey::new(sample_token(&[0x42]), Endpoint::v4([192, 0, 2, 42], 5683));
-    let last = u32::from(crate::BlockTransfer::MAX_PAYLOADS);
+    let last = u32::from(BlockTransfer::MAX_PAYLOADS);
     let body_len = (last as usize) * 16 + 8;
     let body: [u8; 168] = core::array::from_fn(|i| (i + 7) as u8);
 
@@ -3085,7 +3082,7 @@ fn q_block2_outgoing_window_advance_and_complete() {
         engine.tx_body_transfer(id).expect("role").role(),
         BlockRole::OutgoingQBlock2
     );
-    for _ in 0..crate::BlockTransfer::MAX_PAYLOADS {
+    for _ in 0..BlockTransfer::MAX_PAYLOADS {
         engine.next_q_block2(id).expect("window");
     }
     assert_eq!(
@@ -3284,8 +3281,9 @@ fn q_block2_outgoing_reissue_encodes_same_range() {
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
+    use crate::message::OptionsBuilder;
 
-    fn build_alloc(block_wise: bool) -> Engine<crate::AllocMemory> {
+    fn build_alloc(block_wise: bool) -> Engine<crate::storage::AllocMemory> {
         let caps = if block_wise {
             Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>()
         } else {
@@ -3398,15 +3396,11 @@ mod alloc_backend {
         let mut engine = build_alloc(false);
         let id = engine.acquire_tx().expect("tx");
         let cf = crate::ContentFormat::JSON.encode();
-        let mut opts = crate::OptionsBuilder::<2>::new();
-        opts.push(crate::Opt::uri_path("heap")).expect("path");
-        opts.push(crate::Opt::content_format(&cf)).expect("cf");
-        let msg = crate::Message::new(
-            crate::Type::Confirmable,
-            crate::Code::GET,
-            crate::MessageId::new(7),
-        )
-        .with_options(opts.as_slice());
+        let mut opts = OptionsBuilder::<2>::new();
+        opts.push(Opt::uri_path("heap")).expect("path");
+        opts.push(Opt::content_format(&cf)).expect("cf");
+        let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(7))
+            .with_options(opts.as_slice());
         engine.encode_tx(id, &msg).expect("encode");
         let parsed = engine.decode_tx(id).expect("decode");
         assert_eq!(parsed.uri_path().next(), Some(Ok("heap")));

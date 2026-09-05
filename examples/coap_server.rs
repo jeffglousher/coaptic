@@ -16,11 +16,12 @@
 use std::net::UdpSocket;
 use std::time::Instant;
 
-use coaptic::{
-    App, BlockValue, Code, ContentFormat, DatagramIo, EncodedUint, Endpoint, Ids, Message,
-    MessageId, Opt, OptionsBuilder, ParsedMessage, Request, Response, Token, Type, decode, encode,
-    get, profiles,
+use coaptic::message::{
+    BlockValue, EncodedUint, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
+    Type, decode, encode,
 };
+use coaptic::storage::DatagramIo;
+use coaptic::{App, Code, ContentFormat, Endpoint, Request, Response, get, profiles};
 
 fn get_temp(_req: Request<'_>) -> Response {
     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
@@ -57,9 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::profile::<profiles::Default>()
         .block_wise(true)
-        .route(&["sensors", "temp"], get(get_temp))
-        .route(&["leds", "0"], get(get_led).put(put_led))
-        .route(&["large"], get(get_large))
+        .route("sensors/temp", get(get_temp))
+        .route("leds/0", get(get_led).put(put_led))
+        .route("large", get(get_large))
         .well_known_core()
         .bind(socket)?;
 

@@ -12,7 +12,7 @@ use super::decode::ParsedMessage;
 /// Echo option value (opaque, 1..=40 bytes).
 ///
 /// Not a seventh core area. Outstanding-request copies live on
-/// [`crate::ExchangeEntry`]. See `knowledge/rfcs/rfc9175.txt`.
+/// [`crate::storage::ExchangeEntry`]. See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Echo {
     bytes: [u8; Self::MAX_LEN],
