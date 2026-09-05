@@ -170,32 +170,7 @@ impl<S: Storage> Engine<S> {
         }
     }
 
-    /// Occupancy acquire for the Dedup Table. Callers use `insert_dedup`.
-    pub(crate) fn acquire_dedup(&mut self) -> Option<SlotId> {
-        self.storage.dedup().acquire()
-    }
-
-    /// Occupancy release for the Dedup Table. Callers use `remove_dedup`.
-    pub(crate) fn release_dedup(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.storage.dedup().release(id)
-    }
-
-    /// Advance the Dedup Table rotating cursor.
-    pub(crate) fn rotate_dedup(&mut self) {
-        self.storage.dedup().rotate();
-    }
-
-    /// Occupancy acquire for the Observe table. Callers use `insert_observe`.
-    pub(crate) fn acquire_observe(&mut self) -> Option<SlotId> {
-        self.storage.observe().acquire()
-    }
-
-    /// Occupancy release for the Observe table. Callers use `remove_observe`.
-    pub(crate) fn release_observe(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.storage.observe().release(id)
-    }
-
-    /// Advance the Observe table rotating cursor.
+    /// Advance the Observe table rotating cursor. Used by progress fairness.
     pub(crate) fn rotate_observe(&mut self) {
         self.storage.observe().rotate();
     }

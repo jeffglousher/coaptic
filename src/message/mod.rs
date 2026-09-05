@@ -171,7 +171,7 @@ impl Token {
 
     /// Copy at most [`Self::MAX_LEN`] bytes. Does not allocate or panic.
     ///
-    /// [`decode`](crate::message::decode) uses this after the TKL nibble and
+    /// [`decode`] uses this after the TKL nibble and
     /// remaining-length checks. Prefer [`Self::new`] when the length is not
     /// already proven. Longer input is truncated to [`Self::MAX_LEN`].
     #[inline]
