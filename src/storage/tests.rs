@@ -34,8 +34,8 @@ use super::WithBodies;
 use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
-    BlockValue, Code, Message, MessageId, OBSERVE_SEQUENCE_MASK, Opt, Token, Transmission, Type,
-    empty_ack, empty_rst, encode, encode_observe,
+    BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK, Opt, Token,
+    Transmission, Type, empty_ack, empty_rst, encode, encode_observe,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -1258,8 +1258,8 @@ fn sample_token(bytes: &[u8]) -> Token {
     Token::new(bytes).expect("token")
 }
 
-fn encode_into(msg: &Message<'_>) -> ([u8; 32], usize) {
-    let mut buf = [0u8; 32];
+fn encode_into(msg: &Message<'_>) -> ([u8; 128], usize) {
+    let mut buf = [0u8; 128];
     let n = encode(msg, &mut buf).expect("encode");
     (buf, n)
 }
@@ -1529,6 +1529,145 @@ fn engine_exchange_fills_to_tx_capacity() {
         engine
             .lookup_exchange(ExchangeKey::new(sample_token(&[1]), ep))
             .is_some()
+    );
+}
+
+#[test]
+fn engine_echo_challenge_on_401_then_retry_same_endpoint() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 9], 5683);
+    let other = Endpoint::v4([203, 0, 113, 10], 5683);
+    let mid = MessageId::new(0x41);
+    let tok = sample_token(&[0x41]);
+    let challenge = Echo::mint(9, b"Chulhu!").expect("mint");
+
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::PUT, mid).with_token(tok),
+        )
+        .expect("encode");
+    let recorded = engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+    assert_eq!(recorded.echo(), None);
+    assert_eq!(recorded.challenge(), None);
+
+    let unauthorized_opts = [Opt::echo(challenge.as_slice())];
+    let unauthorized = Message::new(Type::Acknowledgement, Code::UNAUTHORIZED, mid)
+        .with_token(tok)
+        .with_options(&unauthorized_opts);
+    let (buf, n) = encode_into(&unauthorized);
+    let parsed = crate::message::decode(&buf[..n]).expect("4.01");
+    assert_eq!(parsed.code(), Code::UNAUTHORIZED);
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo(&parsed),
+        Ok(Some(challenge))
+    );
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 10, 5),
+        EchoFreshness::Fresh
+    );
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 15, 5),
+        EchoFreshness::Stale
+    );
+
+    let matched = engine.match_response(&parsed, ep).expect("hit");
+    assert_eq!(matched.token(), tok);
+    assert_eq!(matched.endpoint(), ep);
+    assert_eq!(matched.echo(), None);
+    assert_eq!(matched.challenge(), Some(challenge));
+    assert_eq!(matched.challenge_for(ep), Some(challenge));
+    assert_eq!(matched.challenge_for(other), None);
+    assert_eq!(engine.lookup_exchange(ExchangeKey::new(tok, ep)), None);
+
+    let retry_mid = MessageId::new(0x42);
+    let retry_tok = sample_token(&[0x42]);
+    let retry_echo = matched.challenge_for(ep).expect("bound");
+    let retry_opts = [Opt::echo(retry_echo.as_slice())];
+    let retry = Message::new(Type::Confirmable, Code::PUT, retry_mid)
+        .with_token(retry_tok)
+        .with_options(&retry_opts);
+    let tx2 = engine.acquire_tx().expect("tx2");
+    engine.encode_tx(tx2, &retry).expect("encode retry");
+    let recorded = engine
+        .record_request(tx2, ep)
+        .expect("record retry")
+        .expect("request");
+    assert_eq!(recorded.echo(), Some(challenge));
+    assert_eq!(recorded.endpoint(), ep);
+
+    let ok = Message::new(Type::Acknowledgement, Code::CHANGED, retry_mid).with_token(retry_tok);
+    let (buf, n) = encode_into(&ok);
+    let parsed = crate::message::decode(&buf[..n]).expect("2.04");
+    let done = engine.match_response(&parsed, ep).expect("done");
+    assert_eq!(done.echo(), Some(challenge));
+    assert_eq!(done.challenge(), None);
+}
+
+#[test]
+fn engine_echo_wrong_endpoint_does_not_surface_challenge() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 10], 5683);
+    let other = Endpoint::v4([192, 0, 2, 11], 5683);
+    let mid = MessageId::new(7);
+    let tok = sample_token(&[0x09]);
+    let echo = Echo::new(b"r").expect("echo");
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_tx(
+            tx,
+            &Message::new(Type::Confirmable, Code::GET, mid).with_token(tok),
+        )
+        .expect("encode");
+    engine
+        .record_request(tx, ep)
+        .expect("record")
+        .expect("request");
+
+    let resp_opts = [Opt::echo(echo.as_slice())];
+    let resp = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(8))
+        .with_token(tok)
+        .with_options(&resp_opts);
+    let (buf, n) = encode_into(&resp);
+    let parsed = crate::message::decode(&buf[..n]).expect("resp");
+    assert_eq!(engine.match_response(&parsed, other), None);
+    assert!(engine.lookup_exchange(ExchangeKey::new(tok, ep)).is_some());
+    let matched = engine.match_response(&parsed, ep).expect("hit");
+    assert_eq!(matched.challenge(), Some(echo));
+}
+
+#[test]
+fn engine_echo_freshness_missing_and_event_equality() {
+    let mid = MessageId::new(1);
+    let bare = Message::new(Type::Confirmable, Code::PUT, mid);
+    let (buf, n) = encode_into(&bare);
+    let parsed = crate::message::decode(&buf[..n]).expect("bare");
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 10, 5),
+        EchoFreshness::Missing
+    );
+    assert_eq!(Engine::<Memory<profiles::Default>>::echo(&parsed), Ok(None));
+
+    let event = Echo::new(&[0x05]).expect("e0");
+    let event_opts = [Opt::echo(event.as_slice())];
+    let msg = Message::new(Type::Confirmable, Code::PUT, mid).with_options(&event_opts);
+    let (buf, n) = encode_into(&msg);
+    let parsed = crate::message::decode(&buf[..n]).expect("event");
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo(&parsed),
+        Ok(Some(event))
+    );
+    assert_ne!(
+        Engine::<Memory<profiles::Default>>::echo(&parsed).expect("ok"),
+        Some(Echo::new(&[0x06]).expect("e1"))
+    );
+    assert_eq!(
+        Engine::<Memory<profiles::Default>>::echo_freshness(&parsed, 10, 5),
+        EchoFreshness::Stale
     );
 }
 

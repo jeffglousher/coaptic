@@ -7,8 +7,9 @@
 //! These codecs operate on option *value* bytes after
 //! [`crate::message::decode`] / before [`crate::message::encode`]. They do
 //! not parse option headers. Wire format lives in
-//! `knowledge/rfcs/rfc7252.txt`, `knowledge/rfcs/rfc7959.txt`, and
-//! `knowledge/rfcs/rfc9177.txt`. This module does not restate it.
+//! `knowledge/rfcs/rfc7252.txt`, `knowledge/rfcs/rfc7959.txt`,
+//! `knowledge/rfcs/rfc9175.txt`, and `knowledge/rfcs/rfc9177.txt`. This
+//! module does not restate it.
 
 use core::fmt;
 
@@ -525,6 +526,14 @@ impl<'a> Opt<'a> {
         Self::opaque(OptionNumber::REQUEST_TAG, tag)
     }
 
+    /// Echo (opaque, 1..=40). RFC 9175; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub const fn echo(value: &'a [u8]) -> Self {
+        Self::opaque(OptionNumber::ECHO, value)
+    }
+
     /// If-None-Match (empty).
     #[must_use]
     pub const fn if_none_match() -> Self {
@@ -940,6 +949,14 @@ impl<'a> ParsedMessage<'a> {
         }
     }
 
+    /// Echo value, if present. RFC 9175; not repeatable.
+    ///
+    /// See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub fn echo(self) -> Option<&'a [u8]> {
+        self.get_option(OptionNumber::ECHO).map(Opt::value)
+    }
+
     /// First known RFC 7252 option whose value has the wrong format.
     #[must_use]
     pub fn bad_option_format(self) -> Option<OptionNumber> {
@@ -1081,6 +1098,11 @@ mod unit_tests {
         assert!(!OptionNumber::REQUEST_TAG.is_rfc7252());
         assert!(!OptionNumber::REQUEST_TAG.is_critical());
         assert!(!OptionNumber::REQUEST_TAG.is_unsafe());
+        assert!(!OptionNumber::ECHO.is_rfc7252());
+        assert!(!OptionNumber::ECHO.is_critical());
+        assert!(!OptionNumber::ECHO.is_unsafe());
+        assert!(OptionNumber::ECHO.is_no_cache_key());
+        assert_eq!(option_value_format(OptionNumber::ECHO), None);
     }
 
     #[test]

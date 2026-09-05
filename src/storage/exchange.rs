@@ -2,8 +2,10 @@
 //!
 //! RFC 7252 §5.3 matches a response to a request by Token plus the remote
 //! endpoint. This is not the Dedup Table (Message ID + Endpoint) and not
-//! pending-CON confirm (Message ID + Endpoint on a TX slot). See
-//! `knowledge/rfcs/rfc7252.txt` §5.3 and `design.md`.
+//! pending-CON confirm (Message ID + Endpoint on a TX slot). Echo (RFC 9175)
+//! sent on the request and a response challenge are sidecar on
+//! [`ExchangeEntry`]. See `knowledge/rfcs/rfc7252.txt` §5.3,
+//! `knowledge/rfcs/rfc9175.txt`, and `design.md`.
 //!
 //! Capacity is the TX Datagram Pool count. Occupancy is independent of TX
 //! slot occupancy so a separate response or NON reply can complete after the
@@ -13,7 +15,7 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::{MessageId, ParsedMessage, Token, Type};
+use crate::message::{Echo, MessageId, ParsedMessage, Token, Type};
 
 /// Lookup identity for one outstanding request.
 ///
@@ -50,11 +52,17 @@ impl ExchangeKey {
 /// [`Self::message_id`] is the request Message ID (piggybacked ACK matching).
 /// [`Self::tx_slot`] is the TX datagram that held the request at insert;
 /// the caller releases it. The table does not own that slot.
+/// [`Self::echo`] is the Echo sent with the request, if any.
+/// [`Self::challenge`] is the Echo on a matched response (RFC 9175 freshness).
+/// Not a seventh core area; sidecar on this row. See
+/// `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ExchangeEntry {
     key: ExchangeKey,
     message_id: MessageId,
     tx_slot: SlotId,
+    echo: Option<Echo>,
+    challenge: Option<Echo>,
 }
 
 impl ExchangeEntry {
@@ -70,6 +78,26 @@ impl ExchangeEntry {
             key: ExchangeKey::new(token, endpoint),
             message_id,
             tx_slot,
+            echo: None,
+            challenge: None,
+        }
+    }
+
+    /// Same entry with the Echo sent on the request.
+    #[must_use]
+    pub const fn with_echo(self, echo: Echo) -> Self {
+        Self {
+            echo: Some(echo),
+            ..self
+        }
+    }
+
+    /// Same entry with the Echo challenge from a matched response.
+    #[must_use]
+    pub const fn with_challenge(self, challenge: Echo) -> Self {
+        Self {
+            challenge: Some(challenge),
+            ..self
         }
     }
 
@@ -101,6 +129,31 @@ impl ExchangeEntry {
     #[must_use]
     pub const fn tx_slot(self) -> SlotId {
         self.tx_slot
+    }
+
+    /// Echo sent with the outstanding request, if any.
+    #[must_use]
+    pub const fn echo(self) -> Option<Echo> {
+        self.echo
+    }
+
+    /// Echo on the matched response (freshness challenge), if any.
+    ///
+    /// Bound to [`Self::endpoint`]. The client echoes it only to that
+    /// endpoint. See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub const fn challenge(self) -> Option<Echo> {
+        self.challenge
+    }
+
+    /// [`Self::challenge`] when `endpoint` is this row's remote, else `None`.
+    #[must_use]
+    pub fn challenge_for(self, endpoint: Endpoint) -> Option<Echo> {
+        if self.endpoint() == endpoint {
+            self.challenge
+        } else {
+            None
+        }
     }
 
     /// Whether `parsed` is a matching response for this entry (token already

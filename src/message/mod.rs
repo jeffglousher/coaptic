@@ -22,7 +22,7 @@
 //! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
 //! Table 4. Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2
 //! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX (SZX 7 is BERT).
-//! Request-Tag (RFC 9175) is opaque. None of those numbers are in Table 4.
+//! Request-Tag and Echo (RFC 9175) are opaque. None of those numbers are in Table 4.
 //! [`ParsedMessage::check_rfc7252_formats`] is
 //! optional and separate from wire decode and from
 //! [`ParsedMessage::check_rfc7252_options`].
@@ -32,6 +32,7 @@
 
 mod builder;
 mod decode;
+mod echo;
 mod encode;
 mod id;
 mod option;
@@ -42,6 +43,7 @@ mod tests;
 
 pub use builder::OptionsBuilder;
 pub use decode::{ParsedMessage, decode};
+pub use echo::{Echo, EchoFreshness};
 pub use encode::{Message, encode};
 pub use id::{Ids, TokenSource};
 pub use option::{Opt, OptionNumber, Options};

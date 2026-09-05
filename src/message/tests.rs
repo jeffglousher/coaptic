@@ -683,6 +683,41 @@ fn request_tag_is_opaque_and_not_rfc7252() {
 }
 
 #[test]
+fn echo_is_opaque_and_not_rfc7252() {
+    let opts = [Opt::echo(b"fresh")];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert_eq!(parsed.echo(), Some(&b"fresh"[..]));
+    assert!(!OptionNumber::ECHO.is_rfc7252());
+    assert!(!OptionNumber::ECHO.is_critical());
+    assert!(OptionNumber::ECHO.is_no_cache_key());
+    parsed.check_rfc7252_options().expect("elective Echo");
+    parsed.check_rfc7252_formats().expect("not Table 4");
+
+    let empty = [Opt::echo(b"")];
+    let (n, buf) = parse_opts(&empty);
+    let parsed = decode(&buf[..n]).expect("wire decode");
+    assert_eq!(parsed.echo(), Some(&b""[..]));
+    assert_eq!(
+        crate::message::Echo::from_message(&parsed),
+        Err(ValueError::EchoLength)
+    );
+
+    let long = [0u8; 40];
+    let opts = [Opt::echo(&long)];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("40");
+    assert_eq!(parsed.echo(), Some(&long[..]));
+    assert_eq!(
+        crate::message::Echo::from_message(&parsed)
+            .expect("ok")
+            .expect("present")
+            .as_slice(),
+        &long
+    );
+}
+
+#[test]
 fn string_helpers_host_query_location_proxy() {
     let opts = [
         Opt::uri_host("example.com"),
