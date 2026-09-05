@@ -2,6 +2,7 @@
 
 ## 2026-09-05
 
+* **Update**: Temporary application [`Access`](../src/storage/access.rs) / `AccessMut` to occupied RX/TX datagram and body bytes. Pin bit on the occupancy word: `release` of that id is [`SlotError::Pinned`] until `Drop` unpins. Rotate is cursor-only and does not evict, so it is not blocked. Exclusive: a second pin of the same slot is `Pinned`. No alloc, no unsafe. Engine: `access_rx` / `access_tx` / `access_tx_mut` / `access_rx_body` / `access_tx_body_mut`. Not progress loop, Observe notify, or Q-Block missing-block recovery. No `design.md` change.
 * **Update**: Message ID sequence (`Ids`: wrapping `u16` counter) and Token mint (`Token::mint` / `Token::mint_from` + `TokenSource`). Caller-owned, `Copy` / `no_std`. Core does not call an OS RNG (same posture as `Transmission` jitter). CON/NON request skeletons (`Message::con` / `Message::non`, `Ids::request`) take the next MID + token with no `Engine`. Token length remains 0..=8. No crate-root re-export of `Ids` / `TokenSource`. No Access, progress, Observe notify, or Q-Block recover. No `design.md` change.
 
 ## 2026-09-04

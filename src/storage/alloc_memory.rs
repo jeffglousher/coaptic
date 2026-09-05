@@ -4,6 +4,8 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::Access;
+use super::AccessMut;
 use super::BodySlots;
 use super::DatagramSlots;
 use super::DedupEntry;
@@ -283,6 +285,23 @@ impl AllocDatagramPool {
             }
         })
     }
+
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let slot = self.slots.get(idx).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &slot.buf[..slot.len];
+        Ok(Access::new(id, bytes, pin))
+    }
+
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let slot = self.slots.get_mut(idx).ok_or(SlotError::InvalidSlot)?;
+        Ok(AccessMut::new(id, slot.buf.as_mut(), &mut slot.len, pin))
+    }
 }
 
 impl SlotPool for AllocDatagramPool {
@@ -312,6 +331,10 @@ impl SlotPool for AllocDatagramPool {
 
     fn is_occupied(&self, id: SlotId) -> bool {
         self.occ.is_occupied(id)
+    }
+
+    fn is_pinned(&self, id: SlotId) -> bool {
+        self.occ.is_pinned(id)
     }
 
     fn cursor(&self) -> usize {
@@ -374,6 +397,18 @@ impl DatagramSlots for AllocMemory {
 
     fn lookup_tx_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
         self.tx.lookup_pending(message_id, endpoint)
+    }
+
+    fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.rx.access(id)
+    }
+
+    fn access_tx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.tx.access(id)
+    }
+
+    fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.tx.access_mut(id)
     }
 }
 
@@ -737,6 +772,20 @@ impl BodySlots for AllocMemory {
             .ok_or(BlockTransferError::NoBodyPools)?
             .ack_outgoing(id, BlockRole::OutgoingQBlock2, num)
     }
+
+    fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .access(id)
+    }
+
+    fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .access_mut(id)
+    }
 }
 
 impl ObserveSlots for AllocMemory {
@@ -803,6 +852,23 @@ impl AllocBodyPool {
         }
         let slot = self.slots.get(id.index())?;
         Some(&slot.buf[..slot.len])
+    }
+
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let slot = self.slots.get(idx).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &slot.buf[..slot.len];
+        Ok(Access::new(id, bytes, pin))
+    }
+
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let slot = self.slots.get_mut(idx).ok_or(SlotError::InvalidSlot)?;
+        Ok(AccessMut::new(id, slot.buf.as_mut(), &mut slot.len, pin))
     }
 
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
@@ -1072,6 +1138,14 @@ impl BodyOps for AllocBodyPool {
     ) -> Result<BlockProgress, BlockTransferError> {
         AllocBodyPool::ack_outgoing(self, id, role, num)
     }
+
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        AllocBodyPool::access(self, id)
+    }
+
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        AllocBodyPool::access_mut(self, id)
+    }
 }
 
 impl SlotPool for AllocBodyPool {
@@ -1101,6 +1175,10 @@ impl SlotPool for AllocBodyPool {
 
     fn is_occupied(&self, id: SlotId) -> bool {
         self.occ.is_occupied(id)
+    }
+
+    fn is_pinned(&self, id: SlotId) -> bool {
+        self.occ.is_pinned(id)
     }
 
     fn cursor(&self) -> usize {

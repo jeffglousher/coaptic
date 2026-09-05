@@ -96,6 +96,7 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `ObserveTable` | Observe interest table |
 | `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint) |
 | `SlotId` | Slot identifier |
+| `Access` / `AccessMut` | Temporary application borrow of occupied datagram or body bytes; pin bit refuses `release` until drop |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
@@ -108,3 +109,7 @@ Named here; implement later.
 - release-and-reuse
 - rotating cursor does not restart at zero
 - alloc and no-alloc backends pass the same pool tests
+- access pins against release
+- access drop unpins
+- double access is exclusive
+- access requires occupied

@@ -1,5 +1,7 @@
 //! `no_std` [`Memory`] backend: typed arrays sized by [`MemoryProfile`].
 
+use super::Access;
+use super::AccessMut;
 use super::BodySlots;
 use super::DatagramSlots;
 use super::DedupEntry;
@@ -365,6 +367,18 @@ where
     fn lookup_tx_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
         DatagramBytes::lookup_pending(&self.tx, message_id, endpoint)
     }
+
+    fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        DatagramBytes::access(&mut self.rx, id)
+    }
+
+    fn access_tx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        DatagramBytes::access(&mut self.tx, id)
+    }
+
+    fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        DatagramBytes::access_mut(&mut self.tx, id)
+    }
 }
 
 impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
@@ -705,6 +719,14 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
     ) -> Result<BlockProgress, BlockTransferError> {
         Err(BlockTransferError::NoBodyPools)
     }
+
+    fn access_rx_body(&mut self, _id: SlotId) -> Result<Access<'_>, SlotError> {
+        Err(SlotError::InvalidSlot)
+    }
+
+    fn access_tx_body_mut(&mut self, _id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        Err(SlotError::InvalidSlot)
+    }
 }
 
 impl<P: MemoryProfile> BodySlots for Memory<P, WithBodies<P>>
@@ -946,6 +968,14 @@ where
         self.bodies
             .tx
             .ack_outgoing(id, BlockRole::OutgoingQBlock2, num)
+    }
+
+    fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.bodies.rx.access(id)
+    }
+
+    fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.bodies.tx.access_mut(id)
     }
 }
 

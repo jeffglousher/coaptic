@@ -17,9 +17,13 @@
 //! Block1/Block2, outgoing Block1/Block2). Incoming and outgoing
 //! Q-Block1 / Q-Block2 reuse the same slots with a `MAX_PAYLOADS` window.
 //! They do not invent 4.02 / 2.31 / RST policy.
+//! Temporary application [`Access`] / [`AccessMut`] pins an occupied
+//! datagram or body slot against [`SlotPool::release`] (`design.md`
+//! §Application memory access).
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
+mod access;
 mod block;
 mod builder;
 mod capacities;
@@ -40,6 +44,7 @@ mod alloc_memory;
 #[cfg(test)]
 mod tests;
 
+pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
 pub use block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock};
@@ -77,6 +82,15 @@ pub trait SlotPool {
 
     /// Whether `id` names an occupied slot in this pool.
     fn is_occupied(&self, id: SlotId) -> bool;
+
+    /// Whether application access pins `id` against [`Self::release`].
+    ///
+    /// Default is false. Datagram and body pools override this. Rotate does
+    /// not evict and is not blocked by a pin.
+    fn is_pinned(&self, id: SlotId) -> bool {
+        let _ = id;
+        false
+    }
 
     /// Index where the next acquire search starts.
     fn cursor(&self) -> usize;
@@ -166,6 +180,15 @@ pub trait DatagramSlots {
         message_id: crate::message::MessageId,
         endpoint: Endpoint,
     ) -> Option<SlotId>;
+
+    /// Read access to an occupied RX datagram. Pins `id` until dropped.
+    fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+
+    /// Read access to an occupied TX datagram. Pins `id` until dropped.
+    fn access_tx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+
+    /// Write access to an occupied TX datagram buffer. Pins `id` until dropped.
+    fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 
 /// Typed Dedup Table access.
@@ -414,4 +437,10 @@ pub trait BodySlots {
         id: SlotId,
         num: u32,
     ) -> Result<BlockProgress, crate::error::BlockTransferError>;
+
+    /// Read access to an occupied incoming body. Pins `id` until dropped.
+    fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+
+    /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.
+    fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }

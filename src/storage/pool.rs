@@ -1,5 +1,7 @@
 //! [`DatagramPool`] and [`BodyPool`]: byte buffers, occupancy, rotating cursor.
 
+use super::Access;
+use super::AccessMut;
 use super::SlotPool;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, accept_incoming_role,
@@ -199,6 +201,37 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
         Ok(())
     }
 
+    /// Read access to the filled payload. Pins `id` until the guard is dropped.
+    pub fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &self.bytes[idx][..self.lens[idx]];
+        Ok(Access::new(id, bytes, pin))
+    }
+
+    /// Write access to the full slot buffer. Pins `id` until the guard is dropped.
+    pub fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &mut self.bytes[idx];
+        let len = &mut self.lens[idx];
+        Ok(AccessMut::new(id, bytes, len, pin))
+    }
+
+    /// Set the same pin bit [`Self::access`] holds. For tests of release-while-pinned.
+    #[cfg(test)]
+    pub(crate) fn pin(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.try_pin(id)
+    }
+
+    /// Clear a test pin set by [`Self::pin`].
+    #[cfg(test)]
+    pub(crate) fn unpin(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.unpin(id)
+    }
+
     /// Occupied slot whose pending MID and sidecar endpoint match, if any.
     ///
     /// Scans the configured slot count (O(n)).
@@ -257,6 +290,10 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
         self.occ.is_occupied(id)
     }
 
+    fn is_pinned(&self, id: SlotId) -> bool {
+        self.occ.is_pinned(id)
+    }
+
     fn cursor(&self) -> usize {
         self.occ.cursor()
     }
@@ -280,6 +317,8 @@ pub(crate) trait DatagramBytes {
     ) -> Result<(), SlotError>;
     fn clear_pending_mid(&mut self, id: SlotId) -> Result<(), SlotError>;
     fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId>;
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
@@ -330,6 +369,14 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 
     fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
         DatagramPool::lookup_pending(self, message_id, endpoint)
+    }
+
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        DatagramPool::access(self, id)
+    }
+
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        DatagramPool::access_mut(self, id)
     }
 }
 
@@ -406,6 +453,37 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
             return None;
         }
         self.transfers.get(id.index()).copied().flatten()
+    }
+
+    /// Read access to the filled body. Pins `id` until the guard is dropped.
+    pub fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &self.bytes[idx][..self.lens[idx]];
+        Ok(Access::new(id, bytes, pin))
+    }
+
+    /// Write access to the full body buffer. Pins `id` until the guard is dropped.
+    pub fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        self.occ.try_pin(id)?;
+        let idx = id.index();
+        let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
+        let bytes = &mut self.bytes[idx];
+        let len = &mut self.lens[idx];
+        Ok(AccessMut::new(id, bytes, len, pin))
+    }
+
+    /// Set the same pin bit [`Self::access`] holds. For tests of release-while-pinned.
+    #[cfg(test)]
+    pub(crate) fn pin(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.try_pin(id)
+    }
+
+    /// Clear a test pin set by [`Self::pin`].
+    #[cfg(test)]
+    pub(crate) fn unpin(&mut self, id: SlotId) -> Result<(), SlotError> {
+        self.occ.unpin(id)
     }
 
     /// Occupied slot whose sidecar matches `key`, if any. O(n) in slot count.
@@ -693,6 +771,14 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
     ) -> Result<BlockProgress, BlockTransferError> {
         BodyPool::ack_outgoing(self, id, role, num)
     }
+
+    fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+        BodyPool::access(self, id)
+    }
+
+    fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+        BodyPool::access_mut(self, id)
+    }
 }
 
 impl<const SLOTS: usize, const BYTES: usize> SlotPool for BodyPool<SLOTS, BYTES> {
@@ -722,6 +808,10 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for BodyPool<SLOTS, BYTES>
 
     fn is_occupied(&self, id: SlotId) -> bool {
         self.occ.is_occupied(id)
+    }
+
+    fn is_pinned(&self, id: SlotId) -> bool {
+        self.occ.is_pinned(id)
     }
 
     fn cursor(&self) -> usize {
