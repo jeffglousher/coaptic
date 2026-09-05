@@ -30,8 +30,10 @@ use crate::message::{
 /// Protocol engine, generic over [`Storage`].
 ///
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
-/// Q-Block body-slot assembly when `S` implements [`BodySlots`]. BERT,
-/// Observe notify, and missing-block recovery are not implemented.
+/// Q-Block body-slot assembly when `S` implements [`BodySlots`].
+/// [`Self::progress`] is one bounded pass (`design.md` §Reference progress
+/// contract). BERT, Observe notify, and missing-block recovery are not
+/// implemented.
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -42,6 +44,8 @@ use crate::message::{
 /// When `S` implements [`PendingCons`], outgoing CON slots are marked
 /// pending on the TX datagram sidecar (RTO included) and matched against
 /// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
+/// [`Self::progress`] polls that once and takes one rotating unpinned RX
+/// step per call.
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;

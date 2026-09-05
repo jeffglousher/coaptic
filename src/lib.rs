@@ -50,7 +50,9 @@
 //! without [`Engine`]. Pending
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
 //! seventh area and not the Dedup Table. [`Engine::poll_retransmit`] walks
-//! due pending TX slots using a caller-supplied clock. Outstanding request matching
+//! due pending TX slots using a caller-supplied clock. [`Engine::progress`]
+//! is one bounded pass of that poll plus one rotating unpinned RX step
+//! (`design.md` §Reference progress contract). Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
 //! [`ObserveInterest`] rows. Classic incoming Block1 / Block2, incoming
@@ -136,6 +138,6 @@ pub use storage::{
     Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable,
     Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory,
     MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable,
-    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Retransmit, SlotError, SlotId,
-    SlotPool, Storage, WithBodies,
+    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Progress, Retransmit, SlotError,
+    SlotId, SlotPool, Storage, WithBodies,
 };

@@ -8,6 +8,8 @@
 //! when RX bytes are written. Pending CON state is sidecar on TX slots
 //! ([`PendingCon`] / [`PendingRto`]); empty ACK/RST matching is not the
 //! Dedup Table. [`Engine::poll_retransmit`] walks due TX slots.
+//! [`Engine::progress`] is one bounded pass of that poll plus one rotating
+//! unpinned RX step.
 //! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
@@ -19,7 +21,10 @@
 //! They do not invent 4.02 / 2.31 / RST policy.
 //! Temporary application [`Access`] / [`AccessMut`] pins an occupied
 //! datagram or body slot against [`SlotPool::release`] (`design.md`
-//! §Application memory access).
+//! §Application memory access). [`Engine::progress`] is one bounded
+//! pass: pending CON retransmit poll plus one rotating unpinned RX
+//! step (`design.md` §Reference progress contract). Observe notify
+//! and Q-Block missing-block recovery are later PRs.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -35,6 +40,7 @@ mod occupancy;
 mod pending;
 mod pool;
 pub mod profiles;
+mod progress;
 mod slot;
 mod table;
 
@@ -56,6 +62,7 @@ pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
 pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};
+pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
 pub use table::{DedupEntry, DedupKey, DedupTable, ObserveInterest, ObserveKey, ObserveTable};
 

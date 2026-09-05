@@ -97,6 +97,7 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint) |
 | `SlotId` | Slot identifier |
 | `Access` / `AccessMut` | Temporary application borrow of occupied datagram or body bytes; pin bit refuses `release` until drop |
+| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX; Observe / Q-Block recover later) |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
@@ -113,3 +114,7 @@ Named here; implement later.
 - access drop unpins
 - double access is exclusive
 - access requires occupied
+- progress idle
+- progress retransmit due
+- progress does not release pinned RX
+- progress rotating RX fairness
