@@ -34,13 +34,14 @@
 //! A datagram slot holds CoAP bytes (UDP payload), not Ethernet. [`Endpoint`]
 //! is sidecar metadata. Not seventh areas: Dedup ([`DedupEntry`]), pending CON
 //! and RTO ([`PendingCon`] / [`PendingRto`]), token matching ([`ExchangeEntry`]),
-//! Observe interest ([`ObserveInterest`]), Block/Q-Block ([`BlockTransfer`]).
+//! Observe interest ([`ObserveInterest`] / [`ObserveLifetime`]), Block/Q-Block ([`BlockTransfer`]).
 //! Incoming Q-Block holes surface as [`QBlockRecover`].
 //!
 //! [`Access`] / [`AccessMut`] pin occupied bytes against release.
 //! [`Engine::progress`] is one bounded pass: CON retransmit poll, one rotating
-//! unpinned RX step, one rotating Observe notify, at most one incoming
-//! Q-Block recover. The caller owns clock, jitter, and send.
+//! unpinned RX step, one rotating Observe notify, at most one Observe
+//! lifetime expiry, at most one incoming Q-Block recover. The caller owns
+//! clock, jitter, and send.
 //!
 //! - `no_std` default: [`Memory<P>`](Memory) sized by
 //!   [`storage::MemoryProfile`]. Body pools exist only as
@@ -67,7 +68,7 @@
 //! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
 //! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
 //! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
-//! | `cargo test --test plugtest td_coap_obs` | Runnable `TD_COAP_OBS_*`; prints skip reasons for OBS_04 / OBS_05. |
+//! | `cargo test --test plugtest td_coap_obs` | All in-scope `TD_COAP_OBS_*` from `block.yml` (no `TD_COAP_OBS_03`). |
 //! | `cargo test --test plugtest td_coap_link` | All 9 `TD_COAP_LINK_*` from `link.yml`. |
 //! | `cargo test --test plugtest inventory -- --nocapture` | Print RUN vs SKIP for every vendored TD id. |
 //!
@@ -114,7 +115,7 @@ pub use message::{
 pub use storage::AllocMemory;
 pub use storage::{
     Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, Capacities, DedupEntry,
-    DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory, ObserveInterest,
-    ObserveKey, OutgoingBlock, PendingCon, PendingRto, Progress, QBlockRecover, Retransmit,
-    SlotError, SlotId, Storage,
+    DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory, ObserveExpiry,
+    ObserveInterest, ObserveKey, ObserveLifetime, OutgoingBlock, PendingCon, PendingRto, Progress,
+    QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };

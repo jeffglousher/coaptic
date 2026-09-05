@@ -97,11 +97,12 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `PendingCon` / `PendingRto` | TX-sidecar pending CON + caller-clock RTO |
 | `ExchangeKey` / `ExchangeEntry` | Token + remote Endpoint request/response matching |
 | `ObserveTable` | Observe interest table |
-| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify and 24-bit sequence on the row |
+| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify, 24-bit sequence, and optional Max-Age / CON-wait lifetime on the row |
+| `ObserveLifetime` / `ObserveExpiry` | Colocated freshness or unacked-CON deadline; one due row from `progress` |
 | `SlotId` | Slot identifier |
 | `Ids` / `TokenSource` | Wrapping Message ID counter; caller-entropy Token mint (no OS RNG) |
 | `Access` / `AccessMut` | Temporary application borrow of occupied datagram or body bytes; pin bit refuses `release` until drop |
-| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX + rotating Observe notify + at most one `QBlockRecover`) |
+| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX + rotating Observe notify + at most one Observe lifetime expiry + at most one `QBlockRecover`) |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 

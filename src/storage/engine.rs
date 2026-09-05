@@ -12,8 +12,10 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::ObserveExpiry;
 use super::ObserveInterest;
 use super::ObserveKey;
+use super::ObserveLifetime;
 use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
@@ -48,8 +50,8 @@ use crate::message::{
 /// pending on the TX datagram sidecar (RTO included) and matched against
 /// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
 /// [`Self::progress`] polls that once, takes one rotating unpinned RX
-/// step, surfaces at most one pending Observe notify, and at most one
-/// incoming Q-Block recover per call.
+/// step, surfaces at most one pending Observe notify, at most one Observe
+/// lifetime expiry, and at most one incoming Q-Block recover per call.
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
@@ -616,6 +618,57 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         self.storage.signal_observe(key)
     }
 
+    /// Set or refresh Max-Age / observer lifetime on the row matching `key`.
+    ///
+    /// `max_age_secs` is the resource Max-Age. Due is `now_ms + max_age_secs
+    /// * 1000` (caller clock; no OS time). `con_mid` `Some` records a CON
+    /// notification waiting for ACK ([`ObserveLifetime::Unacked`]); `None`
+    /// is freshness ([`ObserveLifetime::MaxAge`]). `None` return when no
+    /// row matches. Does not encode, send, or invent 4.02 / RST policy.
+    /// See `knowledge/rfcs/rfc7641.txt` and Max-Age in
+    /// `knowledge/rfcs/rfc7252.txt`.
+    pub fn refresh_observe_max_age(
+        &mut self,
+        key: ObserveKey,
+        now_ms: u64,
+        max_age_secs: u32,
+        con_mid: Option<MessageId>,
+    ) -> Option<SlotId> {
+        let id = self.storage.lookup_observe(key)?;
+        let interest = self.storage.observe_interest(id)?;
+        let lifetime = match con_mid {
+            Some(message_id) => ObserveLifetime::unacked(now_ms, max_age_secs, message_id),
+            None => ObserveLifetime::max_age(now_ms, max_age_secs),
+        };
+        self.storage
+            .set_observe_interest(id, interest.with_lifetime(Some(lifetime)))
+            .ok()?;
+        Some(id)
+    }
+
+    /// Clear CON-wait on the interest that recorded `message_id` for `endpoint`.
+    ///
+    /// Used after an empty ACK matches a pending CON notify. Does not drop
+    /// the row and does not invent RST policy. `None` when no row matches.
+    pub fn ack_observe_con(&mut self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let interest = self.storage.observe_interest(id)?;
+        self.storage
+            .set_observe_interest(id, interest.with_lifetime(None))
+            .ok()?;
+        Some(id)
+    }
+
+    /// First interest whose colocated lifetime is due at `now_ms`, if any.
+    ///
+    /// Rotating and fair. Surfaces at most one row, clears that lifetime
+    /// and pending, leaves the row occupied. The caller drops it or stops
+    /// notifying. Does not send RST. See `design.md` §Bounded state-machine
+    /// lifetime and `knowledge/rfcs/rfc7641.txt`.
+    pub fn poll_observe_lifetime(&mut self, now_ms: u64) -> Option<ObserveExpiry> {
+        poll_observe_lifetime(self, now_ms)
+    }
+
     /// If `parsed` is a GET with Observe 0 (register), insert Token + Endpoint.
     ///
     /// Idempotent for the same Token and endpoint. `None` when the datagram
@@ -683,6 +736,86 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             return Ok(None);
         }
         Ok(self.storage.take_observe(ObserveKey::new(token, endpoint)))
+    }
+
+    /// If a CON notify with `message_id` is still waiting, make it due now.
+    ///
+    /// Used when [`Retransmit::GiveUp`] matches that CON. Does not drop the
+    /// row. `None` when no row matches.
+    pub(crate) fn mark_observe_unacked_due(
+        &mut self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+        now_ms: u64,
+    ) -> Option<SlotId> {
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let interest = self.storage.observe_interest(id)?;
+        self.storage
+            .set_observe_interest(
+                id,
+                interest.with_lifetime(Some(ObserveLifetime::unacked(now_ms, 0, message_id))),
+            )
+            .ok()?;
+        Some(id)
+    }
+}
+
+fn lookup_observe_unacked<S: Storage + ObserveSlots>(
+    storage: &mut S,
+    message_id: MessageId,
+    endpoint: Endpoint,
+) -> Option<SlotId> {
+    let n = storage.observe().slot_count();
+    for i in 0..n {
+        let id = SlotId::from_index(i);
+        let Some(interest) = storage.observe_interest(id) else {
+            continue;
+        };
+        if interest.endpoint() == endpoint
+            && interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)
+        {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn poll_observe_lifetime<S: Storage + ObserveSlots>(
+    engine: &mut Engine<S>,
+    now_ms: u64,
+) -> Option<ObserveExpiry> {
+    let n = engine.storage_mut().observe().slot_count();
+    if n == 0 {
+        return None;
+    }
+    let start = engine.storage_mut().observe().cursor();
+    let mut found = None;
+    for offset in 0..n {
+        let id = SlotId::from_index((start + offset) % n);
+        let Some(mut interest) = engine.observe_interest(id) else {
+            continue;
+        };
+        let Some(life) = interest.take_expired(now_ms) else {
+            continue;
+        };
+        found = Some((id, offset, interest, life));
+        break;
+    }
+    match found {
+        Some((id, offset, interest, life)) => {
+            engine
+                .storage_mut()
+                .set_observe_interest(id, interest)
+                .ok()?;
+            for _ in 0..=offset {
+                engine.rotate_observe();
+            }
+            Some(match life {
+                ObserveLifetime::MaxAge { .. } => ObserveExpiry::MaxAge(id),
+                ObserveLifetime::Unacked { .. } => ObserveExpiry::ClientOff(id),
+            })
+        }
+        None => None,
     }
 }
 

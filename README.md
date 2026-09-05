@@ -22,8 +22,8 @@ Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progre
 - Bounded `Engine` / `Memory` / pools
 - `Endpoint` sidecar (address + port); datagram slots hold CoAP bytes only
 - `Access` / `AccessMut` pin occupied slot bytes against `release`
-- `Engine::progress` → `Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify, at most one incoming `QBlockRecover`
-- Dedup (`DedupEntry`), pending CON + RTO (`PendingCon` / `PendingRto`), token matching (`ExchangeEntry`), Observe interest (`ObserveInterest`)
+- `Engine::progress` → `Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify, at most one Observe lifetime expiry, at most one incoming `QBlockRecover`
+- Dedup (`DedupEntry`), pending CON + RTO (`PendingCon` / `PendingRto`), token matching (`ExchangeEntry`), Observe interest (`ObserveInterest` / `ObserveLifetime`)
 - Classic Block and Q-Block body assembly on body-pool slots when `.block_wise(true)`
 - None of those is a seventh area
 
@@ -82,11 +82,7 @@ cargo test --test plugtest td_coap_link
 cargo test --test plugtest inventory -- --nocapture
 ```
 
-<<<<<<< HEAD
-`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. `inventory` prints RUN vs SKIP for every vendored TD id (`dtls` / `6lowpan` and OBS_04 / OBS_05 are skipped with reasons). See rustdoc §Validation harness.
-=======
-`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. See rustdoc §Validation harness, [knowledge/block-testing.md](knowledge/block-testing.md), and [knowledge/plugtest/](knowledge/plugtest/).
->>>>>>> 8ce00d7 (Keep pending CON TX occupied for ACK/RST match)
+`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. `inventory` prints RUN vs SKIP for every vendored TD id (`dtls` / `6lowpan` remain skipped). See rustdoc §Validation harness, [knowledge/block-testing.md](knowledge/block-testing.md), and [knowledge/plugtest/](knowledge/plugtest/).
 
 ## Architecture (short)
 
