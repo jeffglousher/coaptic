@@ -2145,7 +2145,8 @@ fn bert_apply_from_rx_and_encode_with_request_tag() {
             1024,
         )
         .expect("encode bert");
-    assert_eq!(encoded.len(), 1024);
+    assert!(!encoded.block().more());
+    assert_eq!(encoded.len(), 200);
     let parsed = engine.decode_tx(tx).expect("decode tx");
     assert!(parsed.block1().expect("b1").expect("ok").is_bert());
     assert_eq!(parsed.request_tag().next(), Some(&b"rt"[..]));
