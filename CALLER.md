@@ -2,6 +2,12 @@
 
 coaptic is a library, not a daemon or socket stack. The core never sends on the wire and has no OS clock or RNG. Integration owns the items below. Protocol rules stay in [`knowledge/rfcs/`](knowledge/rfcs/); this file does not restate them.
 
+## Two paths
+
+**Server (happy path).** [`Server`](src/server/mod.rs) owns the recv / progress / route / reply / send / release loop. You own the socket (passed into [`Server::new`](src/server/mod.rs)), the clock (`now_ms` into [`Server::poll`](src/server/mod.rs)), and resource payloads ([`Resource`](src/server/resource.rs)). You do not touch slots to expose a GET or PUT.
+
+**Engine (advanced).** Slots, [`Access`](src/storage/access.rs), Observe notify, Block / Q-Block, and custom RST / 4.xx policy stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
+
 ## Send
 
 - Own the socket or radio. Bind it with [`DatagramIo`](src/storage/io.rs) (`std::net::UdpSocket` implements it under `std`). The core never sends.
@@ -33,13 +39,16 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 ## Resource and If-Match
 
-- Resource selection, semantics, and payloads are application-owned ([`design.md`](design.md) §Application memory access).
-- `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST).
-- FETCH / PATCH / iPATCH are named codes only — no method policy.
+- **Server:** [`Router::at`](src/server/router.rs) selects the resource by URI-Path. [`Resource::handle`](src/server/resource.rs) owns semantics and payloads. Unknown path is 4.04; path exists but method does not is 4.05. [`Reply`](src/server/reply.rs) builders encode the response.
+- **Engine:** resource selection is still application-owned ([`design.md`](design.md) §Application memory access).
+- `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST). `Reply::precondition_failed` is the 4.12 builder.
+- FETCH / PATCH / iPATCH are named codes; the router binds them if you register `.fetch` / `.patch` / `.ipatch`.
 
 ## Encode + Access loops
 
-Typical cycle:
+**Server:** [`Server::poll`](src/server/mod.rs) is the loop. Retransmit send / give-up release, request dispatch, piggybacked ACK, and slot release are inside. Observe notify and Q-Block recover are not sent on this path yet (Phase 2); use `Server::engine_mut` if you need them now.
+
+**Engine** (advanced):
 
 1. Recv into an RX slot (`Engine::recv_from` + your [`DatagramIo`](src/storage/io.rs)). `write_rx` remains for tests that already have bytes.
 2. Call `Engine::progress(now_ms)`.

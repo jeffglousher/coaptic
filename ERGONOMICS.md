@@ -1,8 +1,8 @@
 # 0.1 feature inventory and last-mile bind
 
-Code-confirmed against `main` `0b990d2` plus this PR’s [`DatagramIo`](src/storage/io.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
+Code-confirmed against `main` `6e9d6f0` plus this PR’s [`Server`](src/server/mod.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
 
-Taste of the bind: `examples/udp_engine.rs` (`cargo run --example udp_engine --features std`).
+Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --features std`). Advanced: Engine + [`DatagramIo`](src/storage/io.rs).
 
 ## Feature confirmation
 
@@ -20,6 +20,7 @@ Taste of the bind: `examples/udp_engine.rs` (`cargo run --example udp_engine --f
 | If-Match / If-None-Match | Present | `src/message/precondition.rs::Precondition`; 4.12 policy **Absent** |
 | FETCH / PATCH / iPATCH | Present (codes only) | `src/message/mod.rs::Code::FETCH`, `PATCH`, `IPATCH`; method policy **Absent** |
 | Named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 | Present (codes only) | `src/message/mod.rs::Code::CONTINUE` and siblings |
+| **Server façade** | Present | `src/server/mod.rs::Server`; `Router::at`; `Resource`; `Reply`; `Server::poll` |
 | Engine / Memory / builder | Present | `src/storage/engine.rs::Engine`; `src/storage/memory.rs::Memory`; `src/storage/builder.rs::EngineBuilder` |
 | `Endpoint` sidecar | Present | `src/storage/endpoint.rs::Endpoint` |
 | **Transport bind** | Present | `src/storage/io.rs::DatagramIo`; `Engine::recv_from`, `Engine::send_tx`; `std::net::UdpSocket` impl under `std` |
@@ -68,30 +69,35 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 - `write_rx` stays for tests that already have bytes (plugtest loopback). It is not the integrator bind.
 - The core still does not send. Saturation (`DatagramIoError::Saturated`) leaves the transport unread. Idle poll is `Ok(None)`.
 
-## Taste test (no API rename)
+## Taste test
 
 **Intuitive**
 
+- `Server::router().at(&["sensors", "temp"]).get(Temp)` then `server.poll(now_ms)`.
+- `Resource` is a trait (unit struct). `Reply::content` / `changed` / `not_found`.
 - `decode` / `encode` work with no Engine.
 - Named `Opt` helpers and `EngineBuilder` typestate (`block_wise` is required).
 - `Endpoint` ↔ `SocketAddr` under `std`.
-- `recv_from` / `send_tx` are the two bind calls. `send_tx` holds `Access` only for the send.
+- `recv_from` / `send_tx` are the two Engine bind calls. `send_tx` holds `Access` only for the send.
 
-**Clunky (0.1 freeze — do not “fix” here)**
+**Clunky**
 
+- `.get(Temp)` uses the **type** only; the value is not stored. Stateful resources live in `static`s.
 - `profiles::Default` is not `Default::default()`.
 - `Memory::<P>::with_block_wise()` must match `.block_wise(true)` or `BuildError::SizeMismatch`.
 - `Progress` is five independent `Option` fields, not one enum. Easy to ignore `observe_expired` / `qblock_recover`.
 - `EncodedUint` must outlive `Opt` (`Opt::content_format(&cf)`).
-- Forget `release_rx` and Default’s 4 RX slots saturate (`recv_from` → `Saturated`).
+- Forget `release_rx` on the Engine path and Default’s 4 RX slots saturate (`recv_from` → `Saturated`).
 - `check_rfc7252_options` is Table 4 only: Observe / Block look “unrecognized critical.”
 - Dedup is MID+endpoint history, not a response cache.
 - `Token::mint` / `Ids` / jitter / `now_ms` stay caller-owned (not on `DatagramIo`).
+- Observe notify and Q-Block recover are not inside `Server::poll` yet (Phase 2).
 
 **What a 0.1 integrator trips on**
 
-1. Hand-rolling `recv` + `write_rx` + `access_tx` + `send_to` instead of `recv_from` / `send_tx`.
-2. Holding `Access` across `progress` (that slot is skipped).
-3. Releasing a pending-CON TX before the empty ACK.
-4. Expecting Engine to bind a port or skip sends for `NoResponse`.
-5. Mixing clocks across `progress`, RTO, Observe, and Echo.
+1. Using Engine slots to expose a GET instead of `Server` + `Resource`.
+2. Hand-rolling `recv` + `write_rx` + `access_tx` + `send_to` instead of `recv_from` / `send_tx` (Engine path).
+3. Holding `Access` across `progress` (that slot is skipped).
+4. Releasing a pending-CON TX before the empty ACK.
+5. Expecting Engine to bind a port or skip sends for `NoResponse` (Server honors `NoResponse`).
+6. Mixing clocks across `progress`, RTO, Observe, and Echo.

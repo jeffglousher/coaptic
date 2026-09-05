@@ -21,5 +21,5 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
-name = "udp_engine"
+name = "coap_server"
 required-features = ["std"]
