@@ -71,7 +71,12 @@ impl Ids {
     ///
     /// `None` if `ty` is ACK or RST; the counter is not advanced.
     #[must_use]
-    pub const fn request(&mut self, ty: Type, code: Code, token: Token) -> Option<Message<'static>> {
+    pub const fn request(
+        &mut self,
+        ty: Type,
+        code: Code,
+        token: Token,
+    ) -> Option<Message<'static>> {
         match ty {
             Type::Confirmable | Type::NonConfirmable => {
                 Some(Message::new(ty, code, self.next()).with_token(token))
@@ -296,9 +301,10 @@ mod unit_tests {
         assert_eq!(via.ty(), Type::Confirmable);
 
         let before = ids.peek();
-        assert!(ids
-            .request(Type::Acknowledgement, Code::EMPTY, token)
-            .is_none());
+        assert!(
+            ids.request(Type::Acknowledgement, Code::EMPTY, token)
+                .is_none()
+        );
         assert!(ids.request(Type::Reset, Code::EMPTY, token).is_none());
         assert_eq!(ids.peek(), before);
     }
