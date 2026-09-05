@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-09-05
+
+* **Update**: Message ID sequence (`Ids`: wrapping `u16` counter) and Token mint (`Token::mint` / `Token::mint_from` + `TokenSource`). Caller-owned, `Copy` / `no_std`. Core does not call an OS RNG (same posture as `Transmission` jitter). CON/NON request skeletons (`Message::con` / `Message::non`, `Ids::request`) take the next MID + token with no `Engine`. Token length remains 0..=8. No crate-root re-export of `Ids` / `TokenSource`. No Access, progress, Observe notify, or Q-Block recover. No `design.md` change.
+
 ## 2026-09-04
 
 * **Update**: CON retransmission / RTO on the existing `PendingCon` TX sidecar (`PendingRto`: attempts, next-due, current timeout). Caller injects `now_ms` and `jitter_ms` (core has no OS clock or RNG; `Transmission::initial_timeout_ms` clamps jitter to the ACK_RANDOM_FACTOR span). `poll_retransmit` scans pending TX slots (O(n)); exponential backoff; `Retransmit::GiveUp` at `MAX_RETRANSMIT`. Empty ACK/RST already cleared pending and now clears RTO. `NSTART` is a per-endpoint outstanding-CON count on `record_pending_con` (message layer only; not exchange/NON). No socket send. No `design.md` change.
