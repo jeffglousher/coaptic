@@ -4,9 +4,9 @@
 //! [`get`] / [`put`], [`Engine`], [`Memory`], [`Endpoint`], [`Progress`],
 //! [`Access`], [`Ids`], keyed rows, Block/Q-Block types, main errors).
 //! Typestate markers, raw tables/pools, and backend traits live in
-//! [`storage`] / [`message`]. [`app`] is the routing façade (`Request` →
-//! [`Reply`]). Engine slots are the advanced path (per-slot state machines
-//! + [`Progress`]). Caller contract: `CALLER.md`. Repo map: `README.md`.
+//! [`storage`] / [`message`]. [`app`] is the routing façade (`Request` to
+//! [`Reply`]). Engine slots are the advanced path: per-slot state machines
+//! and [`Progress`]. Caller contract: `CALLER.md`. Repo map: `README.md`.
 //! Reviewer brief: `REVIEW.md`. Architecture: [`design.md`][design]. Protocol:
 //! [`knowledge/rfcs/`][rfcs]. This rustdoc does not restate wire format.
 //!
