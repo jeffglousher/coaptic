@@ -1074,3 +1074,100 @@ fn client_path_too_long_is_error() {
         .expect_err("path");
     assert_eq!(err, Error::Path);
 }
+
+/// Send queues into recv so one App is both client and server (Block2 / Q-Block2).
+#[derive(Default)]
+struct Pipe {
+    slots: [Option<(Endpoint, [u8; WIRE], usize)>; 8],
+    head: usize,
+    len: usize,
+}
+
+impl DatagramIo for Pipe {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        if self.len == 0 {
+            return Ok(None);
+        }
+        let i = self.head;
+        let Some((ep, bytes, n)) = self.slots[i].take() else {
+            return Ok(None);
+        };
+        self.head = (self.head + 1) % self.slots.len();
+        self.len -= 1;
+        if n > buf.len() {
+            return Err("short buf");
+        }
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > WIRE {
+            return Err("too long");
+        }
+        if self.len >= self.slots.len() {
+            return Err("pipe full");
+        }
+        let i = (self.head + self.len) % self.slots.len();
+        let mut slot = [0u8; WIRE];
+        slot[..bytes.len()].copy_from_slice(bytes);
+        self.slots[i] = Some((dest, slot, bytes.len()));
+        self.len += 1;
+        Ok(bytes.len())
+    }
+}
+
+fn pipe_app() -> App<profiles::Default, Pipe> {
+    App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["large"], get(get_large))
+        .bind(Pipe::default())
+        .expect("bind")
+}
+
+fn poll_until_reply(app: &mut App<profiles::Default, Pipe>, call: crate::Call) -> crate::Reply {
+    for t in 0u64..8 {
+        app.poll(t).expect("poll");
+        if let Some(reply) = app.take_reply(call) {
+            return reply;
+        }
+    }
+    panic!("client Block2/Q-Block2 did not complete");
+}
+
+#[test]
+fn client_get_block2_assembles_body_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    let call = app.get(&["large"]).to(peer).send(0).expect("send");
+    let reply = poll_until_reply(&mut app, call);
+    assert_eq!(reply.code(), Code::CONTENT);
+    assert_eq!(reply.content_format(), Some(ContentFormat::OCTET_STREAM));
+    assert!(reply.has_body());
+    assert_eq!(reply.body().expect("assembled"), &LARGE[..]);
+    assert_eq!(reply.token(), call.token());
+    assert_eq!(reply.peer(), peer);
+    assert!(app.take_reply(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_get_q_block2_assembles_body_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    let call = app
+        .get(&["large"])
+        .to(peer)
+        .q_block2()
+        .send(0)
+        .expect("send");
+    let reply = poll_until_reply(&mut app, call);
+    assert_eq!(reply.code(), Code::CONTENT);
+    assert!(reply.has_body());
+    assert_eq!(reply.body().expect("assembled"), &LARGE[..]);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
