@@ -26,10 +26,10 @@ use super::Storage;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
 };
-use crate::error::{BlockTransferError, SlotMessageError};
+use crate::error::{BlockTransferError, SlotMessageError, ValueError};
 use crate::message::{
-    BlockValue, Code, EncodedUint, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
-    Type, encode_uint,
+    BlockValue, Code, Echo, EchoFreshness, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
+    ParsedMessage, Token, Type, encode_uint,
 };
 
 /// Protocol engine, generic over [`Storage`].
@@ -56,7 +56,10 @@ use crate::message::{
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
-/// a piggybacked ACK with a response code is. When `S` implements
+/// a piggybacked ACK with a response code is. Echo (RFC 9175) sent on the
+/// request and a response Echo challenge are sidecar on [`ExchangeEntry`].
+/// [`Self::echo_freshness`] classifies time-based freshness; the caller
+/// owns 4.01. When `S` implements
 /// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
 /// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
 /// implements [`BodySlots`], incoming Block1 / Block2 / Q-Block1 / Q-Block2
@@ -95,6 +98,20 @@ impl<S: Storage> Engine<S> {
     #[must_use]
     pub fn capacities(&self) -> Capacities {
         self.storage.capacities()
+    }
+
+    /// Echo option on `parsed`. `Ok(None)` if absent.
+    pub fn echo(parsed: &ParsedMessage<'_>) -> Result<Option<Echo>, ValueError> {
+        Echo::from_message(parsed)
+    }
+
+    /// Time-based freshness of a mint-shaped Echo on `parsed`.
+    ///
+    /// Event-based freshness is equality against a caller-owned [`Echo`].
+    /// Does not invent 4.01 / RST policy. See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub fn echo_freshness(parsed: &ParsedMessage<'_>, now_ms: u64, fresh_ms: u64) -> EchoFreshness {
+        EchoFreshness::of(parsed, now_ms, fresh_ms)
     }
 
     /// Whether this engine’s Storage includes body pools.
@@ -475,9 +492,10 @@ impl<S: Storage + Exchanges> Engine<S> {
 
     /// Record an outstanding CON/NON request from occupied TX `id`.
     ///
-    /// Sets the TX sidecar endpoint. `Ok(None)` when the datagram is not a
-    /// CON/NON request, or the table is full. Idempotent for the same Token
-    /// and endpoint. Does not mark pending CON and does not use Dedup.
+    /// Sets the TX sidecar endpoint. Captures a well-formed Echo on the
+    /// request ([`ExchangeEntry::echo`]). `Ok(None)` when the datagram is
+    /// not a CON/NON request, or the table is full. Idempotent for the same
+    /// Token and endpoint. Does not mark pending CON and does not use Dedup.
     pub fn record_request(
         &mut self,
         id: SlotId,
@@ -486,19 +504,23 @@ impl<S: Storage + Exchanges> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let (token, message_id, is_request) = {
+        let (token, message_id, is_request, echo) = {
             let parsed = decode_occupied(self.storage.tx_payload(id))?;
             (
                 parsed.token(),
                 parsed.message_id(),
                 super::exchange::is_con_or_non_request(&parsed),
+                Echo::from_option(parsed.echo()),
             )
         };
         if !is_request {
             return Ok(None);
         }
         self.storage.set_tx_endpoint(id, endpoint)?;
-        let entry = ExchangeEntry::new(token, endpoint, message_id, id);
+        let mut entry = ExchangeEntry::new(token, endpoint, message_id, id);
+        if let Some(echo) = echo {
+            entry = entry.with_echo(echo);
+        }
         let table_id = self.storage.insert_exchange(entry);
         Ok(table_id.and_then(|tid| self.storage.exchange_entry(tid)))
     }
@@ -507,8 +529,9 @@ impl<S: Storage + Exchanges> Engine<S> {
     ///
     /// Match is Token plus `endpoint` ([`ExchangeKey`]). A piggybacked ACK
     /// also requires the request Message ID. Empty ACK/RST are not responses.
-    /// Returns the entry; the caller releases the TX slot. `None` on miss.
-    /// Does not consult Dedup or pending CON.
+    /// Returns the entry; a well-formed response Echo is
+    /// [`ExchangeEntry::challenge`]. The caller releases the TX slot.
+    /// `None` on miss. Does not consult Dedup or pending CON.
     pub fn match_response(
         &mut self,
         parsed: &ParsedMessage<'_>,
@@ -520,6 +543,7 @@ impl<S: Storage + Exchanges> Engine<S> {
             parsed.code(),
             parsed.message_id(),
             endpoint,
+            Echo::from_option(parsed.echo()),
         )
     }
 
@@ -532,16 +556,17 @@ impl<S: Storage + Exchanges> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let (token, ty, code, message_id) = {
+        let (token, ty, code, message_id, echo) = {
             let parsed = decode_occupied(self.storage.rx_payload(id))?;
             (
                 parsed.token(),
                 parsed.ty(),
                 parsed.code(),
                 parsed.message_id(),
+                Echo::from_option(parsed.echo()),
             )
         };
-        Ok(self.take_matching_response(token, ty, code, message_id, endpoint))
+        Ok(self.take_matching_response(token, ty, code, message_id, endpoint, echo))
     }
 
     fn take_matching_response(
@@ -551,6 +576,7 @@ impl<S: Storage + Exchanges> Engine<S> {
         code: crate::message::Code,
         message_id: MessageId,
         endpoint: Endpoint,
+        challenge: Option<Echo>,
     ) -> Option<ExchangeEntry> {
         if !code.is_response()
             || !matches!(
@@ -573,7 +599,11 @@ impl<S: Storage + Exchanges> Engine<S> {
         if !mid_ok {
             return None;
         }
-        self.storage.take_exchange(key)
+        let entry = self.storage.take_exchange(key)?;
+        Some(match challenge {
+            Some(echo) => entry.with_challenge(echo),
+            None => entry,
+        })
     }
 }
 

@@ -10,6 +10,8 @@
 //! Dedup Table. [`Engine::poll_retransmit`] walks due TX slots.
 //! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
+//! Echo (RFC 9175) sent on the request and a response challenge are sidecar
+//! on that row.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
 //! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
 //! key). Max-Age / CON-wait lifetime is colocated on the row

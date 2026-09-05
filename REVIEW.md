@@ -20,12 +20,12 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#30** on `main` plus this docs alignment:
+Through squash-merges **#7–#31** on `main` plus Echo:
 
 | Domain | In the crate |
 | --- | --- |
-| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, `OptionsBuilder`, `Ids`, Token mint |
-| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry`, Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
+| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, `OptionsBuilder`, `Ids`, Token mint |
+| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, incoming `QBlockRecover` + outgoing Q-Block reissue |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
@@ -35,12 +35,11 @@ The core does not send. The caller owns the clock, jitter, and socket.
 
 - DTLS, OSCORE, 6LoWPAN (and those plugtest suites)
 - RST / 4.02 / 2.31 / 4.08 policy (caller-owned)
-- Echo option (RFC 9175) beyond Request-Tag / ETag body identity
 - Public crates.io / public GitHub
 
 Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).
 
-`design.md` is the architecture contract. Its Validation and tuning section now matches this crate (`Access` pins, `Engine::progress`, Observe notify and Max-Age / client-OFF lifetime, Q-Block recover, BERT and `BodyTag` identity, in-crate harness). Ownership, six areas, datagram = CoAP payload, `Endpoint` sidecar, and block-wise builder rules are unchanged.
+`design.md` is the architecture contract. Its Validation and tuning section matches this crate (`Access` pins, `Engine::progress`, Observe notify and Max-Age / client-OFF lifetime, Q-Block recover, BERT and `BodyTag` identity, Echo on `ExchangeEntry`, in-crate harness). Ownership, six areas, datagram = CoAP payload, `Endpoint` sidecar, and block-wise builder rules are unchanged.
 
 ## How to check
 

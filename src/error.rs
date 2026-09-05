@@ -161,6 +161,8 @@ pub enum ValueError {
     BlockNumOverflow,
     /// Opaque option value is longer than 8 bytes (ETag / Request-Tag).
     OpaqueLength,
+    /// Echo option value is empty or longer than 40 bytes.
+    EchoLength,
 }
 
 impl core::fmt::Display for ValueError {
@@ -171,6 +173,7 @@ impl core::fmt::Display for ValueError {
             Self::IllegalSzx => f.write_str("block SZX is not 0..=6 or BERT 7"),
             Self::BlockNumOverflow => f.write_str("block NUM does not fit in 20 bits"),
             Self::OpaqueLength => f.write_str("opaque option value is longer than 8 bytes"),
+            Self::EchoLength => f.write_str("Echo option value is empty or longer than 40 bytes"),
         }
     }
 }
