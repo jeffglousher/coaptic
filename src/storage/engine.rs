@@ -37,8 +37,8 @@ use crate::message::{
 ///
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
 /// Q-Block body-slot assembly when `S` implements [`BodySlots`].
-/// [`Self::progress`] is one bounded pass (`design.md` §Reference progress
-/// contract), including at most one incoming Q-Block recover. BERT (SZX 7)
+/// [`Self::progress`] is one bounded pass, including at most one incoming
+/// Q-Block recover. BERT (SZX 7)
 /// and Request-Tag / ETag body identity live on [`BlockTransfer`] /
 /// [`BlockKey`].
 ///
@@ -70,12 +70,9 @@ use crate::message::{
 /// Q-Block1 / Q-Block2 slice the Outgoing Body Pool. Dedup,
 /// pending CON, exchange matching, Observe interest, and body-slot
 /// transfers are different identities. Temporary [`Access`] / [`AccessMut`]
-/// pins an occupied datagram or body slot against release (`design.md`
-/// §Application memory access). Optional format and
+/// pins an occupied datagram or body slot against release. Optional format and
 /// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
 /// not invent 4.02 / 4.08 / 2.31 / RST policy.
-///
-/// See `design.md` and `knowledge/memory.md`.
 #[derive(Debug)]
 pub struct Engine<S: Storage> {
     storage: S,
@@ -333,7 +330,6 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     /// Read access to an occupied RX datagram. Pins `id` until dropped.
     ///
     /// Release of `id` returns [`SlotError::Pinned`] while the guard is live.
-    /// See `design.md` §Application memory access.
     pub fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.storage.access_rx(id)
     }
@@ -647,7 +643,6 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Coalesces: a second signal before [`Self::progress`] surfaces the row
     /// still yields one work item. `None` when no row matches. Does not
     /// encode a payload, acquire a TX slot, or invent 4.02 / RST policy.
-    /// See `design.md` §Ownership by progress domain.
     pub fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
         self.storage.signal_observe(key)
     }
@@ -734,8 +729,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     ///
     /// Rotating and fair. Surfaces at most one row, clears that lifetime
     /// and pending, leaves the row occupied. The caller drops it or stops
-    /// notifying. Does not send RST. See `design.md` §Bounded state-machine
-    /// lifetime and `knowledge/rfcs/rfc7641.txt`.
+    /// notifying. Does not send RST. See `knowledge/rfcs/rfc7641.txt`.
     pub fn poll_observe_lifetime(&mut self, now_ms: u64) -> Option<ObserveExpiry> {
         poll_observe_lifetime(self, now_ms)
     }
@@ -1051,7 +1045,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Admit a new incoming Block1 body when the first block arrives.
     ///
     /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
-    /// `size1` is the Size1 hint when present. See `design.md` and
+    /// `size1` is the Size1 hint when present. See
     /// `knowledge/rfcs/rfc7959.txt`.
     #[inline]
     pub fn admit_block1(
@@ -1105,7 +1099,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Admit a new incoming Block2 body when the first block arrives.
     ///
     /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
-    /// `size2` is the Size2 hint when present. See `design.md` and
+    /// `size2` is the Size2 hint when present. See
     /// `knowledge/rfcs/rfc7959.txt`.
     #[inline]
     pub fn admit_block2(
@@ -1158,8 +1152,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Admit a new incoming Q-Block1 body when the first window-0 block arrives.
     ///
     /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size1` is the
-    /// Size1 hint when present. See `design.md` and
-    /// `knowledge/rfcs/rfc9177.txt`.
+    /// Size1 hint when present. See `knowledge/rfcs/rfc9177.txt`.
     #[inline]
     pub fn admit_q_block1(
         &mut self,
@@ -1211,8 +1204,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Admit a new incoming Q-Block2 body when the first window-0 block arrives.
     ///
     /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size2` is the
-    /// Size2 hint when present. See `design.md` and
-    /// `knowledge/rfcs/rfc9177.txt`.
+    /// Size2 hint when present. See `knowledge/rfcs/rfc9177.txt`.
     #[inline]
     pub fn admit_q_block2(
         &mut self,

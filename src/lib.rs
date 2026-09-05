@@ -6,9 +6,11 @@
 //! Typestate markers, raw tables/pools, and backend traits live in
 //! [`storage`] / [`message`]. [`app`] is the routing façade (`Request` to
 //! [`Response`]). Engine slots are the advanced path: per-slot state machines
-//! and [`Progress`]. Caller contract: `CALLER.md`. Repo map: `README.md`.
-//! Reviewer brief: `REVIEW.md`. Architecture: [`design.md`][design]. Protocol:
-//! [`knowledge/rfcs/`][rfcs]. This rustdoc does not restate wire format.
+//! and [`Progress`]. The caller owns the socket ([`DatagramIo`]), the clock
+//! (`now_ms`), and domain state that outlives a request — there is no global
+//! App State. Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture
+//! planning: [GitHub project][plan]. This rustdoc does not restate wire
+//! format.
 //!
 //! # Modules
 //!
@@ -101,9 +103,9 @@
 //!
 //! | Command | What it runs |
 //! | --- | --- |
-//! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Policy: `knowledge/block-testing.md`. |
+//! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Tracking: [issue #49][plugtest]. |
 //! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
-//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `knowledge/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` is skipped (deferred). `6lowpan` is skipped (not planned). |
+//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `tests/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` is skipped (deferred). `6lowpan` is skipped (not planned). |
 //! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
 //! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
 //! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
@@ -112,7 +114,7 @@
 //! | `cargo test --test plugtest inventory -- --nocapture` | Print RUN vs SKIP for every vendored TD id. |
 //!
 //! TD identifiers are extracted from those YAML files. This crate does not
-//! invent TD numbers. See `knowledge/plugtest/requirements.md`.
+//! invent TD numbers. Tracking: [issue #49][plugtest].
 //!
 //! # Features
 //!
@@ -120,8 +122,9 @@
 //! - `std` — enable the standard library. Implies `alloc`.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
-//! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
+//! [plan]: https://github.com/users/jeffglousher/projects/2
+//! [plugtest]: https://github.com/jeffglousher/coaptic/issues/49
 
 #![no_std]
 #![deny(unsafe_code)]

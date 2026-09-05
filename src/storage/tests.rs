@@ -1,4 +1,4 @@
-//! Named storage-layer tests from `knowledge/memory.md` plus body-pool checks.
+//! Named storage-layer tests plus body-pool checks.
 
 use super::BlockKey;
 use super::BlockRole;
@@ -2216,8 +2216,8 @@ fn block_key() -> BlockKey {
 
 /// Chop `body` into classic Block1 pieces of `size` and apply them.
 ///
-/// Representative sizes only. The full SZX × 1..=25 sweep is specified in
-/// `knowledge/block-testing.md` and is not implemented here.
+/// Representative sizes only. The full SZX × 1..=25 sweep lives in
+/// `tests/block_sweep.rs` and is not implemented here.
 fn assemble_classic_block1<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey,

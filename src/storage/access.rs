@@ -1,6 +1,6 @@
 //! Temporary application [`Access`] to occupied datagram and body bytes.
 //!
-//! See `design.md` §Application memory access. While an [`Access`] or
+//! While an [`Access`] or
 //! [`AccessMut`] is live, the issuing pool pins that [`SlotId`] and
 //! [`SlotPool::release`](super::SlotPool::release) returns
 //! [`SlotError::Pinned`]. [`Drop`] clears the pin. Rotate only moves the

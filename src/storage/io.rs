@@ -1,8 +1,7 @@
 //! [`DatagramIo`]: first-class bind from any datagram transport into Engine slots.
 //!
-//! Transport progress in `design.md` moves bytes between the platform boundary
-//! and Datagram Slots. This trait is that bind. The core still does not own a
-//! socket, clock, or send policy (`CALLER.md`).
+//! This trait moves bytes between the platform boundary and Datagram Slots.
+//! The core still does not own a socket, clock, or send policy.
 
 use super::DatagramSlots;
 use super::Endpoint;

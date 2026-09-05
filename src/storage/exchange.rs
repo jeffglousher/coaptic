@@ -4,8 +4,8 @@
 //! endpoint. This is not the Dedup Table (Message ID + Endpoint) and not
 //! pending-CON confirm (Message ID + Endpoint on a TX slot). Echo (RFC 9175)
 //! sent on the request and a response challenge are sidecar on
-//! [`ExchangeEntry`]. See `knowledge/rfcs/rfc7252.txt` §5.3,
-//! `knowledge/rfcs/rfc9175.txt`, and `design.md`.
+//! [`ExchangeEntry`]. See `knowledge/rfcs/rfc7252.txt` §5.3 and
+//! `knowledge/rfcs/rfc9175.txt`.
 //!
 //! Capacity is the TX Datagram Pool count. Occupancy is independent of TX
 //! slot occupancy so a separate response or NON reply can complete after the

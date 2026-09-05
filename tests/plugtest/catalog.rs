@@ -1,7 +1,7 @@
 //! TD identifiers extracted from vendored CoAP#4 YAML.
 //!
 //! Hand-maintained lists must match the `TD_*` keys in
-//! `knowledge/plugtest/td-coap4/*.yml`. Do not invent identifiers.
+//! `tests/plugtest/td-coap4/*.yml`. Do not invent identifiers.
 //! Extraction is a line scan for `TD_…:` keys (no YAML crate).
 
 /// In-scope CORE TDs from `base.yml` (same order as the file).
@@ -83,11 +83,11 @@ pub const DTLS: &[&str] = &[
     "TD_COAP_DTLS_07",
 ];
 
-const BASE_YML: &str = include_str!("../../knowledge/plugtest/td-coap4/base.yml");
-const BLOCK_YML: &str = include_str!("../../knowledge/plugtest/td-coap4/block.yml");
-const LINK_YML: &str = include_str!("../../knowledge/plugtest/td-coap4/link.yml");
-const DTLS_YML: &str = include_str!("../../knowledge/plugtest/td-coap4/dtls.yml");
-const LOWPAN_YML: &str = include_str!("../../knowledge/plugtest/td-coap4/6lowpan.yml");
+const BASE_YML: &str = include_str!("td-coap4/base.yml");
+const BLOCK_YML: &str = include_str!("td-coap4/block.yml");
+const LINK_YML: &str = include_str!("td-coap4/link.yml");
+const DTLS_YML: &str = include_str!("td-coap4/dtls.yml");
+const LOWPAN_YML: &str = include_str!("td-coap4/6lowpan.yml");
 
 /// Keys that look like `TD_…:` at the start of a YAML line.
 #[must_use]

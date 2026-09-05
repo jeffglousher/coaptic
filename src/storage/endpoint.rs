@@ -5,7 +5,7 @@ use core::fmt;
 /// UDP peer address stored beside a datagram slot, not in its byte buffer.
 ///
 /// A datagram slot holds CoAP message bytes (the UDP payload). [`Endpoint`] is
-/// sidecar metadata for that slot. See `design.md` and `knowledge/memory.md`.
+/// sidecar metadata for that slot.
 ///
 /// This type does not use [`std::net`] on the default `no_std` path. The `std`
 /// feature adds conversions. IPv6 flowinfo and scope id are not stored; they

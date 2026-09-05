@@ -2,7 +2,7 @@
 //!
 //! Integration tests may use `std`. The library under test stays `no_std`.
 //! A large [`SweepProfile`] (32 × 1024 body bytes) is used so Default 4096
-//! is not the ceiling. See `knowledge/block-testing.md`.
+//! is not the ceiling.
 #![allow(dead_code)]
 
 use coaptic::storage::{

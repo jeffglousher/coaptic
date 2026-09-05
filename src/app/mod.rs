@@ -20,8 +20,9 @@
 //!
 //! Default handlers are relatively stateless: `fn(Request<'_>) -> Response`.
 //! Application domain data that outlives a request is application-owned
-//! outside `App` ([`design.md`][design] §Application memory access) — a GPIO
-//! write lives in firmware, not in an Axum-style `AppState`.
+//! outside `App` — a GPIO write lives in firmware, not in an Axum-style
+//! `AppState`. The caller owns the socket ([`DatagramIo`]), the clock
+//! (`now_ms` into [`App::poll`]), and that domain state.
 //!
 //! ```
 //! use coaptic::{
@@ -67,11 +68,9 @@
 //! [`MethodRouter::observe`](MethodRouter::observe) supplies a snapshot
 //! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
 //! and incoming Q-Block1 assembly reuse Engine body helpers. Engine /
-//! [`DatagramIo`] remain the advanced path (`CALLER.md`, `ERGONOMICS.md`)
+//! [`DatagramIo`] remain the advanced path
 //! for [`Access`](crate::Access), custom RST / 4.xx, and BERT edges.
 //! Escape: [`App::engine_mut`].
-//!
-//! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
 
 mod request;
 mod response;

@@ -1,7 +1,7 @@
 //! In-scope ETSI CoAP#4 plugtest harness (in-memory Engine pair).
 //!
 //! Two [`coaptic::Engine`]s exchange datagram bytes (no sockets, no DTLS).
-//! TD identifiers come from `knowledge/plugtest/td-coap4/*.yml` — this file
+//! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
 //! does not invent ids. The deferred `dtls` suite and the not-planned
 //! `6lowpan` suite are skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated
 //! `ObserveInterest` lifetime (no seventh area).
@@ -16,7 +16,7 @@
 //! cargo test --test plugtest inventory -- --nocapture
 //! ```
 //!
-//! See `knowledge/plugtest/requirements.md`.
+//! Tracking: <https://github.com/jeffglousher/coaptic/issues/49>.
 
 #![allow(clippy::too_many_lines)]
 
@@ -89,7 +89,7 @@ fn deferred_dtls_skipped() {
 
 #[test]
 fn not_planned_6lowpan_skipped() {
-    let yaml = include_str!("../knowledge/plugtest/td-coap4/6lowpan.yml");
+    let yaml = include_str!("plugtest/td-coap4/6lowpan.yml");
     for id in catalog::extract_td_ids(yaml) {
         let reason = catalog::skip_reason(id).unwrap_or_else(|| panic!("{id} must skip"));
         assert!(reason.contains("6LoWPAN"), "{id}: {reason}");
@@ -127,8 +127,7 @@ fn inventory() {
             }
         }
     }
-    let lowpan =
-        catalog::extract_td_ids(include_str!("../knowledge/plugtest/td-coap4/6lowpan.yml"));
+    let lowpan = catalog::extract_td_ids(include_str!("plugtest/td-coap4/6lowpan.yml"));
     skipped += lowpan.len();
     lines.push(format!(
         "SKIP  6LOWPAN {} TDs (not planned: 6LoWPAN)",

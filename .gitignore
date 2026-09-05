@@ -23,12 +23,4 @@ rustc-ice-*.txt
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Generated diagram renders; coap_constrained_design.drawio is canonical.
 # knowledge/rfcs/*.pdf stay in the tree.
-/coap_constrained_design.png
-/coap_constrained_design.svg
-/coap_constrained_design.pdf
-
-# Python bytecode from the OKF frontmatter scripts
-__pycache__/
-*.pyc

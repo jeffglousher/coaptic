@@ -9,8 +9,7 @@ use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, ObserveTransmission, Toke
 /// Lookup identity for one Dedup Table row.
 ///
 /// Compact duplicate history is Message ID plus remote [`Endpoint`]. Token
-/// matching is not this table. See `knowledge/rfcs/rfc7252.txt` §4.5 and
-/// `design.md`.
+/// matching is not this table. See `knowledge/rfcs/rfc7252.txt` §4.5.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupKey {
     message_id: MessageId,
@@ -99,7 +98,7 @@ pub(crate) trait DedupStore {
 /// RFC 7641 keys the observer list by client endpoint and Token. Resource
 /// path is not part of that key. This is not Dedup (Message ID + Endpoint),
 /// not pending CON, and not [`super::ExchangeKey`] (same Token + Endpoint
-/// pair, different table). See `knowledge/rfcs/rfc7641.txt` and `design.md`.
+/// pair, different table). See `knowledge/rfcs/rfc7641.txt`.
 ///
 /// [`ObserveResource`] is an optional sidecar on the same row so App can
 /// notify by Uri-Path without a second table.
@@ -183,7 +182,6 @@ impl ObserveResource {
 /// Absolute `due_ms` in the caller `now_ms` domain (same posture as
 /// [`super::PendingRto`]). The core has no OS clock. See
 /// `knowledge/rfcs/rfc7641.txt` and Max-Age in `knowledge/rfcs/rfc7252.txt`.
-/// `design.md` §Bounded state-machine lifetime.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObserveLifetime {
     /// Freshness deadline from a caller-supplied Max-Age (typically client).
@@ -327,8 +325,7 @@ impl ObserveNotifyHold {
 /// library-assigned 24-bit notification sequence, optional Max-Age /
 /// CON-wait lifetime, RFC 7641 §4.5 / §4.5.1 confirm / NSTART hold, and
 /// an optional [`ObserveResource`] path key. Notification bodies are not
-/// stored here. See `design.md` §Observe Interest Table / Bounded
-/// state-machine lifetime and `knowledge/rfcs/rfc7641.txt`.
+/// stored here. See `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveInterest {
     key: ObserveKey,

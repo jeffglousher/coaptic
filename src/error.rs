@@ -260,9 +260,8 @@ impl std::error::Error for SlotMessageError {
 /// Failure of a Block / Q-Block body-slot transfer.
 ///
 /// These are structured reports for the body-pool state machine. The library
-/// does not invent 4.02 / 4.08 / RST policy. See `design.md` (Incoming /
-/// Outgoing Body Slot), `knowledge/rfcs/rfc7959.txt`, and
-/// `knowledge/rfcs/rfc9177.txt`.
+/// does not invent 4.02 / 4.08 / RST policy. See
+/// `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockTransferError {
     /// Storage has no body pools (`.block_wise(false)`).

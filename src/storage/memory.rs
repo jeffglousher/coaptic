@@ -115,7 +115,6 @@ impl<P: MemoryProfile> WithBodies<P> {
 /// }
 /// ```
 ///
-/// See `design.md` and `knowledge/memory.md`.
 pub struct Memory<P: MemoryProfile, B = NoBodies> {
     rx: P::RxDatagram,
     tx: P::TxDatagram,

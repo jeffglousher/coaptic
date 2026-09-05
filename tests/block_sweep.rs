@@ -1,7 +1,6 @@
 //! Combinatorial Block / Q-Block SZX × 1..=25 sweep.
 //!
-//! Dynamic loops, not a hard-coded case list. Policy:
-//! `knowledge/block-testing.md`. Default body 4096 is not the ceiling —
+//! Dynamic loops, not a hard-coded case list. Default body 4096 is not the ceiling —
 //! this uses [`harness::SweepProfile`] (32 × 1024). Classic Block1/Block2
 //! assembly and Q-Block windowed send/receive are all exercised. Gaps and
 //! overflows fail the test.
