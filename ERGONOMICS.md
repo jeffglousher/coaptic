@@ -1,6 +1,6 @@
 # 0.1 feature inventory and last-mile bind
 
-Code-confirmed against `main` `b12143f` plus this PR’s [`App`](src/app/mod.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
+Code-confirmed against `main` `be8438a` plus this PR’s [`App`](src/app/mod.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
 
 Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --features std`). Advanced: Engine + [`DatagramIo`](src/storage/io.rs).
 
