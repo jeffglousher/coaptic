@@ -52,7 +52,8 @@
 //! [`EngineBuilder`] is consuming and typestate-gated.
 //! [`.block_wise`](EngineBuilder::block_wise)`(false)` omits body pools.
 //!
-//! OSCORE, DTLS, BERT, and an in-crate plugtest harness are out of scope.
+//! OSCORE, DTLS, and BERT are out of scope. An in-crate plugtest harness is
+//! not on this tree (see repo `README.md` / `REVIEW.md`).
 //!
 //! # Features
 //!

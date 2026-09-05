@@ -34,7 +34,7 @@ The core does not send. The caller owns the clock, jitter, and socket.
 
 - DTLS, OSCORE, 6LoWPAN (and those plugtest suites)
 - BERT, Request-Tag / ETag body identity
-- In-crate validation harness / SZX×1–25 sweep runner (policy is in [`knowledge/block-testing.md`](knowledge/block-testing.md); TDs in [`knowledge/plugtest/`](knowledge/plugtest/))
+- In-crate validation harness / SZX×1–25 sweep runner (not on `main`; draft [PR #27](https://github.com/jeffglousher/coaptic/pull/27). Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/))
 - Public crates.io / public GitHub
 
 `design.md` is the architecture contract. A few “next implementation work” sentences there predate the progress/Access/Q-Block recover landings; the crate is ahead of those sentences. Do not rewrite `design.md` from a docs pass.

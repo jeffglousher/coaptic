@@ -1,6 +1,6 @@
 # Directory Update Log
 
-Current on `main` (through #26): message codec, bounded storage, `Endpoint` (not `Peer`), `Access` pins, `Ids` / Token mint, CON RTO on `PendingCon`, Exchange / Dedup / Observe tables, classic Block + Q-Block send/receive, `Engine::progress` (retransmit, RX, Observe notify, `QBlockRecover`). No in-crate plugtest harness. No DTLS / OSCORE / 6LoWPAN. No crates.io publish.
+Current on `main` (through #26): message codec, bounded storage, `Endpoint` (not `Peer`), `Access` pins, `Ids` / Token mint, CON RTO on `PendingCon`, Exchange / Dedup / Observe tables, classic Block + Q-Block send/receive, `Engine::progress` (retransmit, RX, Observe notify, `QBlockRecover`). No in-crate plugtest harness on `main` (draft PR #27). No DTLS / OSCORE / 6LoWPAN. No crates.io publish.
 
 Older bullets are PR-time notes. Present-tense "not implemented" or "stays a stub" in those notes is historical scope for that change, not current tree state.
 

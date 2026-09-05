@@ -66,7 +66,9 @@ CI (`fmt`, `clippy`, `test`, `doc`, `okf`) is PR-only (`pull_request` to `main` 
 
 ## Plugtest
 
-Vendored ETSI TDs and the coaptic mapping live in [knowledge/plugtest/](knowledge/plugtest/). Combinatorial SZX sweep policy: [knowledge/block-testing.md](knowledge/block-testing.md). An in-crate validation harness is not on this tree.
+Vendored ETSI TDs and the coaptic mapping live in [knowledge/plugtest/](knowledge/plugtest/). Combinatorial SZX sweep policy: [knowledge/block-testing.md](knowledge/block-testing.md).
+
+An in-crate harness is not on `main` yet. Draft: [PR #27](https://github.com/jeffglousher/coaptic/pull/27).
 
 ## Architecture (short)
 
