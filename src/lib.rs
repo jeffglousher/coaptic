@@ -33,7 +33,7 @@
 //!
 //! A datagram slot holds CoAP bytes (UDP payload), not Ethernet. [`Endpoint`]
 //! is sidecar metadata. Not seventh areas: Dedup ([`DedupEntry`]), pending CON
-//! + RTO ([`PendingCon`] / [`PendingRto`]), token matching ([`ExchangeEntry`]),
+//! and RTO ([`PendingCon`] / [`PendingRto`]), token matching ([`ExchangeEntry`]),
 //! Observe interest ([`ObserveInterest`]), Block/Q-Block ([`BlockTransfer`]).
 //! Incoming Q-Block holes surface as [`QBlockRecover`].
 //!
