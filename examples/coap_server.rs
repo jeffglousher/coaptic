@@ -60,7 +60,7 @@ fn main() {
         .build(Memory::<profiles::Default>::with_block_wise())
         .expect("Default + block_wise");
 
-    let mut socket = UdpSocket::bind("127.0.0.1:0").expect("server bind");
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("server bind");
     let mut client = UdpSocket::bind("127.0.0.1:0").expect("client bind");
     let server_ep = Endpoint::from(socket.local_addr().expect("server addr"));
     let timeout = std::time::Duration::from_millis(200);

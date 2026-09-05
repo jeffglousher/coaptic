@@ -76,10 +76,24 @@ pub struct Server<S: Storage, T, const ROUTES: usize = DEFAULT_ROUTES> {
     router: Router<ROUTES>,
 }
 
-impl<S: Storage, T, const ROUTES: usize> Server<S, T, ROUTES> {
-    /// Bind `engine` to `io`. Register routes with [`Self::router`].
+impl<S: Storage, T> Server<S, T> {
+    /// Bind `engine` to `io` with the default router (8 bindings).
+    ///
+    /// Need more slots? [`Server::with_routes`] (`Server::<_, _, 16>::with_routes(...)`).
     #[must_use]
     pub const fn new(engine: Engine<S>, io: T) -> Self {
+        Self {
+            engine,
+            io,
+            router: Router::new(),
+        }
+    }
+}
+
+impl<S: Storage, T, const ROUTES: usize> Server<S, T, ROUTES> {
+    /// Bind `engine` to `io` with a `ROUTES`-sized table.
+    #[must_use]
+    pub const fn with_routes(engine: Engine<S>, io: T) -> Self {
         Self {
             engine,
             io,
