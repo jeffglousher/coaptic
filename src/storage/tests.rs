@@ -34,8 +34,9 @@ use super::WithBodies;
 use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
-    BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK, Opt, Token,
-    Transmission, Type, empty_ack, empty_rst, encode, encode_observe,
+    BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK,
+    ObserveTransmission, Opt, Token, Transmission, Type, empty_ack, empty_rst, encode,
+    encode_observe,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -754,6 +755,103 @@ fn observe_lifetime_rotating_fairness() {
     assert!(first == a || first == b);
     assert!(second == a || second == b);
     assert_eq!(engine.progress(1_000).observe_expired(), None);
+}
+
+#[test]
+fn observe_24h_non_confirm_and_con_reset() {
+    let mut interest =
+        ObserveInterest::new(sample_token(&[0xa1]), Endpoint::v4([203, 0, 113, 60], 5683));
+    assert!(!interest.must_confirm(0));
+    interest.record_notify(0, None);
+    assert_eq!(
+        interest.confirm_due_ms(),
+        Some(ObserveTransmission::CONFIRM_INTERVAL_MS)
+    );
+    assert!(!interest.must_confirm(ObserveTransmission::CONFIRM_INTERVAL_MS - 1));
+    assert!(interest.must_confirm(ObserveTransmission::CONFIRM_INTERVAL_MS));
+    interest.record_notify(1_000, None);
+    assert_eq!(
+        interest.confirm_due_ms(),
+        Some(ObserveTransmission::CONFIRM_INTERVAL_MS),
+        "later NON must not reset the 24-hour clock"
+    );
+    interest.record_notify(2_000, Some(MessageId::new(1)));
+    assert_eq!(
+        interest.confirm_due_ms(),
+        Some(2_000 + ObserveTransmission::CONFIRM_INTERVAL_MS)
+    );
+    assert!(!interest.must_confirm(2_000 + ObserveTransmission::CONFIRM_INTERVAL_MS - 1));
+    assert!(interest.must_confirm(2_000 + ObserveTransmission::CONFIRM_INTERVAL_MS));
+}
+
+#[test]
+fn observe_nstart_blocks_same_endpoint_until_hold_elapses() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 61], 5683);
+    let a_key = ObserveKey::new(sample_token(&[0xb1]), ep);
+    let b_key = ObserveKey::new(sample_token(&[0xb2]), ep);
+    let a = engine
+        .insert_observe(ObserveInterest::from(a_key))
+        .expect("a");
+    let b = engine
+        .insert_observe(ObserveInterest::from(b_key))
+        .expect("b");
+    assert_eq!(engine.signal_observe(a_key), Some(a));
+    assert_eq!(engine.progress(0).observe_notify(), Some(a));
+    assert_eq!(engine.record_observe_notify(a_key, 0, None), Some(a));
+    assert!(engine.observe_interest(a).expect("held").is_notify_held(0));
+    assert_eq!(engine.signal_observe(b_key), Some(b));
+    assert_eq!(
+        engine.progress(0).observe_notify(),
+        None,
+        "NSTART=1 blocks another notify to the same endpoint"
+    );
+    assert!(
+        engine
+            .observe_interest(b)
+            .expect("still pending")
+            .is_pending()
+    );
+    assert_eq!(
+        engine.record_observe_notify(b_key, 0, None),
+        None,
+        "record also rejects while held"
+    );
+    let later = u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    assert_eq!(engine.progress(later).observe_notify(), Some(b));
+    assert_eq!(engine.record_observe_notify(b_key, later, None), Some(b));
+}
+
+#[test]
+fn observe_nstart_con_ack_and_other_endpoint() {
+    let mut engine = build_default();
+    let ep_a = Endpoint::v4([203, 0, 113, 62], 5683);
+    let ep_b = Endpoint::v4([203, 0, 113, 63], 5683);
+    let a_key = ObserveKey::new(sample_token(&[0xc1]), ep_a);
+    let b_key = ObserveKey::new(sample_token(&[0xc2]), ep_b);
+    let a = engine
+        .insert_observe(ObserveInterest::from(a_key))
+        .expect("a");
+    let b = engine
+        .insert_observe(ObserveInterest::from(b_key))
+        .expect("b");
+    let mid = MessageId::new(0x0c01);
+    assert_eq!(engine.signal_observe(a_key), Some(a));
+    assert_eq!(engine.progress(0).observe_notify(), Some(a));
+    assert_eq!(engine.record_observe_notify(a_key, 0, Some(mid)), Some(a));
+    assert_eq!(
+        engine.record_observe_notify(a_key, 0, Some(mid)),
+        Some(a),
+        "idempotent same CON MID"
+    );
+    assert_eq!(engine.signal_observe(b_key), Some(b));
+    assert_eq!(
+        engine.progress(0).observe_notify(),
+        Some(b),
+        "other endpoint is not NSTART-blocked"
+    );
+    assert_eq!(engine.ack_observe_con(mid, ep_a), Some(a));
+    assert!(!engine.observe_interest(a).expect("acked").is_notify_held(0));
 }
 
 #[test]
@@ -2470,6 +2568,31 @@ fn block2_outgoing_slices_and_encodes() {
 
     engine.release_tx_body(id).expect("abort/release");
     assert!(engine.tx_body_transfer(id).is_none());
+}
+
+#[test]
+fn block2_observe_tx_writes_observe() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let body: [u8; 20] = core::array::from_fn(|i| i as u8);
+    let id = engine.start_block2(key, &body, 0).expect("start");
+    let tx = engine.acquire_tx().expect("tx");
+    let issued = engine
+        .encode_block2_observe_tx(
+            id,
+            tx,
+            Type::Confirmable,
+            Code::CONTENT,
+            MessageId::new(11),
+            3,
+        )
+        .expect("encode first with Observe");
+    assert_eq!(issued.block().num(), 0);
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(parsed.observe().expect("Observe").expect("seq"), 3);
+    assert_eq!(parsed.block2().expect("Block2").expect("val").num(), 0);
+    assert_eq!(parsed.payload(), &body[..16]);
+    engine.release_tx(tx).expect("release");
 }
 
 #[test]

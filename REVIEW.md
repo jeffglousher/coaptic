@@ -20,13 +20,13 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#31** on `main` plus Echo:
+Through squash-merges **#7–#32** on `main` plus RFC 7641 §4.5 pacing:
 
 | Domain | In the crate |
 | --- | --- |
-| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, `OptionsBuilder`, `Ids`, Token mint |
+| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, `ObserveTransmission`, named 2.31 / 4.08 codes, `OptionsBuilder`, `Ids`, Token mint |
 | Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
-| Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, incoming `QBlockRecover` + outgoing Q-Block reissue |
+| Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
 The core does not send. The caller owns the clock, jitter, and socket.

@@ -259,6 +259,8 @@ impl Code {
     pub const CHANGED: Self = Self(pack_code(2, 4));
     /// 2.05 Content.
     pub const CONTENT: Self = Self(pack_code(2, 5));
+    /// 2.31 Continue (RFC 7959). The library does not invent when to send it.
+    pub const CONTINUE: Self = Self(pack_code(2, 31));
 
     /// 4.00 Bad Request.
     pub const BAD_REQUEST: Self = Self(pack_code(4, 0));
@@ -274,6 +276,10 @@ impl Code {
     pub const METHOD_NOT_ALLOWED: Self = Self(pack_code(4, 5));
     /// 4.06 Not Acceptable.
     pub const NOT_ACCEPTABLE: Self = Self(pack_code(4, 6));
+    /// 4.08 Request Entity Incomplete (RFC 7959 / RFC 9177).
+    ///
+    /// The library does not invent 4.08 policy.
+    pub const REQUEST_ENTITY_INCOMPLETE: Self = Self(pack_code(4, 8));
     /// 4.12 Precondition Failed.
     pub const PRECONDITION_FAILED: Self = Self(pack_code(4, 12));
     /// 4.13 Request Entity Too Large.
@@ -472,4 +478,18 @@ impl Transmission {
         };
         Self::ACK_TIMEOUT_MS.saturating_add(extra)
     }
+}
+
+/// RFC 7641 §4.5 / §4.5.1 notification transmission constants.
+///
+/// Colocated on [`crate::ObserveInterest`]. The core does not send and does
+/// not invent RST / 4.02 policy. See `knowledge/rfcs/rfc7641.txt`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObserveTransmission;
+
+impl ObserveTransmission {
+    /// 24 hours in milliseconds. A mostly-NON notifier must send CON this often.
+    pub const CONFIRM_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
+    /// Default NON notify spacing when the caller has no RTT estimate.
+    pub const NON_TIMEOUT_MS: u32 = 3_000;
 }

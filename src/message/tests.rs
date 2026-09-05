@@ -354,6 +354,18 @@ fn code_helpers() {
     assert!(Code::INTERNAL_SERVER_ERROR.is_server_error());
     assert!(Code::CONTENT.is_response());
     assert_eq!(Code::from_class_detail(2, 5), Some(Code::CONTENT));
+    assert_eq!(Code::from_class_detail(2, 31), Some(Code::CONTINUE));
+    assert_eq!(
+        Code::from_class_detail(4, 8),
+        Some(Code::REQUEST_ENTITY_INCOMPLETE)
+    );
+    assert!(Code::CONTINUE.is_success());
+    assert!(Code::REQUEST_ENTITY_INCOMPLETE.is_client_error());
+    assert_eq!(
+        crate::ObserveTransmission::CONFIRM_INTERVAL_MS,
+        24 * 60 * 60 * 1_000
+    );
+    assert_eq!(crate::ObserveTransmission::NON_TIMEOUT_MS, 3_000);
     assert_eq!((Code::GET.class(), Code::GET.detail()), (0, 1));
     assert_eq!(Type::Confirmable.to_bits(), 0);
     assert_eq!(Type::from_bits(2), Some(Type::Acknowledgement));

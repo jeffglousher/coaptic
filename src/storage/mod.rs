@@ -15,7 +15,9 @@
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
 //! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
 //! key). Max-Age / CON-wait lifetime is colocated on the row
-//! ([`ObserveLifetime`]). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
+//! ([`ObserveLifetime`]). RFC 7641 §4.5 / §4.5.1 24-hour NON-confirm and
+//! per-endpoint notification NSTART live on the same row
+//! ([`ObserveNotifyHold`]). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
 //! sidecar on body-pool slots when block-wise is enabled (incoming
 //! Block1/Block2, outgoing Block1/Block2), including BERT (SZX 7).
 //! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`].
@@ -73,7 +75,7 @@ pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
 pub use table::{
     DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
-    ObserveTable,
+    ObserveNotifyHold, ObserveTable,
 };
 
 /// Acquire, release, and rotate occupancy for one pool or table.
@@ -236,8 +238,9 @@ pub trait DedupSlots {
 /// capacity). Capacity is the profile observe-entry count. [`Memory`] and
 /// [`AllocMemory`] implement this so [`Engine`] can store
 /// [`ObserveInterest`] values in the existing table slots. Pending notify,
-/// the 24-bit sequence, and optional Max-Age / CON-wait lifetime stay on
-/// the row; bodies are not stored here.
+/// the 24-bit sequence, optional Max-Age / CON-wait lifetime, and RFC 7641
+/// §4.5 / §4.5.1 confirm / NSTART hold stay on the row; bodies are not
+/// stored here.
 pub trait ObserveSlots {
     /// Insert `interest`, or return the existing slot if the key is present.
     ///
