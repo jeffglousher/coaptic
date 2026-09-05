@@ -6,6 +6,10 @@
 //! RX slot (+ body) --view--> Request
 //! handler(Request) -> Response
 //! Response --encode--> TX slot (+ TX body when the payload needs Block2)
+//!
+//! Outgoing (get/put) --encode--> TX slot
+//! poll matches Token + endpoint (Exchange table)
+//! RX datagram --copy--> Reply
 //! ```
 //!
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
@@ -71,7 +75,14 @@
 //! [`DatagramIo`] remain the advanced path
 //! for [`Access`](crate::Access), custom RST / 4.xx, and BERT edges.
 //! Escape: [`App::engine_mut`].
-
+//!
+//! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
+//! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
+//! via the Exchange table. [`App::take_reply`] is a [`Reply`] (code /
+//! payload). No `SlotId`. The caller owns the destination endpoint and
+//! must take replies. Tokens and Message IDs are App counters (no OS RNG).
+//! Block2 / Q-Block2 assembly and Observe client stay Engine-only.
+mod client;
 mod request;
 mod response;
 mod routing;
@@ -89,14 +100,15 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
-    EngineBuilder, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey, ObserveResource,
-    ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError,
-    SlotId, Storage, WithBodies,
+    EngineBuilder, Exchanges, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey,
+    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit,
+    SlotError, SlotId, Storage, WithBodies,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
+pub use client::{Call, Outgoing, Reply};
 pub use request::{MAX_PATH_SEGMENTS, Request};
 pub use response::{INLINE_PAYLOAD, IntoResponse, Response};
 pub use routing::{
@@ -127,6 +139,8 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
     io: T,
     site: Site<N>,
     ids: Ids,
+    tokens: u32,
+    inbox: client::ClientInbox,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
@@ -234,6 +248,8 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
             io,
             site: self.site,
             ids: Ids::new(1),
+            tokens: 0,
+            inbox: client::ClientInbox::new(),
         })
     }
 }
@@ -301,8 +317,9 @@ impl<P, T, const N: usize> App<P, T, N>
 where
     P: MemoryProfile,
     T: DatagramIo,
-    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
-    Memory<P, WithBodies<P>>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+    Memory<P, WithBodies<P>>:
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
 {
     /// One loop step: recv, progress, route, handler, send, release.
     ///
@@ -339,14 +356,30 @@ where
     /// problem details (CBOR). Echo 4.01 and Engine-path 4.xx stay
     /// caller-built ([`Response::problem`](crate::Response::problem) when a
     /// body is wanted). CON is answered with a piggybacked ACK.
+    ///
+    /// Outbound: a response whose Token and peer match an outstanding
+    /// [`Call`] is copied into a [`Reply`] for [`Self::take_reply`]. A
+    /// piggybacked ACK releases the pending CON. A separate CON response
+    /// is acknowledged with an empty ACK. Retransmit give-up drops the
+    /// Exchange (take_reply stays `None`).
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
-            EngineSlot::Datagram(engine) => {
-                poll_engine(engine, &mut self.io, &self.site, &mut self.ids, now_ms)
-            }
-            EngineSlot::BlockWise(engine) => {
-                poll_engine(engine, &mut self.io, &self.site, &mut self.ids, now_ms)
-            }
+            EngineSlot::Datagram(engine) => poll_engine(
+                engine,
+                &mut self.io,
+                &self.site,
+                &mut self.ids,
+                &mut self.inbox,
+                now_ms,
+            ),
+            EngineSlot::BlockWise(engine) => poll_engine(
+                engine,
+                &mut self.io,
+                &self.site,
+                &mut self.ids,
+                &mut self.inbox,
+                now_ms,
+            ),
         }
     }
 
@@ -440,10 +473,11 @@ fn poll_engine<Mem, T, const N: usize>(
     io: &mut T,
     site: &Site<N>,
     ids: &mut Ids,
+    inbox: &mut client::ClientInbox,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
     T: DatagramIo,
 {
     let received = engine.recv_from(io)?;
@@ -455,13 +489,14 @@ where
                 engine.send_tx(io, pending.tx_slot())?;
             }
             Retransmit::GiveUp(pending) => {
+                client::forget_exchange_tx(engine, pending.tx_slot());
                 engine.release_tx(pending.tx_slot())?;
             }
         }
     }
 
     if let Some(rx) = progress.rx_ready().or(received) {
-        dispatch_rx(engine, io, site, now_ms, rx)?;
+        dispatch_rx(engine, io, site, inbox, now_ms, rx)?;
     }
 
     if let Some(expiry) = progress.observe_expired() {
@@ -569,11 +604,12 @@ fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
+    inbox: &mut client::ClientInbox,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {
@@ -622,8 +658,7 @@ where
     }
 
     if !parsed.code().is_request() {
-        let _ = engine.release_rx(rx);
-        return Ok(());
+        return client::complete_client(engine, io, inbox, peer, &parsed, rx);
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
@@ -1211,7 +1246,7 @@ fn encode_response<S: Storage + DatagramSlots>(
     engine.encode_tx(tx, &msg).map(|_| ())
 }
 
-fn finish_send<S, T>(
+pub(crate) fn finish_send<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     tx: SlotId,
@@ -1278,7 +1313,7 @@ fn copy_rx<S: Storage + DatagramSlots, E>(
     Ok(src.len())
 }
 
-fn send_empty_ack<S, T>(
+pub(crate) fn send_empty_ack<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     dest: Endpoint,
@@ -1319,6 +1354,8 @@ pub enum Error<E> {
     Saturated,
     /// Block / Q-Block body start, issue, or recover encode failed.
     Block(BlockTransferError),
+    /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
+    Path,
 }
 
 impl<E> From<DatagramIoError<E>> for Error<E> {
@@ -1356,6 +1393,7 @@ where
             Self::Message(e) => write!(f, "{e}"),
             Self::Saturated => f.write_str("outgoing datagram pool is saturated"),
             Self::Block(e) => write!(f, "{e}"),
+            Self::Path => f.write_str("uri-path has too many segments"),
         }
     }
 }
@@ -1372,6 +1410,7 @@ where
             Self::Message(e) => Some(e),
             Self::Saturated => None,
             Self::Block(e) => Some(e),
+            Self::Path => None,
         }
     }
 }

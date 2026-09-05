@@ -945,3 +945,132 @@ fn observe_source_sends_on_signal_poll() {
     assert_eq!(note.observe().and_then(Result::ok), Some(1));
     assert_eq!(note.payload(), b"obs-snap");
 }
+
+/// Send writes into recv so one App is both client and server.
+#[derive(Default)]
+struct Echo {
+    pending: Option<(Endpoint, [u8; 256], usize)>,
+}
+
+impl DatagramIo for Echo {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((ep, bytes, n)) = self.pending.take() else {
+            return Ok(None);
+        };
+        if n > buf.len() {
+            return Err("short buf");
+        }
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > 256 {
+            return Err("too long");
+        }
+        let mut slot = [0u8; 256];
+        slot[..bytes.len()].copy_from_slice(bytes);
+        self.pending = Some((dest, slot, bytes.len()));
+        Ok(bytes.len())
+    }
+}
+
+fn echo_app() -> App<profiles::Default, Echo> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_temp))
+        .route(&["leds", "0"], get(get_led).put(put_body))
+        .bind(Echo::default())
+        .expect("bind")
+}
+
+#[test]
+fn client_get_round_trip_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert!(app.take_reply(call).is_none());
+    app.poll(0).expect("server handle");
+    assert!(app.take_reply(call).is_none());
+    app.poll(0).expect("client match");
+    let reply = app.take_reply(call).expect("matched");
+    assert_eq!(reply.code(), Code::CONTENT);
+    assert_eq!(reply.payload(), b"21.5");
+    assert_eq!(reply.content_format(), Some(ContentFormat::TEXT_PLAIN));
+    assert_eq!(reply.token(), call.token());
+    assert_eq!(reply.peer(), peer);
+    assert_eq!(reply.ty(), Type::Acknowledgement);
+    assert!(app.take_reply(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_put_round_trip_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let call = app
+        .put(&["leds", "0"])
+        .to(peer)
+        .payload(b"on")
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .send(0)
+        .expect("send");
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let reply = app.take_reply(call).expect("matched");
+    assert_eq!(reply.code(), Code::CHANGED);
+    assert_eq!(reply.payload(), b"on");
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_non_get_matches() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .non()
+        .send(0)
+        .expect("send");
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let reply = app.take_reply(call).expect("matched");
+    assert_eq!(reply.code(), Code::CONTENT);
+    assert_eq!(reply.payload(), b"21.5");
+    assert_eq!(reply.ty(), Type::NonConfirmable);
+}
+
+#[test]
+fn client_get_unknown_path_is_problem_details() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let call = app.get(&["nope"]).to(peer).send(0).expect("send");
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let reply = app.take_reply(call).expect("matched");
+    assert_eq!(reply.code(), Code::NOT_FOUND);
+    let details = reply.problem_details().expect("cbor");
+    assert_eq!(details.response_code(), Some(Code::NOT_FOUND));
+    assert_eq!(details.title_text(), Some("Not Found"));
+}
+
+#[test]
+fn client_path_too_long_is_error() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_app();
+    let err = app
+        .get(&["a", "b", "c", "d", "e", "f", "g", "h", "too-many"])
+        .to(peer)
+        .send(0)
+        .expect_err("path");
+    assert_eq!(err, Error::Path);
+}

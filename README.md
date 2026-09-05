@@ -8,6 +8,10 @@ A bounded `no_std` CoAP engine with an approachable `App` face. Slots and tables
 RX slot (+ body) --view--> Request
 handler(Request) -> Response
 Response --encode--> TX slot (+ body)
+
+Outgoing (get/put) --encode--> TX slot
+poll matches Token + endpoint
+RX --copy--> Reply
 ```
 
 ```rust
@@ -21,9 +25,13 @@ let mut app = App::profile::<profiles::Default>()
     .route(&["sensors", "temp"], get(get_temp))
     .bind(io)?;
 app.poll(now_ms)?;
+
+let call = app.get(&["sensors", "temp"]).to(peer).send(now_ms)?;
+app.poll(now_ms)?;
+let reply = app.take_reply(call);
 ```
 
-Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release. You own the socket, the clock, and any domain data that outlives a request.
+Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release, and matches outbound exchanges. You own the socket, the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
 
 ## Features
 
