@@ -1,8 +1,8 @@
 //! In-memory Engine-pair drivers for `TD_COAP_CORE_*`.
 
 use coaptic::{
-    Code, ContentFormat, DedupEntry, Message, Opt, Retransmit, Token, Transmission, Type, empty_ack,
-    empty_rst,
+    Code, ContentFormat, DedupEntry, Message, Opt, Retransmit, Token, Transmission, Type,
+    empty_ack, empty_rst,
 };
 
 use crate::harness::{Pair, path_is, uri_query};
@@ -24,7 +24,13 @@ pub fn run(id: &str) {
         "TD_COAP_CORE_10" => {
             let token = Pair::client_token(4);
             assert!(!token.is_empty());
-            basic_token(Type::Confirmable, Code::GET, Code::CONTENT, &["test"], token);
+            basic_token(
+                Type::Confirmable,
+                Code::GET,
+                Code::CONTENT,
+                &["test"],
+                token,
+            );
         }
         "TD_COAP_CORE_11" => separate(Type::Confirmable, Pair::client_token(8), &["separate"]),
         "TD_COAP_CORE_12" => {
@@ -97,7 +103,11 @@ fn basic_token(ty: Type, req: Code, resp: Code, path: &[&str], token: Token) {
     } else {
         pair.server_ids.next()
     };
-    let body: &[u8] = if resp == Code::CONTENT { TEST_BODY } else { &[] };
+    let body: &[u8] = if resp == Code::CONTENT {
+        TEST_BODY
+    } else {
+        &[]
+    };
     let cf = ContentFormat::TEXT_PLAIN.encode();
     let extra: &[Opt<'_>] = if resp == Code::CONTENT {
         &[Opt::content_format(&cf)]
@@ -133,6 +143,9 @@ fn basic_token(ty: Type, req: Code, resp: Code, path: &[&str], token: Token) {
 fn separate(req_ty: Type, token: Token, path: &[&str]) {
     let mut pair = Pair::new();
     let (tx, mid) = pair.client_request(req_ty, Code::GET, token, path, &[], &[]);
+    if req_ty == Type::Confirmable {
+        pair.client_track_con(tx, mid);
+    }
     let rx = pair.exchange_client(tx);
     let parsed = pair.server.decode_rx(rx).expect("decode");
     assert!(path_is(parsed, path));
@@ -196,14 +209,8 @@ fn core_14_uri_query() {
         Opt::uri_query("second=2"),
         Opt::uri_query("third=3"),
     ];
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["query"],
-        &extra,
-        &[],
-    );
+    let (tx, mid) =
+        pair.client_request(Type::Confirmable, Code::GET, token, &["query"], &extra, &[]);
     let rx = pair.exchange_client(tx);
     let parsed = pair.server.decode_rx(rx).expect("decode");
     assert!(path_is(parsed, &["query"]));
@@ -227,20 +234,17 @@ fn core_14_uri_query() {
 fn core_15_lossy_piggyback() {
     let mut pair = Pair::new();
     let token = Pair::client_token(2);
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["test"],
-        &[],
-        &[],
+    let (tx, mid) = pair.client_request(Type::Confirmable, Code::GET, token, &["test"], &[], &[]);
+    pair.client_track_con(tx, mid);
+    assert!(
+        pair.client.pending_con(tx).is_some(),
+        "CORE_15 pending CON must stay on TX"
     );
-    pair.now_ms = pair
-        .now_ms
-        .saturating_add(u64::from(Transmission::ACK_TIMEOUT_MS));
+    pair.now_ms = u64::from(Transmission::ACK_TIMEOUT_MS);
     let Retransmit::Due(pending) = pair
         .client
-        .poll_retransmit(pair.now_ms)
+        .progress(pair.now_ms)
+        .retransmit()
         .expect("retransmission launched")
     else {
         panic!("CORE_15 expected Due");
@@ -270,14 +274,9 @@ fn core_15_lossy_piggyback() {
 fn core_16_lossy_separate() {
     let mut pair = Pair::new();
     let token = Pair::client_token(2);
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["separate"],
-        &[],
-        &[],
-    );
+    let (tx, mid) =
+        pair.client_request(Type::Confirmable, Code::GET, token, &["separate"], &[], &[]);
+    pair.client_track_con(tx, mid);
     let rx = pair.client_to_server(tx);
     let ack = empty_ack(mid);
     let stx = pair.server_send(&ack);
@@ -285,7 +284,14 @@ fn core_16_lossy_separate() {
     let smid = pair.server_ids.next();
     let cf = ContentFormat::TEXT_PLAIN.encode();
     let extra = [Opt::content_format(&cf)];
-    let stx = pair.server_reply(Type::Confirmable, Code::CONTENT, smid, token, &extra, SEP_BODY);
+    let stx = pair.server_reply(
+        Type::Confirmable,
+        Code::CONTENT,
+        smid,
+        token,
+        &extra,
+        SEP_BODY,
+    );
     pair.server.release_rx(rx).ok();
     let crx = pair.exchange_server(stx);
     assert!(pair.client.match_response_rx(crx).expect("match").is_some());
@@ -303,7 +309,10 @@ fn core_16_lossy_separate() {
 fn core_18_location_path() {
     let mut pair = Pair::new();
     let token = Pair::client_token(2);
-    let loc = [Opt::location_path("location1"), Opt::location_path("location2")];
+    let loc = [
+        Opt::location_path("location1"),
+        Opt::location_path("location2"),
+    ];
     let (tx, mid) = pair.client_request(
         Type::Confirmable,
         Code::POST,
@@ -313,14 +322,7 @@ fn core_18_location_path() {
         TEST_BODY,
     );
     let rx = pair.exchange_client(tx);
-    let stx = pair.server_reply(
-        Type::Acknowledgement,
-        Code::CREATED,
-        mid,
-        token,
-        &loc,
-        &[],
-    );
+    let stx = pair.server_reply(Type::Acknowledgement, Code::CREATED, mid, token, &loc, &[]);
     pair.server.release_rx(rx).ok();
     let crx = pair.exchange_server(stx);
     let got = pair.client.decode_rx(crx).expect("decode");
@@ -333,7 +335,10 @@ fn core_18_location_path() {
 fn core_19_location_query() {
     let mut pair = Pair::new();
     let token = Pair::client_token(2);
-    let loc = [Opt::location_query("first=1"), Opt::location_query("second=2")];
+    let loc = [
+        Opt::location_query("first=1"),
+        Opt::location_query("second=2"),
+    ];
     let (tx, mid) = pair.client_request(
         Type::Confirmable,
         Code::POST,
@@ -343,14 +348,7 @@ fn core_19_location_query() {
         TEST_BODY,
     );
     let rx = pair.exchange_client(tx);
-    let stx = pair.server_reply(
-        Type::Acknowledgement,
-        Code::CREATED,
-        mid,
-        token,
-        &loc,
-        &[],
-    );
+    let stx = pair.server_reply(Type::Acknowledgement, Code::CREATED, mid, token, &loc, &[]);
     pair.server.release_rx(rx).ok();
     let crx = pair.exchange_server(stx);
     let got = pair.client.decode_rx(crx).expect("decode");
@@ -365,14 +363,8 @@ fn core_20_accept() {
     let token = Pair::client_token(2);
     let accept = ContentFormat::TEXT_PLAIN.encode();
     let extra = [Opt::accept(&accept)];
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["test"],
-        &extra,
-        &[],
-    );
+    let (tx, mid) =
+        pair.client_request(Type::Confirmable, Code::GET, token, &["test"], &extra, &[]);
     let rx = pair.exchange_client(tx);
     let parsed = pair.server.decode_rx(rx).expect("decode");
     assert_eq!(
@@ -398,14 +390,8 @@ fn core_20_accept() {
 fn core_21_etag() {
     let mut pair = Pair::new();
     let token = Pair::client_token(2);
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["validate"],
-        &[],
-        &[],
-    );
+    let (tx, mid) =
+        pair.client_request(Type::Confirmable, Code::GET, token, &["validate"], &[], &[]);
     let rx = pair.exchange_client(tx);
     let etag = b"etag1";
     let cf = ContentFormat::TEXT_PLAIN.encode();
@@ -438,10 +424,20 @@ fn core_21_etag() {
     );
     let rx2 = pair.exchange_client(tx2);
     let extra = [Opt::etag(etag)];
-    let stx2 = pair.server_reply(Type::Acknowledgement, Code::VALID, mid2, token2, &extra, &[]);
+    let stx2 = pair.server_reply(
+        Type::Acknowledgement,
+        Code::VALID,
+        mid2,
+        token2,
+        &extra,
+        &[],
+    );
     pair.server.release_rx(rx2).ok();
     let crx2 = pair.exchange_server(stx2);
-    assert_eq!(pair.client.decode_rx(crx2).expect("decode").code(), Code::VALID);
+    assert_eq!(
+        pair.client.decode_rx(crx2).expect("decode").code(),
+        Code::VALID
+    );
     pair.client.match_response_rx(crx2).ok();
     pair.client.release_rx(crx2).ok();
 }
@@ -555,10 +551,14 @@ fn core_31_ping() {
     let crx = pair.exchange_server(stx);
     let pending = pair.client.match_empty_ack_rst_rx(crx).expect("RST match");
     assert!(pending.is_some(), "ping RST must match pending CON");
-    assert!(pair.client.decode_rx(crx).expect("decode RST").is_empty_rst());
+    assert!(
+        pair.client
+            .decode_rx(crx)
+            .expect("decode RST")
+            .is_empty_rst()
+    );
     if let Some(id) = pending {
         pair.client.release_tx(id).ok();
     }
     pair.client.release_rx(crx).ok();
 }
-

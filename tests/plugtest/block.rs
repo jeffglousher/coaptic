@@ -1,8 +1,7 @@
 //! In-memory Engine-pair drivers for `TD_COAP_BLOCK_*` (classic Block, RFC 7959).
 
 use coaptic::{
-    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, SlotId,
-    Token, Type,
+    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, SlotId, Token, Type,
 };
 
 use crate::harness::{
@@ -32,14 +31,8 @@ fn block2_early(size: u16, body_len: usize) {
     let szx = BlockValue::from_size(0, false, size).expect("szx").szx();
     let first = block_at(0, false, size).encode();
     let extra = [Opt::block2(&first)];
-    let (tx, _mid) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["large"],
-        &extra,
-        &[],
-    );
+    let (tx, _mid) =
+        pair.client_request(Type::Confirmable, Code::GET, token, &["large"], &extra, &[]);
     let rx = pair.exchange_client(tx);
     let parsed = pair.server.decode_rx(rx).expect("decode GET");
     assert!(path_is(parsed, &["large"]));
@@ -61,7 +54,10 @@ fn block2_late(size: u16, body_len: usize) {
     let (tx, _mid) = pair.client_request(Type::Confirmable, Code::GET, token, &["large"], &[], &[]);
     let rx = pair.exchange_client(tx);
     let parsed = pair.server.decode_rx(rx).expect("decode GET");
-    assert!(parsed.block2().is_none(), "late negotiation: no Block2 on GET");
+    assert!(
+        parsed.block2().is_none(),
+        "late negotiation: no Block2 on GET"
+    );
     let key = block_key(token, pair.client_ep);
     let body_id = pair
         .server
@@ -112,14 +108,8 @@ fn assemble_block2_to_client(
         }
         let next = block_at(num + 1, false, size).encode();
         let extra = [Opt::block2(&next)];
-        let (tx, _) = pair.client_request(
-            Type::Confirmable,
-            Code::GET,
-            token,
-            &["large"],
-            &extra,
-            &[],
-        );
+        let (tx, _) =
+            pair.client_request(Type::Confirmable, Code::GET, token, &["large"], &extra, &[]);
         let rx = pair.exchange_client(tx);
         pair.server.release_rx(rx).ok();
     }
@@ -147,7 +137,11 @@ fn block1_post(size: u16, body_len: usize, two_way: bool) {
         } else {
             &["large-create"]
         },
-        if two_way { Code::CHANGED } else { Code::CREATED },
+        if two_way {
+            Code::CHANGED
+        } else {
+            Code::CREATED
+        },
         two_way,
     );
 }
@@ -177,7 +171,13 @@ fn block1_request(
         let tx = pair.client.acquire_tx().expect("client TX");
         let issued = pair
             .client
-            .encode_block1_tx(body_id, tx, Type::Confirmable, method, pair.client_ids.next())
+            .encode_block1_tx(
+                body_id,
+                tx,
+                Type::Confirmable,
+                method,
+                pair.client_ids.next(),
+            )
             .expect("encode Block1");
         let (mid, blk, payload) = {
             let parsed = pair.client.decode_tx(tx).expect("decode issued");
@@ -196,7 +196,9 @@ fn block1_request(
             .with_token(token)
             .with_options(opts.as_slice())
             .with_payload(&payload);
-        pair.client.encode_tx(tx, &msg).expect("re-encode with path");
+        pair.client
+            .encode_tx(tx, &msg)
+            .expect("re-encode with path");
         pair.client.set_tx_endpoint(tx, pair.server_ep).ok();
         pair.client.record_request(tx, pair.server_ep).ok();
         let _ = pair
@@ -216,14 +218,7 @@ fn block1_request(
         };
         let echo = block_at(num, !progress.complete(), size).encode();
         let extra = [Opt::block1(&echo)];
-        let stx = pair.server_reply(
-            Type::Acknowledgement,
-            resp_code,
-            mid,
-            token,
-            &extra,
-            &[],
-        );
+        let stx = pair.server_reply(Type::Acknowledgement, resp_code, mid, token, &extra, &[]);
         pair.server.release_rx(rx).ok();
         let crx = pair.exchange_server(stx);
         assert!(pair.client.match_response_rx(crx).expect("match").is_some());
@@ -242,13 +237,7 @@ fn block1_request(
     }
 }
 
-fn pull_block2(
-    pair: &mut Pair,
-    token: Token,
-    want: &[u8],
-    size: u16,
-    path: &[&str],
-) -> Vec<u8> {
+fn pull_block2(pair: &mut Pair, token: Token, want: &[u8], size: u16, path: &[&str]) -> Vec<u8> {
     let blocks = want.len().div_ceil(usize::from(size)) as u32;
     let szx = BlockValue::from_size(0, false, size).expect("szx").szx();
     let key = block_key(token, pair.client_ep);
@@ -279,14 +268,7 @@ fn pull_block2(
         }
         let next = block_at(num + 1, false, size).encode();
         let extra = [Opt::block2(&next)];
-        let (tx, _) = pair.client_request(
-            Type::Confirmable,
-            Code::POST,
-            token,
-            path,
-            &extra,
-            &[],
-        );
+        let (tx, _) = pair.client_request(Type::Confirmable, Code::POST, token, path, &extra, &[]);
         let rx = pair.exchange_client(tx);
         pair.server.release_rx(rx).ok();
     }

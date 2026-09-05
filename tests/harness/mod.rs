@@ -150,6 +150,13 @@ impl Pair {
         (self.client_send(&msg), mid)
     }
 
+    /// Record pending CON on an already-sent client TX (`NSTART` is 1).
+    pub fn client_track_con(&mut self, tx: SlotId, mid: MessageId) {
+        self.client
+            .record_pending_con(tx, self.server_ep, mid, self.now_ms, 0)
+            .expect("pending CON");
+    }
+
     /// Encode a response on the server and send it. Caller supplies options.
     pub fn server_reply(
         &mut self,
@@ -202,11 +209,6 @@ impl Pair {
         self.client
             .record_request(tx, self.server_ep)
             .expect("record request");
-        if msg.ty() == Type::Confirmable {
-            self.client
-                .record_pending_con(tx, self.server_ep, msg.message_id(), self.now_ms, 0)
-                .expect("pending CON");
-        }
         tx
     }
 
@@ -225,25 +227,28 @@ impl Pair {
         tx
     }
 
-    /// Deliver client TX to server, then release the client TX slot.
+    /// Deliver client TX to server. Pending CON TX stays occupied for ACK/RST match.
     pub fn exchange_client(&mut self, tx: SlotId) -> SlotId {
         let rx = self.client_to_server(tx);
-        self.client.release_tx(tx).expect("release client TX");
+        if self.client.pending_con(tx).is_none() {
+            self.client.release_tx(tx).expect("release client TX");
+        }
         rx
     }
 
-    /// Deliver server TX to client, then release the server TX slot.
+    /// Deliver server TX to client. Pending CON TX stays occupied for ACK/RST match.
     pub fn exchange_server(&mut self, tx: SlotId) -> SlotId {
         let rx = self.server_to_client(tx);
-        self.server.release_tx(tx).expect("release server TX");
+        if self.server.pending_con(tx).is_none() {
+            self.server.release_tx(tx).expect("release server TX");
+        }
         rx
     }
 
     /// Mint a client Token of `len` bytes (1..=8) from a fixed entropy stream.
     #[must_use]
     pub fn client_token(len: usize) -> Token {
-        Token::mint(len, &[0xC0, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07])
-            .expect("token length")
+        Token::mint(len, &[0xC0, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07]).expect("token length")
     }
 }
 

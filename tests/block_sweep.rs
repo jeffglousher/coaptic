@@ -8,6 +8,7 @@
 //!
 //! ```text
 //! cargo test --test block_sweep
+//! cargo test --test block_sweep --all-features
 //! ```
 
 #![allow(clippy::too_many_lines)]
@@ -15,8 +16,7 @@
 mod harness;
 
 use coaptic::{
-    BlockKey, BlockTransfer, BlockTransferError, BlockValue, Code, Endpoint, MessageId, Token,
-    Type,
+    BlockKey, BlockTransfer, BlockTransferError, BlockValue, Code, Endpoint, MessageId, Token, Type,
 };
 use harness::{
     BLOCK_COUNTS, SWEEP_BODY_BYTES, SZX_SIZES, block_at, block_slice, build_engine, patterned_body,
@@ -40,7 +40,8 @@ fn body_len(blocks: u32, size: u16) -> usize {
 fn assert_body_eq(got: Option<&[u8]>, want: &[u8], ctx: &str) {
     let got = got.unwrap_or_else(|| panic!("{ctx}: missing body payload"));
     assert_eq!(
-        got, want,
+        got,
+        want,
         "{ctx}: assembled {} bytes, expected {}",
         got.len(),
         want.len()
@@ -350,11 +351,13 @@ fn sweep_axes_are_dynamic() {
     assert_eq!(SZX_SIZES, [16, 32, 64, 128, 256, 512, 1024]);
     assert_eq!(*BLOCK_COUNTS.start(), 1);
     assert_eq!(*BLOCK_COUNTS.end(), 25);
-    assert!(
-        SWEEP_BODY_BYTES >= 25 * 1024,
-        "Default 4096 is not the test ceiling"
-    );
-    assert_eq!(SWEEP_BODY_BYTES % 1024, 0);
+    const {
+        assert!(
+            SWEEP_BODY_BYTES >= 25 * 1024,
+            "Default 4096 is not the ceiling"
+        );
+        assert!(SWEEP_BODY_BYTES % 1024 == 0);
+    }
 }
 
 #[test]
@@ -413,7 +416,12 @@ fn alloc_memory_holds_25_by_1024() {
         let chunk = block_slice(&want, num, 1024);
         let more = num + 1 < 25;
         engine
-            .apply_block1(key, block_at(num, more, 1024), chunk, Some(want.len() as u32))
+            .apply_block1(
+                key,
+                block_at(num, more, 1024),
+                chunk,
+                Some(want.len() as u32),
+            )
             .unwrap_or_else(|e| panic!("AllocMemory Block1 NUM={num}: {e:?}"));
     }
     let id = engine.lookup_rx_body(key).expect("assembled");

@@ -33,7 +33,12 @@ pub fn run(id: &str) {
     }
 }
 
-fn register(pair: &mut Pair, ty: Type, token: Token, path: &[&str]) -> (coaptic::MessageId, SlotId) {
+fn register(
+    pair: &mut Pair,
+    ty: Type,
+    token: Token,
+    path: &[&str],
+) -> (coaptic::MessageId, SlotId) {
     let extra = [Opt::observe_register()];
     let (tx, mid) = pair.client_request(ty, Code::GET, token, path, &extra, &[]);
     let rx = pair.exchange_client(tx);
@@ -47,12 +52,7 @@ fn register(pair: &mut Pair, ty: Type, token: Token, path: &[&str]) -> (coaptic:
     (mid, rx)
 }
 
-fn notify(
-    pair: &mut Pair,
-    token: Token,
-    notify_ty: Type,
-    body: &[u8],
-) -> (u32, SlotId) {
+fn notify(pair: &mut Pair, token: Token, notify_ty: Type, body: &[u8]) -> (u32, SlotId) {
     let key = ObserveKey::new(token, pair.client_ep);
     pair.server.signal_observe(key).expect("signal");
     let oid = pair
@@ -94,7 +94,10 @@ fn observe_basic(req_ty: Type, notify_ty: Type, path: &[&str]) {
     let stx = pair.server_reply(first_ty, Code::CONTENT, first_mid, token, &extra, OBS_BODY);
     pair.server.release_rx(rx).ok();
     let crx = pair.exchange_server(stx);
-    assert_eq!(pair.client.decode_rx(crx).expect("first").payload(), OBS_BODY);
+    assert_eq!(
+        pair.client.decode_rx(crx).expect("first").payload(),
+        OBS_BODY
+    );
     pair.client.release_rx(crx).ok();
 
     let (seq1, nrx) = notify(&mut pair, token, notify_ty, OBS_BODY_2);
@@ -142,14 +145,8 @@ fn obs_07_delete() {
     let (_mid, rx) = register(&mut pair, Type::Confirmable, token, &["obs"]);
     pair.server.release_rx(rx).ok();
     let del_tok = Pair::client_token(2);
-    let (tx, mid) = pair.client_request(
-        Type::Confirmable,
-        Code::DELETE,
-        del_tok,
-        &["obs"],
-        &[],
-        &[],
-    );
+    let (tx, mid) =
+        pair.client_request(Type::Confirmable, Code::DELETE, del_tok, &["obs"], &[], &[]);
     let srx = pair.exchange_client(tx);
     assert!(path_is(pair.server.decode_rx(srx).expect("del"), &["obs"]));
     let gone = pair
@@ -192,7 +189,13 @@ fn obs_10_get_does_not_cancel() {
         &[],
     );
     let srx = pair.exchange_client(tx);
-    assert!(!pair.server.decode_rx(srx).expect("get").is_observe_deregister());
+    assert!(
+        !pair
+            .server
+            .decode_rx(srx)
+            .expect("get")
+            .is_observe_deregister()
+    );
     assert!(
         pair.server
             .lookup_observe(ObserveKey::new(token, pair.client_ep))
@@ -250,14 +253,7 @@ fn obs_12_deregister() {
     let (_mid, rx) = register(&mut pair, Type::Confirmable, token, &["obs"]);
     pair.server.release_rx(rx).ok();
     let extra = [Opt::observe_deregister()];
-    let (tx, _) = pair.client_request(
-        Type::Confirmable,
-        Code::GET,
-        token,
-        &["obs"],
-        &extra,
-        &[],
-    );
+    let (tx, _) = pair.client_request(Type::Confirmable, Code::GET, token, &["obs"], &extra, &[]);
     let srx = pair.exchange_client(tx);
     let gone = pair.server.deregister_observe_rx(srx).expect("deregister");
     assert!(gone.is_some(), "Observe=1 must cancel");
@@ -294,14 +290,7 @@ fn obs_13_block2(variable: bool) {
     if !first.complete() {
         let next = block_at(1, false, size).encode();
         let extra = [Opt::block2(&next), Opt::observe_register()];
-        let (tx, _) = pair.client_request(
-            Type::Confirmable,
-            Code::GET,
-            token,
-            &path,
-            &extra,
-            &[],
-        );
+        let (tx, _) = pair.client_request(Type::Confirmable, Code::GET, token, &path, &extra, &[]);
         let srx = pair.exchange_client(tx);
         pair.server.release_rx(srx).ok();
         let stx = pair.server.acquire_tx().expect("TX2");

@@ -10,6 +10,10 @@
 //! cargo test --test plugtest
 //! cargo test --test plugtest catalog
 //! cargo test --test plugtest td_coap_core
+//! cargo test --test plugtest td_coap_block
+//! cargo test --test plugtest td_coap_obs
+//! cargo test --test plugtest td_coap_link
+//! cargo test --test plugtest inventory -- --nocapture
 //! ```
 //!
 //! See `knowledge/plugtest/requirements.md`.
@@ -119,9 +123,8 @@ fn inventory() {
             }
         }
     }
-    let lowpan = catalog::extract_td_ids(include_str!(
-        "../knowledge/plugtest/td-coap4/6lowpan.yml"
-    ));
+    let lowpan =
+        catalog::extract_td_ids(include_str!("../knowledge/plugtest/td-coap4/6lowpan.yml"));
     skipped += lowpan.len();
     lines.push(format!(
         "SKIP  6LOWPAN {} TDs (deferred: 6LoWPAN not implemented)",
