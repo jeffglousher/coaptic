@@ -23,7 +23,7 @@ let mut app = App::profile::<profiles::Default>()
 app.poll(now_ms)?;
 ```
 
-Handlers are `fn(Request<'_>) -> Response`. `App::poll` recv / progress / route / send / release. You own the socket, the clock, and any domain data that outlives a request.
+Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release. You own the socket, the clock, and any domain data that outlives a request.
 
 ## Features
 

@@ -1,6 +1,6 @@
 //! Bounded table of [`MethodRouter`](super::MethodRouter) routes.
 
-use crate::message::ContentFormat;
+use crate::message::{Code, ContentFormat};
 use crate::storage::ObserveResource;
 
 use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
@@ -111,6 +111,7 @@ impl<const N: usize> Site<N> {
     }
 
     /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
+    /// Unbound method and unknown path use RFC 9290 problem details (CBOR).
     #[must_use]
     pub fn dispatch(&self, request: Request<'_>) -> Response {
         for entry in self.entries.iter().flatten() {
@@ -119,16 +120,16 @@ impl<const N: usize> Site<N> {
             }
             return match request.method() {
                 Some(method) => entry.methods.call(method, request),
-                None => Response::method_not_allowed(),
+                None => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
             };
         }
         if self.well_known && path_is_well_known(request.path()) {
             return match request.method() {
                 Some(Method::Get) => link_format(self),
-                _ => Response::method_not_allowed(),
+                _ => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
             };
         }
-        Response::not_found()
+        Response::problem(Code::NOT_FOUND).title("Not Found")
     }
 
     /// Snapshot fn for `resource`, if the matching route registered one.

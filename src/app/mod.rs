@@ -11,7 +11,7 @@
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
 //! `payload()`, and `body()` when Block1 / Q-Block1 has assembled).
 //! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
-//! `not_found`).
+//! `not_found` / [`Response::problem`]).
 //! Borrows last only for the handler call; `poll` encodes and then releases.
 //! The reactor ([`Engine`] / [`Progress`](crate::Progress)) owns per-slot
 //! state machines under the hood (pending CON/RTO, BlockTransfer,
@@ -335,7 +335,10 @@ where
     /// [`Retransmit::GiveUp`].
     ///
     /// Incoming requests are dispatched through the site (4.04 / 4.05
-    /// when no match). CON is answered with a piggybacked ACK.
+    /// when no match). Those codes, and App-generated 4.08, carry RFC 9290
+    /// problem details (CBOR). Echo 4.01 and Engine-path 4.xx stay
+    /// caller-built ([`Response::problem`](crate::Response::problem) when a
+    /// body is wanted). CON is answered with a piggybacked ACK.
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => {
@@ -554,7 +557,8 @@ where
                 engine,
                 io,
                 meta,
-                &Response::new(Code::REQUEST_ENTITY_INCOMPLETE),
+                &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
+                    .title("Request Entity Incomplete"),
             )
         }
         _ => Ok(()),
@@ -647,7 +651,8 @@ where
                 engine,
                 io,
                 meta,
-                &Response::new(Code::REQUEST_ENTITY_INCOMPLETE),
+                &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
+                    .title("Request Entity Incomplete"),
             );
             let _ = engine.release_rx(rx);
             return outcome;
@@ -672,8 +677,14 @@ where
                 let plan = ObservePlan::from_request(site, &request);
                 (site.dispatch(request), plan)
             }
-            Err(request::PathError::BadUtf8) => (Response::bad_request(), ObservePlan::idle()),
-            Err(request::PathError::TooLong) => (Response::not_found(), ObservePlan::idle()),
+            Err(request::PathError::BadUtf8) => (
+                Response::problem(Code::BAD_REQUEST).title("Bad Request"),
+                ObservePlan::idle(),
+            ),
+            Err(request::PathError::TooLong) => (
+                Response::problem(Code::NOT_FOUND).title("Not Found"),
+                ObservePlan::idle(),
+            ),
         }
     };
     let response = apply_observe(engine, now_ms, peer, response, plan);
