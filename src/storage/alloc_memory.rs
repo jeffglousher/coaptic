@@ -59,15 +59,12 @@ impl AllocMemory {
     ) -> Result<Self, BuildError> {
         capacities.validate_for_build(block_wise)?;
         let (rx_body, tx_body) = if block_wise {
+            let Some((rx_slots, rx_bytes, tx_slots, tx_bytes)) = capacities.body_dims() else {
+                return Err(BuildError::MissingBodyPools);
+            };
             (
-                Some(AllocBodyPool::new(
-                    capacities.rx_body_slots.expect("validated"),
-                    capacities.rx_body_bytes.expect("validated"),
-                )),
-                Some(AllocBodyPool::new(
-                    capacities.tx_body_slots.expect("validated"),
-                    capacities.tx_body_bytes.expect("validated"),
-                )),
+                Some(AllocBodyPool::new(rx_slots, rx_bytes)),
+                Some(AllocBodyPool::new(tx_slots, tx_bytes)),
             )
         } else {
             (None, None)

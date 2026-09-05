@@ -8,9 +8,9 @@ use super::{
     Code, EncodedUint, Ids, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token,
     Transmission, Type, decode, encode,
 };
-use crate::MemoryProfile;
 use crate::error::{EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
 use crate::profiles;
+use crate::storage::MemoryProfile;
 use crate::storage::{EngineBuilder, Memory, SlotError, SlotId, SlotPool};
 
 fn encode_to<'a>(msg: &Message<'_>, buf: &'a mut [u8]) -> &'a [u8] {
@@ -188,6 +188,18 @@ fn accept_tkl_8() {
 #[test]
 fn reject_token_new_too_long() {
     assert!(Token::new(&[0; 9]).is_none());
+}
+
+#[test]
+fn token_from_checked_is_infallible() {
+    let t = Token::from_checked(&[1, 2, 3]);
+    assert_eq!(t.as_bytes(), &[1, 2, 3]);
+    let t8 = Token::from_checked(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(t8.len(), 8);
+    let truncated = Token::from_checked(&[0; 9]);
+    assert_eq!(truncated.len(), 8);
+    assert_eq!(truncated.as_bytes(), &[0; 8]);
+    assert_eq!(Token::from_checked(&[]), Token::EMPTY);
 }
 
 #[test]

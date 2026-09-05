@@ -155,7 +155,7 @@ impl Token {
         if len > Self::MAX_LEN || entropy.len() < len {
             return None;
         }
-        Self::new(&entropy[..len])
+        Some(Self::from_checked(&entropy[..len]))
     }
 
     /// Mint `len` bytes from `source`.
@@ -176,7 +176,7 @@ impl Token {
         if !source.fill(dest) {
             return None;
         }
-        Self::new(dest)
+        Some(Self::from_checked(dest))
     }
 }
 

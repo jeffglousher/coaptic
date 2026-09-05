@@ -156,7 +156,7 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
         return Err(ParseError::TruncatedToken);
     }
     let (token_bytes, after_token) = rest.split_at(tkl_usize);
-    let token = Token::new(token_bytes).expect("TKL already checked");
+    let token = Token::from_checked(token_bytes);
 
     if code.is_empty() {
         if tkl != 0 || !after_token.is_empty() {

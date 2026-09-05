@@ -139,8 +139,9 @@ impl From<u16> for MessageId {
 /// CoAP Token (0–8 bytes).
 ///
 /// Construct with [`Token::new`] or [`Token::mint`]. Lengths above
-/// [`Token::MAX_LEN`] are rejected. Minting uses caller entropy; the core
-/// does not call an OS RNG.
+/// [`Token::MAX_LEN`] are rejected. After a bound check (decode TKL,
+/// mint length), use [`Token::from_checked`]. Minting uses caller
+/// entropy; the core does not call an OS RNG.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Token {
     bytes: [u8; 8],
@@ -158,30 +159,55 @@ impl Token {
     pub const MAX_LEN: usize = 8;
 
     /// Copy `bytes` into a token. `None` if `bytes` is longer than [`Self::MAX_LEN`].
+    #[inline]
     #[must_use]
-    pub fn new(bytes: &[u8]) -> Option<Self> {
+    pub const fn new(bytes: &[u8]) -> Option<Self> {
         if bytes.len() > Self::MAX_LEN {
-            return None;
+            None
+        } else {
+            Some(Self::from_checked(bytes))
         }
+    }
+
+    /// Copy at most [`Self::MAX_LEN`] bytes. Does not allocate or panic.
+    ///
+    /// [`decode`](crate::message::decode) uses this after the TKL nibble and
+    /// remaining-length checks. Prefer [`Self::new`] when the length is not
+    /// already proven. Longer input is truncated to [`Self::MAX_LEN`].
+    #[inline]
+    #[must_use]
+    pub const fn from_checked(bytes: &[u8]) -> Self {
+        let n = if bytes.len() > Self::MAX_LEN {
+            Self::MAX_LEN
+        } else {
+            bytes.len()
+        };
         let mut token = Self::EMPTY;
-        token.bytes[..bytes.len()].copy_from_slice(bytes);
-        token.len = bytes.len() as u8;
-        Some(token)
+        let mut i = 0;
+        while i < n {
+            token.bytes[i] = bytes[i];
+            i += 1;
+        }
+        token.len = n as u8;
+        token
     }
 
     /// Token length in bytes (0–8).
+    #[inline]
     #[must_use]
     pub const fn len(self) -> usize {
         self.len as usize
     }
 
     /// Whether the token is empty.
+    #[inline]
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.len == 0
     }
 
     /// Token bytes, without padding.
+    #[inline]
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
