@@ -2,8 +2,8 @@
 
 use crate::message::ContentFormat;
 
-use super::response::Response;
 use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
+use super::response::Response;
 use super::routing::{Method, MethodRouter, split_path};
 
 /// Default number of routes in a [`Site`] / [`App`](super::App).

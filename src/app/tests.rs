@@ -310,7 +310,10 @@ fn replacing_route_changes_handler() {
 fn response_builders() {
     assert_eq!(Response::changed().code(), Code::CHANGED);
     assert_eq!(Response::not_found().code(), Code::NOT_FOUND);
-    assert_eq!(Response::method_not_allowed().code(), Code::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        Response::method_not_allowed().code(),
+        Code::METHOD_NOT_ALLOWED
+    );
     assert_eq!(Response::content(b"x").payload(), b"x");
     let cf = Response::content(b"x")
         .content_format(ContentFormat::LINK_FORMAT)
@@ -403,7 +406,10 @@ fn block1_complete_exposes_body() {
     app.poll(1).expect("poll");
     let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::CHANGED);
-    assert_eq!(&parsed.payload[..parsed.payload_len], b"AAAAAAAAAAAAAAAAREST");
+    assert_eq!(
+        &parsed.payload[..parsed.payload_len],
+        b"AAAAAAAAAAAAAAAAREST"
+    );
 }
 
 #[test]

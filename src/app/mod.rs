@@ -472,12 +472,7 @@ where
     let assembled = assemble_block1(engine, rx);
     match assembled {
         InboundBody::Continue => {
-            let outcome = send_response(
-                engine,
-                io,
-                meta,
-                &Response::new(Code::CONTINUE),
-            );
+            let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE));
             let _ = engine.release_rx(rx);
             return outcome;
         }
