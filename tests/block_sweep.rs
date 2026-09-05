@@ -16,7 +16,8 @@
 mod harness;
 
 use coaptic::{
-    BlockKey, BlockTransfer, BlockTransferError, BlockValue, Code, Endpoint, MessageId, Token, Type,
+    BlockKey, BlockTransfer, BlockTransferError, BlockValue, BodyTag, Code, Endpoint, MessageId,
+    Token, Type,
 };
 use harness::{
     BLOCK_COUNTS, SWEEP_BODY_BYTES, SZX_SIZES, block_at, block_slice, build_engine, patterned_body,
@@ -426,4 +427,52 @@ fn alloc_memory_holds_25_by_1024() {
     }
     let id = engine.lookup_rx_body(key).expect("assembled");
     assert_eq!(engine.rx_body_payload(id), Some(want.as_slice()));
+}
+
+#[test]
+fn bert_three_blocks_one_datagram() {
+    let mut engine = Box::new(build_engine());
+    let want = patterned_body(3072);
+    let key = key_for(0xB7);
+    let progress = engine
+        .apply_block1(
+            key,
+            BlockValue::bert(0, false).expect("bert"),
+            &want,
+            Some(3072),
+        )
+        .expect("bert 3072");
+    assert!(progress.complete());
+    assert_body_eq(engine.rx_body_payload(progress.id()), &want, "bert in");
+
+    let out = engine
+        .start_block2(key, &want, BlockValue::SZX_BERT)
+        .expect("bert out");
+    let issued = engine.next_bert2(out, 2048).expect("2×1024");
+    assert!(issued.block().is_bert());
+    assert!(issued.block().more());
+    assert_eq!(issued.len(), 2048);
+    let last = engine.next_bert2(out, 2048).expect("final");
+    assert!(!last.block().more());
+    assert_eq!(last.len(), 1024);
+    assert!(last.complete());
+}
+
+#[test]
+fn request_tag_mismatch_is_a_new_body() {
+    let mut engine = Box::new(build_engine());
+    let token = token_for(0xB1);
+    let ep = Endpoint::v4([198, 51, 100, 0xB1], 5683);
+    let a = BlockKey::new(token, ep).with_identity(BodyTag::new(b"A").expect("A"));
+    let b = BlockKey::new(token, ep).with_identity(BodyTag::new(b"B").expect("B"));
+    let block = BlockValue::from_size(0, false, 16).expect("16");
+    let pa = engine
+        .apply_block1(a, block, &[1u8; 8], None)
+        .expect("tag A");
+    let pb = engine
+        .apply_block1(b, block, &[2u8; 8], None)
+        .expect("tag B");
+    assert_ne!(pa.id(), pb.id());
+    assert_eq!(engine.rx_body_payload(pa.id()), Some(&[1u8; 8][..]));
+    assert_eq!(engine.rx_body_payload(pb.id()), Some(&[2u8; 8][..]));
 }

@@ -35,7 +35,8 @@
 //! is sidecar metadata. Not seventh areas: Dedup ([`DedupEntry`]), pending CON
 //! and RTO ([`PendingCon`] / [`PendingRto`]), token matching ([`ExchangeEntry`]),
 //! Observe interest ([`ObserveInterest`] / [`ObserveLifetime`]), Block/Q-Block ([`BlockTransfer`]).
-//! Incoming Q-Block holes surface as [`QBlockRecover`].
+//! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`]. BERT is SZX 7
+//! on [`BlockValue`]. Incoming Q-Block holes surface as [`QBlockRecover`].
 //!
 //! [`Access`] / [`AccessMut`] pin occupied bytes against release.
 //! [`Engine::progress`] is one bounded pass: CON retransmit poll, one rotating
@@ -53,7 +54,7 @@
 //! [`EngineBuilder`] is consuming and typestate-gated.
 //! [`.block_wise`](EngineBuilder::block_wise)`(false)` omits body pools.
 //!
-//! OSCORE, DTLS, and BERT are out of scope.
+//! OSCORE and DTLS are out of scope.
 //!
 //! # Validation harness
 //!
@@ -114,8 +115,8 @@ pub use message::{
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, Capacities, DedupEntry,
-    DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory, ObserveExpiry,
-    ObserveInterest, ObserveKey, ObserveLifetime, OutgoingBlock, PendingCon, PendingRto, Progress,
-    QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, Capacities,
+    DedupEntry, DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory,
+    ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime, OutgoingBlock, PendingCon,
+    PendingRto, Progress, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };

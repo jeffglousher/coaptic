@@ -13,7 +13,8 @@ Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progre
 - Wrapping Message ID sequence (`Ids`) and Token mint (`TokenSource`; no OS RNG)
 - CON/NON request skeletons
 - RFC 7252 option value codecs (`message::value`)
-- Observe (RFC 7641 option 6) and Block / Q-Block / Size2 (`BlockValue`)
+- Observe (RFC 7641 option 6) and Block / Q-Block / Size2 (`BlockValue`; SZX 7 is BERT)
+- Request-Tag (RFC 9175) plus ETag body identity (`BodyTag` on `BlockKey`)
 - `OptionsBuilder` for out-of-order insertion
 - No `Engine` required
 
@@ -24,7 +25,7 @@ Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progre
 - `Access` / `AccessMut` pin occupied slot bytes against `release`
 - `Engine::progress` → `Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify, at most one Observe lifetime expiry, at most one incoming `QBlockRecover`
 - Dedup (`DedupEntry`), pending CON + RTO (`PendingCon` / `PendingRto`), token matching (`ExchangeEntry`), Observe interest (`ObserveInterest` / `ObserveLifetime`)
-- Classic Block and Q-Block body assembly on body-pool slots when `.block_wise(true)`
+- Classic Block and Q-Block body assembly on body-pool slots when `.block_wise(true)`; BERT multi-block payloads; Request-Tag / ETag on the sidecar
 - None of those is a seventh area
 
 ### `coaptic::profiles`

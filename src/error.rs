@@ -155,10 +155,12 @@ pub enum ValueError {
     InvalidUtf8,
     /// Integer does not fit the target width.
     UintOverflow,
-    /// Block/Q-Block SZX is not 0..=6, or the size is not a legal SZX size.
+    /// Block/Q-Block SZX is not 0..=6 or BERT 7, or the size is not a legal SZX size.
     IllegalSzx,
     /// Block/Q-Block NUM does not fit in 20 bits (3-byte option value).
     BlockNumOverflow,
+    /// Opaque option value is longer than 8 bytes (ETag / Request-Tag).
+    OpaqueLength,
 }
 
 impl core::fmt::Display for ValueError {
@@ -166,8 +168,9 @@ impl core::fmt::Display for ValueError {
         match self {
             Self::InvalidUtf8 => f.write_str("option value is not UTF-8"),
             Self::UintOverflow => f.write_str("uint option value does not fit the target"),
-            Self::IllegalSzx => f.write_str("block SZX is not 0..=6"),
+            Self::IllegalSzx => f.write_str("block SZX is not 0..=6 or BERT 7"),
             Self::BlockNumOverflow => f.write_str("block NUM does not fit in 20 bits"),
+            Self::OpaqueLength => f.write_str("opaque option value is longer than 8 bytes"),
         }
     }
 }

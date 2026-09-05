@@ -25,7 +25,8 @@ use super::SlotPool;
 use super::Storage;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, OutgoingBlock,
-    accept_incoming_role, block_offset, start_incoming, store_incoming, write_range,
+    accept_incoming_role, block_offset, same_body_identity, start_incoming, store_incoming,
+    write_range,
 };
 use super::capacities::Capacities;
 use super::exchange::ExchangeStore;
@@ -699,6 +700,17 @@ impl BodySlots for AllocMemory {
             .next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
+    fn next_bert1(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .next_bert_outgoing(id, BlockRole::OutgoingBlock1, max_payload)
+    }
+
     fn start_block2(
         &mut self,
         key: BlockKey,
@@ -716,6 +728,17 @@ impl BodySlots for AllocMemory {
             .as_mut()
             .ok_or(BlockTransferError::NoBodyPools)?
             .next_outgoing(id, BlockRole::OutgoingBlock2)
+    }
+
+    fn next_bert2(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .next_bert_outgoing(id, BlockRole::OutgoingBlock2, max_payload)
     }
 
     fn start_q_block1(
@@ -893,6 +916,19 @@ impl AllocBodyPool {
         })
     }
 
+    fn lookup_identity(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        if key.identity().is_absent() {
+            return None;
+        }
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.transfer(id) {
+                Some(t) if same_body_identity(t, key, role) => Some(id),
+                _ => None,
+            }
+        })
+    }
+
     fn admit_incoming(
         &mut self,
         key: BlockKey,
@@ -980,6 +1016,9 @@ impl AllocBodyPool {
         if let Some(id) = self.lookup(key) {
             return self.write_incoming(id, role, block, payload);
         }
+        if let Some(id) = self.lookup_identity(key, role) {
+            return self.write_incoming(id, role, block, payload);
+        }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;
         let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
@@ -1038,6 +1077,36 @@ impl AllocBodyPool {
         } else {
             transfer.issue_outgoing()?
         };
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
+    }
+
+    fn next_bert_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.slots[id.index()]
+            .transfer
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (block, offset, len) = transfer.issue_bert_outgoing(max_payload)?;
         Ok(OutgoingBlock::new(
             id,
             block,
@@ -1133,6 +1202,15 @@ impl BodyOps for AllocBodyPool {
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         AllocBodyPool::next_outgoing(self, id, role)
+    }
+
+    fn next_bert_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        AllocBodyPool::next_bert_outgoing(self, id, role, max_payload)
     }
 
     fn ack_outgoing(

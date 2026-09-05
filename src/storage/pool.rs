@@ -5,7 +5,7 @@ use super::AccessMut;
 use super::SlotPool;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, accept_incoming_role,
-    block_offset, start_incoming, store_incoming, write_range,
+    block_offset, same_body_identity, start_incoming, store_incoming, write_range,
 };
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
@@ -498,6 +498,21 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         })
     }
 
+    /// Occupied slot with the same present Request-Tag / ETag and endpoint.
+    #[must_use]
+    pub fn lookup_identity(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        if key.identity().is_absent() {
+            return None;
+        }
+        (0..SLOTS).find_map(|i| {
+            let id = SlotId::from_index(i);
+            match self.transfer(id) {
+                Some(t) if same_body_identity(t, key, role) => Some(id),
+                _ => None,
+            }
+        })
+    }
+
     /// Admit an incoming Block / Q-Block body: acquire a slot and write the first block.
     ///
     /// Classic Block starts at NUM 0. Q-Block may start with any NUM in window
@@ -582,6 +597,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     }
 
     /// Admit or continue an incoming transfer identified by `key` and `role`.
+    ///
+    /// A present Request-Tag / ETag also matches an existing slot at the same
+    /// endpoint when Tokens differ.
     pub fn apply_incoming(
         &mut self,
         key: BlockKey,
@@ -591,6 +609,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
         if let Some(id) = self.lookup(key) {
+            return self.write_incoming(id, role, block, payload);
+        }
+        if let Some(id) = self.lookup_identity(key, role) {
             return self.write_incoming(id, role, block, payload);
         }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;
@@ -654,6 +675,36 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         } else {
             transfer.issue_outgoing()?
         };
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
+    }
+
+    /// Issue one BERT payload of at most `max_payload` bytes from `id`.
+    pub fn next_bert_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (block, offset, len) = transfer.issue_bert_outgoing(max_payload)?;
         Ok(OutgoingBlock::new(
             id,
             block,
@@ -761,6 +812,15 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         BodyPool::next_outgoing(self, id, role)
+    }
+
+    fn next_bert_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        BodyPool::next_bert_outgoing(self, id, role, max_payload)
     }
 
     fn ack_outgoing(

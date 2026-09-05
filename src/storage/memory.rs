@@ -673,6 +673,14 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn next_bert1(
+        &mut self,
+        _id: SlotId,
+        _max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn start_block2(
         &mut self,
         _key: BlockKey,
@@ -683,6 +691,14 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
     }
 
     fn next_block2(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn next_bert2(
+        &mut self,
+        _id: SlotId,
+        _max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
         Err(BlockTransferError::NoBodyPools)
     }
 
@@ -921,6 +937,16 @@ where
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
+    fn next_bert1(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies
+            .tx
+            .next_bert_outgoing(id, BlockRole::OutgoingBlock1, max_payload)
+    }
+
     fn start_block2(
         &mut self,
         key: BlockKey,
@@ -934,6 +960,16 @@ where
 
     fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock2)
+    }
+
+    fn next_bert2(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.bodies
+            .tx
+            .next_bert_outgoing(id, BlockRole::OutgoingBlock2, max_payload)
     }
 
     fn start_q_block1(

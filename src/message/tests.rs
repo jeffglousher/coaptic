@@ -659,6 +659,30 @@ fn opaque_if_match_and_etag() {
 }
 
 #[test]
+fn request_tag_is_opaque_and_not_rfc7252() {
+    let opts = [Opt::request_tag(b"rt1"), Opt::request_tag(&[])];
+    let (n, buf) = parse_opts(&opts);
+    let parsed = decode(&buf[..n]).expect("decode");
+    let tags: [&[u8]; 2] = {
+        let mut out = [&b""[..]; 2];
+        let mut i = 0;
+        for v in parsed.request_tag() {
+            out[i] = v;
+            i += 1;
+        }
+        assert_eq!(i, 2);
+        out
+    };
+    assert_eq!(tags[0], b"rt1");
+    assert_eq!(tags[1], b"");
+    assert!(!OptionNumber::REQUEST_TAG.is_rfc7252());
+    parsed
+        .check_rfc7252_options()
+        .expect("elective Request-Tag");
+    parsed.check_rfc7252_formats().expect("not Table 4");
+}
+
+#[test]
 fn string_helpers_host_query_location_proxy() {
     let opts = [
         Opt::uri_host("example.com"),
