@@ -4,9 +4,10 @@ coaptic is a library, not a daemon or socket stack. The core never sends on the 
 
 ## Send
 
-- Own the UDP (or other) socket. [`Engine::progress`](src/storage/progress.rs) only reports work.
-- On `Progress::retransmit`: send the occupied TX datagram (`Due`) or release after `GiveUp` (pending is already cleared; the TX slot stays occupied so you can free it).
-- On `Progress::observe_notify`: encode a notification (ordinary TX or first-block Block2) and send. The Observe table does not queue bodies.
+- Own the socket or radio. Bind it with [`DatagramIo`](src/storage/io.rs) (`std::net::UdpSocket` implements it under `std`). The core never sends.
+- Recv into an RX slot with [`Engine::recv_from`](src/storage/io.rs). Send an occupied TX slot with [`Engine::send_tx`](src/storage/io.rs) (pins `Access` for the call). [`Engine::progress`](src/storage/progress.rs) only reports work.
+- On `Progress::retransmit`: `send_tx` the occupied datagram (`Due`) or release after `GiveUp` (pending is already cleared; the TX slot stays occupied so you can free it).
+- On `Progress::observe_notify`: encode a notification (ordinary TX or first-block Block2) and `send_tx`. The Observe table does not queue bodies.
 - On `Progress::qblock_recover`: encode a Q-Block2 recover, or own any Q-Block1 4.08.
 - Honor `NoResponse` yourself (`NoResponse::suppresses`). The library does not skip sends.
 
@@ -40,11 +41,11 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 Typical cycle:
 
-1. Write received CoAP bytes into an RX slot (`write_rx` + `Endpoint`).
+1. Recv into an RX slot (`Engine::recv_from` + your [`DatagramIo`](src/storage/io.rs)). `write_rx` remains for tests that already have bytes.
 2. Call `Engine::progress(now_ms)`.
-3. Handle `Progress` (decode `rx_ready`, send retransmit, encode notify / recover).
+3. Handle `Progress` (decode `rx_ready`, `send_tx` retransmit, encode notify / recover).
 4. Encode outgoing messages with `encode_tx` or `AccessMut` into a TX or body slot.
-5. Send the filled datagram. Drop `Access` / `AccessMut` before `release` (`SlotError::Pinned` while a pin is live).
+5. `Engine::send_tx` the filled datagram (Access pin lives only for that call). Then `release` if the slot is no longer pending.
 6. Repeat. Progress skips pinned slots and does not drain the pools.
 
 `decode` / `encode` also work on plain buffers with no `Engine`.

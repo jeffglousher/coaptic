@@ -48,6 +48,9 @@
 //! on [`BlockValue`]. Incoming Q-Block holes surface as [`QBlockRecover`].
 //!
 //! [`Access`] / [`AccessMut`] pin occupied bytes against release.
+//! [`DatagramIo`] binds any caller transport into RX/TX slots
+//! ([`Engine::recv_from`] / [`Engine::send_tx`]). The core still does not
+//! own a socket.
 //! [`Engine::progress`] is one bounded pass: CON retransmit poll, one rotating
 //! unpinned RX step, one rotating Observe notify (skips an endpoint at
 //! notification NSTART), at most one Observe lifetime expiry, at most one
@@ -127,7 +130,8 @@ pub use message::{
 pub use storage::AllocMemory;
 pub use storage::{
     Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, Capacities,
-    DedupEntry, DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory,
-    ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime, ObserveNotifyHold, OutgoingBlock,
-    PendingCon, PendingRto, Progress, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    DatagramIo, DatagramIoError, DedupEntry, DedupKey, Endpoint, Engine, EngineBuilder,
+    ExchangeEntry, ExchangeKey, Memory, ObserveExpiry, ObserveInterest, ObserveKey,
+    ObserveLifetime, ObserveNotifyHold, OutgoingBlock, PendingCon, PendingRto, Progress,
+    QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };

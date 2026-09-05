@@ -25,11 +25,11 @@ Through squash-merges **#7–#34** on `main`:
 | Domain | In the crate |
 | --- | --- |
 | Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, Hop-Limit, No-Response, If-Match / If-None-Match [`Precondition`](src/message/precondition.rs), FETCH / PATCH / iPATCH codes, named 2.31 / 4.08 / 4.09 / 4.22 / 5.08, `ObserveTransmission`, `OptionsBuilder`, `Ids`, Token mint |
-| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
+| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, [`DatagramIo`](src/storage/io.rs) bind (`Engine::recv_from` / `send_tx`; `UdpSocket` under `std`), Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
-The core does not send. The caller owns the clock, jitter, and socket. Integration checklist: [`CALLER.md`](CALLER.md).
+The core does not send. The caller owns the clock, jitter, and a [`DatagramIo`](src/storage/io.rs) impl. Integration checklist: [`CALLER.md`](CALLER.md).
 
 ## Core CoAP bar
 
@@ -59,7 +59,7 @@ See [`CALLER.md`](CALLER.md). Short form: send, clock (`now_ms`), jitter / entro
 
 This is the 0.1 public surface. Do not balloon crate-root re-exports. Do not rename unless a name is actively wrong (not taste). Do not start an optimization pass in the same change as a rename.
 
-**Crate root (happy path):** `Engine`, `Memory` / `AllocMemory`, `EngineBuilder`, `Endpoint`, `Progress`, `Access` / `AccessMut`, `Ids`, `decode` / `encode`, `Message` / `ParsedMessage`, `Opt` / `OptionsBuilder`, keyed table rows (`DedupEntry`, `ExchangeEntry`, `ObserveInterest`, and siblings), Block/Q-Block types (`BlockValue`, `BlockTransfer`, `QBlockRecover`, `BodyTag`, and siblings), named option helpers (`Echo`, `HopLimit`, `NoResponse`, `Precondition`), `Transmission` / `ObserveTransmission`, main errors.
+**Crate root (happy path):** `Engine`, `Memory` / `AllocMemory`, `EngineBuilder`, `Endpoint`, `DatagramIo` / `DatagramIoError`, `Progress`, `Access` / `AccessMut`, `Ids`, `decode` / `encode`, `Message` / `ParsedMessage`, `Opt` / `OptionsBuilder`, keyed table rows (`DedupEntry`, `ExchangeEntry`, `ObserveInterest`, and siblings), Block/Q-Block types (`BlockValue`, `BlockTransfer`, `QBlockRecover`, `BodyTag`, and siblings), named option helpers (`Echo`, `HopLimit`, `NoResponse`, `Precondition`), `Transmission` / `ObserveTransmission`, main errors.
 
 **Stay nested:**
 
@@ -89,7 +89,8 @@ CI runs those on pull requests to `main` (and `workflow_dispatch`). No push-to-m
 
 1. This file
 2. [`CALLER.md`](CALLER.md) (what the caller must own)
-3. [`README.md`](README.md) (crate surface)
-4. [`design.md`](design.md) (architecture)
-5. Crate rustdoc (`src/lib.rs`)
-6. [`knowledge/index.md`](knowledge/index.md) → memory, profiles, plugtest, RFCs
+3. [`ERGONOMICS.md`](ERGONOMICS.md) (feature table; `DatagramIo` bind)
+4. [`README.md`](README.md) (crate surface)
+5. [`design.md`](design.md) (architecture)
+6. Crate rustdoc (`src/lib.rs`)
+7. [`knowledge/index.md`](knowledge/index.md) → memory, profiles, plugtest, RFCs
