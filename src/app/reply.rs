@@ -17,8 +17,8 @@ enum Payload {
 
 /// Conversion into a [`Reply`].
 ///
-/// Stored handlers are `fn(...) -> Reply`. Implement this if a wrapper
-/// type should become a response.
+/// Stored handlers are [`fn(Request<'_>) -> Reply`](super::HandlerFn).
+/// Implement this if a wrapper type should become a response.
 pub trait IntoReply {
     /// Build the response.
     fn into_reply(self) -> Reply;

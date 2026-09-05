@@ -20,7 +20,7 @@ Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --featur
 | If-Match / If-None-Match | Present | `src/message/precondition.rs::Precondition`; 4.12 policy **Absent** |
 | FETCH / PATCH / iPATCH | Present (codes only) | `src/message/mod.rs::Code::FETCH`, `PATCH`, `IPATCH`; method policy **Absent** |
 | Named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 | Present (codes only) | `src/message/mod.rs::Code::CONTINUE` and siblings |
-| **App façade** | Present | `src/app/mod.rs::App`; `App::profile` / `block_wise` / `state` / `route` / `bind`; `get` / `put` method routers; `State`; `Reply`; `App::poll`; `well_known_core` |
+| **App façade** | Present | `src/app/mod.rs::App`; `App::profile` / `block_wise` / `route` / `bind`; `get` / `put` method routers; `fn(Request<'_>) -> Reply`; `Reply`; `App::poll`; `well_known_core` |
 | Engine / Memory / builder | Present | `src/storage/engine.rs::Engine`; `src/storage/memory.rs::Memory`; `src/storage/builder.rs::EngineBuilder` |
 | `Endpoint` sidecar | Present | `src/storage/endpoint.rs::Endpoint` |
 | **Transport bind** | Present | `src/storage/io.rs::DatagramIo`; `Engine::recv_from`, `Engine::send_tx`; `std::net::UdpSocket` impl under `std` |
@@ -73,8 +73,8 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 
 **Intuitive**
 
-- `App::profile().block_wise(true).state(s).route(path, get(h).put(p)).bind(io)` then `app.poll(now_ms)`.
-- Handlers are `fn(State<&mut S>, Request<'_>) -> Reply`. `Reply::content` / `changed` / `not_found`.
+- `App::profile().block_wise(true).route(path, get(h).put(p)).bind(io)` then `app.poll(now_ms)`.
+- Handlers are `fn(Request<'_>) -> Reply`. `Reply::content` / `changed` / `not_found`. No global mutable shared state in `App`.
 - `decode` / `encode` work with no Engine.
 - Named `Opt` helpers and `EngineBuilder` typestate (`block_wise` is required).
 - `Endpoint` ↔ `SocketAddr` under `std`.
@@ -95,7 +95,7 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 
 **What a 0.1 integrator trips on**
 
-1. Using Engine slots to expose a GET instead of `App` + `route` + `State`.
+1. Using Engine slots to expose a GET instead of `App` + `route` + a `fn(Request<'_>) -> Reply` handler.
 2. Hand-rolling `recv` + `write_rx` + `access_tx` + `send_to` instead of `recv_from` / `send_tx` (Engine path).
 3. Holding `Access` across `progress` (that slot is skipped).
 4. Releasing a pending-CON TX before the empty ACK.

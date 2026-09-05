@@ -1,37 +1,32 @@
-//! Taste of [`coaptic::App`]: routes, [`State`], one `poll` loop.
+//! Taste of [`coaptic::App`]: stateless routes, one `poll` loop.
 //!
 //! ```text
 //! cargo run --example coap_server --features std
 //! ```
 //!
-//! Client GET `/sensors/temp` → 2.05 Content. PUT `/leds/0` then GET
-//! reflects shared state. `/.well-known/core` is link-format from
-//! registered paths. Engine slots stay off the happy path (`CALLER.md`).
+//! Client GET `/sensors/temp` → 2.05 Content. PUT `/leds/0` → 2.04 Changed
+//! (no in-App LED bag; real LED state is firmware-owned). GET `/leds/0` →
+//! demo payload. `/.well-known/core` is link-format from registered paths.
+//! Engine slots stay off the happy path (`CALLER.md`).
 
 use std::net::UdpSocket;
 use std::time::Instant;
 
 use coaptic::{
     App, Code, ContentFormat, DatagramIo, Endpoint, Ids, Opt, OptionsBuilder, ParsedMessage, Reply,
-    Request, State, Token, decode, encode, get, profiles,
+    Request, Token, decode, encode, get, profiles,
 };
 
-struct Sensors {
-    temp_c: i16,
-    led_on: bool,
-}
-
-fn get_temp(State(s): State<&mut Sensors>, _req: Request<'_>) -> Reply {
-    let _ = s.temp_c;
+fn get_temp(_req: Request<'_>) -> Reply {
     Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_led(State(s): State<&mut Sensors>, _: Request<'_>) -> Reply {
-    Reply::content(if s.led_on { b"on" } else { b"off" })
+fn get_led(_: Request<'_>) -> Reply {
+    // Demo payload. Real LED state is firmware-owned, not an App bag.
+    Reply::content(b"off")
 }
 
-fn put_led(State(s): State<&mut Sensors>, req: Request<'_>) -> Reply {
-    s.led_on = req.payload() == b"1";
+fn put_led(_req: Request<'_>) -> Reply {
     Reply::changed()
 }
 
@@ -51,10 +46,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::profile::<profiles::Default>()
         .block_wise(true)
-        .state(Sensors {
-            temp_c: 215,
-            led_on: false,
-        })
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
         .well_known_core()
@@ -70,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     send_client(&mut client, server_ep, Code::GET, &["leds", "0"], &[]);
     app.poll(now_ms(origin))?;
-    expect_reply(&mut client, Code::CONTENT, Some(b"on"))?;
+    expect_reply(&mut client, Code::CONTENT, Some(b"off"))?;
 
     send_client(
         &mut client,
@@ -86,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(b"</sensors/temp>,</leds/0>"),
     )?;
 
-    eprintln!("coap_server: 2.05 \"21.5\"; PUT led; GET on; well-known/core");
+    eprintln!("coap_server: 2.05 \"21.5\"; PUT led Changed; GET demo off; well-known/core");
     Ok(())
 }
 
