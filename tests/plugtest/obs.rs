@@ -205,8 +205,9 @@ fn obs_04_max_age() {
     pair.client
         .insert_observe(ObserveInterest::new(token, pair.server_ep))
         .expect("client reregister");
+    let seq_re = encode_observe(0);
     let extra2 = [
-        Opt::observe(&encode_observe(0)),
+        Opt::observe(&seq_re),
         Opt::content_format(&cf),
         Opt::max_age(&age),
     ];
