@@ -1,14 +1,16 @@
 //! Stand-alone [`no_std`] CoAP library: messages plus bounded storage.
 //!
 //! Crate-root types are the happy path ([`App`], [`Request`], [`Response`],
+//! [`Call`], [`Reply`], [`Outgoing`],
 //! [`get`] / [`put`], [`Engine`], [`Memory`], [`Endpoint`], [`Progress`],
 //! [`Access`], [`Ids`], keyed rows, Block/Q-Block types, main errors).
 //! Typestate markers, raw tables/pools, and backend traits live in
 //! [`storage`] / [`message`]. [`app`] is the routing façade (`Request` to
-//! [`Response`]). Engine slots are the advanced path: per-slot state machines
+//! [`Response`]) and the outbound client face ([`Outgoing`] → [`Reply`]).
+//! Engine slots are the advanced path: per-slot state machines
 //! and [`Progress`]. The caller owns the socket ([`DatagramIo`]), the clock
-//! (`now_ms`), and domain state that outlives a request — there is no global
-//! App State. Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture
+//! (`now_ms`), the destination of an outbound request, and domain state
+//! that outlives a request — there is no global App State. Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture
 //! planning: [GitHub project][plan]. This rustdoc does not restate wire
 //! format.
 //!
@@ -16,7 +18,8 @@
 //!
 //! - [`app`] — [`App`] + [`Site`](app::Site): [`route`](app::AppBuilder::route),
 //!   [`get`] / [`put`] method routers, `fn(Request<'_>) -> Response` handlers,
-//!   [`Response`] builders, [`App::poll`], [`App::notify`](app::App::notify).
+//!   [`Response`] builders, [`App::poll`], [`App::notify`](app::App::notify),
+//!   outbound [`App::get`] / [`Outgoing::send`] / [`Reply`].
 //!   No global mutable shared bag.
 //! - [`message`] — decode/encode a CoAP datagram. No [`Engine`] required.
 //! - [`storage`] — [`Engine`] generic over [`Storage`]; [`Memory`], pools, tables.
@@ -94,7 +97,12 @@
 //! Engine Observe table (no `SlotId` on the happy path). Progress-driven
 //! Q-Block2 recover and incoming Q-Block1 assembly run inside `poll`.
 //! The reactor owns per-slot state machines inside `poll`. Domain data
-//! that outlives a request stays outside `App`. Engine remains the
+//! that outlives a request stays outside `App`. Outbound: [`App::get`] /
+//! [`App::put`] → [`Outgoing::to`] → [`Outgoing::send`]; `poll` matches
+//! Token + peer on the Exchange table; [`App::take_reply`] is a [`Reply`]
+//! (code / payload). No `SlotId`. The caller owns the destination and
+//! must take replies. Tokens and Message IDs are App counters (no OS RNG).
+//! Block2 / Observe client stay on the Engine path. Engine remains the
 //! advanced escape hatch for explicit slots, [`Access`], custom RST /
 //! 4.xx, and BERT edges (`app.engine_mut()`). See
 //! `examples/coap_server.rs` (`std`).
@@ -149,7 +157,8 @@ pub mod storage;
 pub use storage::profiles;
 
 pub use app::{
-    App, IntoResponse, Method, Request, Response, delete, fetch, get, ipatch, patch, post, put,
+    App, Call, IntoResponse, Method, Outgoing, Reply, Request, Response, delete, fetch, get,
+    ipatch, patch, post, put,
 };
 pub use error::{
     BlockTransferError, BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError,
