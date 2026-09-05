@@ -3,7 +3,7 @@
 use crate::message::{Code, ContentFormat};
 
 /// Bytes copied into a [`Reply`] when the payload is not `'static`.
-pub const INLINE_PAYLOAD: usize = 256;
+pub const INLINE_PAYLOAD: usize = 128;
 
 #[derive(Clone, Copy, Debug)]
 enum Payload {
