@@ -6,7 +6,7 @@ Brief for an outside reader of **jeffglousher/coaptic** (private). Start here, t
 
 A stand-alone `no_std` CoAP **library** (not a daemon, not a socket stack):
 
-- Server domain: [`Server`](src/server/mod.rs) + [`Router`](src/server/router.rs) + [`Resource`](src/server/resource.rs) — URI-Path routes, [`Reply`](src/server/reply.rs) builders, [`Server::poll`](src/server/mod.rs).
+- App domain: [`App`](src/app/mod.rs) + [`Site`](src/app/site.rs) + owned [`Resource`](src/app/resource.rs) instances — URI-Path table, per-method hooks, [`Reply`](src/app/reply.rs) builders, [`App::poll`](src/app/mod.rs).
 - Message domain: RFC 7252 decode/encode, option values, Observe and Block/Q-Block codecs, `Ids` / Token mint.
 - Storage domain: six bounded areas, `Engine<S: Storage>`, `Memory` / optional `AllocMemory`.
 - Progress domain: `Engine::progress` → `Progress` (CON RTO poll, rotating RX, Observe notify, Observe lifetime, incoming `QBlockRecover`).
@@ -26,12 +26,12 @@ Through squash-merges **#7–#34** on `main`:
 | Domain | In the crate |
 | --- | --- |
 | Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, Hop-Limit, No-Response, If-Match / If-None-Match [`Precondition`](src/message/precondition.rs), FETCH / PATCH / iPATCH codes, named 2.31 / 4.08 / 4.09 / 4.22 / 5.08, `ObserveTransmission`, `OptionsBuilder`, `Ids`, Token mint |
-| Server | [`Server`](src/server/mod.rs) façade: segment routes, `Resource` trait (no boxed closures), `Reply` builders, `poll` (recv + progress + route + reply + send + release). Observe notify / Q-Block recover not sent on this path yet (Phase 2). |
+| App | [`App`](src/app/mod.rs) façade: `profile` / `block_wise` / `bind`, owned `Resource` instances in a fixed [`Site`](src/app/site.rs), method hooks, `Reply` (no handler lifetime), `well_known_core`, `poll` (recv + progress + route + method hook + send + release). Observe notify / Q-Block recover not sent on this path yet (Phase 2). |
 | Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, [`DatagramIo`](src/storage/io.rs) bind (`Engine::recv_from` / `send_tx`; `UdpSocket` under `std`), Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
-[`Server::poll`](src/server/mod.rs) sends through the caller’s [`DatagramIo`](src/storage/io.rs). The Engine still does not own a socket. The caller owns the clock, jitter, and the transport. Integration checklist: [`CALLER.md`](CALLER.md).
+[`App::poll`](src/app/mod.rs) sends through the caller’s [`DatagramIo`](src/storage/io.rs). The Engine still does not own a socket. The caller owns the clock, jitter, and the transport. Integration checklist: [`CALLER.md`](CALLER.md).
 
 ## Core CoAP bar
 
@@ -55,17 +55,17 @@ Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowle
 
 ## What the caller must own
 
-See [`CALLER.md`](CALLER.md). Short form: **Server** — socket, `now_ms`, `Resource` payloads. **Engine** — send, clock, jitter / entropy, when to RST or 4.xx (and 2.31), resource / If-Match decisions, Encode+Access loops. Codes and classifiers exist; the library does not invent policy.
+See [`CALLER.md`](CALLER.md). Short form: **App** — socket, `now_ms`, owned `Resource` instances. **Engine** — send, clock, jitter / entropy, when to RST or 4.xx (and 2.31), resource / If-Match decisions, Encode+Access loops. Codes and classifiers exist; the library does not invent policy.
 
 ## 0.1 API surface
 
-Taste lock: the happy path is **Server + Router + Resource**, not slot plumbing. Adding `server` and re-exporting that façade at the crate root is allowed. Do not rename existing Engine / message names unless a name is actively wrong. Do not start an optimization pass in the same change as a rename. Extra crate-root names still need a happy-path caller.
+Taste lock: the happy path is **App + owned Resource + Site**, not slot plumbing and not a type-tag router. `App` replaces `Server` / `Router`. Do not rename existing Engine / message names unless a name is actively wrong. Do not start an optimization pass in the same change as a rename. Extra crate-root names still need a happy-path caller.
 
-**Crate root (happy path):** `Server`, `Resource`, `Request`, `Reply`, `Method`, `Engine`, `Memory` / `AllocMemory`, `EngineBuilder`, `Endpoint`, `DatagramIo` / `DatagramIoError`, `Progress`, `Access` / `AccessMut`, `Ids`, `decode` / `encode`, `Message` / `ParsedMessage`, `Opt` / `OptionsBuilder`, keyed table rows (`DedupEntry`, `ExchangeEntry`, `ObserveInterest`, and siblings), Block/Q-Block types (`BlockValue`, `BlockTransfer`, `QBlockRecover`, `BodyTag`, and siblings), named option helpers (`Echo`, `HopLimit`, `NoResponse`, `Precondition`), `Transmission` / `ObserveTransmission`, main errors.
+**Crate root (happy path):** `App`, `Resource`, `Request`, `Reply`, `Method`, `Engine`, `Memory` / `AllocMemory`, `EngineBuilder`, `Endpoint`, `DatagramIo` / `DatagramIoError`, `Progress`, `Access` / `AccessMut`, `Ids`, `decode` / `encode`, `Message` / `ParsedMessage`, `Opt` / `OptionsBuilder`, keyed table rows (`DedupEntry`, `ExchangeEntry`, `ObserveInterest`, and siblings), Block/Q-Block types (`BlockValue`, `BlockTransfer`, `QBlockRecover`, `BodyTag`, and siblings), named option helpers (`Echo`, `HopLimit`, `NoResponse`, `Precondition`), `Transmission` / `ObserveTransmission`, main errors.
 
 **Stay nested:**
 
-- `server::` — `Router`, `At`, `Error`, `DEFAULT_ROUTES`, `MAX_PATH_SEGMENTS`.
+- `app::` — `AppBuilder`, `Site`, `ResourceDyn`, `EngineMut` / `EngineRef`, `Error`, `DEFAULT_RESOURCES`, `MAX_PATH_SEGMENTS`, `MAX_RESOURCE_BYTES`.
 - `message::` — `TokenSource`, `message::value` iterators and extra codecs.
 - `storage::` — typestate `Missing` / `Present`, raw `*Table` / `*Pool` types, `MemoryProfile` / `NoBodies` / `WithBodies`, backend traits (`Storage`, `SlotPool`, `DatagramSlots`, and siblings).
 - `profiles` — capacity numbers (`Default`, `Constrained`).

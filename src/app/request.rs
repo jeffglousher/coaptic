@@ -5,10 +5,10 @@ use crate::storage::{Endpoint, SlotId};
 
 use super::resource::Method;
 
-/// Maximum Uri-Path segments stored on a [`Request`] or a route.
+/// Maximum Uri-Path segments stored on a [`Request`] or a site entry.
 pub const MAX_PATH_SEGMENTS: usize = 8;
 
-/// Decoded request the router and [`Resource`](super::Resource) see.
+/// Decoded request a [`Resource`](super::Resource) sees.
 ///
 /// [`SlotId`] is available as [`Self::slot_id`] for Engine-level work.
 /// Ordinary handlers do not need it.

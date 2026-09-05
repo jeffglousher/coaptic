@@ -18,7 +18,7 @@ Read `knowledge/index.md` then `design.md` before architecture work. Do not rewr
 
 Default is `no_std` with no allocator. `alloc` and `std` are optional (`std` implies `alloc`). Own the slot and table types in this crate. Do not add `heapless` as the architecture.
 
-0.1 happy path is [`Server`](src/server/mod.rs) + routes (`REVIEW.md`). Engine / slots are advanced. Do not balloon unrelated crate-root re-exports. No drive-by renames unless a name is actively wrong. Caller contract: [`CALLER.md`](CALLER.md).
+0.1 happy path is [`App`](src/app/mod.rs) + owned [`Resource`](src/app/resource.rs) instances (`REVIEW.md`). Engine / slots are advanced. Do not balloon unrelated crate-root re-exports. No drive-by renames unless a name is actively wrong. Caller contract: [`CALLER.md`](CALLER.md).
 
 ## Pull requests
 

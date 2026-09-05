@@ -1,18 +1,18 @@
 //! Stand-alone [`no_std`] CoAP library: messages plus bounded storage.
 //!
-//! Crate-root types are the happy path ([`Server`], [`Resource`], [`Request`],
+//! Crate-root types are the happy path ([`App`], [`Resource`], [`Request`],
 //! [`Reply`], [`Engine`], [`Memory`], [`Endpoint`], [`Progress`], [`Access`],
 //! [`Ids`], keyed rows, Block/Q-Block types, main errors). Typestate markers,
 //! raw tables/pools, and backend traits live in [`storage`] / [`message`].
-//! [`server`] is the approachable façade (routes and resources). Engine slots
+//! [`app`] is the approachable façade (owned resources). Engine slots
 //! are the advanced path. Caller contract: `CALLER.md`. Repo map: `README.md`.
 //! Reviewer brief: `REVIEW.md`. Architecture: [`design.md`][design]. Protocol:
 //! [`knowledge/rfcs/`][rfcs]. This rustdoc does not restate wire format.
 //!
 //! # Modules
 //!
-//! - [`server`] — [`Server`] + [`Router`](server::Router): path/method routes,
-//!   [`Resource`] handlers, [`Reply`] builders, [`Server::poll`].
+//! - [`app`] — [`App`] + [`Site`](app::Site): owned [`Resource`] instances,
+//!   per-method hooks, [`Reply`] builders, [`App::poll`].
 //! - [`message`] — decode/encode a CoAP datagram. No [`Engine`] required.
 //! - [`storage`] — [`Engine`] generic over [`Storage`]; [`Memory`], pools, tables.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
@@ -70,12 +70,12 @@
 //! [`EngineBuilder`] is consuming and typestate-gated.
 //! [`.block_wise`](EngineBuilder::block_wise)`(false)` omits body pools.
 //!
-//! # Server
+//! # App
 //!
-//! [`Server`] is the approachable loop: bind an [`Engine`] and a
-//! [`DatagramIo`], register [`Resource`] types on URI-Path segments, then
-//! [`Server::poll`]. Slots stay on [`Engine`] for Block / Observe / custom
-//! policy. See `examples/coap_server.rs` (`std`).
+//! [`App`] is the approachable loop: [`App::profile`], [`block_wise`](app::AppBuilder::block_wise),
+//! [`bind`](app::AppBuilder::bind), move [`Resource`] instances onto paths, then
+//! [`App::poll`]. Slots stay on [`Engine`] for Block / Observe / custom
+//! policy (`app.engine_mut()`). See `examples/coap_server.rs` (`std`).
 //!
 //! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
 //!
@@ -109,7 +109,7 @@
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
 
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 #[cfg(feature = "alloc")]
@@ -118,13 +118,14 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod app;
 mod error;
 pub mod message;
-pub mod server;
 pub mod storage;
 
 pub use storage::profiles;
 
+pub use app::{App, Method, Reply, Request, Resource};
 pub use error::{
     BlockTransferError, BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError,
     ValueError,
@@ -137,7 +138,6 @@ pub use message::{
     decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_block, encode_observe,
     encode_uint,
 };
-pub use server::{Method, Reply, Request, Resource, Server};
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{

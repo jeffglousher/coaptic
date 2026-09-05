@@ -4,18 +4,20 @@ Stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded
 
 ## Crate surface
 
-Happy-path types live at the crate root (`Server`, `Resource`, `Request`, `Reply`, `Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`. Engine slots are the **advanced** path. Taste lock: [`REVIEW.md`](REVIEW.md) §0.1 API surface.
+Happy-path types live at the crate root (`App`, `Resource`, `Request`, `Reply`, `Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`. Engine slots are the **advanced** path. Taste lock: [`REVIEW.md`](REVIEW.md) §0.1 API surface.
 
-[`Server`](src/server/mod.rs) is how a process exposes resources. The caller still owns the socket, the clock, and resource payloads. Checklist: [`CALLER.md`](CALLER.md).
+[`App`](src/app/mod.rs) is how a process exposes resources. The caller still owns the socket, the clock, and resource payloads. Checklist: [`CALLER.md`](CALLER.md).
 
-### `coaptic::server`
+### `coaptic::app`
 
-- `Server` — Engine + `DatagramIo` + a bounded `Router`
-- `.at(&["sensors", "temp"]).get(Temp)` — URI-Path segments, method binding
-- `Resource` trait (no boxed closures, no allocator)
-- `Request` / `Reply` — path, peer, method; builders for 2.05 / 2.04 / 4.04 / 4.05 / …
-- `Server::poll(now_ms)` — recv, progress, route, reply, send, release
-- Engine remains reachable as `server.engine_mut()` (Observe / Block / custom policy)
+- `App::profile().block_wise(true).bind(io)` — hides `EngineBuilder` / `Memory`
+- `.at(&["sensors", "temp"], Temp { celsius: 215 })` — owned instance, not a type tag
+- `Resource` — `get` / `put` / `post` / `delete` / `fetch` (default 4.05)
+- `Site` — fixed table of type-erased instances (`App<_, _, N>`, default 8)
+- `Reply` — no handler lifetime; `'static` payload or a small inline copy
+- `.well_known_core()` — RFC 6690 link-format from registered paths
+- `App::poll(now_ms)` — recv, progress, route, method hook, send, release
+- Engine remains reachable as `app.engine_mut()` (Observe / Block / custom policy)
 
 ### `coaptic::message`
 
@@ -55,7 +57,7 @@ Happy-path types live at the crate root (`Server`, `Resource`, `Request`, `Reply
 | [REVIEW.md](REVIEW.md) | External-reviewer brief; 0.1 API freeze |
 | [CALLER.md](CALLER.md) | What the caller must own |
 | [ERGONOMICS.md](ERGONOMICS.md) | Code-confirmed feature table; `DatagramIo` last-mile bind |
-| `examples/coap_server.rs` | `std` UDP: `Server` + routes (`GET /sensors/temp` → 2.05) |
+| `examples/coap_server.rs` | `std` UDP: `App` + owned resources (`GET /sensors/temp` → 2.05) |
 | [design.md](design.md) | Canonical architecture and progress contract |
 | [knowledge/](knowledge/) | OKF bundle: memory names, profiles, plugtest, RFCs |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor entry |
