@@ -4,8 +4,9 @@
 //! the Block or Q-Block state for that body (`design.md`). Individual CoAP
 //! messages stay in ordinary datagram slots. Incoming and outgoing Q-Block1 /
 //! Q-Block2 use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10).
-//! BERT, missing-block recovery, and RTO are out of scope. See
-//! `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
+//! Incoming window holes surface as [`QBlockRecover`]; outgoing reissue reads
+//! the complete body without changing window state. BERT and RTO stay out of
+//! scope. See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
 
 use super::Access;
 use super::AccessMut;
@@ -201,6 +202,125 @@ impl OutgoingBlock {
     #[must_use]
     pub const fn complete(self) -> bool {
         self.complete
+    }
+}
+
+/// One incoming Q-Block missing-block recover opportunity.
+///
+/// Gaps are unset bits in the current `MAX_PAYLOADS` window that are already
+/// known missing: below the highest received NUM in that window, or at/before
+/// the M=0 NUM. [`hole_mask`](Self::hole_mask) bit `i` is window-relative
+/// (`window_base + i`). The core does not send and does not invent 4.08 /
+/// 2.31 / RST. Incoming Q-Block2 recover uses repeatable Q-Block2 options
+/// (RFC 9177 §4.4); incoming Q-Block1 4.08 encoding stays with the caller.
+///
+/// See `design.md` §Ownership by progress domain and
+/// `knowledge/rfcs/rfc9177.txt`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QBlockRecover {
+    id: SlotId,
+    key: BlockKey,
+    role: BlockRole,
+    missing_num: u32,
+    hole_mask: u16,
+    window_base: u32,
+    szx: u8,
+}
+
+impl QBlockRecover {
+    pub(crate) const fn new(
+        id: SlotId,
+        key: BlockKey,
+        role: BlockRole,
+        missing_num: u32,
+        hole_mask: u16,
+        window_base: u32,
+        szx: u8,
+    ) -> Self {
+        Self {
+            id,
+            key,
+            role,
+            missing_num,
+            hole_mask,
+            window_base,
+            szx,
+        }
+    }
+
+    /// Incoming body slot that holds this transfer.
+    #[must_use]
+    pub const fn id(self) -> SlotId {
+        self.id
+    }
+
+    /// Token + endpoint identity of the transfer.
+    #[must_use]
+    pub const fn key(self) -> BlockKey {
+        self.key
+    }
+
+    /// Incoming Q-Block1 or Q-Block2 role.
+    #[must_use]
+    pub const fn role(self) -> BlockRole {
+        self.role
+    }
+
+    /// First known missing NUM (ascending).
+    #[must_use]
+    pub const fn missing_num(self) -> u32 {
+        self.missing_num
+    }
+
+    /// Known holes in the current window (`bit i` is `window_base + i`).
+    #[must_use]
+    pub const fn hole_mask(self) -> u16 {
+        self.hole_mask
+    }
+
+    /// First NUM of the current Q-Block window.
+    #[must_use]
+    pub const fn window_base(self) -> u32 {
+        self.window_base
+    }
+
+    /// SZX locked for this transfer (used when encoding recover options).
+    #[must_use]
+    pub const fn szx(self) -> u8 {
+        self.szx
+    }
+
+    /// How many known missing NUMs are in [`Self::hole_mask`].
+    #[must_use]
+    pub const fn missing_count(self) -> u8 {
+        self.hole_mask.count_ones() as u8
+    }
+
+    /// Whether `num` is a known hole in this window.
+    #[must_use]
+    pub const fn contains(self, num: u32) -> bool {
+        if num < self.window_base {
+            return false;
+        }
+        let idx = num - self.window_base;
+        if idx >= BlockTransfer::MAX_PAYLOADS as u32 {
+            return false;
+        }
+        self.hole_mask & (1u16 << idx) != 0
+    }
+
+    /// Copy known missing NUMs (ascending) into `out`. Returns how many written.
+    pub fn copy_missing_nums(self, out: &mut [u32]) -> usize {
+        let mut n = 0usize;
+        let mut i = 0u32;
+        while i < u32::from(BlockTransfer::MAX_PAYLOADS) && n < out.len() {
+            if self.hole_mask & (1u16 << i) != 0 {
+                out[n] = self.window_base + i;
+                n += 1;
+            }
+            i += 1;
+        }
+        n
     }
 }
 
@@ -590,6 +710,49 @@ impl BlockTransfer {
         }
     }
 
+    /// Known incoming Q-Block holes in the current window, if any.
+    ///
+    /// Returns `(first_missing_num, hole_mask)` when the transfer is
+    /// incomplete and at least one unset bit sits below the highest received
+    /// NUM, or at/before the M=0 NUM. A contiguous prefix with more blocks
+    /// still expected is not a recover opportunity (those payloads may still
+    /// be in flight). Classic Block and outgoing Q-Block return `None`.
+    ///
+    /// See `knowledge/rfcs/rfc9177.txt`.
+    #[must_use]
+    pub const fn q_holes(self) -> Option<(u32, u16)> {
+        if !self.role.is_incoming() || !self.role.is_q_block() || self.complete {
+            return None;
+        }
+        let Some(q) = self.q else {
+            return None;
+        };
+        if q.mask == 0 {
+            return None;
+        }
+        let max = Self::MAX_PAYLOADS as u32;
+        let end = if let Some(final_num) = q.final_num {
+            let idx = final_num - q.base;
+            if idx >= max { max } else { idx + 1 }
+        } else {
+            15 - q.mask.leading_zeros()
+        };
+        let mut holes = 0u16;
+        let mut i = 0u32;
+        while i < end {
+            let bit = 1u16 << i;
+            if q.mask & bit == 0 {
+                holes |= bit;
+            }
+            i += 1;
+        }
+        if holes == 0 {
+            None
+        } else {
+            Some((q.base + holes.trailing_zeros(), holes))
+        }
+    }
+
     /// Accept one in-order incoming block. Returns the write offset.
     pub fn accept_incoming(
         &mut self,
@@ -802,6 +965,22 @@ impl BlockTransfer {
         self.issue_range(num)
     }
 
+    /// Reissue one Q-Block payload from the complete body already in the slot.
+    ///
+    /// RFC 9177 §4.3 / §4.4: the sender retransmits a missing payload using
+    /// the same NUM, SZX, and M as originally sent. The complete body remains
+    /// the cached copy, so `num` may be in the current window or a previous
+    /// one. Does not change window state. Does not invent 4.08 / 2.31.
+    pub fn reissue_q_outgoing(
+        &self,
+        num: u32,
+    ) -> Result<(BlockValue, usize, usize), BlockTransferError> {
+        if !self.role.is_outgoing() || !self.role.is_q_block() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        self.outgoing_range(num)
+    }
+
     /// Advance the outgoing Q-Block window after a peer window ACK.
     ///
     /// Empty ACK (code 0.00) is not a window ACK. This method does not inspect
@@ -877,6 +1056,19 @@ impl BlockTransfer {
         Ok((self.filled, self.complete))
     }
 
+    fn outgoing_range(&self, num: u32) -> Result<(BlockValue, usize, usize), BlockTransferError> {
+        let size = usize::from(BlockValue::size_from_szx(self.szx)?);
+        let offset = block_offset(num, size)?;
+        if offset > self.filled || (offset == self.filled && self.filled > 0) {
+            return Err(BlockTransferError::Gap);
+        }
+        let remaining = self.filled - offset;
+        let len = remaining.min(size);
+        let more = remaining > size;
+        let block = BlockValue::new(num, more, self.szx)?;
+        Ok((block, offset, len))
+    }
+
     fn issue_range(&mut self, num: u32) -> Result<(BlockValue, usize, usize), BlockTransferError> {
         if let Some(q) = self.q.as_ref() {
             if num < q.base {
@@ -892,15 +1084,7 @@ impl BlockTransfer {
             }
         }
 
-        let size = usize::from(BlockValue::size_from_szx(self.szx)?);
-        let offset = block_offset(num, size)?;
-        if offset > self.filled {
-            return Err(BlockTransferError::Gap);
-        }
-        let remaining = self.filled - offset;
-        let len = remaining.min(size);
-        let more = remaining > size;
-        let block = BlockValue::new(num, more, self.szx)?;
+        let (block, offset, len) = self.outgoing_range(num)?;
 
         if let Some(q) = self.q.as_mut() {
             let idx = num - q.base;
@@ -908,9 +1092,9 @@ impl BlockTransfer {
         }
 
         self.num = num;
-        self.more = more;
+        self.more = block.more();
         self.next_num = num.checked_add(1).ok_or(BlockTransferError::Overflow)?;
-        self.complete = !more;
+        self.complete = !block.more();
         Ok((block, offset, len))
     }
 }
@@ -1520,6 +1704,54 @@ mod tests {
         assert_eq!(
             BlockTransfer::outgoing_q_block2(key(), 4097, 6, 4096).expect_err("cap"),
             BlockTransferError::Overflow
+        );
+    }
+
+    #[test]
+    fn incoming_q_holes_below_highest_and_before_m0() {
+        let mut t =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, None).expect("0");
+        assert_eq!(t.q_holes(), None);
+
+        t.accept_q_incoming(szx16(2, true), 16, 4096).expect("2");
+        let (first, mask) = t.q_holes().expect("gap");
+        assert_eq!(first, 1);
+        assert_eq!(mask, 0b0010);
+
+        t.accept_q_incoming(szx16(1, true), 16, 4096).expect("fill");
+        assert_eq!(t.q_holes(), None);
+
+        let mut m0 = BlockTransfer::incoming_q_block1(key(), szx16(2, false), 8, 4096, Some(40))
+            .expect("m0 first");
+        let (first, mask) = m0.q_holes().expect("holes before m0");
+        assert_eq!(first, 0);
+        assert_eq!(mask, 0b0011);
+        m0.accept_q_incoming(szx16(0, true), 16, 4096).expect("0");
+        m0.accept_q_incoming(szx16(1, true), 16, 4096).expect("1");
+        assert!(m0.is_complete());
+        assert_eq!(m0.q_holes(), None);
+    }
+
+    #[test]
+    fn outgoing_q_reissue_reads_body_without_window_change() {
+        let mut t = BlockTransfer::outgoing_q_block2(key(), 40, 0, 4096).expect("start");
+        t.issue_q_outgoing().expect("0");
+        t.issue_q_outgoing().expect("1");
+        t.issue_q_outgoing().expect("2");
+        assert!(t.is_complete());
+        let mask = t.window_mask();
+        let (b, off, len) = t.reissue_q_outgoing(1).expect("reissue");
+        assert_eq!((b.num(), b.more(), b.szx(), off, len), (1, true, 0, 16, 16));
+        assert_eq!(t.window_mask(), mask);
+        assert_eq!(
+            t.reissue_q_outgoing(3).expect_err("past body"),
+            BlockTransferError::Gap
+        );
+        let incoming =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, None).expect("in");
+        assert_eq!(
+            incoming.reissue_q_outgoing(0).expect_err("in"),
+            BlockTransferError::IdentityMismatch
         );
     }
 }

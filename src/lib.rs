@@ -28,9 +28,10 @@
 //! remote [`Endpoint`]; see `design.md`). Incoming Q-Block1 / Q-Block2 use
 //! the same slots with a [`BlockTransfer::MAX_PAYLOADS`] window (RFC 9177
 //! §7.2 default 10). Outgoing Q-Block1 / Q-Block2 issue up to that many
-//! outstanding blocks per window on the Outgoing Body Pool. BERT,
-//! missing-block recovery, and plugtest are out of scope here. OSCORE and
-//! DTLS are also out of scope.
+//! outstanding blocks per window on the Outgoing Body Pool. Incoming
+//! Q-Block window holes surface as [`QBlockRecover`] from
+//! [`Engine::progress`]. BERT and plugtest are out of scope here. OSCORE
+//! and DTLS are also out of scope.
 //!
 //! # Message
 //!
@@ -52,8 +53,9 @@
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
 //! seventh area and not the Dedup Table. [`Engine::poll_retransmit`] walks
 //! due pending TX slots using a caller-supplied clock. [`Engine::progress`]
-//! is one bounded pass of that poll, one rotating unpinned RX step, and
-//! one rotating Observe notify (`design.md` §Reference progress contract).
+//! is one bounded pass of that poll, one rotating unpinned RX step, one
+//! rotating Observe notify, and at most one incoming Q-Block recover
+//! (`design.md` §Reference progress contract).
 //! Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
@@ -142,6 +144,6 @@ pub use storage::{
     Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable,
     Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory,
     MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable,
-    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Progress, Retransmit, SlotError,
-    SlotId, SlotPool, Storage, WithBodies,
+    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Progress, QBlockRecover,
+    Retransmit, SlotError, SlotId, SlotPool, Storage, WithBodies,
 };

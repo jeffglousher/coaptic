@@ -633,6 +633,87 @@ fn progress_observe_does_not_release_pinned_tx() {
 }
 
 #[test]
+fn progress_qblock_recover_gap_then_fill() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xc1]), Endpoint::v4([192, 0, 2, 91], 5683));
+    let body: [u8; 40] = core::array::from_fn(|i| i as u8);
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let b2 = BlockValue::from_size(2, false, 16).expect("2");
+    engine
+        .apply_q_block2(key, b0, &body[..16], Some(40))
+        .expect("0");
+    engine
+        .apply_q_block2(key, b2, &body[32..], Some(40))
+        .expect("2");
+    let outcome = engine.progress(0);
+    let recover = outcome.qblock_recover().expect("gap");
+    assert_eq!(recover.key(), key);
+    assert_eq!(recover.role(), BlockRole::IncomingQBlock2);
+    assert_eq!(recover.missing_num(), 1);
+    assert!(recover.contains(1));
+    assert!(!recover.contains(0));
+    assert_eq!(recover.missing_count(), 1);
+    let mut nums = [0u32; 4];
+    assert_eq!(recover.copy_missing_nums(&mut nums), 1);
+    assert_eq!(nums[0], 1);
+
+    let b1 = BlockValue::from_size(1, true, 16).expect("1");
+    engine
+        .apply_q_block2(key, b1, &body[16..32], Some(40))
+        .expect("fill");
+    assert!(engine.progress(0).qblock_recover().is_none());
+}
+
+#[test]
+fn progress_qblock_recover_rotating_fairness() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([192, 0, 2, 92], 5683);
+    let key_a = BlockKey::new(sample_token(&[0xa1]), ep);
+    let key_b = BlockKey::new(sample_token(&[0xa2]), ep);
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 1) as u8);
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let b2 = BlockValue::from_size(2, false, 16).expect("2");
+    for key in [key_a, key_b] {
+        engine
+            .apply_q_block2(key, b0, &body[..16], Some(40))
+            .expect("0");
+        engine
+            .apply_q_block2(key, b2, &body[32..], Some(40))
+            .expect("2");
+    }
+    let first = engine.progress(0).qblock_recover().expect("first");
+    let second = engine.progress(0).qblock_recover().expect("second");
+    assert_ne!(first.id(), second.id());
+    assert!(first.key() == key_a || first.key() == key_b);
+    assert!(second.key() == key_a || second.key() == key_b);
+    assert_ne!(first.key(), second.key());
+}
+
+#[test]
+fn progress_qblock_recover_absent_when_block_wise_false() {
+    let mut engine = build_default();
+    assert!(!engine.has_body_pools());
+    assert_eq!(engine.progress(0).qblock_recover(), None);
+}
+
+#[test]
+fn progress_qblock_recover_skips_classic_and_prefix() {
+    let mut engine = build_default_bodies();
+    let classic = BlockKey::new(sample_token(&[0xb1]), Endpoint::v4([192, 0, 2, 93], 5683));
+    let block = BlockValue::from_size(0, true, 16).expect("0");
+    engine
+        .apply_block1(classic, block, &[0u8; 16], None)
+        .expect("classic");
+    assert!(engine.progress(0).qblock_recover().is_none());
+
+    let q = BlockKey::new(sample_token(&[0xb2]), Endpoint::v4([192, 0, 2, 94], 5683));
+    engine
+        .apply_q_block2(q, block, &[1u8; 16], None)
+        .expect("prefix");
+    assert!(engine.progress(0).qblock_recover().is_none());
+}
+
+#[test]
 fn engine_set_tx_endpoint() {
     let mut engine = build_default();
     let id = engine.acquire_tx().expect("tx");
@@ -2336,6 +2417,128 @@ fn q_block_outgoing_szx1024_completes() {
     );
 }
 
+#[test]
+fn q_block2_recover_encodes_repeatable_options() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xd1]), Endpoint::v4([192, 0, 2, 95], 5683));
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 7) as u8);
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(0, true, 16).expect("0"),
+            &body[..16],
+            Some(40),
+        )
+        .expect("0");
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(2, false, 16).expect("2"),
+            &body[32..],
+            Some(40),
+        )
+        .expect("2");
+    let recover = engine.progress(0).qblock_recover().expect("gap");
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_q_block2_recover_tx(
+            recover,
+            tx,
+            Type::NonConfirmable,
+            Code::GET,
+            MessageId::new(30),
+        )
+        .expect("encode recover");
+    let parsed = engine.decode_tx(tx).expect("decode");
+    let mut nums = [0u32; 2];
+    let mut n = 0usize;
+    for item in parsed.q_block2() {
+        let v = item.expect("val");
+        assert!(!v.more());
+        nums[n] = v.num();
+        n += 1;
+    }
+    assert_eq!(&nums[..n], &[1]);
+    assert_eq!(parsed.token(), key.token());
+    assert_eq!(engine.tx_endpoint(tx), Some(key.endpoint()));
+    assert!(parsed.observe().is_none());
+}
+
+#[test]
+fn q_block1_recover_is_structured_not_encoded() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xd2]), Endpoint::v4([192, 0, 2, 96], 5683));
+    let body: [u8; 40] = core::array::from_fn(|i| i as u8);
+    engine
+        .apply_q_block1(
+            key,
+            BlockValue::from_size(0, true, 16).expect("0"),
+            &body[..16],
+            Some(40),
+        )
+        .expect("0");
+    engine
+        .apply_q_block1(
+            key,
+            BlockValue::from_size(2, false, 16).expect("2"),
+            &body[32..],
+            Some(40),
+        )
+        .expect("2");
+    let recover = engine.progress(0).qblock_recover().expect("gap");
+    assert_eq!(recover.role(), BlockRole::IncomingQBlock1);
+    assert_eq!(recover.missing_num(), 1);
+    let tx = engine.acquire_tx().expect("tx");
+    assert_eq!(
+        engine.encode_q_block2_recover_tx(
+            recover,
+            tx,
+            Type::NonConfirmable,
+            Code::GET,
+            MessageId::new(31),
+        ),
+        Err(BlockTransferError::IdentityMismatch)
+    );
+}
+
+#[test]
+fn q_block2_outgoing_reissue_encodes_same_range() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let body: [u8; 40] = core::array::from_fn(|i| (i + 9) as u8);
+    let id = engine.start_q_block2(key, &body, 0).expect("start");
+    let first = engine.next_q_block2(id).expect("0");
+    let mid = engine.next_q_block2(id).expect("1");
+    engine.next_q_block2(id).expect("2");
+    assert_eq!(first.block().num(), 0);
+    let reissued = engine.reissue_q_block2(id, 1).expect("reissue");
+    assert_eq!(reissued.block().num(), mid.block().num());
+    assert_eq!(reissued.offset(), mid.offset());
+    assert_eq!(reissued.len(), mid.len());
+    assert_eq!(
+        engine.tx_body_transfer(id).expect("sidecar").window_mask(),
+        0b0111
+    );
+
+    let tx = engine.acquire_tx().expect("tx");
+    engine
+        .encode_q_block2_reissue_tx(
+            id,
+            tx,
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(32),
+            1,
+        )
+        .expect("encode reissue");
+    let parsed = engine.decode_tx(tx).expect("decode");
+    assert_eq!(
+        parsed.q_block2().next().expect("opt").expect("val").num(),
+        1
+    );
+    assert_eq!(parsed.payload(), &body[16..32]);
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
@@ -2396,6 +2599,40 @@ mod alloc_backend {
         assert_eq!(engine.progress(0).observe_notify(), Some(id));
         assert_eq!(engine.observe_interest(id).expect("row").seq(), 1);
         assert!(!engine.observe_interest(id).expect("row").is_pending());
+    }
+
+    #[test]
+    fn alloc_progress_qblock_recover_gap() {
+        let mut engine = build_alloc(true);
+        let key = BlockKey::new(sample_token(&[0xe1]), Endpoint::v4([192, 0, 2, 97], 5683));
+        let body: [u8; 40] = core::array::from_fn(|i| i as u8);
+        engine
+            .apply_q_block2(
+                key,
+                BlockValue::from_size(0, true, 16).expect("0"),
+                &body[..16],
+                Some(40),
+            )
+            .expect("0");
+        engine
+            .apply_q_block2(
+                key,
+                BlockValue::from_size(2, false, 16).expect("2"),
+                &body[32..],
+                Some(40),
+            )
+            .expect("2");
+        let recover = engine.progress(0).qblock_recover().expect("gap");
+        assert_eq!(recover.missing_num(), 1);
+        engine
+            .apply_q_block2(
+                key,
+                BlockValue::from_size(1, true, 16).expect("1"),
+                &body[16..32],
+                Some(40),
+            )
+            .expect("fill");
+        assert!(engine.progress(0).qblock_recover().is_none());
     }
 
     #[test]
