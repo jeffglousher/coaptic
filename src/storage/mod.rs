@@ -8,8 +8,6 @@
 //! when RX bytes are written. Pending CON state is sidecar on TX slots
 //! ([`PendingCon`] / [`PendingRto`]); empty ACK/RST matching is not the
 //! Dedup Table. [`Engine::poll_retransmit`] walks due TX slots.
-//! [`Engine::progress`] is one bounded pass of that poll plus one rotating
-//! unpinned RX step.
 //! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
 //! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
 //! Observe interest rows ([`ObserveInterest`]) fill the existing
@@ -22,9 +20,9 @@
 //! Temporary application [`Access`] / [`AccessMut`] pins an occupied
 //! datagram or body slot against [`SlotPool::release`] (`design.md`
 //! §Application memory access). [`Engine::progress`] is one bounded
-//! pass: pending CON retransmit poll plus one rotating unpinned RX
-//! step (`design.md` §Reference progress contract). Observe notify
-//! and Q-Block missing-block recovery are later PRs.
+//! pass: pending CON retransmit poll, one rotating unpinned RX step, and
+//! one rotating Observe notify (`design.md` §Reference progress contract).
+//! Q-Block missing-block recovery is a later PR.
 //!
 //! See `design.md` and `knowledge/memory.md`.
 
@@ -225,7 +223,8 @@ pub trait DedupSlots {
 /// Insert, lookup, remove, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the profile observe-entry count. [`Memory`] and
 /// [`AllocMemory`] implement this so [`Engine`] can store
-/// [`ObserveInterest`] values in the existing table slots.
+/// [`ObserveInterest`] values in the existing table slots. Pending notify
+/// and the 24-bit sequence stay on the row; bodies are not stored here.
 pub trait ObserveSlots {
     /// Insert `interest`, or return the existing slot if the key is present.
     ///
@@ -243,6 +242,24 @@ pub trait ObserveSlots {
 
     /// Occupied payload at `id`.
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest>;
+
+    /// Write payload into an already-occupied Observe slot.
+    fn set_observe_interest(
+        &mut self,
+        id: SlotId,
+        interest: ObserveInterest,
+    ) -> Result<(), SlotError>;
+
+    /// Mark the interest matching `key` as due for one notification.
+    ///
+    /// Coalesces until progress surfaces the row. `None` when no row matches.
+    fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
+        let id = self.lookup_observe(key)?;
+        let mut interest = self.observe_interest(id)?;
+        interest.mark_due();
+        self.set_observe_interest(id, interest).ok()?;
+        Some(id)
+    }
 }
 
 /// Classic Block and Q-Block access to Incoming / Outgoing Body Pools.

@@ -5,6 +5,7 @@
 
 use super::DatagramSlots;
 use super::Engine;
+use super::ObserveSlots;
 use super::PendingCons;
 use super::Retransmit;
 use super::SlotId;
@@ -12,9 +13,8 @@ use super::Storage;
 
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
-/// Idle when [`Self::is_idle`]. Observe notify and Q-Block missing-block
-/// recovery are later PRs; [`Self::observe_notify`] and
-/// [`Self::qblock_recover`] stay `None` here.
+/// Idle when [`Self::is_idle`]. Q-Block missing-block recovery is a later
+/// PR; [`Self::qblock_recover`] stays `None` here.
 ///
 /// See `design.md` §Reference progress contract.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -64,9 +64,15 @@ impl Progress {
         self.rx_ready
     }
 
-    /// Observe notify domain. Always `None` until that PR.
+    /// One Observe interest due for a notification, if any.
     ///
-    /// See `design.md` §Ownership by progress domain.
+    /// [`Engine::signal_observe`] marks the row pending. This pass surfaces
+    /// at most one pending row (rotating, fair), assigns the next 24-bit
+    /// sequence, and clears pending. The caller encodes a notification into
+    /// a TX datagram with existing Observe option helpers and [`super::Access`].
+    /// This pass does not queue a body in the Observe table, acquire TX, or
+    /// invent a resource payload. See `design.md` §Ownership by progress
+    /// domain and `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn observe_notify(self) -> Option<SlotId> {
         self.observe_notify
@@ -81,7 +87,7 @@ impl Progress {
     }
 }
 
-impl<S: Storage + DatagramSlots + PendingCons> Engine<S> {
+impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots> Engine<S> {
     /// One bounded progress invocation.
     ///
     /// Caller supplies `now_ms` (no OS clock). Each call:
@@ -89,7 +95,8 @@ impl<S: Storage + DatagramSlots + PendingCons> Engine<S> {
     /// 1. [`Self::poll_retransmit`] — at most one due CON (`Due` / `GiveUp`).
     /// 2. One rotating RX step from the pool cursor: first occupied slot
     ///    that is not pinned. The cursor resumes after that slot.
-    /// 3. Observe notify — stub ([`Progress::observe_notify`] is `None`).
+    /// 3. Observe notify — at most one pending interest from the Observe
+    ///    table cursor ([`Progress::observe_notify`]).
     /// 4. Q-Block missing-block recovery — stub
     ///    ([`Progress::qblock_recover`] is `None`).
     ///
@@ -104,15 +111,48 @@ impl<S: Storage + DatagramSlots + PendingCons> Engine<S> {
         Progress {
             retransmit,
             rx_ready,
-            observe_notify: progress_observe(),
+            observe_notify: progress_observe(self),
             qblock_recover: progress_qblock(),
         }
     }
 }
 
-/// Observe notify fan-out. Later PR; see `design.md` Observe progress.
-const fn progress_observe() -> Option<SlotId> {
-    None
+/// First pending Observe interest starting at the rotating cursor.
+///
+/// Assigns the next 24-bit sequence and clears pending on the surfaced row.
+/// Advances the cursor past that slot so the next call does not restart at
+/// slot zero. Does not acquire TX or write a notification body.
+fn progress_observe<S: Storage + ObserveSlots>(engine: &mut Engine<S>) -> Option<SlotId> {
+    let n = engine.storage_mut().observe().slot_count();
+    if n == 0 {
+        return None;
+    }
+    let start = engine.storage_mut().observe().cursor();
+    let mut found = None;
+    for offset in 0..n {
+        let id = SlotId::from_index((start + offset) % n);
+        let Some(mut interest) = engine.observe_interest(id) else {
+            continue;
+        };
+        if interest.take_due().is_none() {
+            continue;
+        }
+        found = Some((id, offset, interest));
+        break;
+    }
+    match found {
+        Some((id, offset, interest)) => {
+            engine
+                .storage_mut()
+                .set_observe_interest(id, interest)
+                .ok()?;
+            for _ in 0..=offset {
+                engine.rotate_observe();
+            }
+            Some(id)
+        }
+        None => None,
+    }
 }
 
 /// Q-Block missing-block recovery. Later PR; see `design.md` Block/Q-Block progress.

@@ -509,6 +509,14 @@ where
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
         self.observe.entry(id)
     }
+
+    fn set_observe_interest(
+        &mut self,
+        id: SlotId,
+        interest: ObserveInterest,
+    ) -> Result<(), SlotError> {
+        self.observe.set_entry(id, interest)
+    }
 }
 
 impl<P: MemoryProfile> BodySlots for Memory<P> {

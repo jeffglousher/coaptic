@@ -808,6 +808,14 @@ impl ObserveSlots for AllocMemory {
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
         self.observe.entry(id)
     }
+
+    fn set_observe_interest(
+        &mut self,
+        id: SlotId,
+        interest: ObserveInterest,
+    ) -> Result<(), SlotError> {
+        self.observe.set_entry(id, interest)
+    }
 }
 
 struct AllocBodySlot {
@@ -1423,6 +1431,18 @@ impl ObserveStore for AllocObserveTable {
             return None;
         }
         self.entries.get(id.index()).copied().flatten()
+    }
+
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.entries[id.index()] = Some(interest);
+        Ok(())
     }
 }
 

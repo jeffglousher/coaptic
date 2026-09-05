@@ -31,8 +31,8 @@ use super::WithBodies;
 use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
-    BlockValue, Code, Message, MessageId, Opt, Token, Transmission, Type, empty_ack, empty_rst,
-    encode,
+    BlockValue, Code, Message, MessageId, OBSERVE_SEQUENCE_MASK, Opt, Token, Transmission, Type,
+    empty_ack, empty_rst, encode, encode_observe,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -507,6 +507,129 @@ fn progress_rotating_rx_fairness() {
     assert!(second == a || second == b);
     engine.release_rx(a).expect("release a");
     engine.release_rx(b).expect("release b");
+}
+
+#[test]
+fn progress_observe_notify_due() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 40], 5683);
+    let tok = sample_token(&[0x31]);
+    let key = ObserveKey::new(tok, ep);
+    let register_opts = [Opt::observe_register()];
+    let register = observe_get(tok, 0x6101, &register_opts);
+    let (buf, n) = encode_into(&register);
+    let parsed = crate::message::decode(&buf[..n]).expect("register");
+    let id = engine.register_observe(&parsed, ep).expect("register");
+    assert_eq!(
+        engine.signal_observe(ObserveKey::new(sample_token(&[0x32]), ep)),
+        None
+    );
+    assert_eq!(engine.progress(0).observe_notify(), None);
+    assert_eq!(engine.signal_observe(key), Some(id));
+    assert_eq!(engine.signal_observe(key), Some(id));
+    assert_eq!(engine.register_observe(&parsed, ep), Some(id));
+    let row = engine.observe_interest(id).expect("pending row");
+    assert!(row.is_pending());
+    assert_eq!(row.seq(), 0);
+    let outcome = engine.progress(0);
+    assert_eq!(outcome.observe_notify(), Some(id));
+    let row = engine.observe_interest(id).expect("surfaced");
+    assert!(!row.is_pending());
+    assert_eq!(row.seq(), 1);
+    assert_eq!(encode_observe(row.seq()).as_bytes(), &[1]);
+    assert_eq!(engine.progress(0).observe_notify(), None);
+    assert_eq!(engine.observe_interest(id).expect("still idle").seq(), 1);
+}
+
+#[test]
+fn progress_observe_rotating_fairness() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 41], 5683);
+    let a_key = ObserveKey::new(sample_token(&[0x41]), ep);
+    let b_key = ObserveKey::new(sample_token(&[0x42]), ep);
+    let a = engine
+        .insert_observe(ObserveInterest::new(a_key.token(), ep))
+        .expect("a");
+    let b = engine
+        .insert_observe(ObserveInterest::new(b_key.token(), ep))
+        .expect("b");
+    assert_eq!(engine.signal_observe(a_key), Some(a));
+    assert_eq!(engine.signal_observe(b_key), Some(b));
+    let first = engine.progress(0).observe_notify().expect("first");
+    let second = engine.progress(0).observe_notify().expect("second");
+    assert_ne!(first, second);
+    assert!(first == a || first == b);
+    assert!(second == a || second == b);
+    assert_eq!(engine.progress(0).observe_notify(), None);
+}
+
+#[test]
+fn progress_observe_deregister_clears() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 42], 5683);
+    let tok = sample_token(&[0x51]);
+    let key = ObserveKey::new(tok, ep);
+    let register_opts = [Opt::observe_register()];
+    let register = observe_get(tok, 0x6201, &register_opts);
+    let (buf, n) = encode_into(&register);
+    let parsed = crate::message::decode(&buf[..n]).expect("register");
+    let id = engine.register_observe(&parsed, ep).expect("register");
+    assert_eq!(engine.signal_observe(key), Some(id));
+    let deregister_opts = [Opt::observe_deregister()];
+    let deregister = observe_get(tok, 0x6202, &deregister_opts);
+    let (buf, n) = encode_into(&deregister);
+    let parsed = crate::message::decode(&buf[..n]).expect("deregister");
+    let taken = engine.deregister_observe(&parsed, ep).expect("take");
+    assert_eq!(taken.key(), key);
+    assert!(taken.is_pending());
+    assert_eq!(engine.signal_observe(key), None);
+    assert_eq!(engine.progress(0).observe_notify(), None);
+    assert_eq!(engine.lookup_observe(key), None);
+}
+
+#[test]
+fn observe_sequence_wrap() {
+    let mut interest =
+        ObserveInterest::new(sample_token(&[0x61]), Endpoint::v4([203, 0, 113, 43], 5683))
+            .with_seq(OBSERVE_SEQUENCE_MASK - 1);
+    interest.mark_due();
+    assert_eq!(interest.take_due(), Some(OBSERVE_SEQUENCE_MASK));
+    interest.mark_due();
+    assert_eq!(interest.take_due(), Some(0));
+    assert!(!interest.is_pending());
+    assert_eq!(interest.take_due(), None);
+
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 43], 5683);
+    let key = ObserveKey::new(sample_token(&[0x62]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key).with_seq(OBSERVE_SEQUENCE_MASK))
+        .expect("insert");
+    assert_eq!(engine.signal_observe(key), Some(id));
+    assert_eq!(engine.progress(0).observe_notify(), Some(id));
+    assert_eq!(engine.observe_interest(id).expect("wrapped").seq(), 0);
+}
+
+#[test]
+fn progress_observe_does_not_release_pinned_tx() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 44], 5683);
+    let key = ObserveKey::new(sample_token(&[0x71]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key))
+        .expect("observe");
+    let tx = engine.acquire_tx().expect("tx");
+    engine.storage_mut().tx_datagram_mut().pin(tx).expect("pin");
+    assert_eq!(engine.signal_observe(key), Some(id));
+    assert_eq!(engine.progress(0).observe_notify(), Some(id));
+    assert!(engine.tx_is_pinned(tx));
+    assert_eq!(engine.release_tx(tx), Err(SlotError::Pinned));
+    engine
+        .storage_mut()
+        .tx_datagram_mut()
+        .unpin(tx)
+        .expect("unpin");
+    engine.release_tx(tx).expect("release after unpin");
 }
 
 #[test]
@@ -2258,6 +2381,21 @@ mod alloc_backend {
         assert_eq!(outcome.rx_ready(), Some(id));
         assert!(engine.storage_mut().rx_datagram().is_occupied(id));
         engine.release_rx(id).expect("release");
+    }
+
+    #[test]
+    fn alloc_progress_observe_notify_due() {
+        let mut engine = build_alloc(false);
+        let ep = Endpoint::v4([192, 0, 2, 83], 5683);
+        let key = ObserveKey::new(sample_token(&[0x81]), ep);
+        let id = engine
+            .insert_observe(ObserveInterest::from(key))
+            .expect("insert");
+        assert!(engine.progress(0).observe_notify().is_none());
+        assert_eq!(engine.signal_observe(key), Some(id));
+        assert_eq!(engine.progress(0).observe_notify(), Some(id));
+        assert_eq!(engine.observe_interest(id).expect("row").seq(), 1);
+        assert!(!engine.observe_interest(id).expect("row").is_pending());
     }
 
     #[test]

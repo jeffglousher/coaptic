@@ -21,7 +21,8 @@
 //! jitter). A different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
 //! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
 //! TX pool count (not a seventh area). Observe interest ([`ObserveInterest`])
-//! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]).
+//! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]; pending
+//! notify and 24-bit sequence live on the row).
 //! Classic Block1 / Block2 body assembly uses a [`BlockTransfer`] sidecar on
 //! Incoming / Outgoing Body Pool slots when `.block_wise(true)` (Token +
 //! remote [`Endpoint`]; see `design.md`). Incoming Q-Block1 / Q-Block2 use
@@ -51,11 +52,14 @@
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
 //! seventh area and not the Dedup Table. [`Engine::poll_retransmit`] walks
 //! due pending TX slots using a caller-supplied clock. [`Engine::progress`]
-//! is one bounded pass of that poll plus one rotating unpinned RX step
-//! (`design.md` §Reference progress contract). Outstanding request matching
+//! is one bounded pass of that poll, one rotating unpinned RX step, and
+//! one rotating Observe notify (`design.md` §Reference progress contract).
+//! Outstanding request matching
 //! ([`ExchangeEntry`]) uses Token plus remote [`Endpoint`]; empty ACK is
 //! not a response for that table. Observe register/deregister fills
-//! [`ObserveInterest`] rows. Classic incoming Block1 / Block2, incoming
+//! [`ObserveInterest`] rows; [`Engine::signal_observe`] marks a row pending
+//! and progress surfaces at most one (sequence on the row, no body queued).
+//! Classic incoming Block1 / Block2, incoming
 //! Q-Block1 / Q-Block2, and outgoing Block1 / Block2 / Q-Block1 / Q-Block2
 //! assemble or slice complete bodies in body-pool slots ([`BlockTransfer`])
 //! when [`BodySlots`] is implemented. Optional
