@@ -5,7 +5,7 @@
 //! ```text
 //! RX slot (+ body) --view--> Request
 //! handler(Request) -> Response
-//! Response --encode--> TX slot (+ body)
+//! Response --encode--> TX slot (+ TX body when the payload needs Block2)
 //! ```
 //!
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
@@ -75,14 +75,15 @@ mod tests;
 
 use core::marker::PhantomData;
 
-use crate::error::{BlockTransferError, BuildError, SlotMessageError};
+use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    Code, EncodedUint, Message, NoResponse, Opt, OptionsBuilder, Type, decode, encode_uint,
+    BlockValue, Code, EncodedUint, Message, MessageId, NoResponse, Opt, OptionsBuilder, Type,
+    decode, encode_uint,
 };
 use crate::storage::{
-    BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine, EngineBuilder, Memory,
-    MemoryProfile, Missing, ObserveSlots, PendingCons, Present, Retransmit, SlotError, SlotId,
-    Storage, WithBodies,
+    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
+    EngineBuilder, Memory, MemoryProfile, Missing, ObserveSlots, OutgoingBlock, PendingCons,
+    Present, Retransmit, SlotError, SlotId, Storage, WithBodies,
 };
 
 pub use request::{MAX_PATH_SEGMENTS, Request};
@@ -292,12 +293,17 @@ where
     /// One loop step: recv, progress, route, handler, send, release.
     ///
     /// Handlers receive a borrowed [`Request`] and return an owned
-    /// [`Response`]. `poll` writes that intent with `encode_tx`. Block-wise
-    /// TX body start is Phase 2. Incoming Block1 is assembled so
-    /// [`Request::body`] can borrow the complete body; an incomplete Block1
-    /// is answered with 2.31 and does not run the handler. Q-Block1 inbound,
-    /// Observe notify, Observe expiry, and Q-Block recover stay on
-    /// [`Engine`] (Phase 2 / [`Self::engine_mut`]).
+    /// [`Response`]. A payload that fits one datagram uses `encode_tx`. A
+    /// larger payload (within the configured TX body capacity) is copied
+    /// into a TX body area and shipped as outgoing Block2, or Q-Block2
+    /// when the request carried Q-Block2. Subsequent client Block2 /
+    /// Q-Block2 Continue requests reuse that body; the handler does not
+    /// see [`SlotId`]. Incoming Block1 is assembled so [`Request::body`]
+    /// can borrow the complete body; an incomplete Block1 is answered
+    /// with 2.31 and does not run the handler. When block-wise is off, a
+    /// payload that does not fit one datagram fails clearly (no silent
+    /// heap). Q-Block1 inbound, Observe notify, Observe expiry, and
+    /// Q-Block recover stay on [`Engine`] ([`Self::engine_mut`]).
     ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`].
@@ -461,12 +467,16 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
+    let block2 = parsed.block2().and_then(Result::ok);
+    let q_block2 = parsed.q_block2().next().and_then(Result::ok);
     let meta = SendResponse {
         dest: peer,
         ty: parsed.ty(),
         mid: parsed.message_id(),
         token: parsed.token(),
         no_response,
+        block2,
+        q_block2,
     };
 
     let assembled = assemble_block1(engine, rx);
@@ -523,7 +533,7 @@ fn send_response<S, T>(
     response: &Response,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots,
+    S: Storage + DatagramSlots + BodySlots,
     T: DatagramIo,
 {
     if meta.no_response.suppresses(response.code()) {
@@ -536,21 +546,250 @@ where
         Type::Acknowledgement | Type::Reset => return Ok(()),
     };
 
+    let key = BlockKey::new(meta.token, meta.dest);
+    if let Some(id) = engine.lookup_tx_body(key) {
+        return continue_outgoing(engine, io, meta, response, ty, id);
+    }
+
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
 
+    match encode_response(
+        engine,
+        tx,
+        ty,
+        meta.mid,
+        meta.token,
+        response,
+        response.payload(),
+        None,
+    ) {
+        Ok(()) => finish_send(engine, io, tx, meta.dest),
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+            let _ = engine.release_tx(tx);
+            start_outgoing(engine, io, meta, response, ty, key)
+        }
+        Err(e) => {
+            let _ = engine.release_tx(tx);
+            Err(e.into())
+        }
+    }
+}
+
+fn start_outgoing<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    ty: Type,
+    key: BlockKey,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots,
+    T: DatagramIo,
+{
+    let szx = szx_for(meta.block2, meta.q_block2);
+    let started = if meta.q_block2.is_some() {
+        engine.start_q_block2(key, response.payload(), szx)
+    } else {
+        engine.start_block2(key, response.payload(), szx)
+    };
+    let id = match started {
+        Ok(id) => id,
+        Err(BlockTransferError::NoBodyPools) => {
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )));
+        }
+        Err(e) => return Err(Error::Block(e)),
+    };
+    let outcome = if meta.q_block2.is_some() {
+        issue_q_window(engine, io, meta, response, ty, id)
+    } else {
+        issue_classic(engine, io, meta, response, ty, meta.mid, id)
+    };
+    if outcome.is_err() {
+        let _ = engine.release_tx_body(id);
+    }
+    outcome
+}
+
+fn continue_outgoing<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    ty: Type,
+    id: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots,
+    T: DatagramIo,
+{
+    let role = engine
+        .tx_body_transfer(id)
+        .map(|t| t.role())
+        .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+    match role {
+        BlockRole::OutgoingQBlock2 => match meta.q_block2 {
+            Some(q) if q.more() => {
+                engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
+                issue_q_window(engine, io, meta, response, ty, id)
+            }
+            Some(_) => Ok(()),
+            None => issue_q_window(engine, io, meta, response, ty, id),
+        },
+        BlockRole::OutgoingBlock2 => issue_classic(engine, io, meta, response, ty, meta.mid, id),
+        _ => Ok(()),
+    }
+}
+
+fn issue_classic<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    ty: Type,
+    mid: MessageId,
+    id: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots,
+    T: DatagramIo,
+{
+    let issued = engine.next_block2(id).map_err(Error::Block)?;
+    send_issued(engine, io, meta, response, ty, mid, issued, false)?;
+    if issued.complete() {
+        let _ = engine.release_tx_body(id);
+    }
+    Ok(())
+}
+
+fn issue_q_window<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    first_ty: Type,
+    id: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots,
+    T: DatagramIo,
+{
+    let mut extra = 0u16;
+    loop {
+        let issued = match engine.next_q_block2(id) {
+            Ok(issued) => issued,
+            Err(BlockTransferError::OutsideWindow) => return Ok(()),
+            Err(e) => return Err(Error::Block(e)),
+        };
+        let (ty, mid) = if extra == 0 {
+            (first_ty, meta.mid)
+        } else {
+            (Type::NonConfirmable, meta.mid.wrapping_add(extra))
+        };
+        send_issued(engine, io, meta, response, ty, mid, issued, true)?;
+        extra = extra.saturating_add(1);
+        if issued.complete() {
+            let _ = engine.release_tx_body(id);
+            return Ok(());
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_issued<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    ty: Type,
+    mid: MessageId,
+    issued: OutgoingBlock,
+    q_block: bool,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots,
+    T: DatagramIo,
+{
+    let mut chunk = [0u8; 1024];
+    let n = copy_issued(engine, issued, &mut chunk).map_err(Error::Block)?;
+    let size2 = if q_block {
+        engine.tx_body_transfer(issued.id()).map(|t| t.filled())
+    } else {
+        None
+    };
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
+    let block = Some(BlockOpt {
+        value: issued.block(),
+        q_block,
+        size2,
+    });
+    if let Err(e) = encode_response(
+        engine,
+        tx,
+        ty,
+        mid,
+        meta.token,
+        response,
+        &chunk[..n],
+        block,
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(e.into());
+    }
+    finish_send(engine, io, tx, meta.dest)
+}
+
+fn copy_issued<S: Storage + BodySlots>(
+    engine: &Engine<S>,
+    issued: OutgoingBlock,
+    dest: &mut [u8],
+) -> Result<usize, BlockTransferError> {
+    let payload = engine
+        .tx_body_payload(issued.id())
+        .ok_or(BlockTransferError::NoTransfer)?;
+    let end = issued
+        .offset()
+        .checked_add(issued.len())
+        .ok_or(BlockTransferError::Overflow)?;
+    if end > payload.len() || issued.len() > dest.len() {
+        return Err(BlockTransferError::Overflow);
+    }
+    dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+    Ok(issued.len())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response<S: Storage + DatagramSlots>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: crate::message::Token,
+    response: &Response,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+) -> Result<(), SlotMessageError> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
     let observe = response
         .observe_seq()
         .map(|seq| encode_uint(seq & 0x00ff_ffff));
-    let mut opts = OptionsBuilder::<4>::new();
-    if let Some(ref encoded) = observe {
-        let _ = opts.push(Opt::observe(encoded));
-    }
+    let block_enc = block.map(|b| b.value.encode());
+    let size2_enc = block
+        .and_then(|b| b.size2)
+        .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
+    let mut opts = OptionsBuilder::<8>::new();
     if let Some(etag) = response.etag_bytes() {
         let _ = opts.push(Opt::etag(etag));
+    }
+    if let Some(ref encoded) = observe {
+        let _ = opts.push(Opt::observe(encoded));
     }
     if let Some(ref encoded) = cf {
         let _ = opts.push(Opt::content_format(encoded));
@@ -558,17 +797,34 @@ where
     if let Some(ref encoded) = max_age {
         let _ = opts.push(Opt::max_age(encoded));
     }
-
-    let msg = Message::new(ty, response.code(), meta.mid)
-        .with_token(meta.token)
-        .with_options(opts.as_slice())
-        .with_payload(response.payload());
-
-    if let Err(e) = engine.encode_tx(tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(Error::Message(e));
+    if let Some(ref encoded) = block_enc {
+        if block.is_some_and(|b| b.q_block) {
+            if let Some(ref size2) = size2_enc {
+                let _ = opts.push(Opt::size2(size2));
+            }
+            let _ = opts.push(Opt::q_block2(encoded));
+        } else {
+            let _ = opts.push(Opt::block2(encoded));
+        }
     }
-    if let Err(e) = engine.set_tx_endpoint(tx, meta.dest) {
+    let msg = Message::new(ty, response.code(), mid)
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    engine.encode_tx(tx, &msg).map(|_| ())
+}
+
+fn finish_send<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    tx: SlotId,
+    dest: Endpoint,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots,
+    T: DatagramIo,
+{
+    if let Err(e) = engine.set_tx_endpoint(tx, dest) {
         let _ = engine.release_tx(tx);
         return Err(Error::Slot(e));
     }
@@ -578,12 +834,29 @@ where
     Ok(())
 }
 
+fn szx_for(block2: Option<BlockValue>, q_block2: Option<BlockValue>) -> u8 {
+    match q_block2.or(block2) {
+        Some(block) if !block.is_bert() => block.szx(),
+        _ => BlockValue::SZX_MAX,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BlockOpt {
+    value: BlockValue,
+    q_block: bool,
+    size2: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
 struct SendResponse {
     dest: Endpoint,
     ty: Type,
-    mid: crate::message::MessageId,
+    mid: MessageId,
     token: crate::message::Token,
     no_response: NoResponse,
+    block2: Option<BlockValue>,
+    q_block2: Option<BlockValue>,
 }
 
 fn copy_rx<S: Storage + DatagramSlots, E>(
@@ -641,6 +914,8 @@ pub enum Error<E> {
     Message(SlotMessageError),
     /// TX pool is full. The RX datagram was released.
     Saturated,
+    /// Outgoing Block2 / Q-Block2 body start or issue failed.
+    Block(BlockTransferError),
 }
 
 impl<E> From<DatagramIoError<E>> for Error<E> {
@@ -677,6 +952,7 @@ where
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
             Self::Saturated => f.write_str("outgoing datagram pool is saturated"),
+            Self::Block(e) => write!(f, "{e}"),
         }
     }
 }
@@ -692,6 +968,7 @@ where
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
             Self::Saturated => None,
+            Self::Block(e) => Some(e),
         }
     }
 }

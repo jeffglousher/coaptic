@@ -32,11 +32,12 @@ impl IntoResponse for Response {
 
 /// Owned response intent. No lifetime — `'static` payload or a small inline copy.
 ///
-/// Handlers return this. [`App::poll`](super::App::poll) writes it into a TX
-/// datagram (`encode_tx`) and sends. Block-wise TX body start
-/// (`start_block2` / Q-Block2) is Phase 2: a payload that does not fit one
-/// datagram is still encoded as a single message today. The reactor owns
-/// per-slot state machines inside that loop.
+/// Handlers return this. [`App::poll`](super::App::poll) writes a payload
+/// that fits one datagram with `encode_tx`. A larger payload (within the
+/// configured TX body capacity) is copied into a TX body area and shipped
+/// as outgoing Block2, or Q-Block2 when that is the request's transfer.
+/// Handlers do not opt in and do not see slot identifiers. The reactor
+/// owns per-slot state machines inside that loop.
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};

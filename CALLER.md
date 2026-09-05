@@ -4,7 +4,7 @@ coaptic is a library, not a daemon or socket stack. The core never sends on the 
 
 ## Two paths
 
-**App (happy path).** [`App`](src/app/mod.rs) is a routing façade: recv / progress / route / handler / response / send / release. Handlers are `fn(Request<'_>) -> Response`: borrowed request fields (`payload()`, path, token, options, `body()` when Block1 assembled) and an owned [`Response`](src/app/response.rs) (`content` / `content_copy`). You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).route(…).bind(io)`) and the clock (`now_ms` into [`App::poll`](src/app/mod.rs)). You do not touch slots to expose a GET or PUT; [`Request`](src/app/request.rs) does not expose `SlotId`. `App` does **not** own a global mutable shared bag; domain data that outlives a request (GPIO, sensor firmware, …) stays outside coaptic ([`design.md`](design.md) §Application memory access). The reactor owns per-slot state machines inside `poll`.
+**App (happy path).** [`App`](src/app/mod.rs) is a routing façade: recv / progress / route / handler / response / send / release. Handlers are `fn(Request<'_>) -> Response`: borrowed request fields (`payload()`, path, token, options, `body()` when Block1 assembled) and an owned [`Response`](src/app/response.rs) (`content` / `content_copy`). A `Response` payload that does not fit one datagram is copied into a TX body and shipped as Block2 (or Q-Block2 when the request asked for it). You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).route(…).bind(io)`) and the clock (`now_ms` into [`App::poll`](src/app/mod.rs)). You do not touch slots to expose a GET or PUT; [`Request`](src/app/request.rs) does not expose `SlotId`. `App` does **not** own a global mutable shared bag; domain data that outlives a request (GPIO, sensor firmware, …) stays outside coaptic ([`design.md`](design.md) §Application memory access). The reactor owns per-slot state machines inside `poll`.
 
 **Engine (advanced / reactor).** Per-slot state machines plus [`progress`](src/storage/progress.rs) ship protocol mechanics (pending CON/RTO, BlockTransfer, ObserveInterest, Dedup, Exchange). Slots, [`Access`](src/storage/access.rs), Observe notify, Block / Q-Block, and custom RST / 4.xx policy stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
 
@@ -46,7 +46,7 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 ## Encode + Access loops
 
-**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, Block1 assembly, request dispatch, piggybacked ACK, `encode_tx`, and slot release are inside. Block-wise TX body, Observe notify, and Q-Block recover are not sent on this path yet (Phase 2); use `App::engine_mut` if you need them now.
+**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, Block1 assembly, request dispatch, piggybacked ACK, `encode_tx` for a single datagram, outgoing Block2 / Q-Block2 from a TX body when the [`Response`](src/app/response.rs) payload does not fit one datagram, and slot release are inside. Observe notify and Q-Block recover are not sent on this path; use `App::engine_mut` if you need them now.
 
 **Engine** (advanced):
 

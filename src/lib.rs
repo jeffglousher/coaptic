@@ -79,10 +79,12 @@
 //! [`App::poll`]. Handlers are `fn(Request<'_>) -> Response`: borrowed
 //! request fields (`payload()`, path, token, options, `body()` when Block1
 //! assembled) and an owned [`Response`] (`content` / `content_copy`).
-//! The reactor owns per-slot state machines inside `poll`. Domain data
-//! that outlives a request stays outside `App`. Engine remains the
-//! advanced escape hatch for explicit slots, Q-Block, Observe, and custom
-//! policy (`app.engine_mut()`). See `examples/coap_server.rs` (`std`).
+//! Large responses use the TX body area (Block2, or Q-Block2 when the
+//! request asked for it) without exposing `SlotId`. The reactor owns
+//! per-slot state machines inside `poll`. Domain data that outlives a
+//! request stays outside `App`. Engine remains the advanced escape hatch
+//! for explicit slots, Observe notify, Q-Block recover, and custom policy
+//! (`app.engine_mut()`). See `examples/coap_server.rs` (`std`).
 //!
 //! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
 //!
