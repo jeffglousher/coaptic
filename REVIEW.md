@@ -20,21 +20,31 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#32** on `main` plus RFC 7641 §4.5 pacing:
+Through squash-merges **#7–#33** on `main` plus this tree's message-layer codes/options:
 
 | Domain | In the crate |
 | --- | --- |
-| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, `ObserveTransmission`, named 2.31 / 4.08 codes, `OptionsBuilder`, `Ids`, Token mint |
+| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, Hop-Limit, No-Response, If-Match / If-None-Match [`Precondition`](src/message/precondition.rs), FETCH / PATCH / iPATCH codes, named 2.31 / 4.08 / 4.09 / 4.22 / 5.08, `ObserveTransmission`, `OptionsBuilder`, `Ids`, Token mint |
 | Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
 The core does not send. The caller owns the clock, jitter, and socket.
 
-## Deferred
+## Core CoAP bar
 
-- DTLS, OSCORE, 6LoWPAN (and those plugtest suites)
-- RST / 4.02 / 2.31 / 4.08 policy (caller-owned)
+The standing goal is a library that is functional and complete for **core CoAP** on the six areas, plus in-scope CoAP#4 TD passage (`base` / `block` / `link`). That bar is the RFC 7252 message/option surface (including FETCH / PATCH / iPATCH codes, No-Response, Hop-Limit, If-Match / If-None-Match classification), RFC 7641 Observe, RFC 7959 Block, RFC 9177 Q-Block, and RFC 9175 Echo / Request-Tag.
+
+This is not a transport-stack completeness claim. The caller owns send, clock, jitter, and RST / 4.xx policy. UDP / DTLS / OSCORE / 6LoWPAN are not part of that bar.
+
+## Not planned
+
+- **6LoWPAN** and `TD_6LoWPAN_*`. Adaptation-layer. Not a completeness gap. Skip reason is **not planned**, not deferred.
+
+## Deferred (out of the standing goal)
+
+- DTLS, OSCORE (and the `TD_COAP_DTLS_*` suite)
+- RST / 4.02 / 2.31 / 4.08 / 4.09 / 4.22 / 5.08 **policy** (caller-owned; codes and classifiers exist)
 - Public crates.io / public GitHub
 
 Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).

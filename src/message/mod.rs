@@ -22,7 +22,9 @@
 //! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
 //! Table 4. Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2
 //! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX (SZX 7 is BERT).
-//! Request-Tag and Echo (RFC 9175) are opaque. None of those numbers are in Table 4.
+//! Request-Tag and Echo (RFC 9175) are opaque. Hop-Limit (RFC 8768) and
+//! No-Response (RFC 7967) reuse uint. None of those numbers are in Table 4.
+//! [`ParsedMessage::precondition`] classifies If-Match / If-None-Match.
 //! [`ParsedMessage::check_rfc7252_formats`] is
 //! optional and separate from wire decode and from
 //! [`ParsedMessage::check_rfc7252_options`].
@@ -34,8 +36,11 @@ mod builder;
 mod decode;
 mod echo;
 mod encode;
+mod hop;
 mod id;
+mod no_response;
 mod option;
+mod precondition;
 pub mod value;
 
 #[cfg(test)]
@@ -45,8 +50,11 @@ pub use builder::OptionsBuilder;
 pub use decode::{ParsedMessage, decode};
 pub use echo::{Echo, EchoFreshness};
 pub use encode::{Message, encode};
+pub use hop::HopLimit;
 pub use id::{Ids, TokenSource};
+pub use no_response::NoResponse;
 pub use option::{Opt, OptionNumber, Options};
+pub use precondition::Precondition;
 pub use value::{
     BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
     OBSERVE_SEQUENCE_MASK, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
@@ -248,6 +256,12 @@ impl Code {
     pub const PUT: Self = Self(3);
     /// DELETE (0.04).
     pub const DELETE: Self = Self(4);
+    /// FETCH (0.05). RFC 8132. The library does not invent FETCH policy.
+    pub const FETCH: Self = Self(5);
+    /// PATCH (0.06). RFC 8132. The library does not invent PATCH policy.
+    pub const PATCH: Self = Self(6);
+    /// iPATCH (0.07). RFC 8132. The library does not invent iPATCH policy.
+    pub const IPATCH: Self = Self(7);
 
     /// 2.01 Created.
     pub const CREATED: Self = Self(pack_code(2, 1));
@@ -280,12 +294,16 @@ impl Code {
     ///
     /// The library does not invent 4.08 policy.
     pub const REQUEST_ENTITY_INCOMPLETE: Self = Self(pack_code(4, 8));
+    /// 4.09 Conflict (RFC 8132). The library does not invent 4.09 policy.
+    pub const CONFLICT: Self = Self(pack_code(4, 9));
     /// 4.12 Precondition Failed.
     pub const PRECONDITION_FAILED: Self = Self(pack_code(4, 12));
     /// 4.13 Request Entity Too Large.
     pub const REQUEST_ENTITY_TOO_LARGE: Self = Self(pack_code(4, 13));
     /// 4.15 Unsupported Content-Format.
     pub const UNSUPPORTED_CONTENT_FORMAT: Self = Self(pack_code(4, 15));
+    /// 4.22 Unprocessable Entity (RFC 8132). The library does not invent 4.22 policy.
+    pub const UNPROCESSABLE_ENTITY: Self = Self(pack_code(4, 22));
 
     /// 5.00 Internal Server Error.
     pub const INTERNAL_SERVER_ERROR: Self = Self(pack_code(5, 0));
@@ -299,6 +317,8 @@ impl Code {
     pub const GATEWAY_TIMEOUT: Self = Self(pack_code(5, 4));
     /// 5.05 Proxying Not Supported.
     pub const PROXYING_NOT_SUPPORTED: Self = Self(pack_code(5, 5));
+    /// 5.08 Hop Limit Reached (RFC 8768). The library does not invent 5.08 policy.
+    pub const HOP_LIMIT_REACHED: Self = Self(pack_code(5, 8));
 
     /// Wrap a raw code byte.
     #[must_use]
@@ -344,6 +364,26 @@ impl Code {
     #[must_use]
     pub const fn is_request(self) -> bool {
         self.class() == 0 && !self.is_empty()
+    }
+
+    /// Safe request method (GET / FETCH). Responses are not safe.
+    ///
+    /// See `knowledge/rfcs/rfc7252.txt` and `knowledge/rfcs/rfc8132.txt`.
+    #[must_use]
+    pub const fn is_safe(self) -> bool {
+        matches!(self, Self::GET | Self::FETCH)
+    }
+
+    /// Idempotent request method (GET / PUT / DELETE / FETCH / iPATCH).
+    ///
+    /// Responses are not idempotent. See `knowledge/rfcs/rfc7252.txt` and
+    /// `knowledge/rfcs/rfc8132.txt`.
+    #[must_use]
+    pub const fn is_idempotent(self) -> bool {
+        matches!(
+            self,
+            Self::GET | Self::PUT | Self::DELETE | Self::FETCH | Self::IPATCH
+        )
     }
 
     /// Response (class 2, 4, or 5).

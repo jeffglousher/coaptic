@@ -22,11 +22,13 @@
 //! build a CON/NON skeleton. Empty ACK/RST live in [`message`].
 //! [`message::value`] covers RFC 7252 empty/opaque/uint/string. Named
 //! [`Opt`] helpers cover Table 4 plus Observe, Block / Q-Block / Size2
-//! ([`BlockValue`]), Request-Tag, and Echo ([`Echo`]).
-//! [`ObserveTransmission`] names RFC 7641 §4.5 constants. [`Code::CONTINUE`]
-//! (2.31) and [`Code::REQUEST_ENTITY_INCOMPLETE`] (4.08) are named codes
-//! only — the library does not invent when to send them. Optional, not used
-//! by [`decode`]:
+//! ([`BlockValue`]), Request-Tag, Echo ([`Echo`]), Hop-Limit
+//! ([`HopLimit`]), and No-Response ([`NoResponse`]).
+//! [`ParsedMessage::precondition`] classifies If-Match / If-None-Match.
+//! [`ObserveTransmission`] names RFC 7641 §4.5 constants. [`Code::FETCH`] /
+//! [`Code::PATCH`] / [`Code::IPATCH`] and named 2.31 / 4.08 / 4.09 / 4.22 /
+//! 5.08 are codes only — the library does not invent when to send them.
+//! Optional, not used by [`decode`]:
 //!
 //! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
 //! - [`ParsedMessage::check_rfc7252_formats`] — known option, wrong format
@@ -61,7 +63,7 @@
 //! [`EngineBuilder`] is consuming and typestate-gated.
 //! [`.block_wise`](EngineBuilder::block_wise)`(false)` omits body pools.
 //!
-//! OSCORE and DTLS are out of scope.
+//! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
 //!
 //! # Validation harness
 //!
@@ -72,7 +74,7 @@
 //! | --- | --- |
 //! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Policy: `knowledge/block-testing.md`. |
 //! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
-//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `knowledge/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` / `6lowpan` are skipped. |
+//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `knowledge/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` is skipped (deferred). `6lowpan` is skipped (not planned). |
 //! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
 //! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
 //! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
@@ -113,11 +115,12 @@ pub use error::{
     ValueError,
 };
 pub use message::{
-    BlockValue, Code, ContentFormat, Echo, EchoFreshness, EncodedUint, Header, Ids, Message,
-    MessageId, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, ObserveTransmission,
-    Opt, OptionNumber, OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token,
-    Transmission, Type, decode, decode_block, decode_observe, decode_uint, decode_uint16,
-    empty_ack, empty_rst, encode, encode_block, encode_observe, encode_uint,
+    BlockValue, Code, ContentFormat, Echo, EchoFreshness, EncodedUint, Header, HopLimit, Ids,
+    Message, MessageId, NoResponse, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK,
+    ObserveTransmission, Opt, OptionNumber, OptionValueFormat, Options, OptionsBuilder,
+    ParsedMessage, Precondition, Token, Transmission, Type, decode, decode_block, decode_observe,
+    decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_block, encode_observe,
+    encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;

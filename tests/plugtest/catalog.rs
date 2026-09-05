@@ -132,14 +132,14 @@ pub fn assert_ids_match_yaml() {
     assert!(!lowpan.is_empty(), "6lowpan.yml must contain TD keys");
 }
 
-/// Skip reason for a deferred or not-yet-drivable TD. `None` means implement.
+/// Skip reason for a deferred or not-planned TD. `None` means implement.
 #[must_use]
 pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_COAP_DTLS_") {
         return Some("deferred: DTLS/OSCORE not implemented");
     }
     if id.starts_with("TD_6LoWPAN_") {
-        return Some("deferred: 6LoWPAN not implemented");
+        return Some("not planned: 6LoWPAN");
     }
     None
 }

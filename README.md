@@ -16,6 +16,8 @@ Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progre
 - Observe (RFC 7641 option 6) and Block / Q-Block / Size2 (`BlockValue`; SZX 7 is BERT)
 - `ObserveTransmission` (24-hour NON-confirm / default NON timeout)
 - Request-Tag and Echo (RFC 9175); ETag body identity (`BodyTag` on `BlockKey`)
+- Hop-Limit (RFC 8768), No-Response (RFC 7967), If-Match / If-None-Match `Precondition`
+- FETCH / PATCH / iPATCH codes (RFC 8132); named 4.09 / 4.22 / 5.08
 - `OptionsBuilder` for out-of-order insertion
 - No `Engine` required
 
@@ -84,7 +86,7 @@ cargo test --test plugtest td_coap_link
 cargo test --test plugtest inventory -- --nocapture
 ```
 
-`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. `inventory` prints RUN vs SKIP for every vendored TD id (`dtls` / `6lowpan` remain skipped). See rustdoc §Validation harness, [knowledge/block-testing.md](knowledge/block-testing.md), and [knowledge/plugtest/](knowledge/plugtest/).
+`--all-features` on `block_sweep` includes the `AllocMemory` 25 × 1024 case. Suite filters match the `#[test]` names in `tests/plugtest.rs`. `inventory` prints RUN vs SKIP for every vendored TD id (`dtls` deferred; `6lowpan` not planned). See rustdoc §Validation harness, [knowledge/block-testing.md](knowledge/block-testing.md), and [knowledge/plugtest/](knowledge/plugtest/).
 
 ## Architecture (short)
 

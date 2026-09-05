@@ -163,6 +163,10 @@ pub enum ValueError {
     OpaqueLength,
     /// Echo option value is empty or longer than 40 bytes.
     EchoLength,
+    /// Hop-Limit option value is not exactly one byte in `1..=255`.
+    HopLimit,
+    /// No-Response option value is longer than one byte.
+    NoResponseLength,
 }
 
 impl core::fmt::Display for ValueError {
@@ -174,6 +178,12 @@ impl core::fmt::Display for ValueError {
             Self::BlockNumOverflow => f.write_str("block NUM does not fit in 20 bits"),
             Self::OpaqueLength => f.write_str("opaque option value is longer than 8 bytes"),
             Self::EchoLength => f.write_str("Echo option value is empty or longer than 40 bytes"),
+            Self::HopLimit => {
+                f.write_str("Hop-Limit option value is not exactly one byte in 1..=255")
+            }
+            Self::NoResponseLength => {
+                f.write_str("No-Response option value is longer than one byte")
+            }
         }
     }
 }

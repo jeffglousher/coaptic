@@ -1,12 +1,12 @@
 ---
 type: Test Descriptions
 title: "CoAP#4 6LoWPAN"
-description: "Deferred ETSI CoAP#4 6LoWPAN TDs. Not required until 6LoWPAN / security work."
+description: "Not-planned ETSI CoAP#4 6LoWPAN TDs. Adaptation-layer; not a coaptic completeness gap."
 resource: td-coap4/6lowpan.yml
 td_ids: [TD_6LoWPAN_FORMAT_01, TD_6LoWPAN_FORMAT_07, TD_6LoWPAN_FORMAT_06, TD_6LoWPAN_ND_01, TD_6LoWPAN_ND_06, TD_6LoWPAN_HC_01, TD_6LoWPAN_HC_03, TD_6LoWPAN_HC_09, TD_6LoWPAN_HC_05, TD_6LoWPAN_HC_07, TD_6LoWPAN_ND_HC_01, TD_6LoWPAN_ND_HC_03, TD_6LoWPAN_FORMAT_02, TD_6LoWPAN_FORMAT_08, TD_6LoWPAN_FORMAT_05, TD_6LoWPAN_ND_02, TD_6LoWPAN_ND_07, TD_6LoWPAN_HC_02, TD_6LoWPAN_HC_04, TD_6LoWPAN_HC_10, TD_6LoWPAN_HC_06, TD_6LoWPAN_HC_08, TD_6LoWPAN_ND_HC_02, TD_6LoWPAN_ND_HC_04, TD_6LoWPAN_FORMAT_03, TD_6LoWPAN_FORMAT_04, TD_6LoWPAN_ND_03, TD_6LoWPAN_ND_04, TD_6LoWPAN_ND_05]
-tags: [plugtest, 6lowpan, deferred]
+tags: [plugtest, 6lowpan, not-planned]
 status: deprecated
-scope: deferred
+scope: not-planned
 sources:
   - id: 6lowpan-yml
     resource: "https://raw.githubusercontent.com/cabo/td-coap4/master/6lowpan.yml"
@@ -18,14 +18,14 @@ deterministic:
   fields: [type, resource, td_ids]
 generated:
   by: cursor_agent/cursor-grok-4.6
-  at: "2026-09-03T12:49:03Z"
+  at: "2026-09-05T16:00:00Z"
 ---
 
-# 6LoWPAN (deferred)
+# 6LoWPAN (not planned)
 
 Local copy: [td-coap4/6lowpan.yml](td-coap4/6lowpan.yml). Kept as a reference artifact.
 
-Not required for the current engine. The YAML `ref` lines cite RFC 4944, RFC 6775, and RFC 6282 (not copied into this bundle). Do not invent 6LoWPAN behavior to pass these TDs.
+**Not planned.** Adaptation-layer; not a core CoAP completeness gap. The YAML `ref` lines cite RFC 4944, RFC 6775, and RFC 6282 (not copied into this bundle). Do not invent 6LoWPAN behavior to pass these TDs.
 
 | ID | Objective (from YAML `obj`) |
 | --- | --- |

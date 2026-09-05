@@ -56,6 +56,8 @@ impl OptionNumber {
     pub const MAX_AGE: Self = Self(14);
     /// Uri-Query (15).
     pub const URI_QUERY: Self = Self(15);
+    /// Hop-Limit (16). RFC 8768; not in RFC 7252 Table 4.
+    pub const HOP_LIMIT: Self = Self(16);
     /// Accept (17).
     pub const ACCEPT: Self = Self(17);
     /// Q-Block1 (19). RFC 9177; not in RFC 7252 Table 4.
@@ -78,6 +80,8 @@ impl OptionNumber {
     pub const SIZE1: Self = Self(60);
     /// Echo (252). RFC 9175; not in RFC 7252 Table 4.
     pub const ECHO: Self = Self(252);
+    /// No-Response (258). RFC 7967; not in RFC 7252 Table 4.
+    pub const NO_RESPONSE: Self = Self(258);
     /// Request-Tag (292). RFC 9175; not in RFC 7252 Table 4.
     pub const REQUEST_TAG: Self = Self(292);
 
@@ -95,8 +99,8 @@ impl OptionNumber {
 
     /// Whether this number is defined in RFC 7252 (Table 4).
     ///
-    /// Other registered numbers (Observe, Block, Q-Block, Echo, …) parse as
-    /// opaque options and are not included here.
+    /// Other registered numbers (Observe, Block, Q-Block, Echo, Hop-Limit,
+    /// No-Response, …) parse as opaque options and are not included here.
     #[must_use]
     pub const fn is_rfc7252(self) -> bool {
         matches!(

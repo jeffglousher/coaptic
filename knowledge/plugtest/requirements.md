@@ -51,9 +51,13 @@ The 2014 CoAP#4 TDs do not cover Q-Block or Echo / Request-Tag ([RFC 9175](/rfcs
 
 Engine Block/Q-Block tests (beyond CoAP#4 TDs) are a dynamic combinatorial SZX × 1–25-block sweep, not a hard-coded case list. Sweep assumes block-wise **enabled**. `profiles::Default` body 4096 is the enabled default, not the test ceiling, and not a disable knob. Policy: [Block testing](/block-testing.md).
 
-## Deferred (OSCORE / DTLS / 6LoWPAN)
+## Deferred (OSCORE / DTLS)
 
-[dtls](/plugtest/dtls.md) and [6lowpan](/plugtest/6lowpan.md) are deferred. Do not implement DTLS or OSCORE to pass those TDs yet.
+[dtls](/plugtest/dtls.md) is deferred. Do not implement DTLS or OSCORE to pass those TDs yet.
+
+## Not planned (6LoWPAN)
+
+[6lowpan](/plugtest/6lowpan.md) `TD_6LoWPAN_*` is **not planned**. Adaptation-layer; not a core CoAP completeness gap. Do not implement 6LoWPAN to pass those TDs.
 
 ## Engine constraint
 
