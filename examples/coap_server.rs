@@ -8,9 +8,11 @@
 //! (no in-App LED bag; real LED state is firmware-owned). GET `/leds/0` →
 //! demo payload. GET `/large` → a payload that does not fit one datagram,
 //! shipped as outgoing Block2 from a TX body. `/.well-known/core` is
-//! link-format from registered paths. Handlers see borrowed `Request`
-//! fields and return owned `Response`. Engine slot identifiers stay off
-//! this path (`CALLER.md`).
+//! link-format from registered paths. Observe: return `.observe(0)` on a
+//! successful GET to register; `app.notify(now_ms, path, response)` sends
+//! later representations. Handlers see borrowed `Request` fields and
+//! return owned `Response`. Engine slot identifiers stay off this path
+//! (`CALLER.md`).
 
 use std::net::UdpSocket;
 use std::time::Instant;

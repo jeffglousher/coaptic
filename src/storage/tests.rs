@@ -22,6 +22,7 @@ use super::ObserveExpiry;
 use super::ObserveInterest;
 use super::ObserveKey;
 use super::ObserveLifetime;
+use super::ObserveResource;
 use super::ObserveTable;
 use super::PendingCon;
 use super::PendingRto;
@@ -598,6 +599,33 @@ fn progress_observe_deregister_clears() {
     assert_eq!(engine.signal_observe(key), None);
     assert_eq!(engine.progress(0).observe_notify(), None);
     assert_eq!(engine.lookup_observe(key), None);
+}
+
+#[test]
+fn observe_resource_path_hash_and_none() {
+    let a = ObserveResource::from_path(&["sensors", "temp"]);
+    let b = ObserveResource::from_path(&["sensors", "temp"]);
+    let c = ObserveResource::from_path(&["leds", "0"]);
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+    assert!(a.matches(&["sensors", "temp"]));
+    assert!(!a.matches(&["leds", "0"]));
+    assert!(ObserveResource::NONE.is_none());
+    assert!(!ObserveResource::NONE.matches(&[]));
+    assert!(!ObserveResource::from_path(&[]).is_none());
+
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 40], 5683);
+    let key = ObserveKey::new(sample_token(&[0x60]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key).with_resource(a))
+        .expect("insert");
+    assert_eq!(engine.observe_interest(id).expect("row").resource(), a);
+    assert_eq!(engine.signal_observe_resource(a), 1);
+    assert!(engine.observe_interest(id).expect("row").is_pending());
+    assert_eq!(engine.take_observe_resource(c), 0);
+    assert_eq!(engine.take_observe_resource(a), 1);
+    assert!(engine.lookup_observe(key).is_none());
 }
 
 #[test]

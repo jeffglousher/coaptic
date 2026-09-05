@@ -97,7 +97,7 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `PendingCon` / `PendingRto` | TX-sidecar pending CON + caller-clock RTO |
 | `ExchangeKey` / `ExchangeEntry` | Token + remote Endpoint request/response matching |
 | `ObserveTable` | Observe interest table |
-| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify, 24-bit sequence, and optional Max-Age / CON-wait lifetime on the row |
+| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify, 24-bit sequence, optional Max-Age / CON-wait lifetime, and optional [`ObserveResource`](../src/storage/table.rs) path key on the row |
 | `ObserveLifetime` / `ObserveExpiry` | Colocated freshness or unacked-CON deadline; one due row from `progress` |
 | `SlotId` | Slot identifier |
 | `Ids` / `TokenSource` | Wrapping Message ID counter; caller-entropy Token mint (no OS RNG) |

@@ -23,8 +23,9 @@ Response --encode--> TX slot (+ TX body when the payload needs Block2)
 - `Site` — fixed table of fn-pointer routers (`App<_, _, N>`, default 8)
 - `Response` — no handler lifetime; `'static` payload or a small inline copy
 - `.well_known_core()` — RFC 6690 link-format from registered paths
-- `App::poll(now_ms)` — recv, progress, route, handler, send, release; large `Response` payloads use the TX body (Block2 / Q-Block2)
-- Engine remains reachable as `app.engine_mut()` (Observe notify, Q-Block recover, custom policy)
+- `App::poll(now_ms)` — recv, progress, route, handler, Observe register/deregister, send, release; large `Response` payloads use the TX body (Block2 / Q-Block2)
+- `App::notify(now_ms, path, response)` — send notifications to observers of that path (token match, no `SlotId`)
+- Engine remains reachable as `app.engine_mut()` (Q-Block recover, custom policy)
 
 ### `coaptic::message`
 

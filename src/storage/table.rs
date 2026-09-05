@@ -100,6 +100,9 @@ pub(crate) trait DedupStore {
 /// path is not part of that key. This is not Dedup (Message ID + Endpoint),
 /// not pending CON, and not [`super::ExchangeKey`] (same Token + Endpoint
 /// pair, different table). See `knowledge/rfcs/rfc7641.txt` and `design.md`.
+///
+/// [`ObserveResource`] is an optional sidecar on the same row so App can
+/// notify by Uri-Path without a second table.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveKey {
     token: Token,
@@ -123,6 +126,55 @@ impl ObserveKey {
     #[must_use]
     pub const fn endpoint(self) -> Endpoint {
         self.endpoint
+    }
+}
+
+/// Compact resource identity on an [`ObserveInterest`] row.
+///
+/// RFC 7641 still keys the row by Token + Endpoint. This hash lets App
+/// (and Engine helpers) match observers for one Uri-Path without a
+/// parallel table. [`Self::NONE`] means no path was recorded.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct ObserveResource {
+    hash: u64,
+}
+
+impl ObserveResource {
+    /// No Uri-Path recorded (Engine insert without a path).
+    pub const NONE: Self = Self { hash: 0 };
+
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+    /// Hash of Uri-Path `segments` (wire order, no leading slash).
+    #[must_use]
+    pub fn from_path(segments: &[&str]) -> Self {
+        let mut hash = Self::FNV_OFFSET;
+        for (i, segment) in segments.iter().enumerate() {
+            if i > 0 {
+                hash = Self::fnv_byte(hash, b'/');
+            }
+            for byte in segment.as_bytes() {
+                hash = Self::fnv_byte(hash, *byte);
+            }
+        }
+        Self { hash }
+    }
+
+    /// Whether this key was produced by [`Self::from_path`] for `segments`.
+    #[must_use]
+    pub fn matches(self, segments: &[&str]) -> bool {
+        self != Self::NONE && self == Self::from_path(segments)
+    }
+
+    /// Whether this is [`Self::NONE`].
+    #[must_use]
+    pub const fn is_none(self) -> bool {
+        self.hash == 0
+    }
+
+    const fn fnv_byte(hash: u64, byte: u8) -> u64 {
+        (hash ^ byte as u64).wrapping_mul(Self::FNV_PRIME)
     }
 }
 
@@ -273,13 +325,14 @@ impl ObserveNotifyHold {
 ///
 /// Relation identity plus small pending/coalescing state, the last
 /// library-assigned 24-bit notification sequence, optional Max-Age /
-/// CON-wait lifetime, and RFC 7641 §4.5 / §4.5.1 confirm / NSTART hold.
-/// Notification bodies are not stored here. See
-/// `design.md` §Observe Interest Table / Bounded state-machine lifetime and
-/// `knowledge/rfcs/rfc7641.txt`.
+/// CON-wait lifetime, RFC 7641 §4.5 / §4.5.1 confirm / NSTART hold, and
+/// an optional [`ObserveResource`] path key. Notification bodies are not
+/// stored here. See `design.md` §Observe Interest Table / Bounded
+/// state-machine lifetime and `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveInterest {
     key: ObserveKey,
+    resource: ObserveResource,
     seq: u32,
     pending: bool,
     lifetime: Option<ObserveLifetime>,
@@ -295,6 +348,7 @@ impl ObserveInterest {
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new(token, endpoint),
+            resource: ObserveResource::NONE,
             seq: 0,
             pending: false,
             lifetime: None,
@@ -319,6 +373,18 @@ impl ObserveInterest {
     #[must_use]
     pub const fn endpoint(self) -> Endpoint {
         self.key.endpoint()
+    }
+
+    /// Uri-Path resource key, if recorded.
+    #[must_use]
+    pub const fn resource(self) -> ObserveResource {
+        self.resource
+    }
+
+    /// Set the Uri-Path resource key (or [`ObserveResource::NONE`]).
+    #[must_use]
+    pub const fn with_resource(self, resource: ObserveResource) -> Self {
+        Self { resource, ..self }
     }
 
     /// Last library-assigned notification sequence (24-bit).

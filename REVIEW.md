@@ -26,7 +26,7 @@ Through squash-merges **#7–#34** on `main`:
 | Domain | In the crate |
 | --- | --- |
 | Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, Echo, Hop-Limit, No-Response, If-Match / If-None-Match [`Precondition`](src/message/precondition.rs), FETCH / PATCH / iPATCH codes, named 2.31 / 4.08 / 4.09 / 4.22 / 5.08, `ObserveTransmission`, `OptionsBuilder`, `Ids`, Token mint |
-| App | [`App`](src/app/mod.rs) façade: `profile` / `block_wise` / `route` / `bind`, [`get`](src/app/routing.rs) / `put` / … method routers (fn pointers; no `unsafe`), `fn(Request<'_>) -> Response` handlers, `Response` (no handler lifetime), `well_known_core`, `poll` (recv + progress + route + handler + send + release). Incoming Block1 assembly for `Request::body`. Outgoing Block2 / Q-Block2 from a TX body when a `Response` payload does not fit one datagram. No `State<T>` bag. Observe notify / Q-Block recover not sent on this path (use [`App::engine_mut`](src/app/mod.rs)). |
+| App | [`App`](src/app/mod.rs) façade: `profile` / `block_wise` / `route` / `bind`, [`get`](src/app/routing.rs) / `put` / … method routers (fn pointers; no `unsafe`), `fn(Request<'_>) -> Response` handlers, `Response` (no handler lifetime), `well_known_core`, `poll` (recv + progress + route + handler + send + release). Incoming Block1 assembly for `Request::body`. Outgoing Block2 / Q-Block2 from a TX body when a `Response` payload does not fit one datagram. Observe register / deregister, [`App::notify`](src/app/mod.rs), [`ObserveSource`](src/app/routing.rs) on poll `observe_notify`, Max-Age / client-OFF drop. No `State<T>` bag. Q-Block recover not sent on this path (use [`App::engine_mut`](src/app/mod.rs)). |
 | Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, [`DatagramIo`](src/storage/io.rs) bind (`Engine::recv_from` / `send_tx`; `UdpSocket` under `std`), Dedup, pending CON + RTO, `ExchangeEntry` (Echo sidecar), Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
@@ -65,7 +65,7 @@ Taste lock: the happy path is **App + route + method router + `fn(Request<'_>) -
 
 **Stay nested:**
 
-- `app::` — `AppBuilder`, `Site`, `MethodRouter`, `HandlerFn`, `EngineMut` / `EngineRef`, `Error`, `DEFAULT_ROUTES`, `MAX_PATH_SEGMENTS`, `split_path`.
+- `app::` — `AppBuilder`, `Site`, `MethodRouter`, `HandlerFn`, `ObserveSource`, `EngineMut` / `EngineRef`, `Error`, `DEFAULT_ROUTES`, `MAX_PATH_SEGMENTS`, `split_path`.
 - `message::` — `TokenSource`, `message::value` iterators and extra codecs.
 - `storage::` — typestate `Missing` / `Present`, raw `*Table` / `*Pool` types, `MemoryProfile` / `NoBodies` / `WithBodies`, backend traits (`Storage`, `SlotPool`, `DatagramSlots`, and siblings).
 - `profiles` — capacity numbers (`Default`, `Constrained`).

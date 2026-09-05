@@ -7,7 +7,7 @@ use crate::message::{
     BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token,
     Type, decode, encode,
 };
-use crate::storage::{DatagramIo, Endpoint, profiles};
+use crate::storage::{DatagramIo, Endpoint, ObserveKey, profiles};
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
@@ -39,6 +39,17 @@ fn put_body(req: Request<'_>) -> Response {
 
 fn get_large(_: Request<'_>) -> Response {
     Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
+}
+
+fn get_obs(_req: Request<'_>) -> Response {
+    Response::content(b"obs-0")
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .max_age(5)
+        .observe(0)
+}
+
+fn obs_snapshot() -> Response {
+    Response::content(b"obs-snap").content_format(ContentFormat::TEXT_PLAIN)
 }
 
 #[derive(Default)]
@@ -597,4 +608,111 @@ fn large_get_q_block2_issues_a_window() {
     assert_eq!(q1.num(), 1);
     assert!(!q1.more());
     assert_eq!(second.payload(), &LARGE[1024..]);
+}
+
+fn observe_registered(app: &App<profiles::Default, WideLoopback>, peer: Endpoint) -> bool {
+    let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
+    match app.engine() {
+        crate::app::EngineRef::Datagram(engine) => engine.lookup_observe(key).is_some(),
+        crate::app::EngineRef::BlockWise(engine) => engine.lookup_observe(key).is_some(),
+    }
+}
+
+#[test]
+fn observe_register_notify_deregister() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    {
+        let first = last_wide(&app);
+        assert_eq!(first.code(), Code::CONTENT);
+        assert_eq!(first.token(), Token::new(&[0xA1]).expect("token"));
+        assert_eq!(first.observe().and_then(Result::ok), Some(0));
+        assert_eq!(first.payload(), b"obs-0");
+    }
+    assert!(observe_registered(&app, peer));
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("notify");
+    assert_eq!(sent, 1);
+    {
+        let note = last_wide(&app);
+        assert_eq!(note.ty(), Type::NonConfirmable);
+        assert_eq!(note.code(), Code::CONTENT);
+        assert_eq!(note.token(), Token::new(&[0xA1]).expect("token"));
+        assert_eq!(note.observe().and_then(Result::ok), Some(1));
+        assert_eq!(note.payload(), b"obs-1");
+    }
+
+    let extra = [Opt::observe_deregister()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1002);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(20).expect("poll");
+    assert!(!observe_registered(&app, peer));
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(30, &["sensors", "temp"], Response::content(b"obs-2"))
+        .expect("notify after deregister");
+    assert_eq!(sent, 0);
+}
+
+#[test]
+fn observe_max_age_expiry_drops_interest() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert!(observe_registered(&app, peer));
+
+    app.poll(5_000).expect("expired");
+    assert!(!observe_registered(&app, peer));
+}
+
+#[test]
+fn observe_source_sends_on_signal_poll() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert!(observe_registered(&app, peer));
+
+    assert_eq!(app.signal(&["sensors", "temp"]), 1);
+    app.transport_mut().send_n = 0;
+    app.poll(10).expect("poll notify");
+    let note = last_wide(&app);
+    assert_eq!(note.token(), Token::new(&[0xA1]).expect("token"));
+    assert_eq!(note.observe().and_then(Result::ok), Some(1));
+    assert_eq!(note.payload(), b"obs-snap");
 }

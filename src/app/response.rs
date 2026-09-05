@@ -192,8 +192,12 @@ impl Response {
         self
     }
 
-    /// Set Observe sequence. Notification send is Phase 2 (not in
-    /// [`App::poll`](super::App::poll) yet).
+    /// Set Observe sequence.
+    ///
+    /// On a successful GET/FETCH with Observe=0 this opts the handler into
+    /// registration ([`App`](super::App) writes sequence 0 on the wire).
+    /// [`App::notify`](super::App::notify) overwrites this with the table
+    /// sequence.
     #[must_use]
     pub const fn observe(mut self, sequence: u32) -> Self {
         self.observe = Some(sequence);

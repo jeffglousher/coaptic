@@ -1,10 +1,11 @@
 //! Bounded table of [`MethodRouter`](super::MethodRouter) routes.
 
 use crate::message::ContentFormat;
+use crate::storage::ObserveResource;
 
 use super::request::{MAX_PATH_SEGMENTS, Path, PathError, Request};
 use super::response::Response;
-use super::routing::{Method, MethodRouter, split_path};
+use super::routing::{Method, MethodRouter, ObserveSource, split_path};
 
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
@@ -128,6 +129,28 @@ impl<const N: usize> Site<N> {
             };
         }
         Response::not_found()
+    }
+
+    /// Snapshot fn for `resource`, if the matching route registered one.
+    #[must_use]
+    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<ObserveSource> {
+        if resource.is_none() {
+            return None;
+        }
+        for entry in self.entries.iter().flatten() {
+            if ObserveResource::from_path(entry.path.segments()) == resource {
+                return entry.methods.observe_source();
+            }
+        }
+        None
+    }
+
+    /// Whether this path has an Observe snapshot or is otherwise observable
+    /// only via a handler that returns Observe on the response.
+    #[must_use]
+    pub(crate) fn has_observe_source(&self, segments: &[&str]) -> bool {
+        self.observe_source(ObserveResource::from_path(segments))
+            .is_some()
     }
 }
 

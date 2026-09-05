@@ -6,14 +6,14 @@ coaptic is a library, not a daemon or socket stack. The core never sends on the 
 
 **App (happy path).** [`App`](src/app/mod.rs) is a routing façade: recv / progress / route / handler / response / send / release. Handlers are `fn(Request<'_>) -> Response`: borrowed request fields (`payload()`, path, token, options, `body()` when Block1 assembled) and an owned [`Response`](src/app/response.rs) (`content` / `content_copy`). A `Response` payload that does not fit one datagram is copied into a TX body and shipped as Block2 (or Q-Block2 when the request asked for it). You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).route(…).bind(io)`) and the clock (`now_ms` into [`App::poll`](src/app/mod.rs)). You do not touch slots to expose a GET or PUT; [`Request`](src/app/request.rs) does not expose `SlotId`. `App` does **not** own a global mutable shared bag; domain data that outlives a request (GPIO, sensor firmware, …) stays outside coaptic ([`design.md`](design.md) §Application memory access). The reactor owns per-slot state machines inside `poll`.
 
-**Engine (advanced / reactor).** Per-slot state machines plus [`progress`](src/storage/progress.rs) ship protocol mechanics (pending CON/RTO, BlockTransfer, ObserveInterest, Dedup, Exchange). Slots, [`Access`](src/storage/access.rs), Observe notify, Block / Q-Block, and custom RST / 4.xx policy stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
+**Engine (advanced / reactor).** Per-slot state machines plus [`progress`](src/storage/progress.rs) ship protocol mechanics (pending CON/RTO, BlockTransfer, ObserveInterest, Dedup, Exchange). Slots, [`Access`](src/storage/access.rs), custom RST / 4.xx, Q-Block recover, and BERT edge cases stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
 
 ## Send
 
 - Own the socket or radio. Bind it with [`DatagramIo`](src/storage/io.rs) (`std::net::UdpSocket` implements it under `std`). The core never sends.
 - Recv into an RX slot with [`Engine::recv_from`](src/storage/io.rs). Send an occupied TX slot with [`Engine::send_tx`](src/storage/io.rs) (pins `Access` for the call). [`Engine::progress`](src/storage/progress.rs) only reports work.
 - On `Progress::retransmit`: `send_tx` the occupied datagram (`Due`) or release after `GiveUp` (pending is already cleared; the TX slot stays occupied so you can free it).
-- On `Progress::observe_notify`: encode a notification (ordinary TX or first-block Block2) and `send_tx`. The Observe table does not queue bodies.
+- On `Progress::observe_notify` (**Engine**): encode a notification (ordinary TX or first-block Block2) and `send_tx`. The Observe table does not queue bodies. **App** encodes this when the route has an [`ObserveSource`](src/app/routing.rs), or you call [`App::notify`](src/app/mod.rs) with a [`Response`](src/app/response.rs).
 - On `Progress::qblock_recover`: encode a Q-Block2 recover, or own any Q-Block1 4.08.
 - Honor `NoResponse` yourself (`NoResponse::suppresses`). The library does not skip sends.
 
@@ -39,14 +39,14 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 ## Resource and If-Match
 
-- **App:** [`AppBuilder::route`](src/app/mod.rs) binds a [`MethodRouter`](src/app/routing.rs) (`get` / `put` / `post` / `delete` / `fetch`, plus `patch` / `ipatch`) on Uri-Path segments. Handlers are `fn(Request<'_>) -> Response` (or a type that becomes [`Response`](src/app/response.rs) via [`IntoResponse`](src/app/response.rs)). Unknown path is 4.04; path exists but the method is unbound is 4.05. Do not put a shared mutable `Sensors { led_on }` bag in `App`.
+- **App:** [`AppBuilder::route`](src/app/mod.rs) binds a [`MethodRouter`](src/app/routing.rs) (`get` / `put` / `post` / `delete` / `fetch`, plus `patch` / `ipatch`) on Uri-Path segments. Handlers are `fn(Request<'_>) -> Response` (or a type that becomes [`Response`](src/app/response.rs) via [`IntoResponse`](src/app/response.rs)). Unknown path is 4.04; path exists but the method is unbound is 4.05. Observe: opt in with `.observe(0)` on a success response (or [`MethodRouter::observe`](src/app/routing.rs)); notify with [`App::notify`](src/app/mod.rs). Do not put a shared mutable `Sensors { led_on }` bag in `App`.
 - **Engine:** resource selection is still application-owned ([`design.md`](design.md) §Application memory access).
 - `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST). `Response::precondition_failed` is the 4.12 builder. `Request::precondition` is the same classifier on the handler view.
 - FETCH / PATCH / iPATCH are named codes; the router binds them if you register `.fetch` / `.patch` / `.ipatch`.
 
 ## Encode + Access loops
 
-**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, Block1 assembly, request dispatch, piggybacked ACK, `encode_tx` for a single datagram, outgoing Block2 / Q-Block2 from a TX body when the [`Response`](src/app/response.rs) payload does not fit one datagram, and slot release are inside. Observe notify and Q-Block recover are not sent on this path; use `App::engine_mut` if you need them now.
+**App:** [`App::poll`](src/app/mod.rs) is the loop. Retransmit send / give-up release, Block1 assembly, request dispatch, Observe register / deregister, piggybacked ACK, `encode_tx` for a single datagram, outgoing Block2 / Q-Block2 from a TX body when the [`Response`](src/app/response.rs) payload does not fit one datagram, Observe notify when an [`ObserveSource`](src/app/routing.rs) is registered (or via [`App::notify`](src/app/mod.rs)), Max-Age / client-OFF drop, and slot release are inside. Q-Block recover is not sent on this path; use `App::engine_mut` if you need it now.
 
 **Engine** (advanced):
 
