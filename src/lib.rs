@@ -41,7 +41,11 @@
 //!
 //! [`Engine`] can decode an occupied RX/TX datagram slot and encode a
 //! [`Message`] into an acquired slot (`set_len` included). Empty ACK/RST
-//! constructors and [`ParsedMessage`] detectors live in [`message`]. Pending
+//! constructors and [`ParsedMessage`] detectors live in [`message`].
+//! [`message::Ids`] is a wrapping Message ID counter; [`Token::mint`] takes
+//! caller entropy ([`message::TokenSource`]; the core does not call an OS
+//! RNG). [`Message::con`] / [`Message::non`] build a CON/NON skeleton
+//! without [`Engine`]. Pending
 //! CON matching is sidecar on TX datagram slots ([`PendingCon`]), not a
 //! seventh area and not the Dedup Table. [`Engine::poll_retransmit`] walks
 //! due pending TX slots using a caller-supplied clock. Outstanding request matching

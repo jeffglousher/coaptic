@@ -5,8 +5,8 @@ use super::value::{
     encode_block, encode_observe, encode_uint,
 };
 use super::{
-    Code, EncodedUint, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token, Transmission,
-    Type, decode, encode,
+    Code, EncodedUint, Ids, Message, MessageId, Opt, OptionNumber, OptionsBuilder, Token,
+    Transmission, Type, decode, encode,
 };
 use crate::MemoryProfile;
 use crate::error::{EncodeError, OptionsFull, ParseError, SlotMessageError, ValueError};
@@ -188,6 +188,22 @@ fn accept_tkl_8() {
 #[test]
 fn reject_token_new_too_long() {
     assert!(Token::new(&[0; 9]).is_none());
+}
+
+#[test]
+fn ids_request_skeleton_roundtrip() {
+    let mut ids = Ids::new(0x1234);
+    let token = Token::mint(1, &[0x21]).expect("token");
+    let msg = ids.con(Code::GET, token);
+    assert_roundtrip(&msg);
+    let mut buf = [0u8; 16];
+    let bytes = encode_to(&msg, &mut buf);
+    assert_eq!(bytes, &[0x41, 0x01, 0x12, 0x34, 0x21]);
+    assert_eq!(ids.peek(), MessageId::new(0x1235));
+
+    let non = Message::non(Code::POST, MessageId::new(1), Token::EMPTY);
+    assert_roundtrip(&non);
+    assert_eq!(MessageId::new(u16::MAX).wrapping_add(1), MessageId::new(0));
 }
 
 #[test]

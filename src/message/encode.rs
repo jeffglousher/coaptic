@@ -49,6 +49,22 @@ impl<'a> Message<'a> {
         Self::new(Type::Reset, Code::EMPTY, id)
     }
 
+    /// CON skeleton: `code`, `id`, and `token`. No options or payload.
+    ///
+    /// Does not require [`crate::Engine`]. Pair with [`super::Ids`] to mint `id`.
+    #[must_use]
+    pub const fn con(code: Code, id: MessageId, token: Token) -> Self {
+        Self::new(Type::Confirmable, code, id).with_token(token)
+    }
+
+    /// NON skeleton: `code`, `id`, and `token`. No options or payload.
+    ///
+    /// Does not require [`crate::Engine`]. Pair with [`super::Ids`] to mint `id`.
+    #[must_use]
+    pub const fn non(code: Code, id: MessageId, token: Token) -> Self {
+        Self::new(Type::NonConfirmable, code, id).with_token(token)
+    }
+
     /// Set the token.
     #[must_use]
     pub const fn with_token(mut self, token: Token) -> Self {

@@ -6,7 +6,11 @@
 //! [`empty_ack`] and [`empty_rst`] build the empty ACK / RST messages used to
 //! confirm or reject a CON. [`ParsedMessage::is_empty_ack`] /
 //! [`ParsedMessage::is_empty_rst`] detect them after decode.
-//! [`Transmission`] names RFC 7252 §4.8 defaults and
+//! [`Ids`] is a wrapping Message ID counter; [`Token::mint`] /
+//! [`Token::mint_from`] copy caller entropy ([`TokenSource`]). The core
+//! does not call an OS RNG. [`Message::con`] / [`Message::non`] and
+//! [`Ids::request`] build a CON/NON skeleton (next MID + token) with no
+//! [`crate::Engine`]. [`Transmission`] names RFC 7252 §4.8 defaults and
 //! [`Transmission::initial_timeout_ms`] (caller jitter). Retransmit
 //! scheduling lives on [`crate::PendingCon`].
 //!
@@ -28,6 +32,7 @@
 mod builder;
 mod decode;
 mod encode;
+mod id;
 mod option;
 pub mod value;
 
@@ -37,6 +42,7 @@ mod tests;
 pub use builder::OptionsBuilder;
 pub use decode::{ParsedMessage, decode};
 pub use encode::{Message, encode};
+pub use id::{Ids, TokenSource};
 pub use option::{Opt, OptionNumber, Options};
 pub use value::{
     BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
@@ -99,6 +105,8 @@ impl fmt::Display for Type {
 }
 
 /// 16-bit CoAP Message ID.
+///
+/// Sequence generation is [`Ids`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MessageId(u16);
 
@@ -114,6 +122,12 @@ impl MessageId {
     pub const fn get(self) -> u16 {
         self.0
     }
+
+    /// Wrapping add. [`Ids`] holds the counter when minting a stream of IDs.
+    #[must_use]
+    pub const fn wrapping_add(self, n: u16) -> Self {
+        Self(self.0.wrapping_add(n))
+    }
 }
 
 impl From<u16> for MessageId {
@@ -124,7 +138,9 @@ impl From<u16> for MessageId {
 
 /// CoAP Token (0–8 bytes).
 ///
-/// Construct with [`Token::new`]; lengths above 8 are rejected.
+/// Construct with [`Token::new`] or [`Token::mint`]. Lengths above
+/// [`Token::MAX_LEN`] are rejected. Minting uses caller entropy; the core
+/// does not call an OS RNG.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Token {
     bytes: [u8; 8],
@@ -138,10 +154,13 @@ impl Token {
         len: 0,
     };
 
-    /// Copy `bytes` into a token. `None` if `bytes` is longer than 8 octets.
+    /// Maximum Token length in bytes (RFC 7252 TKL).
+    pub const MAX_LEN: usize = 8;
+
+    /// Copy `bytes` into a token. `None` if `bytes` is longer than [`Self::MAX_LEN`].
     #[must_use]
     pub fn new(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > 8 {
+        if bytes.len() > Self::MAX_LEN {
             return None;
         }
         let mut token = Self::EMPTY;
