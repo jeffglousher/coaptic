@@ -4,7 +4,7 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::{MessageId, Token};
+use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, Token};
 
 /// Lookup identity for one Dedup Table row.
 ///
@@ -128,19 +128,27 @@ impl ObserveKey {
 
 /// Occupied Observe Interest Table payload.
 ///
-/// Long-lived relation state only. Notification bodies are not stored here.
-/// Timing, freshness, and fan-out are not modeled yet.
+/// Relation identity plus small pending/coalescing state and the last
+/// library-assigned 24-bit notification sequence. Notification bodies are
+/// not stored here. See `design.md` §Observe Interest Table and
+/// `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveInterest {
     key: ObserveKey,
+    seq: u32,
+    pending: bool,
 }
 
 impl ObserveInterest {
     /// Interest row for `token` at `endpoint`.
+    ///
+    /// Sequence starts at 0 and is not pending.
     #[must_use]
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new(token, endpoint),
+            seq: 0,
+            pending: false,
         }
     }
 
@@ -161,11 +169,56 @@ impl ObserveInterest {
     pub const fn endpoint(self) -> Endpoint {
         self.key.endpoint()
     }
+
+    /// Last library-assigned notification sequence (24-bit).
+    ///
+    /// Zero after register, before the first [`Self::take_due`]. See
+    /// `knowledge/rfcs/rfc7641.txt`.
+    #[must_use]
+    pub const fn seq(self) -> u32 {
+        self.seq
+    }
+
+    /// Whether a notification is waiting to be surfaced by progress.
+    #[must_use]
+    pub const fn is_pending(self) -> bool {
+        self.pending
+    }
+
+    /// Set the last-assigned sequence (masked to 24 bits).
+    #[must_use]
+    pub const fn with_seq(self, seq: u32) -> Self {
+        Self {
+            key: self.key,
+            seq: seq & OBSERVE_SEQUENCE_MASK,
+            pending: self.pending,
+        }
+    }
+
+    /// Mark this row as needing one notification.
+    ///
+    /// A second mark before [`Self::take_due`] still yields one work item.
+    pub fn mark_due(&mut self) {
+        self.pending = true;
+    }
+
+    /// If pending, assign the next 24-bit sequence, clear pending, return it.
+    ///
+    /// Wraps through [`OBSERVE_SEQUENCE_MASK`]. See
+    /// `knowledge/rfcs/rfc7641.txt`.
+    pub fn take_due(&mut self) -> Option<u32> {
+        if !self.pending {
+            return None;
+        }
+        self.pending = false;
+        self.seq = self.seq.wrapping_add(1) & OBSERVE_SEQUENCE_MASK;
+        Some(self.seq)
+    }
 }
 
 impl From<ObserveKey> for ObserveInterest {
     fn from(key: ObserveKey) -> Self {
-        Self { key }
+        Self::new(key.token(), key.endpoint())
     }
 }
 
@@ -178,6 +231,7 @@ pub(crate) trait ObserveStore {
     fn remove(&mut self, key: ObserveKey) -> bool;
     fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest>;
     fn entry(&self, id: SlotId) -> Option<ObserveInterest>;
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError>;
 }
 
 /// Dedup table: compact duplicate history slots.
@@ -445,6 +499,10 @@ impl<const ENTRIES: usize> ObserveStore for ObserveTable<ENTRIES> {
 
     fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
         ObserveTable::entry(self, id)
+    }
+
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+        ObserveTable::set_entry(self, id, interest)
     }
 }
 

@@ -94,10 +94,10 @@ RX and TX datagrams are two pools of the same type (`DatagramPool`). Body pools 
 | `Endpoint` | UDP peer sidecar next to a datagram slot |
 | `DedupKey` / `DedupEntry` | Dedup identity (Message ID + remote Endpoint) |
 | `ObserveTable` | Observe interest table |
-| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint) |
+| `ObserveKey` / `ObserveInterest` | Observe identity (Token + remote Endpoint); pending notify and 24-bit sequence on the row |
 | `SlotId` | Slot identifier |
 | `Access` / `AccessMut` | Temporary application borrow of occupied datagram or body bytes; pin bit refuses `release` until drop |
-| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX; Observe / Q-Block recover later) |
+| `Progress` | Outcome of one bounded `Engine::progress` pass (retransmit + rotating unpinned RX + rotating Observe notify; Q-Block recover later) |
 | `profiles::Default` | 1472 dgram; enabled body 4096 (4 × 1024); modest slot counts |
 | `profiles::Constrained` | 1152 dgram |
 
@@ -118,3 +118,7 @@ Named here; implement later.
 - progress retransmit due
 - progress does not release pinned RX
 - progress rotating RX fairness
+- progress observe notify due
+- progress observe rotating fairness
+- progress observe deregister clears
+- observe sequence wrap
