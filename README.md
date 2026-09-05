@@ -19,13 +19,13 @@ Response --encode--> TX slot (+ TX body when the payload needs Block2)
 - `App::profile().block_wise(true).route(path, get(h)).bind(io)` — hides `EngineBuilder` / `Memory`
 - `.route(&["sensors", "temp"], get(get_temp))` — Uri-Path segments + method router
 - `get` / `put` / `post` / `delete` / `fetch` — freestanding combinators (chain `.put(h)` like Axum)
-- Handlers are `fn(Request<'_>) -> Response` — borrowed request fields (`payload()`, path, token, options, `body()` when Block1 assembled) and owned `Response` (`content` / `content_copy`); no `SlotId`, no `State<T>`
+- Handlers are `fn(Request<'_>) -> Response` — borrowed request fields (`payload()`, path, token, options, `body()` when Block1 / Q-Block1 assembled) and owned `Response` (`content` / `content_copy`); no `SlotId`, no `State<T>`
 - `Site` — fixed table of fn-pointer routers (`App<_, _, N>`, default 8)
 - `Response` — no handler lifetime; `'static` payload or a small inline copy
 - `.well_known_core()` — RFC 6690 link-format from registered paths
-- `App::poll(now_ms)` — recv, progress, route, handler, Observe register/deregister, send, release; large `Response` payloads use the TX body (Block2 / Q-Block2)
+- `App::poll(now_ms)` — recv, progress, route, handler, Observe register/deregister, Q-Block2 recover, send, release; large `Response` payloads use the TX body (Block2 / Q-Block2); Block1 / Q-Block1 assemble into `Request::body`
 - `App::notify(now_ms, path, response)` — send notifications to observers of that path (token match, no `SlotId`)
-- Engine remains reachable as `app.engine_mut()` (Q-Block recover, custom policy)
+- Engine remains reachable as `app.engine_mut()` (`Access`, custom RST / 4.xx, BERT edges)
 
 ### `coaptic::message`
 

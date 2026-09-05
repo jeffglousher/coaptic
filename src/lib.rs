@@ -78,16 +78,18 @@
 //! [`App`] is the approachable loop: [`App::profile`], [`block_wise`](app::AppBuilder::block_wise),
 //! [`route`](app::AppBuilder::route), [`bind`](app::AppBuilder::bind), then
 //! [`App::poll`]. Handlers are `fn(Request<'_>) -> Response`: borrowed
-//! request fields (`payload()`, path, token, options, `body()` when Block1
-//! assembled) and an owned [`Response`] (`content` / `content_copy`).
-//! Large responses use the TX body area (Block2, or Q-Block2 when the
-//! request asked for it) without exposing `SlotId`. Observe register /
-//! deregister, [`App::notify`](app::App::notify), and poll-time notify via
-//! [`ObserveSource`](app::ObserveSource) use the Engine Observe table
-//! (no `SlotId` on the happy path). The reactor owns per-slot state
-//! machines inside `poll`. Domain data that outlives a request stays
-//! outside `App`. Engine remains the advanced escape hatch for explicit
-//! slots, Q-Block recover, and custom policy (`app.engine_mut()`). See
+//! request fields (`payload()`, path, token, options, `body()` when
+//! Block1 / Q-Block1 assembled) and an owned [`Response`] (`content` /
+//! `content_copy`). Large responses use the TX body area (Block2, or
+//! Q-Block2 when the request asked for it) without exposing `SlotId`.
+//! Observe register / deregister, [`App::notify`](app::App::notify), and
+//! poll-time notify via [`ObserveSource`](app::ObserveSource) use the
+//! Engine Observe table (no `SlotId` on the happy path). Progress-driven
+//! Q-Block2 recover and incoming Q-Block1 assembly run inside `poll`.
+//! The reactor owns per-slot state machines inside `poll`. Domain data
+//! that outlives a request stays outside `App`. Engine remains the
+//! advanced escape hatch for explicit slots, [`Access`], custom RST /
+//! 4.xx, and BERT edges (`app.engine_mut()`). See
 //! `examples/coap_server.rs` (`std`).
 //!
 //! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
