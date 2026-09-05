@@ -37,8 +37,8 @@ use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK,
-    ObserveTransmission, Opt, OptionsBuilder, Token, Transmission, Type, empty_ack, empty_rst,
-    encode, encode_observe, encode_uint,
+    ObserveTransmission, Opt, Token, Transmission, Type, empty_ack, empty_rst, encode,
+    encode_observe, encode_uint,
 };
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
@@ -3281,6 +3281,7 @@ fn q_block2_outgoing_reissue_encodes_same_range() {
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;
+    use crate::message::OptionsBuilder;
 
     fn build_alloc(block_wise: bool) -> Engine<crate::storage::AllocMemory> {
         let caps = if block_wise {

@@ -18,7 +18,7 @@
 //! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
 //! `not_found` / [`Response::problem`]).
 //! Borrows last only for the handler call; `poll` encodes and then releases.
-//! The reactor ([`Engine`](crate::storage::Engine) / [`Progress`](crate::storage::Progress)) owns per-slot
+//! The reactor ([`Engine`] / [`Progress`](crate::storage::Progress)) owns per-slot
 //! state machines under the hood (pending CON/RTO, BlockTransfer,
 //! ObserveInterest, Dedup, Exchange). This module is not a seventh memory
 //! area and does **not** own a global mutable shared bag.

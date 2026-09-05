@@ -5,7 +5,7 @@
 //! [`Call`], [`Outgoing`], [`get`] / [`put`] / [`post`] / [`delete`] /
 //! [`fetch`] / [`patch`] / [`ipatch`], [`Endpoint`], [`profiles`],
 //! [`Code`], [`ContentFormat`], [`Method`], [`ProblemDetails`], and the
-//! errors from [`App::bind`] / [`App::poll`] / [`Outgoing::send`].
+//! errors from [`bind`](app::AppBuilder::bind) / [`App::poll`] / [`Outgoing::send`].
 //! Engine slots, tables, Block/Q-Block types, [`Ids`](message::Ids), and
 //! [`DatagramIo`](storage::DatagramIo) live in [`storage`] / [`message`].
 //! [`app`] is the routing façade (`Request` to [`Response`]) and the
@@ -88,7 +88,7 @@
 //! binds any caller transport into RX/TX slots
 //! ([`Engine::recv_from`](storage::Engine::recv_from) /
 //! [`Engine::send_tx`](storage::Engine::send_tx)). The core still does
-//! not own a socket. [`App::bind`] hides construction;
+//! not own a socket. [`bind`](app::AppBuilder::bind) hides construction;
 //! implement [`storage::DatagramIo`] on the socket type.
 //! [`Engine::progress`](storage::Engine::progress) is one bounded pass:
 //! CON retransmit poll, one rotating unpinned RX step, one rotating
