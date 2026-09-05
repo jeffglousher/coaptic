@@ -27,6 +27,7 @@ The caller owns send, clock, jitter, RST / 4.xx policy, resource / If-Match deci
 
 - Bounded `Engine` / `Memory` / pools
 - `Endpoint` sidecar (address + port); datagram slots hold CoAP bytes only
+- `DatagramIo` — first-class bind (`Engine::recv_from` / `send_tx`). `std::net::UdpSocket` implements it under `std`. The core still does not own a socket.
 - `Access` / `AccessMut` pin occupied slot bytes against `release`
 - `Engine::progress` → `Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify (skips an endpoint at notification NSTART), at most one Observe lifetime expiry, at most one incoming `QBlockRecover`
 - Dedup (`DedupEntry`), pending CON + RTO (`PendingCon` / `PendingRto`), token matching (`ExchangeEntry`; Echo sidecar), Observe interest (`ObserveInterest` / `ObserveLifetime` / `ObserveNotifyHold`)
@@ -44,6 +45,8 @@ The caller owns send, clock, jitter, RST / 4.xx policy, resource / If-Match deci
 | --- | --- |
 | [REVIEW.md](REVIEW.md) | External-reviewer brief; 0.1 API freeze |
 | [CALLER.md](CALLER.md) | What the caller must own |
+| [ERGONOMICS.md](ERGONOMICS.md) | Code-confirmed feature table; `DatagramIo` last-mile bind |
+| `examples/udp_engine.rs` | `std` UDP through [`DatagramIo`](src/storage/io.rs) |
 | [design.md](design.md) | Canonical architecture and progress contract |
 | [knowledge/](knowledge/) | OKF bundle: memory names, profiles, plugtest, RFCs |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor entry |

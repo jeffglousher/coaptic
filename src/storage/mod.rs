@@ -24,9 +24,10 @@
 //! Incoming and outgoing Q-Block1 / Q-Block2 reuse the same slots with a
 //! `MAX_PAYLOADS` window.
 //! They do not invent 4.02 / 2.31 / RST policy.
-//! Temporary application [`Access`] / [`AccessMut`] pins an occupied
-//! datagram or body slot against [`SlotPool::release`] (`design.md`
-//! §Application memory access). [`Engine::progress`] is one bounded
+//! [`DatagramIo`] is the transport bind ([`Engine::recv_from`] /
+//! [`Engine::send_tx`]). Temporary application [`Access`] / [`AccessMut`]
+//! pins an occupied datagram or body slot against [`SlotPool::release`]
+//! (`design.md` §Application memory access). [`Engine::progress`] is one bounded
 //! pass: pending CON retransmit poll, one rotating unpinned RX step, one
 //! rotating Observe notify, at most one Observe lifetime expiry, and at
 //! most one incoming Q-Block recover
@@ -42,6 +43,7 @@ mod capacities;
 mod endpoint;
 mod engine;
 mod exchange;
+mod io;
 mod memory;
 mod occupancy;
 mod pending;
@@ -68,6 +70,7 @@ pub use capacities::Capacities;
 pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
+pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
 pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};

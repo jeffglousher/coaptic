@@ -45,6 +45,7 @@ use crate::message::{
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
 /// against occupied datagram slots and record `set_len` on encode.
 /// [`Self::write_rx`] copies bytes and sets the sidecar [`Endpoint`].
+/// [`Self::recv_from`] / [`Self::send_tx`] bind a [`super::DatagramIo`].
 /// When `S` implements [`DedupSlots`], insert / lookup / remove store
 /// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
 /// When `S` implements [`PendingCons`], outgoing CON slots are marked

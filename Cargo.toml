@@ -19,3 +19,7 @@ std = ["alloc"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "udp_engine"
+required-features = ["std"]
