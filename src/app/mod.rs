@@ -10,6 +10,7 @@
 //! Outgoing (get/put) --encode--> TX slot
 //! poll matches Token + endpoint (Exchange table)
 //! RX datagram --copy--> Reply
+//! Block2 / Q-Block2 --apply--> RX body --copy--> Reply::body()
 //! ```
 //!
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
@@ -79,9 +80,10 @@
 //! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
 //! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
 //! via the Exchange table. [`App::take_reply`] is a [`Reply`] (code /
-//! payload). No `SlotId`. The caller owns the destination endpoint and
-//! must take replies. Tokens and Message IDs are App counters (no OS RNG).
-//! Block2 / Q-Block2 assembly and Observe client stay Engine-only.
+//! payload, and [`Reply::body`] when Block2 / Q-Block2 assembled). No
+//! `SlotId`. The caller owns the destination endpoint and must take
+//! replies. Tokens and Message IDs are App counters (no OS RNG).
+//! Observe client stays Engine-only.
 mod client;
 mod request;
 mod response;
@@ -108,7 +110,7 @@ use crate::storage::{
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
-pub use client::{Call, Outgoing, Reply};
+pub use client::{Call, Outgoing, REPLY_BODY, Reply};
 pub use request::{MAX_PATH_SEGMENTS, Request};
 pub use response::{INLINE_PAYLOAD, IntoResponse, Response};
 pub use routing::{
@@ -141,6 +143,7 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
     ids: Ids,
     tokens: u32,
     inbox: client::ClientInbox,
+    lives: client::ClientLives,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
@@ -250,6 +253,7 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
             ids: Ids::new(1),
             tokens: 0,
             inbox: client::ClientInbox::new(),
+            lives: client::ClientLives::new(),
         })
     }
 }
@@ -361,7 +365,10 @@ where
     /// [`Call`] is copied into a [`Reply`] for [`Self::take_reply`]. A
     /// piggybacked ACK releases the pending CON. A separate CON response
     /// is acknowledged with an empty ACK. Retransmit give-up drops the
-    /// Exchange (take_reply stays `None`).
+    /// Exchange (take_reply stays `None`). Block2 / Q-Block2 fragments
+    /// assemble in the RX body area; [`Reply::body`] is the complete
+    /// body. Classic Block2 Continue and Q-Block2 window Continue are
+    /// sent from `poll` without exposing [`SlotId`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(
@@ -370,6 +377,7 @@ where
                 &self.site,
                 &mut self.ids,
                 &mut self.inbox,
+                &mut self.lives,
                 now_ms,
             ),
             EngineSlot::BlockWise(engine) => poll_engine(
@@ -378,6 +386,7 @@ where
                 &self.site,
                 &mut self.ids,
                 &mut self.inbox,
+                &mut self.lives,
                 now_ms,
             ),
         }
@@ -474,6 +483,7 @@ fn poll_engine<Mem, T, const N: usize>(
     site: &Site<N>,
     ids: &mut Ids,
     inbox: &mut client::ClientInbox,
+    lives: &mut client::ClientLives,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -489,14 +499,14 @@ where
                 engine.send_tx(io, pending.tx_slot())?;
             }
             Retransmit::GiveUp(pending) => {
-                client::forget_exchange_tx(engine, pending.tx_slot());
+                client::forget_exchange_tx(engine, lives, pending.tx_slot());
                 engine.release_tx(pending.tx_slot())?;
             }
         }
     }
 
     if let Some(rx) = progress.rx_ready().or(received) {
-        dispatch_rx(engine, io, site, inbox, now_ms, rx)?;
+        dispatch_rx(engine, io, site, inbox, lives, ids, now_ms, rx)?;
     }
 
     if let Some(expiry) = progress.observe_expired() {
@@ -600,11 +610,14 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
     inbox: &mut client::ClientInbox,
+    lives: &mut client::ClientLives,
+    ids: &mut Ids,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -658,7 +671,7 @@ where
     }
 
     if !parsed.code().is_request() {
-        return client::complete_client(engine, io, inbox, peer, &parsed, rx);
+        return client::complete_client(engine, io, inbox, lives, ids, now_ms, peer, &parsed, rx);
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);

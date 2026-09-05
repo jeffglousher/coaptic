@@ -100,9 +100,10 @@
 //! that outlives a request stays outside `App`. Outbound: [`App::get`] /
 //! [`App::put`] → [`Outgoing::to`] → [`Outgoing::send`]; `poll` matches
 //! Token + peer on the Exchange table; [`App::take_reply`] is a [`Reply`]
-//! (code / payload). No `SlotId`. The caller owns the destination and
-//! must take replies. Tokens and Message IDs are App counters (no OS RNG).
-//! Block2 / Observe client stay on the Engine path. Engine remains the
+//! (code / payload, and [`Reply::body`] when Block2 / Q-Block2 assembled).
+//! No `SlotId`. The caller owns the destination and must take replies.
+//! Tokens and Message IDs are App counters (no OS RNG). Observe client
+//! stays on the Engine path. Engine remains the
 //! advanced escape hatch for explicit slots, [`Access`], custom RST /
 //! 4.xx, and BERT edges (`app.engine_mut()`). See
 //! `examples/coap_server.rs` (`std`).
