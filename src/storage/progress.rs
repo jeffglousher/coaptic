@@ -13,6 +13,8 @@ use super::QBlockRecover;
 use super::Retransmit;
 use super::SlotId;
 use super::Storage;
+use super::engine::endpoint_notify_held;
+use crate::message::Transmission;
 
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
@@ -74,12 +76,15 @@ impl Progress {
     /// One Observe interest due for a notification, if any.
     ///
     /// [`Engine::signal_observe`] marks the row pending. This pass surfaces
-    /// at most one pending row (rotating, fair), assigns the next 24-bit
-    /// sequence, and clears pending. The caller encodes a notification into
-    /// a TX datagram with existing Observe option helpers and [`super::Access`].
-    /// This pass does not queue a body in the Observe table, acquire TX, or
-    /// invent a resource payload. See `design.md` §Ownership by progress
-    /// domain and `knowledge/rfcs/rfc7641.txt`.
+    /// at most one pending row (rotating, fair) whose remote endpoint is
+    /// below notification NSTART, assigns the next 24-bit sequence, and
+    /// clears pending. [`Engine::record_observe_notify`] starts the §4.5
+    /// hold. The caller encodes a notification into a TX datagram with
+    /// existing Observe option helpers and [`super::Access`] (ordinary
+    /// datagram or outgoing Block2). This pass does not queue a body in the
+    /// Observe table, acquire TX, or invent a resource payload. See
+    /// `design.md` §Ownership by progress domain and
+    /// `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn observe_notify(self) -> Option<SlotId> {
         self.observe_notify
@@ -125,7 +130,8 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     ///    ([`Progress::observe_expired`]). A [`Retransmit::GiveUp`] for a
     ///    matching CON notify makes that row due first.
     /// 4. Observe notify — at most one pending interest from the Observe
-    ///    table cursor ([`Progress::observe_notify`]).
+    ///    table cursor whose endpoint is below notification NSTART
+    ///    ([`Progress::observe_notify`]).
     /// 5. Q-Block missing-block recovery — at most one incoming window
     ///    hole ([`Progress::qblock_recover`]).
     ///
@@ -144,7 +150,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         Progress {
             retransmit,
             rx_ready,
-            observe_notify: progress_observe(self),
+            observe_notify: progress_observe(self, now_ms),
             observe_expired,
             qblock_recover: progress_qblock(self),
         }
@@ -156,7 +162,10 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
 /// Assigns the next 24-bit sequence and clears pending on the surfaced row.
 /// Advances the cursor past that slot so the next call does not restart at
 /// slot zero. Does not acquire TX or write a notification body.
-fn progress_observe<S: Storage + ObserveSlots>(engine: &mut Engine<S>) -> Option<SlotId> {
+fn progress_observe<S: Storage + ObserveSlots>(
+    engine: &mut Engine<S>,
+    now_ms: u64,
+) -> Option<SlotId> {
     let n = engine.storage_mut().observe().slot_count();
     if n == 0 {
         return None;
@@ -168,6 +177,14 @@ fn progress_observe<S: Storage + ObserveSlots>(engine: &mut Engine<S>) -> Option
         let Some(mut interest) = engine.observe_interest(id) else {
             continue;
         };
+        if !interest.is_pending() {
+            continue;
+        }
+        if endpoint_notify_held(engine.storage(), interest.endpoint(), now_ms)
+            >= usize::from(Transmission::NSTART)
+        {
+            continue;
+        }
         if interest.take_due().is_none() {
             continue;
         }

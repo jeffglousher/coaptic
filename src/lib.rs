@@ -22,8 +22,11 @@
 //! build a CON/NON skeleton. Empty ACK/RST live in [`message`].
 //! [`message::value`] covers RFC 7252 empty/opaque/uint/string. Named
 //! [`Opt`] helpers cover Table 4 plus Observe, Block / Q-Block / Size2
-//! ([`BlockValue`]), Request-Tag, and Echo ([`Echo`]). Optional, not used by
-//! [`decode`]:
+//! ([`BlockValue`]), Request-Tag, and Echo ([`Echo`]).
+//! [`ObserveTransmission`] names RFC 7641 §4.5 constants. [`Code::CONTINUE`]
+//! (2.31) and [`Code::REQUEST_ENTITY_INCOMPLETE`] (4.08) are named codes
+//! only — the library does not invent when to send them. Optional, not used
+//! by [`decode`]:
 //!
 //! - [`ParsedMessage::check_rfc7252_options`] — unrecognized critical
 //! - [`ParsedMessage::check_rfc7252_formats`] — known option, wrong format
@@ -35,16 +38,18 @@
 //! A datagram slot holds CoAP bytes (UDP payload), not Ethernet. [`Endpoint`]
 //! is sidecar metadata. Not seventh areas: Dedup ([`DedupEntry`]), pending CON
 //! and RTO ([`PendingCon`] / [`PendingRto`]), token matching ([`ExchangeEntry`]),
-//! Observe interest ([`ObserveInterest`] / [`ObserveLifetime`]), Block/Q-Block ([`BlockTransfer`]),
+//! Observe interest ([`ObserveInterest`] / [`ObserveLifetime`] /
+//! [`ObserveNotifyHold`]), Block/Q-Block ([`BlockTransfer`]),
 //! Echo freshness ([`Echo`] on [`ExchangeEntry`]).
 //! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`]. BERT is SZX 7
 //! on [`BlockValue`]. Incoming Q-Block holes surface as [`QBlockRecover`].
 //!
 //! [`Access`] / [`AccessMut`] pin occupied bytes against release.
 //! [`Engine::progress`] is one bounded pass: CON retransmit poll, one rotating
-//! unpinned RX step, one rotating Observe notify, at most one Observe
-//! lifetime expiry, at most one incoming Q-Block recover. The caller owns
-//! clock, jitter, and send.
+//! unpinned RX step, one rotating Observe notify (skips an endpoint at
+//! notification NSTART), at most one Observe lifetime expiry, at most one
+//! incoming Q-Block recover. The caller owns clock, jitter, and send.
+//! RFC 7641 §4.5 24-hour NON-confirm is [`ObserveInterest::must_confirm`].
 //!
 //! - `no_std` default: [`Memory<P>`](Memory) sized by
 //!   [`storage::MemoryProfile`]. Body pools exist only as
@@ -109,16 +114,16 @@ pub use error::{
 };
 pub use message::{
     BlockValue, Code, ContentFormat, Echo, EchoFreshness, EncodedUint, Header, Ids, Message,
-    MessageId, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber,
-    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode,
-    decode_block, decode_observe, decode_uint, decode_uint16, empty_ack, empty_rst, encode,
-    encode_block, encode_observe, encode_uint,
+    MessageId, OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, ObserveTransmission,
+    Opt, OptionNumber, OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token,
+    Transmission, Type, decode, decode_block, decode_observe, decode_uint, decode_uint16,
+    empty_ack, empty_rst, encode, encode_block, encode_observe, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
     Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, Capacities,
     DedupEntry, DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory,
-    ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime, OutgoingBlock, PendingCon,
-    PendingRto, Progress, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime, ObserveNotifyHold, OutgoingBlock,
+    PendingCon, PendingRto, Progress, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };

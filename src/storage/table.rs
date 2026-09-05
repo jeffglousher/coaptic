@@ -4,7 +4,7 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, Token};
+use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, ObserveTransmission, Token};
 
 /// Lookup identity for one Dedup Table row.
 ///
@@ -216,11 +216,65 @@ impl ObserveExpiry {
     }
 }
 
+/// Colocated RFC 7641 §4.5.1 outstanding-notification hold.
+///
+/// NSTART counts these per remote [`Endpoint`]. CON is outstanding until
+/// empty ACK or give-up; NON until [`ObserveTransmission::NON_TIMEOUT_MS`].
+/// See `knowledge/rfcs/rfc7641.txt` §4.5.1.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ObserveNotifyHold {
+    /// NON notification; outstanding until `until_ms` (`now_ms` domain).
+    Non {
+        /// Absolute millisecond time when this NON hold ends.
+        until_ms: u64,
+    },
+    /// CON notification; outstanding until ACK or give-up.
+    Con {
+        /// Message ID of the outstanding CON notification.
+        message_id: MessageId,
+    },
+}
+
+impl ObserveNotifyHold {
+    /// [`Self::Non`] until `now_ms + ObserveTransmission::NON_TIMEOUT_MS`.
+    #[must_use]
+    pub const fn non(now_ms: u64) -> Self {
+        Self::Non {
+            until_ms: now_ms.saturating_add(ObserveTransmission::NON_TIMEOUT_MS as u64),
+        }
+    }
+
+    /// [`Self::Con`] for `message_id`.
+    #[must_use]
+    pub const fn con(message_id: MessageId) -> Self {
+        Self::Con { message_id }
+    }
+
+    /// Whether this hold is still outstanding at `now_ms`.
+    #[must_use]
+    pub const fn is_held(self, now_ms: u64) -> bool {
+        match self {
+            Self::Non { until_ms } => now_ms < until_ms,
+            Self::Con { .. } => true,
+        }
+    }
+
+    /// Outstanding CON Message ID, if this is [`Self::Con`].
+    #[must_use]
+    pub const fn con_mid(self) -> Option<MessageId> {
+        match self {
+            Self::Non { .. } => None,
+            Self::Con { message_id } => Some(message_id),
+        }
+    }
+}
+
 /// Occupied Observe Interest Table payload.
 ///
 /// Relation identity plus small pending/coalescing state, the last
-/// library-assigned 24-bit notification sequence, and optional Max-Age /
-/// CON-wait lifetime. Notification bodies are not stored here. See
+/// library-assigned 24-bit notification sequence, optional Max-Age /
+/// CON-wait lifetime, and RFC 7641 §4.5 / §4.5.1 confirm / NSTART hold.
+/// Notification bodies are not stored here. See
 /// `design.md` §Observe Interest Table / Bounded state-machine lifetime and
 /// `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -229,12 +283,14 @@ pub struct ObserveInterest {
     seq: u32,
     pending: bool,
     lifetime: Option<ObserveLifetime>,
+    confirm_due_ms: Option<u64>,
+    notify_hold: Option<ObserveNotifyHold>,
 }
 
 impl ObserveInterest {
     /// Interest row for `token` at `endpoint`.
     ///
-    /// Sequence starts at 0, is not pending, and has no lifetime.
+    /// Sequence starts at 0, is not pending, and has no lifetime or hold.
     #[must_use]
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
         Self {
@@ -242,6 +298,8 @@ impl ObserveInterest {
             seq: 0,
             pending: false,
             lifetime: None,
+            confirm_due_ms: None,
+            notify_hold: None,
         }
     }
 
@@ -308,7 +366,74 @@ impl ObserveInterest {
         }
     }
 
-    /// If the colocated lifetime is due, clear it and pending, return it.
+    /// Absolute millisecond time when a CON notify becomes mandatory, if any.
+    ///
+    /// Set when the first NON is recorded, or reset by each CON. See
+    /// `knowledge/rfcs/rfc7641.txt` §4.5.
+    #[must_use]
+    pub const fn confirm_due_ms(self) -> Option<u64> {
+        self.confirm_due_ms
+    }
+
+    /// Whether `now_ms` is at or past the 24-hour NON-confirm deadline.
+    #[must_use]
+    pub const fn must_confirm(self, now_ms: u64) -> bool {
+        match self.confirm_due_ms {
+            Some(due) => now_ms >= due,
+            None => false,
+        }
+    }
+
+    /// Colocated NSTART / NON-rate hold, if set.
+    #[must_use]
+    pub const fn notify_hold(self) -> Option<ObserveNotifyHold> {
+        self.notify_hold
+    }
+
+    /// Whether this row still counts toward per-endpoint notification NSTART.
+    ///
+    /// True while [`ObserveLifetime::Unacked`] is set, or while
+    /// [`Self::notify_hold`] is outstanding at `now_ms`.
+    #[must_use]
+    pub const fn is_notify_held(self, now_ms: u64) -> bool {
+        if matches!(self.lifetime, Some(ObserveLifetime::Unacked { .. })) {
+            return true;
+        }
+        match self.notify_hold {
+            Some(hold) => hold.is_held(now_ms),
+            None => false,
+        }
+    }
+
+    /// Record a sent notification: 24-hour confirm clock and NSTART hold.
+    ///
+    /// `con_mid` `Some` is a CON notify (resets the 24-hour clock; hold until
+    /// ACK). `None` is NON (starts the 24-hour clock if unset; hold for
+    /// [`ObserveTransmission::NON_TIMEOUT_MS`]). Does not encode or send.
+    /// See `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
+    pub fn record_notify(&mut self, now_ms: u64, con_mid: Option<MessageId>) {
+        match con_mid {
+            Some(message_id) => {
+                self.confirm_due_ms =
+                    Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
+                self.notify_hold = Some(ObserveNotifyHold::con(message_id));
+            }
+            None => {
+                if self.confirm_due_ms.is_none() {
+                    self.confirm_due_ms =
+                        Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
+                }
+                self.notify_hold = Some(ObserveNotifyHold::non(now_ms));
+            }
+        }
+    }
+
+    /// Clear the NSTART / NON-rate hold. Does not drop the row.
+    pub fn clear_notify_hold(&mut self) {
+        self.notify_hold = None;
+    }
+
+    /// If the colocated lifetime is due, clear it, pending, and notify hold.
     ///
     /// Surfaces once. The row stays occupied. See
     /// `knowledge/rfcs/rfc7641.txt`.
@@ -319,6 +444,7 @@ impl ObserveInterest {
         }
         self.lifetime = None;
         self.pending = false;
+        self.notify_hold = None;
         Some(life)
     }
 

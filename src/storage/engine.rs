@@ -51,8 +51,9 @@ use crate::message::{
 /// pending on the TX datagram sidecar (RTO included) and matched against
 /// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
 /// [`Self::progress`] polls that once, takes one rotating unpinned RX
-/// step, surfaces at most one pending Observe notify, at most one Observe
-/// lifetime expiry, and at most one incoming Q-Block recover per call.
+/// step, surfaces at most one pending Observe notify (skipping an endpoint
+/// at notification NSTART), at most one Observe lifetime expiry, and at
+/// most one incoming Q-Block recover per call.
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
@@ -677,16 +678,53 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         Some(id)
     }
 
-    /// Clear CON-wait on the interest that recorded `message_id` for `endpoint`.
+    /// Clear CON-wait and NSTART hold on the interest that recorded `message_id`.
     ///
     /// Used after an empty ACK matches a pending CON notify. Does not drop
     /// the row and does not invent RST policy. `None` when no row matches.
     pub fn ack_observe_con(&mut self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
         let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
-        let interest = self.storage.observe_interest(id)?;
-        self.storage
-            .set_observe_interest(id, interest.with_lifetime(None))
-            .ok()?;
+        let mut interest = self.storage.observe_interest(id)?;
+        interest = interest.with_lifetime(None);
+        interest.clear_notify_hold();
+        self.storage.set_observe_interest(id, interest).ok()?;
+        Some(id)
+    }
+
+    /// Record a sent notification on the row matching `key` (RFC 7641 §4.5).
+    ///
+    /// `con_mid` `Some` is CON (resets the 24-hour confirm clock; NSTART hold
+    /// until [`Self::ack_observe_con`]). `None` is NON (starts the 24-hour
+    /// clock if unset; NSTART hold for
+    /// [`crate::ObserveTransmission::NON_TIMEOUT_MS`]). `None` return when
+    /// no row matches, or when the endpoint already has NSTART outstanding
+    /// notifications and this row is not the holder. Idempotent when this
+    /// row already holds the same CON Message ID. Does not encode, send, or
+    /// invent 4.02 / RST policy.
+    pub fn record_observe_notify(
+        &mut self,
+        key: ObserveKey,
+        now_ms: u64,
+        con_mid: Option<MessageId>,
+    ) -> Option<SlotId> {
+        let id = self.storage.lookup_observe(key)?;
+        let mut interest = self.storage.observe_interest(id)?;
+        if let Some(existing) = interest.notify_hold() {
+            if existing.is_held(now_ms) {
+                if con_mid.is_some() && existing.con_mid() == con_mid {
+                    return Some(id);
+                }
+                return None;
+            }
+        }
+        if endpoint_notify_held(&self.storage, key.endpoint(), now_ms)
+            >= usize::from(crate::message::Transmission::NSTART)
+            && !interest.is_notify_held(now_ms)
+        {
+            return None;
+        }
+        interest.record_notify(now_ms, con_mid);
+        self.storage.set_observe_interest(id, interest).ok()?;
         Some(id)
     }
 
@@ -791,6 +829,21 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     }
 }
 
+pub(crate) fn endpoint_notify_held<S: Storage + ObserveSlots>(
+    storage: &S,
+    endpoint: Endpoint,
+    now_ms: u64,
+) -> usize {
+    let n = storage.capacities().observe_entries;
+    (0..n)
+        .filter(|&i| {
+            storage
+                .observe_interest(SlotId::from_index(i))
+                .is_some_and(|row| row.endpoint() == endpoint && row.is_notify_held(now_ms))
+        })
+        .count()
+}
+
 fn lookup_observe_unacked<S: Storage + ObserveSlots>(
     storage: &mut S,
     message_id: MessageId,
@@ -802,8 +855,11 @@ fn lookup_observe_unacked<S: Storage + ObserveSlots>(
         let Some(interest) = storage.observe_interest(id) else {
             continue;
         };
-        if interest.endpoint() == endpoint
-            && interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)
+        if interest.endpoint() != endpoint {
+            continue;
+        }
+        if interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)
+            || interest.notify_hold().and_then(|h| h.con_mid()) == Some(message_id)
         {
             return Some(id);
         }
@@ -1239,6 +1295,34 @@ impl<S: Storage + BodySlots> Engine<S> {
         )
     }
 
+    /// [`Self::encode_block2_tx`] plus Observe (RFC 7641) on this block.
+    ///
+    /// Use on the first block of a block-wise notification. Subsequent
+    /// blocks stay on [`Self::encode_block2_tx`]. Does not invent 2.31.
+    /// See `knowledge/rfcs/rfc7641.txt` and `knowledge/rfcs/rfc7959.txt`.
+    pub fn encode_block2_observe_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+        observe_seq: u32,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_block2(body_id)?;
+        self.finish_outgoing_tx_observe(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::Block2,
+            Some(observe_seq),
+        )
+    }
+
     /// Issue one outgoing Block2 BERT payload of at most `max_payload` bytes.
     #[inline]
     pub fn next_bert2(
@@ -1645,6 +1729,21 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
+        self.finish_outgoing_tx_observe(issued, body_id, tx_id, header, which, None)
+    }
+
+    fn finish_outgoing_tx_observe(
+        &mut self,
+        issued: OutgoingBlock,
+        body_id: SlotId,
+        tx_id: SlotId,
+        header: (Type, Code, MessageId),
+        which: OutgoingBlockOpt,
+        observe_seq: Option<u32>,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
         let (ty, code, message_id) = header;
         let transfer = self
             .storage
@@ -1668,7 +1767,8 @@ impl<S: Storage + BodySlots> Engine<S> {
         let size = encode_uint(size_n);
         let identity = transfer.identity();
         let tag = identity.as_slice();
-        let mut opts = OptionsBuilder::<4>::new();
+        let observe = observe_seq.map(crate::message::encode_observe);
+        let mut opts = OptionsBuilder::<5>::new();
         if let Some(tag) = tag {
             match which {
                 OutgoingBlockOpt::Block1 | OutgoingBlockOpt::QBlock1 => {
@@ -1680,6 +1780,10 @@ impl<S: Storage + BodySlots> Engine<S> {
                         .map_err(|_| BlockTransferError::Overflow)?;
                 }
             }
+        }
+        if let Some(ref obs) = observe {
+            opts.push(Opt::observe(obs))
+                .map_err(|_| BlockTransferError::Overflow)?;
         }
         match which {
             OutgoingBlockOpt::Block1 => {

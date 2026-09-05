@@ -68,6 +68,10 @@ fn notify(pair: &mut Pair, token: Token, notify_ty: Type, body: &[u8]) -> (u32, 
     let extra = [Opt::observe(&seq), Opt::content_format(&cf)];
     let mid = pair.server_ids.next();
     let stx = pair.server_reply(notify_ty, Code::CONTENT, mid, token, &extra, body);
+    let con_mid = (notify_ty == Type::Confirmable).then_some(mid);
+    pair.server
+        .record_observe_notify(key, pair.now_ms, con_mid)
+        .expect("record notify");
     let crx = pair.exchange_server(stx);
     let got = pair.client.decode_rx(crx).expect("notify decode");
     assert_eq!(got.token(), token);
@@ -439,6 +443,14 @@ fn obs_13_block2(variable: bool) {
     let path = ["obs"];
     let (_mid, rx) = register(&mut pair, Type::Confirmable, token, &path);
     pair.server.release_rx(rx).ok();
+    let obs_key = ObserveKey::new(token, pair.client_ep);
+    pair.server.signal_observe(obs_key).expect("signal");
+    let oid = pair
+        .server
+        .progress(pair.now_ms)
+        .observe_notify()
+        .expect("observe notify");
+    let seq = pair.server.observe_interest(oid).expect("interest").seq();
     let body = patterned_body(if variable { 200 } else { 160 });
     let size = 64u16;
     let szx = block_at(0, false, size).szx();
@@ -448,21 +460,21 @@ fn obs_13_block2(variable: bool) {
         .start_block2(key, &body, szx)
         .expect("Block2 notify body");
     let stx = pair.server.acquire_tx().expect("TX");
+    let mid = pair.server_ids.next();
     pair.server
-        .encode_block2_tx(
-            body_id,
-            stx,
-            Type::Confirmable,
-            Code::CONTENT,
-            pair.server_ids.next(),
-        )
-        .expect("encode first");
+        .encode_block2_observe_tx(body_id, stx, Type::Confirmable, Code::CONTENT, mid, seq)
+        .expect("encode first with Observe");
+    pair.server
+        .record_observe_notify(obs_key, pair.now_ms, Some(mid))
+        .expect("record CON notify");
     let crx = pair.exchange_server(stx);
+    let first_msg = pair.client.decode_rx(crx).expect("first decode");
+    assert_eq!(first_msg.observe().expect("Observe").expect("seq"), seq);
     let first = pair.client.apply_block2_rx(crx).expect("first block");
     pair.client.release_rx(crx).ok();
     if !first.complete() {
         let next = block_at(1, false, size).encode();
-        let extra = [Opt::block2(&next), Opt::observe_register()];
+        let extra = [Opt::block2(&next)];
         let (tx, _) = pair.client_request(Type::Confirmable, Code::GET, token, &path, &extra, &[]);
         let srx = pair.exchange_client(tx);
         pair.server.release_rx(srx).ok();
@@ -477,6 +489,11 @@ fn obs_13_block2(variable: bool) {
             )
             .expect("encode next");
         let crx = pair.exchange_server(stx);
+        let later = pair.client.decode_rx(crx).expect("later");
+        assert!(
+            later.observe().is_none(),
+            "Observe stays on the first Block2 only"
+        );
         let _ = pair.client.apply_block2_rx(crx);
         pair.client.release_rx(crx).ok();
     }
