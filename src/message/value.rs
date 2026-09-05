@@ -279,8 +279,7 @@ impl From<ContentFormat> for u16 {
 ///
 /// Q-Block uses the same bitfields (RFC 9177 §4.2). SZX 7 is BERT
 /// (`knowledge/rfcs/rfc8323.txt`). This type does not assemble bodies.
-/// Enabled body slot capacity is a multiple of [`Self::SIZE_MAX`] (1024);
-/// see `design.md` and `knowledge/memory.md`.
+/// Enabled body slot capacity is a multiple of [`Self::SIZE_MAX`] (1024).
 ///
 /// See `knowledge/rfcs/rfc7959.txt`, `knowledge/rfcs/rfc9177.txt`, and
 /// `knowledge/rfcs/rfc8323.txt`.

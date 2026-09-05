@@ -30,7 +30,7 @@ pub enum SlotError {
     /// Application [`crate::Access`] still pins this slot.
     ///
     /// Release is refused until the access is dropped. Rotate does not evict
-    /// and is not blocked. See `design.md` §Application memory access.
+    /// and is not blocked.
     Pinned,
 }
 

@@ -2,8 +2,7 @@
 //!
 //! Confirm matching is Message ID plus remote [`Endpoint`]. Retransmit
 //! bookkeeping ([`PendingRto`]) lives on the same sidecar. This is not the
-//! Dedup Table. See `design.md` (Outgoing Datagram Pool) and
-//! `knowledge/rfcs/rfc7252.txt` §4.2 / §4.4 / §4.8.
+//! Dedup Table. See `knowledge/rfcs/rfc7252.txt` §4.2 / §4.4 / §4.8.
 
 use super::endpoint::Endpoint;
 use super::slot::SlotId;

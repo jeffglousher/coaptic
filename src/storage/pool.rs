@@ -386,7 +386,7 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 /// multiple of 1024 when constructed through the engine builder.
 ///
 /// Each occupied slot may hold a [`BlockTransfer`] sidecar (classic Block or
-/// incoming Q-Block). See `design.md` Incoming / Outgoing Body Slot.
+/// incoming Q-Block).
 pub struct BodyPool<const SLOTS: usize, const BYTES: usize> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],

@@ -1,7 +1,7 @@
 //! Bounded [`Progress`] from one [`Engine::progress`] invocation.
 //!
-//! See `design.md` §Reference progress contract, Bounded progress, and
-//! Ownership by progress domain.
+//! One call is bounded: at most one retransmit, one unpinned RX step, one
+//! Observe notify, one Observe lifetime expiry, and one Q-Block recover.
 
 use super::BodySlots;
 use super::DatagramSlots;
@@ -21,8 +21,6 @@ use crate::message::Transmission;
 /// Idle when [`Self::is_idle`]. Q-Block missing-block recovery is at most
 /// one [`QBlockRecover`] from a rotating Incoming Body Pool step. Observe
 /// lifetime expiry is at most one [`ObserveExpiry`].
-///
-/// See `design.md` §Reference progress contract.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Progress {
     retransmit: Option<Retransmit>,
@@ -83,7 +81,6 @@ impl Progress {
     /// existing Observe option helpers and [`super::Access`] (ordinary
     /// datagram or outgoing Block2). This pass does not queue a body in the
     /// Observe table, acquire TX, or invent a resource payload. See
-    /// `design.md` §Ownership by progress domain and
     /// `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn observe_notify(self) -> Option<SlotId> {
@@ -97,8 +94,7 @@ impl Progress {
     /// lifetime and pending, and leaves the row occupied. The caller drops
     /// it or stops notifying. Does not send RST or invent 4.02. A
     /// [`Retransmit::GiveUp`] for a matching CON notify makes that row due
-    /// before this poll. See `design.md` §Bounded state-machine lifetime
-    /// and `knowledge/rfcs/rfc7641.txt`.
+    /// before this poll. See `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn observe_expired(self) -> Option<ObserveExpiry> {
         self.observe_expired
@@ -110,7 +106,6 @@ impl Progress {
     /// caller encodes a recover request (repeatable Q-Block2) or owns any
     /// 4.08 (Q-Block1). This pass does not send, acquire TX, or invent 4.08
     /// / 2.31 / RST. `.block_wise(false)` stays `None`. See
-    /// `design.md` §Ownership by progress domain and
     /// `knowledge/rfcs/rfc9177.txt`.
     #[must_use]
     pub const fn qblock_recover(self) -> Option<QBlockRecover> {
@@ -137,9 +132,6 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     ///
     /// Does not allocate, grow storage, or send on the wire. Does not release
     /// pinned slots. Does not invent 4.02 / RST / 2.31 / 4.08 policy.
-    ///
-    /// See `design.md` §Reference progress contract / Bounded progress /
-    /// Ownership by progress domain.
     pub fn progress(&mut self, now_ms: u64) -> Progress {
         let retransmit = self.poll_retransmit(now_ms);
         if let Some(Retransmit::GiveUp(pending)) = retransmit {

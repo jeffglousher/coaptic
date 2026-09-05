@@ -1,7 +1,7 @@
 //! Block / Q-Block transfer sidecar for a body slot.
 //!
 //! Each occupied Incoming / Outgoing Body Slot holds one contiguous body and
-//! the Block or Q-Block state for that body (`design.md`). Individual CoAP
+//! the Block or Q-Block state for that body. Individual CoAP
 //! messages stay in ordinary datagram slots. Incoming and outgoing Q-Block1 /
 //! Q-Block2 use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10).
 //! Incoming window holes surface as [`QBlockRecover`]; outgoing reissue reads
@@ -297,8 +297,7 @@ impl OutgoingBlock {
 /// 2.31 / RST. Incoming Q-Block2 recover uses repeatable Q-Block2 options
 /// (RFC 9177 §4.4); incoming Q-Block1 4.08 encoding stays with the caller.
 ///
-/// See `design.md` §Ownership by progress domain and
-/// `knowledge/rfcs/rfc9177.txt`.
+/// See `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QBlockRecover {
     id: SlotId,
@@ -423,7 +422,7 @@ struct QWindow {
 /// and allows out-of-order NUMs inside that window. Outgoing Q-Block issues
 /// unsent NUMs in that same window (increasing NUM; RFC 9177 §4.3) and
 /// advances on a peer window ACK. BERT (SZX 7) is classic Block with
-/// multi-block payloads. See `design.md`, `knowledge/rfcs/rfc7959.txt`,
+/// multi-block payloads. See `knowledge/rfcs/rfc7959.txt`,
 /// `knowledge/rfcs/rfc9177.txt`, and `knowledge/rfcs/rfc8323.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockTransfer {

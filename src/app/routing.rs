@@ -5,9 +5,7 @@
 //!
 //! [`App`](super::App) is a routing façade. It does not own a global mutable
 //! shared bag. Domain data that outlives a request stays application-owned
-//! outside `App` ([`design.md`][design] §Application memory access).
-//!
-//! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
+//! outside `App`.
 
 use crate::message::Code;
 

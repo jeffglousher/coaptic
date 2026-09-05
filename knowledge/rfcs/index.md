@@ -7,9 +7,9 @@ PDFs: `https://www.rfc-editor.org/rfc/rfcNNNN.pdf` when published that way; pre-
 
 Each RFC is an OKF concept (`rfcNNNN.md`) plus the IETF copies (`rfcNNNN.txt`, `rfcNNNN.pdf`). Do not paste RFC body into the concept. Protocol behavior stays in the `.txt` files.
 
-The five documents explicitly cited by `design.md` are tagged **core**. The rest are **related**.
+The five core CoAP documents below are tagged **core**. The rest are **related**.
 
-# Core (cited by design.md)
+# Core
 
 * [RFC 7252](rfc7252.md) - The Constrained Application Protocol (CoAP) (June 2014, Proposed Standard).
 * [RFC 7641](rfc7641.md) - Observing Resources in the Constrained Application Protocol (CoAP) (September 2015, Proposed Standard).

@@ -26,15 +26,12 @@
 //! They do not invent 4.02 / 2.31 / RST policy.
 //! [`DatagramIo`] is the transport bind ([`Engine::recv_from`] /
 //! [`Engine::send_tx`]). Temporary application [`Access`] / [`AccessMut`]
-//! pins an occupied datagram or body slot against [`SlotPool::release`]
-//! (`design.md` §Application memory access). [`Engine::progress`] is one bounded
+//! pins an occupied datagram or body slot against [`SlotPool::release`].
+//! [`Engine::progress`] is one bounded
 //! pass: pending CON retransmit poll, one rotating unpinned RX step, one
 //! rotating Observe notify, at most one Observe lifetime expiry, and at
-//! most one incoming Q-Block recover
-//! (`design.md` §Reference progress contract). They do not invent 4.08 /
+//! most one incoming Q-Block recover. They do not invent 4.08 /
 //! 2.31 / RST policy.
-//!
-//! See `design.md` and `knowledge/memory.md`.
 
 mod access;
 mod block;
@@ -123,8 +120,6 @@ pub trait SlotPool {
 /// RX and TX datagrams are two [`DatagramPool`] values. Body pools exist
 /// only when block-wise is enabled; [`Self::rx_body`] / [`Self::tx_body`] then
 /// return `None`.
-///
-/// See `design.md` and `knowledge/memory.md`.
 pub trait Storage {
     /// Configured sizes, including absent body fields when pools are omitted.
     fn capacities(&self) -> Capacities;
@@ -287,7 +282,7 @@ pub trait ObserveSlots {
 /// `AllocMemory` built with `.block_wise(false)` return `None` /
 /// [`crate::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Incoming Body Pool; outgoing Block1 / Block2 /
-/// Q-Block1 / Q-Block2 use the Outgoing Body Pool. See `design.md`.
+/// Q-Block1 / Q-Block2 use the Outgoing Body Pool.
 pub trait BodySlots {
     /// Filled incoming body, if `id` is occupied.
     fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]>;

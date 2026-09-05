@@ -11,8 +11,7 @@
 //! link-format from registered paths. Observe: return `.observe(0)` on a
 //! successful GET to register; `app.notify(now_ms, path, response)` sends
 //! later representations. Handlers see borrowed `Request` fields and
-//! return owned `Response`. Engine slot identifiers stay off this path
-//! (`CALLER.md`).
+//! return owned `Response`. Engine slot identifiers stay off this path.
 
 use std::net::UdpSocket;
 use std::time::Instant;

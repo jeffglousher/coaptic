@@ -1,6 +1,5 @@
 //! Shipped [`MemoryProfile`] implementations.
 //!
-//! Datagram and enabled-body **bytes** are locked in `knowledge/profiles.md`.
 //! Slot and table counts below are modest starting numbers.
 
 use super::exchange::ExchangeTable;
@@ -57,7 +56,7 @@ macro_rules! impl_profile {
 /// | Observe entries | 4 | — |
 ///
 /// 1472 is IPv4 UDP max on Ethernet (`1500 − 20 − 8`). 4096 is four max-size
-/// Block/Q-Block blocks. See `knowledge/profiles.md` and `knowledge/memory.md`.
+/// Block/Q-Block blocks.
 pub struct Default;
 
 impl_profile! {
