@@ -224,9 +224,11 @@ The following decisions are current and normative for the reference architecture
 
 Architecture flow walking has been used to test ownership and lifetime assumptions without duplicating the protocol behavior defined by the RFCs.
 
-The six-area model has been exercised conceptually against ordinary client/server operations, Block and Q-Block request/response bodies, Observe, simultaneous load, and deliberately undersized Datagram configurations. No additional core memory area has been justified.
+The six-area model has been exercised against ordinary client/server operations, Block and Q-Block request/response bodies, Observe, simultaneous load, and deliberately undersized Datagram configurations. No additional core memory area has been justified.
 
-The next implementation work should stress the reference progress contract across capacity combinations and network conditions, measuring throughput, occupancy, turnover, loss, completion, and CPU work per bounded pass. Those results should tune defaults and local boundary policies without changing the six-area ownership model unless a demonstrated lifetime requires it.
+The reference progress contract is present in this crate: temporary application `Access` pins; bounded `Engine::progress` (CON retransmit poll, rotating RX, Observe notify, Observe Max-Age / client-OFF lifetime, incoming Q-Block recover); BERT multi-block payloads on the existing Body Slot path; Request-Tag / ETag body identity (`BodyTag` on the Body Slot sidecar). An in-crate harness covers the Block/Q-Block SZX × 1–25-block sweep and in-memory CoAP#4 plugtest.
+
+Further measurement across capacity combinations and network conditions — throughput, occupancy, turnover, loss, completion, and CPU work per bounded pass — should tune defaults and local boundary policies without changing the six-area ownership model unless a demonstrated lifetime requires it.
 
 ## Standards sources
 

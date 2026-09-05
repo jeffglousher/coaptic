@@ -8,7 +8,7 @@ A stand-alone `no_std` CoAP **library** (not a daemon, not a socket stack):
 
 - Message domain: RFC 7252 decode/encode, option values, Observe and Block/Q-Block codecs, `Ids` / Token mint.
 - Storage domain: six bounded areas, `Engine<S: Storage>`, `Memory` / optional `AllocMemory`.
-- Progress domain: `Engine::progress` → `Progress` (CON RTO poll, rotating RX, Observe notify, incoming `QBlockRecover`).
+- Progress domain: `Engine::progress` → `Progress` (CON RTO poll, rotating RX, Observe notify, Observe lifetime, incoming `QBlockRecover`).
 
 Zero crate dependencies. Default is `no_std` with no allocator. `alloc` and `std` are optional (`std` implies `alloc`). Licensed MIT OR Apache-2.0. Not published to crates.io.
 
@@ -20,7 +20,7 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#29** on `main` plus this change:
+Through squash-merges **#7–#30** on `main` plus this docs alignment:
 
 | Domain | In the crate |
 | --- | --- |
@@ -40,7 +40,7 @@ The core does not send. The caller owns the clock, jitter, and socket.
 
 Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).
 
-`design.md` is the architecture contract. A few “next implementation work” sentences there predate the progress/Access/Q-Block recover landings; the crate is ahead of those sentences. Do not rewrite `design.md` from a docs pass.
+`design.md` is the architecture contract. Its Validation and tuning section now matches this crate (`Access` pins, `Engine::progress`, Observe notify and Max-Age / client-OFF lifetime, Q-Block recover, BERT and `BodyTag` identity, in-crate harness). Ownership, six areas, datagram = CoAP payload, `Endpoint` sidecar, and block-wise builder rules are unchanged.
 
 ## How to check
 
