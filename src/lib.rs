@@ -14,7 +14,8 @@
 //!
 //! - [`app`] — [`App`] + [`Site`](app::Site): [`route`](app::AppBuilder::route),
 //!   [`get`] / [`put`] method routers, `fn(Request<'_>) -> Response` handlers,
-//!   [`Response`] builders, [`App::poll`]. No global mutable shared bag.
+//!   [`Response`] builders, [`App::poll`], [`App::notify`](app::App::notify).
+//!   No global mutable shared bag.
 //! - [`message`] — decode/encode a CoAP datagram. No [`Engine`] required.
 //! - [`storage`] — [`Engine`] generic over [`Storage`]; [`Memory`], pools, tables.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
@@ -80,11 +81,14 @@
 //! request fields (`payload()`, path, token, options, `body()` when Block1
 //! assembled) and an owned [`Response`] (`content` / `content_copy`).
 //! Large responses use the TX body area (Block2, or Q-Block2 when the
-//! request asked for it) without exposing `SlotId`. The reactor owns
-//! per-slot state machines inside `poll`. Domain data that outlives a
-//! request stays outside `App`. Engine remains the advanced escape hatch
-//! for explicit slots, Observe notify, Q-Block recover, and custom policy
-//! (`app.engine_mut()`). See `examples/coap_server.rs` (`std`).
+//! request asked for it) without exposing `SlotId`. Observe register /
+//! deregister, [`App::notify`](app::App::notify), and poll-time notify via
+//! [`ObserveSource`](app::ObserveSource) use the Engine Observe table
+//! (no `SlotId` on the happy path). The reactor owns per-slot state
+//! machines inside `poll`. Domain data that outlives a request stays
+//! outside `App`. Engine remains the advanced escape hatch for explicit
+//! slots, Q-Block recover, and custom policy (`app.engine_mut()`). See
+//! `examples/coap_server.rs` (`std`).
 //!
 //! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
 //!
@@ -155,6 +159,6 @@ pub use storage::{
     Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, Capacities,
     DatagramIo, DatagramIoError, DedupEntry, DedupKey, Endpoint, Engine, EngineBuilder,
     ExchangeEntry, ExchangeKey, Memory, ObserveExpiry, ObserveInterest, ObserveKey,
-    ObserveLifetime, ObserveNotifyHold, OutgoingBlock, PendingCon, PendingRto, Progress,
-    QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    ObserveLifetime, ObserveNotifyHold, ObserveResource, OutgoingBlock, PendingCon, PendingRto,
+    Progress, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };

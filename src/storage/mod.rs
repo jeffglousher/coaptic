@@ -78,7 +78,7 @@ pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
 pub use table::{
     DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
-    ObserveNotifyHold, ObserveTable,
+    ObserveNotifyHold, ObserveResource, ObserveTable,
 };
 
 /// Acquire, release, and rotate occupancy for one pool or table.

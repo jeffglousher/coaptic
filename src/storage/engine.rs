@@ -16,6 +16,7 @@ use super::ObserveExpiry;
 use super::ObserveInterest;
 use super::ObserveKey;
 use super::ObserveLifetime;
+use super::ObserveResource;
 use super::ObserveSlots;
 use super::PendingCon;
 use super::PendingCons;
@@ -741,9 +742,9 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
     /// If `parsed` is a GET with Observe 0 (register), insert Token + Endpoint.
     ///
-    /// Idempotent for the same Token and endpoint. `None` when the datagram
-    /// is not a register GET, or the table is full. Does not invent 4.02 /
-    /// RST policy.
+    /// Records [`ObserveResource`] from Uri-Path on the same row. Idempotent
+    /// for the same Token and endpoint. `None` when the datagram is not a
+    /// register GET, or the table is full. Does not invent 4.02 / RST policy.
     pub fn register_observe(
         &mut self,
         parsed: &ParsedMessage<'_>,
@@ -752,8 +753,10 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if !parsed.is_observe_register() {
             return None;
         }
-        self.storage
-            .insert_observe(ObserveInterest::new(parsed.token(), endpoint))
+        self.storage.insert_observe(
+            ObserveInterest::new(parsed.token(), endpoint)
+                .with_resource(observe_resource_from_message(parsed)),
+        )
     }
 
     /// If `parsed` is a GET with Observe 1 (deregister), take Token + Endpoint.
@@ -777,16 +780,20 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let (token, is_register) = {
+        let (token, is_register, resource) = {
             let parsed = decode_occupied(self.storage.rx_payload(id))?;
-            (parsed.token(), parsed.is_observe_register())
+            (
+                parsed.token(),
+                parsed.is_observe_register(),
+                observe_resource_from_message(&parsed),
+            )
         };
         if !is_register {
             return Ok(None);
         }
         Ok(self
             .storage
-            .insert_observe(ObserveInterest::new(token, endpoint)))
+            .insert_observe(ObserveInterest::new(token, endpoint).with_resource(resource)))
     }
 
     /// Decode occupied RX `id` and [`Self::deregister_observe`] using its sidecar endpoint.
@@ -806,6 +813,69 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             return Ok(None);
         }
         Ok(self.storage.take_observe(ObserveKey::new(token, endpoint)))
+    }
+
+    /// Assign the next 24-bit notification sequence on `id` (same as progress).
+    ///
+    /// Marks the row due, then [`ObserveInterest::take_due`]. `None` when
+    /// the slot is free. Does not encode or send.
+    pub fn next_observe_seq(&mut self, id: SlotId) -> Option<u32> {
+        let mut interest = self.storage.observe_interest(id)?;
+        interest.mark_due();
+        let seq = interest.take_due()?;
+        self.storage.set_observe_interest(id, interest).ok()?;
+        Some(seq)
+    }
+
+    /// Mark every interest whose [`ObserveResource`] equals `resource` as due.
+    ///
+    /// Coalesces like [`Self::signal_observe`]. Returns how many rows were
+    /// marked. [`ObserveResource::NONE`] matches nothing.
+    pub fn signal_observe_resource(&mut self, resource: ObserveResource) -> usize {
+        if resource.is_none() {
+            return 0;
+        }
+        let n = self.storage.capacities().observe_entries;
+        let mut marked = 0usize;
+        for i in 0..n {
+            let id = SlotId::from_index(i);
+            let Some(mut interest) = self.storage.observe_interest(id) else {
+                continue;
+            };
+            if interest.resource() != resource {
+                continue;
+            }
+            interest.mark_due();
+            if self.storage.set_observe_interest(id, interest).is_ok() {
+                marked += 1;
+            }
+        }
+        marked
+    }
+
+    /// Drop every interest whose [`ObserveResource`] equals `resource`.
+    ///
+    /// Returns how many rows were removed. Used when DELETE succeeds on that
+    /// path. [`ObserveResource::NONE`] matches nothing.
+    pub fn take_observe_resource(&mut self, resource: ObserveResource) -> usize {
+        if resource.is_none() {
+            return 0;
+        }
+        let n = self.storage.capacities().observe_entries;
+        let mut dropped = 0usize;
+        for i in 0..n {
+            let id = SlotId::from_index(i);
+            let Some(interest) = self.storage.observe_interest(id) else {
+                continue;
+            };
+            if interest.resource() != resource {
+                continue;
+            }
+            if self.storage.take_observe(interest.key()).is_some() {
+                dropped += 1;
+            }
+        }
+        dropped
     }
 
     /// If a CON notify with `message_id` is still waiting, make it due now.
@@ -828,6 +898,22 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             .ok()?;
         Some(id)
     }
+}
+
+fn observe_resource_from_message(parsed: &ParsedMessage<'_>) -> ObserveResource {
+    let mut segs = [""; 8];
+    let mut n = 0usize;
+    for item in parsed.uri_path() {
+        let Ok(seg) = item else {
+            return ObserveResource::NONE;
+        };
+        if n >= segs.len() {
+            break;
+        }
+        segs[n] = seg;
+        n += 1;
+    }
+    ObserveResource::from_path(&segs[..n])
 }
 
 pub(crate) fn endpoint_notify_held<S: Storage + ObserveSlots>(

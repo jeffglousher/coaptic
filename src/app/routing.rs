@@ -19,6 +19,12 @@ use super::response::Response;
 /// Default handlers are relatively stateless: `Request` → [`Response`].
 pub type HandlerFn = fn(Request<'_>) -> Response;
 
+/// Snapshot for a due Observe notification (`App::poll` / [`App::signal`](super::App::signal)).
+///
+/// Domain data stays outside `App`. This fn builds the current
+/// representation when Engine pacing surfaces a notify.
+pub type ObserveSource = fn() -> Response;
+
 /// Per-path method table (Ohkami-style bits; Axum-style `.get().put()` chain).
 ///
 /// Built with [`get`], [`put`], [`post`], [`delete`], [`fetch`], [`patch`],
@@ -27,6 +33,7 @@ pub type HandlerFn = fn(Request<'_>) -> Response;
 #[derive(Clone, Copy)]
 pub struct MethodRouter {
     handlers: [Option<HandlerFn>; METHOD_COUNT],
+    observe: Option<ObserveSource>,
 }
 
 const METHOD_COUNT: usize = 7;
@@ -37,7 +44,25 @@ impl MethodRouter {
     pub const fn new() -> Self {
         Self {
             handlers: [None; METHOD_COUNT],
+            observe: None,
         }
+    }
+
+    /// Register a poll-time snapshot for Observe notifications.
+    ///
+    /// A successful GET/FETCH with Observe=0 that includes Observe on the
+    /// [`Response`] still registers without this. This hook lets
+    /// [`App::poll`](super::App::poll) encode a notification when Engine
+    /// progress yields `observe_notify` (after [`App::signal`](super::App::signal)).
+    #[must_use]
+    pub const fn observe(self, source: ObserveSource) -> Self {
+        let mut this = self;
+        this.observe = Some(source);
+        this
+    }
+
+    pub(crate) const fn observe_source(self) -> Option<ObserveSource> {
+        self.observe
     }
 
     /// Bind GET (0.01).

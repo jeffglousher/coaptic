@@ -60,8 +60,12 @@
 //!
 //! Site capacity defaults to [`DEFAULT_ROUTES`] (8). Raise it with
 //! [`.routes::<16>()`](AppBuilder::routes) before [`AppBuilder::bind`].
-//! Engine / [`DatagramIo`] remain the advanced path (`CALLER.md`,
-//! `ERGONOMICS.md`). Escape: [`App::engine_mut`].
+//! Observe: a successful GET with Observe=0 whose [`Response`] includes
+//! [`.observe`](Response::observe) registers on the Engine table. Send later
+//! representations with [`App::notify`]. Optional
+//! [`MethodRouter::observe`](MethodRouter::observe) supplies a snapshot
+//! when `poll` sees `observe_notify`. Engine / [`DatagramIo`] remain the
+//! advanced path (`CALLER.md`, `ERGONOMICS.md`). Escape: [`App::engine_mut`].
 //!
 //! [design]: https://github.com/jeffglousher/coaptic/blob/main/design.md
 
@@ -77,19 +81,24 @@ use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, EncodedUint, Message, MessageId, NoResponse, Opt, OptionsBuilder, Type,
+    BlockValue, Code, EncodedUint, Ids, Message, MessageId, NoResponse, Opt, OptionsBuilder, Type,
     decode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
-    EngineBuilder, Memory, MemoryProfile, Missing, ObserveSlots, OutgoingBlock, PendingCons,
-    Present, Retransmit, SlotError, SlotId, Storage, WithBodies,
+    EngineBuilder, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey, ObserveResource,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, Retransmit, SlotError, SlotId, Storage,
+    WithBodies,
 };
+
+/// RFC 7252 default Max-Age when a registration or notify omits it.
+const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use request::{MAX_PATH_SEGMENTS, Request};
 pub use response::{INLINE_PAYLOAD, IntoResponse, Response};
 pub use routing::{
-    HandlerFn, Method, MethodRouter, delete, fetch, get, ipatch, patch, post, put, split_path,
+    HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
+    split_path,
 };
 pub use site::{DEFAULT_ROUTES, Site};
 
@@ -114,6 +123,7 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
     engine: EngineSlot<P>,
     io: T,
     site: Site<N>,
+    ids: Ids,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
@@ -220,6 +230,7 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
             engine,
             io,
             site: self.site,
+            ids: Ids::new(1),
         })
     }
 }
@@ -302,8 +313,17 @@ where
     /// can borrow the complete body; an incomplete Block1 is answered
     /// with 2.31 and does not run the handler. When block-wise is off, a
     /// payload that does not fit one datagram fails clearly (no silent
-    /// heap). Q-Block1 inbound, Observe notify, Observe expiry, and
-    /// Q-Block recover stay on [`Engine`] ([`Self::engine_mut`]).
+    /// heap).
+    ///
+    /// Observe: a successful GET/FETCH with Observe=0 whose [`Response`]
+    /// includes an Observe sequence (or whose route has
+    /// [`MethodRouter::observe`]) is registered on the Engine
+    /// [`ObserveInterest`] table. Observe=1 deregisters. Expired Max-Age /
+    /// client-OFF rows are dropped. When `progress` yields `observe_notify`
+    /// and the route has an [`ObserveSource`], that snapshot is encoded
+    /// (ordinary TX or first-block Block2). Caller-built notifications use
+    /// [`Self::notify`]. Q-Block recover stays on [`Engine`]
+    /// ([`Self::engine_mut`]).
     ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`].
@@ -312,8 +332,60 @@ where
     /// when no match). CON is answered with a piggybacked ACK.
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
-            EngineSlot::Datagram(engine) => poll_engine(engine, &mut self.io, &self.site, now_ms),
-            EngineSlot::BlockWise(engine) => poll_engine(engine, &mut self.io, &self.site, now_ms),
+            EngineSlot::Datagram(engine) => {
+                poll_engine(engine, &mut self.io, &self.site, &mut self.ids, now_ms)
+            }
+            EngineSlot::BlockWise(engine) => {
+                poll_engine(engine, &mut self.io, &self.site, &mut self.ids, now_ms)
+            }
+        }
+    }
+
+    /// Send the current representation to every observer of `path`.
+    ///
+    /// Looks up [`ObserveInterest`] rows by [`ObserveResource`] (same
+    /// Engine table). Honors notification NSTART. Each matching interest
+    /// gets the next sequence, an ordinary TX or first-block Block2 when
+    /// the payload is large, and `send_tx`. CON is used when the row
+    /// [`ObserveInterest::must_confirm`]; otherwise NON. Returns how many
+    /// notifications were sent. Domain data stays in `response`.
+    pub fn notify(
+        &mut self,
+        now_ms: u64,
+        path: &[&str],
+        response: Response,
+    ) -> Result<usize, Error<T::Error>> {
+        let resource = ObserveResource::from_path(path);
+        match &mut self.engine {
+            EngineSlot::Datagram(engine) => notify_engine(
+                engine,
+                &mut self.io,
+                &mut self.ids,
+                now_ms,
+                resource,
+                &response,
+            ),
+            EngineSlot::BlockWise(engine) => notify_engine(
+                engine,
+                &mut self.io,
+                &mut self.ids,
+                now_ms,
+                resource,
+                &response,
+            ),
+        }
+    }
+
+    /// Mark observers of `path` due. [`Self::poll`] encodes via
+    /// [`ObserveSource`] when progress surfaces the row.
+    ///
+    /// Returns how many rows were marked. Use [`Self::notify`] when you
+    /// already have the [`Response`].
+    pub fn signal(&mut self, path: &[&str]) -> usize {
+        let resource = ObserveResource::from_path(path);
+        match &mut self.engine {
+            EngineSlot::Datagram(engine) => engine.signal_observe_resource(resource),
+            EngineSlot::BlockWise(engine) => engine.signal_observe_resource(resource),
         }
     }
 }
@@ -358,6 +430,7 @@ fn poll_engine<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
+    ids: &mut Ids,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -379,12 +452,24 @@ where
     }
 
     if let Some(rx) = progress.rx_ready().or(received) {
-        dispatch_rx(engine, io, site, rx)?;
+        dispatch_rx(engine, io, site, now_ms, rx)?;
     }
 
-    // Phase 2: Observe notify / lifetime / Q-Block recover.
-    let _ = progress.observe_notify();
-    let _ = progress.observe_expired();
+    if let Some(expiry) = progress.observe_expired() {
+        if let Some(interest) = engine.observe_interest(expiry.slot()) {
+            let _ = engine.take_observe(interest.key());
+        }
+    }
+
+    if let Some(id) = progress.observe_notify() {
+        if let Some(interest) = engine.observe_interest(id) {
+            if let Some(source) = site.observe_source(interest.resource()) {
+                let response = source();
+                send_notification(engine, io, ids, now_ms, interest, &response, interest.seq())?;
+            }
+        }
+    }
+
     let _ = progress.qblock_recover();
     Ok(())
 }
@@ -415,10 +500,11 @@ fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
+    now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + BodySlots,
+    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {
@@ -446,6 +532,11 @@ where
     if parsed.is_empty_ack_or_rst() {
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
+        }
+        if parsed.is_empty_ack() {
+            let _ = engine.ack_observe_con(parsed.message_id(), peer);
+        } else {
+            let _ = engine.take_observe(ObserveKey::new(parsed.token(), peer));
         }
         let _ = engine.release_rx(rx);
         return Ok(());
@@ -499,7 +590,7 @@ where
         InboundBody::None | InboundBody::Complete(_) => {}
     }
 
-    let response = {
+    let (response, plan) = {
         let parsed = match engine.decode_rx(rx) {
             Ok(parsed) => parsed,
             Err(e) => {
@@ -512,17 +603,242 @@ where
             InboundBody::None | InboundBody::Continue | InboundBody::IncompleteEntity => None,
         };
         match Request::from_decoded(parsed, peer, body) {
-            Ok(request) => site.dispatch(request),
-            Err(request::PathError::BadUtf8) => Response::bad_request(),
-            Err(request::PathError::TooLong) => Response::not_found(),
+            Ok(request) => {
+                let plan = ObservePlan::from_request(site, &request);
+                (site.dispatch(request), plan)
+            }
+            Err(request::PathError::BadUtf8) => (Response::bad_request(), ObservePlan::idle()),
+            Err(request::PathError::TooLong) => (Response::not_found(), ObservePlan::idle()),
         }
     };
+    let response = apply_observe(engine, now_ms, peer, response, plan);
 
     let outcome = send_response(engine, io, meta, &response);
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
     }
     let _ = engine.release_rx(rx);
+    outcome
+}
+
+#[derive(Clone, Copy)]
+struct ObservePlan {
+    register: bool,
+    deregister: bool,
+    delete: bool,
+    has_source: bool,
+    token: crate::message::Token,
+    resource: ObserveResource,
+}
+
+impl ObservePlan {
+    fn idle() -> Self {
+        Self {
+            register: false,
+            deregister: false,
+            delete: false,
+            has_source: false,
+            token: crate::message::Token::EMPTY,
+            resource: ObserveResource::NONE,
+        }
+    }
+
+    fn from_request<const N: usize>(site: &Site<N>, request: &Request<'_>) -> Self {
+        Self {
+            register: request.is_observe_register(),
+            deregister: request.is_observe_deregister(),
+            delete: request.method() == Some(Method::Delete),
+            has_source: site.has_observe_source(request.path()),
+            token: request.token(),
+            resource: ObserveResource::from_path(request.path()),
+        }
+    }
+}
+
+fn apply_observe<S: Storage + ObserveSlots>(
+    engine: &mut Engine<S>,
+    now_ms: u64,
+    peer: Endpoint,
+    mut response: Response,
+    plan: ObservePlan,
+) -> Response {
+    let key = ObserveKey::new(plan.token, peer);
+
+    if plan.deregister {
+        let _ = engine.take_observe(key);
+    } else if plan.register && response.code().is_success() {
+        let opted = response.observe_seq().is_some() || plan.has_source;
+        if opted {
+            let _ = engine.take_observe(key);
+            if engine
+                .insert_observe(ObserveInterest::new(plan.token, peer).with_resource(plan.resource))
+                .is_some()
+            {
+                let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+                let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
+                response = response.observe(0);
+            }
+        }
+    }
+    if plan.delete && response.code().is_success() {
+        let _ = engine.take_observe_resource(plan.resource);
+    }
+    response
+}
+
+fn notify_engine<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    resource: ObserveResource,
+    response: &Response,
+) -> Result<usize, Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    T: DatagramIo,
+{
+    if resource.is_none() {
+        return Ok(0);
+    }
+    let n = engine.capacities().observe_entries;
+    let mut sent = 0usize;
+    for i in 0..n {
+        let id = SlotId::from_index(i);
+        let Some(interest) = engine.observe_interest(id) else {
+            continue;
+        };
+        if interest.resource() != resource {
+            continue;
+        }
+        if observe_endpoint_held(engine, interest.endpoint(), now_ms)
+            >= usize::from(crate::message::Transmission::NSTART)
+        {
+            continue;
+        }
+        let Some(seq) = engine.next_observe_seq(id) else {
+            continue;
+        };
+        let Some(interest) = engine.observe_interest(id) else {
+            continue;
+        };
+        send_notification(engine, io, ids, now_ms, interest, response, seq)?;
+        sent += 1;
+    }
+    Ok(sent)
+}
+
+fn observe_endpoint_held<S: Storage + ObserveSlots>(
+    engine: &Engine<S>,
+    endpoint: Endpoint,
+    now_ms: u64,
+) -> usize {
+    let n = engine.capacities().observe_entries;
+    (0..n)
+        .filter(|&i| {
+            engine
+                .observe_interest(SlotId::from_index(i))
+                .is_some_and(|row| row.endpoint() == endpoint && row.is_notify_held(now_ms))
+        })
+        .count()
+}
+
+fn send_notification<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    interest: ObserveInterest,
+    response: &Response,
+    seq: u32,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    T: DatagramIo,
+{
+    let ty = if interest.must_confirm(now_ms) {
+        Type::Confirmable
+    } else {
+        Type::NonConfirmable
+    };
+    let mid = ids.next();
+    let response = response.observe(seq);
+    let dest = interest.endpoint();
+    let token = interest.token();
+    let key = BlockKey::new(token, dest);
+    if let Some(body) = engine.lookup_tx_body(key) {
+        let _ = engine.release_tx_body(body);
+    }
+
+    let meta = SendResponse {
+        dest,
+        ty,
+        mid,
+        token,
+        no_response: NoResponse::DEFAULT,
+        block2: None,
+        q_block2: None,
+    };
+
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let outcome = match encode_response(
+        engine,
+        tx,
+        ty,
+        mid,
+        token,
+        &response,
+        response.payload(),
+        None,
+    ) {
+        Ok(()) => finish_send(engine, io, tx, dest, pending),
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+            let _ = engine.release_tx(tx);
+            start_notify_block2(engine, io, meta, &response, ty, pending)
+        }
+        Err(e) => {
+            let _ = engine.release_tx(tx);
+            Err(e.into())
+        }
+    };
+    outcome?;
+
+    let con_mid = (ty == Type::Confirmable).then_some(mid);
+    let _ = engine.record_observe_notify(interest.key(), now_ms, con_mid);
+    let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+    let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, con_mid);
+    Ok(())
+}
+
+fn start_notify_block2<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response,
+    ty: Type,
+    pending: Option<(u64, MessageId)>,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    T: DatagramIo,
+{
+    let key = BlockKey::new(meta.token, meta.dest);
+    let id = match engine.start_block2(key, response.payload(), BlockValue::SZX_MAX) {
+        Ok(id) => id,
+        Err(BlockTransferError::NoBodyPools) => {
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )));
+        }
+        Err(e) => return Err(Error::Block(e)),
+    };
+    let outcome = issue_classic(engine, io, meta, response, ty, meta.mid, id, pending);
+    if outcome.is_err() {
+        let _ = engine.release_tx_body(id);
+    }
     outcome
 }
 
@@ -533,7 +849,7 @@ fn send_response<S, T>(
     response: &Response,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     if meta.no_response.suppresses(response.code()) {
@@ -565,7 +881,7 @@ where
         response.payload(),
         None,
     ) {
-        Ok(()) => finish_send(engine, io, tx, meta.dest),
+        Ok(()) => finish_send(engine, io, tx, meta.dest, None),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
             let _ = engine.release_tx(tx);
             start_outgoing(engine, io, meta, response, ty, key)
@@ -586,7 +902,7 @@ fn start_outgoing<S, T>(
     key: BlockKey,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let szx = szx_for(meta.block2, meta.q_block2);
@@ -607,7 +923,7 @@ where
     let outcome = if meta.q_block2.is_some() {
         issue_q_window(engine, io, meta, response, ty, id)
     } else {
-        issue_classic(engine, io, meta, response, ty, meta.mid, id)
+        issue_classic(engine, io, meta, response, ty, meta.mid, id, None)
     };
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -624,7 +940,7 @@ fn continue_outgoing<S, T>(
     id: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let role = engine
@@ -640,11 +956,14 @@ where
             Some(_) => Ok(()),
             None => issue_q_window(engine, io, meta, response, ty, id),
         },
-        BlockRole::OutgoingBlock2 => issue_classic(engine, io, meta, response, ty, meta.mid, id),
+        BlockRole::OutgoingBlock2 => {
+            issue_classic(engine, io, meta, response, ty, meta.mid, id, None)
+        }
         _ => Ok(()),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn issue_classic<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -653,13 +972,14 @@ fn issue_classic<S, T>(
     ty: Type,
     mid: MessageId,
     id: SlotId,
+    pending: Option<(u64, MessageId)>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let issued = engine.next_block2(id).map_err(Error::Block)?;
-    send_issued(engine, io, meta, response, ty, mid, issued, false)?;
+    send_issued(engine, io, meta, response, ty, mid, issued, false, pending)?;
     if issued.complete() {
         let _ = engine.release_tx_body(id);
     }
@@ -675,7 +995,7 @@ fn issue_q_window<S, T>(
     id: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let mut extra = 0u16;
@@ -690,7 +1010,7 @@ where
         } else {
             (Type::NonConfirmable, meta.mid.wrapping_add(extra))
         };
-        send_issued(engine, io, meta, response, ty, mid, issued, true)?;
+        send_issued(engine, io, meta, response, ty, mid, issued, true, None)?;
         extra = extra.saturating_add(1);
         if issued.complete() {
             let _ = engine.release_tx_body(id);
@@ -709,9 +1029,10 @@ fn send_issued<S, T>(
     mid: MessageId,
     issued: OutgoingBlock,
     q_block: bool,
+    pending: Option<(u64, MessageId)>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let mut chunk = [0u8; 1024];
@@ -742,7 +1063,7 @@ where
         let _ = engine.release_tx(tx);
         return Err(e.into());
     }
-    finish_send(engine, io, tx, meta.dest)
+    finish_send(engine, io, tx, meta.dest, pending)
 }
 
 fn copy_issued<S: Storage + BodySlots>(
@@ -819,9 +1140,10 @@ fn finish_send<S, T>(
     io: &mut T,
     tx: SlotId,
     dest: Endpoint,
+    pending: Option<(u64, MessageId)>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots,
+    S: Storage + DatagramSlots + PendingCons,
     T: DatagramIo,
 {
     if let Err(e) = engine.set_tx_endpoint(tx, dest) {
@@ -829,6 +1151,11 @@ where
         return Err(Error::Slot(e));
     }
     let send = engine.send_tx(io, tx);
+    if let Some((now_ms, mid)) = pending {
+        let _ = engine.record_pending_con(tx, dest, mid, now_ms, 0);
+        send?;
+        return Ok(());
+    }
     let _ = engine.release_tx(tx);
     send?;
     Ok(())
