@@ -52,8 +52,27 @@
 //! [`EngineBuilder`] is consuming and typestate-gated.
 //! [`.block_wise`](EngineBuilder::block_wise)`(false)` omits body pools.
 //!
-//! OSCORE, DTLS, and BERT are out of scope. An in-crate plugtest harness is
-//! not on this tree (see repo `README.md` / `REVIEW.md`).
+//! OSCORE, DTLS, and BERT are out of scope.
+//!
+//! # Validation harness
+//!
+//! Integration tests (not compiled into this `no_std` crate) live under
+//! `tests/`. They may use `std`. No extra Cargo dependencies.
+//!
+//! | Command | What it runs |
+//! | --- | --- |
+//! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Policy: `knowledge/block-testing.md`. |
+//! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
+//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `knowledge/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` / `6lowpan` are skipped. |
+//! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
+//! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
+//! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
+//! | `cargo test --test plugtest td_coap_obs` | Runnable `TD_COAP_OBS_*`; prints skip reasons for OBS_04 / OBS_05. |
+//! | `cargo test --test plugtest td_coap_link` | All 9 `TD_COAP_LINK_*` from `link.yml`. |
+//! | `cargo test --test plugtest inventory -- --nocapture` | Print RUN vs SKIP for every vendored TD id. |
+//!
+//! TD identifiers are extracted from those YAML files. This crate does not
+//! invent TD numbers. See `knowledge/plugtest/requirements.md`.
 //!
 //! # Features
 //!

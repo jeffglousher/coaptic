@@ -1,11 +1,13 @@
 # Plugtest
 
-ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers. Sequences stay in the vendored YAML and PDFs. An in-crate harness is not on `main` yet (draft PR #27).
+ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers. Sequences stay in the vendored YAML and PDFs.
 
 # Requirements
 
 * [coaptic plugtest requirements](requirements.md) - In-scope vs deferred suites; six-area engine constraint.
 * [Block testing](/block-testing.md) - Combinatorial Block/Q-Block SZX × 1–25-block sweep; Default is not the test ceiling.
+
+In-repo harness (no sockets): `cargo test --test block_sweep` and `cargo test --test plugtest`.
 
 # In-scope (CoAP#4)
 

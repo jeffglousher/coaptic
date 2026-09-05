@@ -20,13 +20,14 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#26** on `main` (HEAD `7c417cb` when this brief was written):
+Through squash-merges **#7–#28** on `main` plus the in-crate validation harness on this branch:
 
 | Domain | In the crate |
 | --- | --- |
 | Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs, `OptionsBuilder`, `Ids`, Token mint |
 | Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry`, Observe interest, classic Block + Q-Block body paths |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, incoming `QBlockRecover` + outgoing Q-Block reissue |
+| Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`). In-memory CoAP#4 plugtest (`tests/plugtest/`; 50 RUN / 38 SKIP). |
 
 The core does not send. The caller owns the clock, jitter, and socket.
 
@@ -34,8 +35,10 @@ The core does not send. The caller owns the clock, jitter, and socket.
 
 - DTLS, OSCORE, 6LoWPAN (and those plugtest suites)
 - BERT, Request-Tag / ETag body identity
-- In-crate validation harness / SZX×1–25 sweep runner (not on `main`; draft [PR #27](https://github.com/jeffglousher/coaptic/pull/27). Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/))
+- Observe Max-Age / client-OFF lifetime on `ObserveInterest` (`TD_COAP_OBS_04` / `TD_COAP_OBS_05` skipped)
 - Public crates.io / public GitHub
+
+Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).
 
 `design.md` is the architecture contract. A few “next implementation work” sentences there predate the progress/Access/Q-Block recover landings; the crate is ahead of those sentences. Do not rewrite `design.md` from a docs pass.
 
@@ -46,6 +49,9 @@ cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
 cargo test
+cargo test --test block_sweep --all-features
+cargo test --test plugtest
+cargo test --test plugtest inventory -- --nocapture
 cargo doc --no-deps --all-features
 python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate
 ```

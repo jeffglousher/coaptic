@@ -28,7 +28,7 @@ generated:
 
 # Block / Q-Block testing policy
 
-Locked (Jeff, 2026-09-04). Policy. An in-crate harness is not on `main` yet (draft PR #27); mapping and TDs: [Plugtest](/plugtest/index.md). Protocol behavior stays in [RFC 7959](/rfcs/rfc7959.md) and [RFC 9177](/rfcs/rfc9177.md). Slot defaults: [Memory](/memory.md). Profile numbers: [Profiles](/profiles.md).
+Locked (Jeff, 2026-09-04). Protocol behavior stays in [RFC 7959](/rfcs/rfc7959.md) and [RFC 9177](/rfcs/rfc9177.md). Slot defaults: [Memory](/memory.md). Profile numbers: [Profiles](/profiles.md). Harness: `cargo test --test block_sweep` (`tests/block_sweep.rs`; large `SweepProfile` / `AllocMemory`, not Default 4096). Mapping and TDs: [Plugtest](/plugtest/index.md).
 
 Block/Q-Block tests are a **dynamic combinatorial sweep**, not a hard-coded list of cases. Do not invent ETSI TD identifiers. CoAP#4 block TDs stay in [block](/plugtest/block.md). Extra Q-Block checks come from [RFC 9177](/rfcs/rfc9177.md), not made-up TD numbers.
 
