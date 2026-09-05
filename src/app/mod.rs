@@ -699,6 +699,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_issued<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
