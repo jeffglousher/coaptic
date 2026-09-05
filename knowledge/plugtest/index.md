@@ -1,6 +1,6 @@
 # Plugtest
 
-ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers. Sequences stay in the vendored YAML and PDFs.
+ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers. Sequences stay in the vendored YAML and PDFs. An in-crate validation harness is not on this tree.
 
 # Requirements
 

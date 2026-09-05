@@ -29,4 +29,4 @@ Open the `design.md` section. Do not paraphrase it here.
 - [Dedup Table](../design.md#dedup-table)
 - [Observe Interest Table](../design.md#observe-interest-table)
 
-A new area needs a demonstrated protocol lifetime. See [Architecture](/architecture.md).
+A new area needs a demonstrated protocol lifetime. See [Architecture](/architecture.md). Crate names (`Endpoint`, `Access`, `Progress`, `QBlockRecover`): [Memory](/memory.md).

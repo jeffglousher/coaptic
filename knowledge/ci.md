@@ -38,4 +38,4 @@ generated:
 - Do not publish crates.io until Jeff says the first public go.
 - Repo stays private until that first public go.
 
-See [Review](/review.md).
+See [Review policy](/review.md) and the external-reviewer brief [`REVIEW.md`](../REVIEW.md).

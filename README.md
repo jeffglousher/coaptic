@@ -1,56 +1,77 @@
 # coaptic
 
-A stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded storage engine. Custom slots and tables, optional alloc.
+Stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded six-area storage engine. Custom slots and tables. Optional `alloc` / `std`. Zero crate dependencies.
 
-## Library surface
+## Crate surface
 
-- `coaptic::message` — decode/encode a CoAP datagram (`&[u8]`), empty ACK/RST constructors, wrapping Message ID sequence (`Ids`), Token mint from caller entropy (`TokenSource`; no OS RNG), CON/NON request skeletons, RFC 7252 option value codecs (`message::value`), Observe (RFC 7641 option 6) uint helpers, Block/Q-Block/Size2 (`BlockValue` NUM/M/SZX; RFC 7959 / RFC 9177), and `OptionsBuilder` for out-of-order option insertion. No `Engine` required.
-- `coaptic::storage` — bounded `Engine` / `Memory` / pools. Happy-path types (`Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors) are at the crate root. Typestate markers (`Missing` / `Present`), raw `*Table` / `*Pool` types, and backend traits (`SlotPool`, `*Slots`) live under `storage`. `Engine` decodes/encodes occupied datagram slots when the backend implements `storage::DatagramSlots`. Typed `insert_*` / `take_*` are the public Dedup and Observe paths. `Engine::progress` is one bounded pass (`Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify, and at most one incoming Q-Block recover). Datagram slots hold CoAP bytes only; `Endpoint` is sidecar metadata. The Dedup Table stores typed `DedupEntry` rows. Pending CON matching (`PendingCon`) is sidecar on TX slots, with retransmit / RTO bookkeeping (`PendingRto`; caller clock and jitter). Token matching (`ExchangeEntry`) is a compact table keyed by Token + remote Endpoint, sized from the TX pool count. Observe interest (`ObserveInterest`) fills the existing Observe table (Token + remote Endpoint). Classic Block1 / Block2 body assembly uses a `BlockTransfer` sidecar on Incoming / Outgoing Body Pool slots when `.block_wise(true)`. None of those is a seventh area.
-- `coaptic::profiles` — `Default` (1472-byte datagrams) and `Constrained` (1152).
+Happy-path types live at the crate root (`Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`.
 
-Crate: `coaptic` (`#![no_std]`; optional `alloc` and `std`). Licensed MIT OR Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Knowledge: [knowledge/](knowledge/). Plugtest harnesses are not in this crate yet.
+### `coaptic::message`
 
-Architecture notes below are the current reference. Protocol behavior stays in `knowledge/rfcs/`.
+- Decode / encode a CoAP datagram (`&[u8]`)
+- Empty ACK/RST constructors
+- Wrapping Message ID sequence (`Ids`) and Token mint (`TokenSource`; no OS RNG)
+- CON/NON request skeletons
+- RFC 7252 option value codecs (`message::value`)
+- Observe (RFC 7641 option 6) and Block / Q-Block / Size2 (`BlockValue`)
+- `OptionsBuilder` for out-of-order insertion
+- No `Engine` required
 
-# Constrained CoAP Reference Architecture
+### `coaptic::storage`
 
-A bounded, allocation-independent CoAP architecture for constrained devices.
+- Bounded `Engine` / `Memory` / pools
+- `Endpoint` sidecar (address + port); datagram slots hold CoAP bytes only
+- `Access` / `AccessMut` pin occupied slot bytes against `release`
+- `Engine::progress` → `Progress`: pending CON retransmit poll, one rotating unpinned RX step, one rotating Observe notify, at most one incoming `QBlockRecover`
+- Dedup (`DedupEntry`), pending CON + RTO (`PendingCon` / `PendingRto`), token matching (`ExchangeEntry`), Observe interest (`ObserveInterest`)
+- Classic Block and Q-Block body assembly on body-pool slots when `.block_wise(true)`
+- None of those is a seventh area
 
-## Canonical package
+### `coaptic::profiles`
 
-- `design.md` — current architecture and reference progress contract.
-- `coap_constrained_design.drawio` — editable architecture diagrams.
-- `knowledge/rfcs/` — local IETF CoAP/CoRE copies (txt + PDF). See `knowledge/rfcs/index.md`. Protocol behavior stays there.
+- `Default` — 1472-byte datagrams; enabled body 4096 (4 × 1024)
+- `Constrained` — 1152-byte datagrams
 
-Generated PNG/SVG/PDF diagram renders are disposable and are not canonical.
+## Docs
 
-## Current posture
+| Doc | Role |
+| --- | --- |
+| [REVIEW.md](REVIEW.md) | External-reviewer brief |
+| [design.md](design.md) | Canonical architecture and progress contract |
+| [knowledge/](knowledge/) | OKF bundle: memory names, profiles, plugtest, RFCs |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor entry |
+| [AGENTS.md](AGENTS.md) | Author/review policy and the CI command list |
 
-Applicable IETF CoAP specifications define protocol behavior. Local artifacts define only the constrained-memory model, ownership/lifetimes, application boundary, capacity posture, and bounded progress contract.
+Protocol behavior stays in [knowledge/rfcs/](knowledge/rfcs/). This README does not restate wire format.
 
-The core model has six bounded memory areas:
+## Checks
 
-- Incoming Datagram Pool
-- Outgoing Datagram Pool
-- Incoming Body Pool
-- Outgoing Body Pool
-- Dedup Table
-- Observe Interest Table
+From [AGENTS.md](AGENTS.md). Run these when you touch Rust:
 
-Ordinary messages use Datagram Slots directly. Block-wise bodies use contiguous Body Slots while every individual CoAP message still uses the shared Datagram Pools. Body Slots do not reserve or own Datagram Slots.
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo test
+cargo doc --no-deps --all-features
+```
 
-Progress occurs in bounded passes. Iteration is rotating rather than restarting at slot zero, giving recurring fair opportunity without priorities. Each occupied bounded owner is governed by explicit state-machine retention/release conditions, with timing colocated where required.
+When you touch `knowledge/`:
 
-Datagram Slots remain shared without a fixed reservation scheme or traffic-priority hierarchy. Saturation is handled by the bounded state machines and applicable protocol/platform behavior; tuning determines throughput and loss.
+```bash
+python3 .agents/skills/okf-frontmatter/scripts/extract_frontmatter.py --validate
+```
 
-## Maintenance rules
+CI (`fmt`, `clippy`, `test`, `doc`, `okf`) is PR-only (`pull_request` to `main` plus `workflow_dispatch`). No push-to-main CI.
 
-- Keep only the current architecture; history belongs in versioned snapshots/source control.
-- Change `design.md` and `.drawio` together when architecture changes.
-- Do not persist generated diagram renders.
-- Do not restate IETF wire behavior, protocol state machines, constants, response rules, or option semantics.
-- Use IETF terminology where it exists; do not create project synonyms without explicit review.
-- Add a core memory area only when a demonstrated protocol lifetime requires it.
-- Keep capacity exhaustion explicit and bounded.
-- Keep application semantics and deferred application work outside protocol-owned state.
-- Use flow walking and implementation tests to challenge ownership/lifetime assumptions, then record only the architectural result.
+## Plugtest
+
+Vendored ETSI TDs and the coaptic mapping live in [knowledge/plugtest/](knowledge/plugtest/). Combinatorial SZX sweep policy: [knowledge/block-testing.md](knowledge/block-testing.md). An in-crate validation harness is not on this tree.
+
+## Architecture (short)
+
+Six core-managed areas: Incoming / Outgoing Datagram Pool, Incoming / Outgoing Body Pool, Dedup Table, Observe Interest Table.
+
+Progress is bounded and rotating. Saturation is a normal operating region. Canonical write-up: [design.md](design.md). Locked crate names: [knowledge/memory.md](knowledge/memory.md). UDP peer sidecar is `Endpoint` (not `Peer`).
+
+Crate: `#![no_std]`; optional `alloc` and `std`. Licensed MIT OR Apache-2.0.
