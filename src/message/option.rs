@@ -76,6 +76,8 @@ impl OptionNumber {
     pub const PROXY_SCHEME: Self = Self(39);
     /// Size1 (60).
     pub const SIZE1: Self = Self(60);
+    /// Request-Tag (292). RFC 9175; not in RFC 7252 Table 4.
+    pub const REQUEST_TAG: Self = Self(292);
 
     /// Wrap a raw option number.
     #[must_use]

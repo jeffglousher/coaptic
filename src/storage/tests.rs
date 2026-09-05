@@ -3,6 +3,7 @@
 use super::BlockKey;
 use super::BlockRole;
 use super::BodySlots;
+use super::BodyTag;
 #[cfg(feature = "alloc")]
 use super::Capacities;
 use super::DatagramPool;
@@ -1978,6 +1979,177 @@ fn block1_apply_from_rx_datagram() {
         engine.lookup_rx_body(BlockKey::new(token, ep)),
         Some(progress.id())
     );
+}
+
+#[test]
+fn request_tag_match_continues_mismatch_does_not_mix() {
+    let mut engine = build_default_bodies();
+    let token = sample_token(&[0x11]);
+    let ep = Endpoint::v4([198, 51, 100, 11], 5683);
+    let tag_a = BodyTag::new(b"body-a").expect("a");
+    let tag_b = BodyTag::new(b"body-b").expect("b");
+    let key_a = BlockKey::new(token, ep).with_identity(tag_a);
+    let key_b = BlockKey::new(token, ep).with_identity(tag_b);
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let b1 = BlockValue::from_size(1, false, 16).expect("1");
+    let first = engine
+        .apply_block1(key_a, b0, &[0x11; 16], Some(24))
+        .expect("a0");
+    assert!(!first.complete());
+    let continued = engine
+        .apply_block1(key_a, b1, &[0x22; 8], Some(24))
+        .expect("a1");
+    assert!(continued.complete());
+    assert_eq!(continued.id(), first.id());
+    assert_eq!(
+        engine.rx_body_payload(first.id()).map(<[u8]>::len),
+        Some(24)
+    );
+
+    let other = engine
+        .apply_block1(key_b, b0, &[0x33; 16], None)
+        .expect("b is a different body");
+    assert_ne!(other.id(), first.id());
+    assert_eq!(
+        engine.rx_body_payload(first.id()).map(<[u8]>::len),
+        Some(24)
+    );
+    assert_eq!(
+        engine.rx_body_transfer(first.id()).map(|t| t.identity()),
+        Some(tag_a)
+    );
+    assert_eq!(
+        engine.rx_body_transfer(other.id()).map(|t| t.identity()),
+        Some(tag_b)
+    );
+}
+
+#[test]
+fn q_block1_same_request_tag_different_token() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 12], 5683);
+    let tag = BodyTag::new(b"q1").expect("tag");
+    let k0 = BlockKey::new(sample_token(&[0x01]), ep).with_identity(tag);
+    let k1 = BlockKey::new(sample_token(&[0x02]), ep).with_identity(tag);
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let b1 = BlockValue::from_size(1, false, 16).expect("1");
+    let first = engine
+        .apply_q_block1(k0, b0, &[0xaa; 16], Some(24))
+        .expect("t0");
+    let second = engine
+        .apply_q_block1(k1, b1, &[0xbb; 8], Some(24))
+        .expect("t1");
+    assert_eq!(first.id(), second.id());
+    assert!(second.complete());
+    assert_eq!(
+        engine.rx_body_payload(first.id()).map(<[u8]>::len),
+        Some(24)
+    );
+}
+
+#[test]
+fn etag_mismatch_does_not_join_block2() {
+    let mut engine = build_default_bodies();
+    let token = sample_token(&[0x21]);
+    let ep = Endpoint::v4([198, 51, 100, 21], 5683);
+    let et_old = BodyTag::new(b"oldrep").expect("old");
+    let et_new = BodyTag::new(b"newrep").expect("new");
+    let k_old = BlockKey::new(token, ep).with_identity(et_old);
+    let k_new = BlockKey::new(token, ep).with_identity(et_new);
+    let b0 = BlockValue::from_size(0, true, 16).expect("0");
+    let first = engine
+        .apply_block2(k_old, b0, &[0x44; 16], None)
+        .expect("old");
+    assert!(!first.complete());
+    let fresh = engine
+        .apply_block2(k_new, b0, &[0x55; 16], None)
+        .expect("new body");
+    assert_ne!(fresh.id(), first.id());
+    assert_eq!(engine.rx_body_payload(first.id()), Some(&[0x44; 16][..]));
+}
+
+#[test]
+fn bert_apply_packs_three_blocks() {
+    let mut engine = build_default_bodies();
+    let key = block_key();
+    let mut body = [0u8; 3072];
+    for (i, b) in body.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    let block = BlockValue::bert(0, false).expect("bert");
+    let progress = engine
+        .apply_block1(key, block, &body, Some(3072))
+        .expect("bert apply");
+    assert!(progress.complete());
+    assert_eq!(progress.filled(), 3072);
+    assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+    assert!(
+        engine
+            .rx_body_transfer(progress.id())
+            .is_some_and(|t| t.is_bert())
+    );
+}
+
+#[test]
+fn bert_apply_from_rx_and_encode_with_request_tag() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 7], 5683);
+    let token = sample_token(&[0xbe]);
+    let tag = BodyTag::new(b"rt").expect("rt");
+    let mut payload = [0u8; 1224];
+    for (i, b) in payload.iter_mut().enumerate() {
+        *b = (i % 199) as u8;
+    }
+    let blk = BlockValue::bert(0, false).expect("bert").encode();
+    let size1 = crate::encode_uint(payload.len() as u32);
+    let opts = [
+        Opt::block1(&blk),
+        Opt::size1(&size1),
+        Opt::request_tag(b"rt"),
+    ];
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(8))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(&payload);
+    let mut buf = [0u8; 1472];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    let progress = engine.apply_block1_rx(rx).expect("apply bert");
+    assert!(progress.complete());
+    assert_eq!(
+        engine.rx_body_payload(progress.id()),
+        Some(payload.as_slice())
+    );
+    assert_eq!(
+        engine.lookup_rx_body(BlockKey::new(token, ep).with_identity(tag)),
+        Some(progress.id())
+    );
+
+    let out_key = BlockKey::new(sample_token(&[0xee]), ep).with_identity(tag);
+    let id = engine
+        .start_block1(out_key, &payload, BlockValue::SZX_BERT)
+        .expect("start bert");
+    let issued = engine.next_bert1(id, 1024).expect("first 1024");
+    assert!(issued.block().is_bert());
+    assert!(issued.block().more());
+    assert_eq!(issued.len(), 1024);
+    let tx = engine.acquire_tx().expect("tx");
+    let encoded = engine
+        .encode_bert1_tx(
+            id,
+            tx,
+            Type::Confirmable,
+            Code::PUT,
+            MessageId::new(9),
+            1024,
+        )
+        .expect("encode bert");
+    assert!(!encoded.block().more());
+    assert_eq!(encoded.len(), 200);
+    let parsed = engine.decode_tx(tx).expect("decode tx");
+    assert!(parsed.block1().expect("b1").expect("ok").is_bert());
+    assert_eq!(parsed.request_tag().next(), Some(&b"rt"[..]));
 }
 
 #[test]

@@ -15,8 +15,10 @@
 //! key). Max-Age / CON-wait lifetime is colocated on the row
 //! ([`ObserveLifetime`]). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
 //! sidecar on body-pool slots when block-wise is enabled (incoming
-//! Block1/Block2, outgoing Block1/Block2). Incoming and outgoing
-//! Q-Block1 / Q-Block2 reuse the same slots with a `MAX_PAYLOADS` window.
+//! Block1/Block2, outgoing Block1/Block2), including BERT (SZX 7).
+//! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`].
+//! Incoming and outgoing Q-Block1 / Q-Block2 reuse the same slots with a
+//! `MAX_PAYLOADS` window.
 //! They do not invent 4.02 / 2.31 / RST policy.
 //! Temporary application [`Access`] / [`AccessMut`] pins an occupied
 //! datagram or body slot against [`SlotPool::release`] (`design.md`
@@ -54,7 +56,9 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
-pub use block::{BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, QBlockRecover};
+pub use block::{
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
+};
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
 pub use endpoint::Endpoint;
@@ -413,6 +417,13 @@ pub trait BodySlots {
         id: SlotId,
     ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
 
+    /// Issue one outgoing Block1 BERT payload of at most `max_payload` bytes.
+    fn next_bert1(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
+
     /// Admit an outgoing Block2 body (complete body copied into a TX slot).
     fn start_block2(
         &mut self,
@@ -425,6 +436,13 @@ pub trait BodySlots {
     fn next_block2(
         &mut self,
         id: SlotId,
+    ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
+
+    /// Issue one outgoing Block2 BERT payload of at most `max_payload` bytes.
+    fn next_bert2(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
     ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
 
     /// Admit an outgoing Q-Block1 body (complete body copied into a TX slot).

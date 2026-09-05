@@ -5,33 +5,109 @@
 //! messages stay in ordinary datagram slots. Incoming and outgoing Q-Block1 /
 //! Q-Block2 use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10).
 //! Incoming window holes surface as [`QBlockRecover`]; outgoing reissue reads
-//! the complete body without changing window state. BERT stays out of scope.
-//! CON RTO lives on [`super::PendingCon`], not on this sidecar.
-//! See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
+//! the complete body without changing window state. BERT (SZX 7) packs
+//! multiple 1024-byte ranges into one payload. Request-Tag / ETag body
+//! identity lives on [`BlockKey`]. CON RTO lives on [`super::PendingCon`],
+//! not on this sidecar. See `knowledge/rfcs/rfc7959.txt`,
+//! `knowledge/rfcs/rfc9175.txt`, `knowledge/rfcs/rfc9177.txt`, and
+//! `knowledge/rfcs/rfc8323.txt`.
 
 use super::Access;
 use super::AccessMut;
 use super::endpoint::Endpoint;
 use super::slot::{SlotError, SlotId};
-use crate::error::BlockTransferError;
+use crate::error::{BlockTransferError, ValueError};
 use crate::message::{BlockValue, Token};
 
-/// Lookup identity for one classic block-wise body.
+/// Request-Tag or ETag body identity (opaque, 0..=8 bytes).
 ///
-/// RFC 7959 Block1 / Block2 ride the RFC 7252 request/response match: Token
-/// plus the remote [`Endpoint`]. This is not a Dedup key (Message ID) and not
-/// a seventh core area; it is sidecar on the body slot.
+/// [`Self::ABSENT`] is distinct from a present empty Request-Tag
+/// (`knowledge/rfcs/rfc9175.txt`). ETag uses the same storage (1..=8 on the
+/// wire). Not a seventh core area; sidecar on [`BlockKey`] / [`BlockTransfer`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BodyTag {
+    bytes: [u8; 8],
+    /// `0xff` = absent. `0..=8` = present with that length.
+    n: u8,
+}
+
+impl BodyTag {
+    /// No Request-Tag / ETag on the wire.
+    pub const ABSENT: Self = Self {
+        bytes: [0; 8],
+        n: 0xff,
+    };
+
+    /// Present empty Request-Tag (zero-length option).
+    pub const EMPTY: Self = Self {
+        bytes: [0; 8],
+        n: 0,
+    };
+
+    /// Present tag from `bytes` (0..=8).
+    pub fn new(bytes: &[u8]) -> Result<Self, ValueError> {
+        if bytes.len() > 8 {
+            return Err(ValueError::OpaqueLength);
+        }
+        let mut tag = Self::EMPTY;
+        tag.n = bytes.len() as u8;
+        tag.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(tag)
+    }
+
+    /// First Request-Tag or ETag value, or [`Self::ABSENT`].
+    pub fn from_first(bytes: Option<&[u8]>) -> Result<Self, ValueError> {
+        match bytes {
+            None => Ok(Self::ABSENT),
+            Some(b) => Self::new(b),
+        }
+    }
+
+    /// Whether this is the absent option (not a present empty value).
+    #[must_use]
+    pub const fn is_absent(self) -> bool {
+        self.n == 0xff
+    }
+
+    /// Present value bytes, or `None` when absent.
+    #[must_use]
+    pub fn as_slice(&self) -> Option<&[u8]> {
+        if self.n > 8 {
+            None
+        } else {
+            Some(&self.bytes[..self.n as usize])
+        }
+    }
+}
+
+/// Lookup identity for one block-wise body.
+///
+/// Token plus the remote [`Endpoint`] is the RFC 7252 match. [`BodyTag`] is
+/// Request-Tag (request body) or ETag (response body). This is not a Dedup
+/// key (Message ID) and not a seventh core area; it is sidecar on the body
+/// slot. See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BlockKey {
     token: Token,
     endpoint: Endpoint,
+    identity: BodyTag,
 }
 
 impl BlockKey {
-    /// Identity for one Token at `endpoint`.
+    /// Identity for one Token at `endpoint` with absent Request-Tag / ETag.
     #[must_use]
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
-        Self { token, endpoint }
+        Self {
+            token,
+            endpoint,
+            identity: BodyTag::ABSENT,
+        }
+    }
+
+    /// Same Token and endpoint with `identity` (Request-Tag or ETag).
+    #[must_use]
+    pub const fn with_identity(self, identity: BodyTag) -> Self {
+        Self { identity, ..self }
     }
 
     /// Token of the block-wise exchange.
@@ -44,6 +120,12 @@ impl BlockKey {
     #[must_use]
     pub const fn endpoint(self) -> Endpoint {
         self.endpoint
+    }
+
+    /// Request-Tag or ETag stored for this body. Absent is a distinct value.
+    #[must_use]
+    pub const fn identity(self) -> BodyTag {
+        self.identity
     }
 }
 
@@ -340,8 +422,9 @@ struct QWindow {
 /// Q-Block tracks a [`Self::MAX_PAYLOADS`]-wide bitmap on the current window
 /// and allows out-of-order NUMs inside that window. Outgoing Q-Block issues
 /// unsent NUMs in that same window (increasing NUM; RFC 9177 §4.3) and
-/// advances on a peer window ACK. See `design.md`,
-/// `knowledge/rfcs/rfc7959.txt`, and `knowledge/rfcs/rfc9177.txt`.
+/// advances on a peer window ACK. BERT (SZX 7) is classic Block with
+/// multi-block payloads. See `design.md`, `knowledge/rfcs/rfc7959.txt`,
+/// `knowledge/rfcs/rfc9177.txt`, and `knowledge/rfcs/rfc8323.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockTransfer {
     key: BlockKey,
@@ -446,6 +529,9 @@ impl BlockTransfer {
         if !role.is_incoming() || !role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
         }
+        if block.is_bert() {
+            return Err(BlockTransferError::Value(ValueError::IllegalSzx));
+        }
         let mut transfer = Self {
             key,
             role,
@@ -535,6 +621,9 @@ impl BlockTransfer {
     ) -> Result<Self, BlockTransferError> {
         if !role.is_outgoing() || !role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
+        }
+        if szx == BlockValue::SZX_BERT {
+            return Err(BlockTransferError::Value(ValueError::IllegalSzx));
         }
         Self::outgoing_common(
             key,
@@ -639,10 +728,22 @@ impl BlockTransfer {
         self.key.endpoint()
     }
 
+    /// Request-Tag or ETag stored on this transfer.
+    #[must_use]
+    pub const fn identity(self) -> BodyTag {
+        self.key.identity()
+    }
+
     /// Incoming or outgoing Block / Q-Block role.
     #[must_use]
     pub const fn role(self) -> BlockRole {
         self.role
+    }
+
+    /// Whether this transfer is locked to BERT (SZX 7).
+    #[must_use]
+    pub const fn is_bert(self) -> bool {
+        self.szx == BlockValue::SZX_BERT
     }
 
     /// Whether this sidecar is a Q-Block window (incoming or outgoing).
@@ -777,6 +878,10 @@ impl BlockTransfer {
             return Err(BlockTransferError::Gap);
         }
 
+        if block.is_bert() {
+            return self.accept_bert_incoming(block, payload_len, capacity);
+        }
+
         let size = usize::from(block.size());
         if block.more() {
             if payload_len != size {
@@ -811,6 +916,46 @@ impl BlockTransfer {
         Ok(offset)
     }
 
+    fn accept_bert_incoming(
+        &mut self,
+        block: BlockValue,
+        payload_len: usize,
+        capacity: usize,
+    ) -> Result<usize, BlockTransferError> {
+        if !block.is_bert() {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+        let size = usize::from(BlockValue::SIZE_MAX);
+        if block.more() && (payload_len == 0 || payload_len % size != 0) {
+            return Err(BlockTransferError::PayloadLength);
+        }
+        let offset = block_offset(block.num(), size)?;
+        let end = offset
+            .checked_add(payload_len)
+            .ok_or(BlockTransferError::Overflow)?;
+        if end > capacity {
+            return Err(BlockTransferError::Overflow);
+        }
+        if let Some(expected) = self.expected_len {
+            let expected = usize::try_from(expected).map_err(|_| BlockTransferError::Overflow)?;
+            if end > expected || (!block.more() && end != expected) {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
+        }
+
+        let nblocks =
+            u32::try_from(payload_len / size).map_err(|_| BlockTransferError::Overflow)?;
+        self.num = block.num();
+        self.more = block.more();
+        self.filled = end;
+        self.next_num = block
+            .num()
+            .checked_add(nblocks)
+            .ok_or(BlockTransferError::Overflow)?;
+        self.complete = !block.more();
+        Ok(offset)
+    }
+
     /// Accept one incoming Q-Block in the current window. Returns the write offset.
     ///
     /// Out-of-order NUMs inside `[window_base, window_base + MAX_PAYLOADS)` are
@@ -826,6 +971,9 @@ impl BlockTransfer {
     ) -> Result<usize, BlockTransferError> {
         if !self.role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
+        }
+        if block.is_bert() {
+            return Err(BlockTransferError::Value(ValueError::IllegalSzx));
         }
         if self.complete {
             return Err(BlockTransferError::AlreadyComplete);
@@ -932,6 +1080,9 @@ impl BlockTransfer {
     }
 
     /// Issue the next in-order outgoing classic block. Returns `(block, offset, len)`.
+    ///
+    /// BERT (SZX 7) issues the remaining body as one multi-block payload.
+    /// Use [`Self::issue_bert_outgoing`] to cap the datagram payload.
     pub fn issue_outgoing(&mut self) -> Result<(BlockValue, usize, usize), BlockTransferError> {
         if !self.role.is_outgoing() || self.role.is_q_block() {
             return Err(BlockTransferError::IdentityMismatch);
@@ -939,7 +1090,58 @@ impl BlockTransfer {
         if self.complete {
             return Err(BlockTransferError::AlreadyComplete);
         }
+        if self.is_bert() {
+            return self.issue_bert_outgoing(self.filled);
+        }
         self.issue_range(self.next_num)
+    }
+
+    /// Issue one BERT payload of at most `max_payload` bytes.
+    ///
+    /// Non-final payloads are a positive multiple of 1024. NUM advances by
+    /// `payload_len / 1024`. Q-Block is rejected. See
+    /// `knowledge/rfcs/rfc8323.txt`.
+    pub fn issue_bert_outgoing(
+        &mut self,
+        max_payload: usize,
+    ) -> Result<(BlockValue, usize, usize), BlockTransferError> {
+        if !self.role.is_outgoing() || self.role.is_q_block() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        if !self.is_bert() {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+        if self.complete {
+            return Err(BlockTransferError::AlreadyComplete);
+        }
+        let size = usize::from(BlockValue::SIZE_MAX);
+        let offset = block_offset(self.next_num, size)?;
+        if offset > self.filled || (offset == self.filled && self.filled > 0) {
+            return Err(BlockTransferError::Gap);
+        }
+        let remaining = self.filled - offset;
+        let len = if remaining <= max_payload {
+            remaining
+        } else {
+            (max_payload / size) * size
+        };
+        if remaining > 0 && len == 0 {
+            return Err(BlockTransferError::PayloadLength);
+        }
+        if remaining > len && (len == 0 || len % size != 0) {
+            return Err(BlockTransferError::PayloadLength);
+        }
+        let more = remaining > len;
+        let block = BlockValue::bert(self.next_num, more)?;
+        let nblocks = u32::try_from(len / size).map_err(|_| BlockTransferError::Overflow)?;
+        self.num = self.next_num;
+        self.more = more;
+        self.next_num = self
+            .next_num
+            .checked_add(nblocks)
+            .ok_or(BlockTransferError::Overflow)?;
+        self.complete = !more;
+        Ok((block, offset, len))
     }
 
     /// Issue the next unsent NUM in the current Q-Block window.
@@ -1107,6 +1309,18 @@ pub(crate) fn block_offset(num: u32, size: usize) -> Result<usize, BlockTransfer
         .ok_or(BlockTransferError::Overflow)
 }
 
+/// Same Request-Tag / ETag and endpoint, possibly a different Token.
+///
+/// Used when Q-Block datagrams of one body carry distinct Tokens
+/// (`knowledge/rfcs/rfc9177.txt`). Absent identity is not a unique key.
+#[must_use]
+pub(crate) fn same_body_identity(transfer: BlockTransfer, key: BlockKey, role: BlockRole) -> bool {
+    !key.identity().is_absent()
+        && transfer.role() == role
+        && transfer.endpoint() == key.endpoint()
+        && transfer.identity() == key.identity()
+}
+
 /// Start a classic or Q-Block incoming sidecar from `role`.
 pub(crate) fn start_incoming(
     key: BlockKey,
@@ -1199,6 +1413,12 @@ pub(crate) trait BodyOps {
         id: SlotId,
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError>;
+    fn next_bert_outgoing(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError>;
     fn ack_outgoing(
         &mut self,
         id: SlotId,
@@ -1229,8 +1449,8 @@ pub(crate) fn write_range(
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockKey, BlockRole, BlockTransfer};
-    use crate::error::BlockTransferError;
+    use super::{BlockKey, BlockRole, BlockTransfer, BodyTag};
+    use crate::error::{BlockTransferError, ValueError};
     use crate::message::{BlockValue, Token};
     use crate::storage::Endpoint;
 
@@ -1754,5 +1974,134 @@ mod tests {
             incoming.reissue_q_outgoing(0).expect_err("in"),
             BlockTransferError::IdentityMismatch
         );
+    }
+
+    #[test]
+    fn body_tag_absent_empty_and_present() {
+        assert!(BodyTag::ABSENT.is_absent());
+        assert_eq!(BodyTag::ABSENT.as_slice(), None);
+        assert!(!BodyTag::EMPTY.is_absent());
+        assert_eq!(BodyTag::EMPTY.as_slice(), Some(&b""[..]));
+        let tag = BodyTag::new(b"etag12").expect("tag");
+        assert_eq!(tag.as_slice(), Some(&b"etag12"[..]));
+        assert_eq!(BodyTag::new(&[0; 9]), Err(ValueError::OpaqueLength));
+        assert_eq!(BodyTag::from_first(None).expect("absent"), BodyTag::ABSENT);
+        assert_eq!(
+            BodyTag::from_first(Some(b"ab")).expect("first").as_slice(),
+            Some(&b"ab"[..])
+        );
+        let a = BlockKey::new(key().token(), key().endpoint());
+        let b = a.with_identity(tag);
+        assert_ne!(a, b);
+        assert_eq!(b.identity(), tag);
+        assert!(a.identity().is_absent());
+    }
+
+    #[test]
+    fn bert_incoming_multi_block_then_final() {
+        let expected = 3072 + 5120 + 4711;
+        let mut t = BlockTransfer::incoming_block1(
+            key(),
+            BlockValue::bert(0, true).expect("bert"),
+            3072,
+            16384,
+            Some(expected as u32),
+        )
+        .expect("3072");
+        assert!(t.is_bert());
+        assert_eq!(t.szx(), BlockValue::SZX_BERT);
+        assert_eq!(t.filled(), 3072);
+        assert_eq!(t.next_num(), 3);
+        assert!(!t.is_complete());
+        assert_eq!(
+            t.accept_incoming(BlockValue::bert(3, true).expect("bert"), 5120, 16384)
+                .expect("5120"),
+            3072
+        );
+        assert_eq!(t.next_num(), 8);
+        assert_eq!(
+            t.accept_incoming(BlockValue::bert(8, false).expect("bert"), 4711, 16384)
+                .expect("final"),
+            8192
+        );
+        assert!(t.is_complete());
+        assert_eq!(t.filled(), expected);
+    }
+
+    #[test]
+    fn bert_incoming_rejects_non_multiple_and_szx_mix() {
+        assert_eq!(
+            BlockTransfer::incoming_block1(
+                key(),
+                BlockValue::bert(0, true).expect("bert"),
+                2048 + 1,
+                8192,
+                None
+            )
+            .expect_err("not multiple"),
+            BlockTransferError::PayloadLength
+        );
+        let mut t = BlockTransfer::incoming_block1(
+            key(),
+            BlockValue::bert(0, true).expect("bert"),
+            1024,
+            4096,
+            None,
+        )
+        .expect("first");
+        let classic = BlockValue::from_size(1, false, 1024).expect("szx6");
+        assert_eq!(
+            t.accept_incoming(classic, 1024, 4096).expect_err("mix"),
+            BlockTransferError::SzxMismatch
+        );
+        assert_eq!(
+            BlockTransfer::incoming_q_block1(
+                key(),
+                BlockValue::bert(0, true).expect("bert"),
+                1024,
+                4096,
+                None
+            )
+            .expect_err("q bert"),
+            BlockTransferError::Value(ValueError::IllegalSzx)
+        );
+    }
+
+    #[test]
+    fn bert_outgoing_caps_payload_and_advances_num() {
+        let mut t =
+            BlockTransfer::outgoing_block2(key(), 8192 + 16384 + 5683, 7, 32768).expect("start");
+        assert!(t.is_bert());
+        let (b0, off0, len0) = t.issue_bert_outgoing(8192).expect("first");
+        assert!(b0.is_bert());
+        assert_eq!((b0.num(), b0.more(), off0, len0), (0, true, 0, 8192));
+        assert_eq!(t.next_num(), 8);
+        let (b1, off1, len1) = t.issue_bert_outgoing(16384).expect("16384");
+        assert_eq!((b1.num(), b1.more(), off1, len1), (8, true, 8192, 16384));
+        assert_eq!(t.next_num(), 24);
+        let (b2, off2, len2) = t.issue_bert_outgoing(8192).expect("final");
+        assert_eq!((b2.num(), b2.more(), off2, len2), (24, false, 24576, 5683));
+        assert!(t.is_complete());
+        assert_eq!(
+            t.issue_bert_outgoing(1024).expect_err("done"),
+            BlockTransferError::AlreadyComplete
+        );
+    }
+
+    #[test]
+    fn bert_outgoing_rejects_q_and_too_small_max() {
+        assert_eq!(
+            BlockTransfer::outgoing_q_block1(key(), 2048, 7, 4096).expect_err("q"),
+            BlockTransferError::Value(ValueError::IllegalSzx)
+        );
+        let mut t = BlockTransfer::outgoing_block1(key(), 4096, 7, 4096).expect("bert");
+        assert_eq!(
+            t.issue_bert_outgoing(500).expect_err("tiny"),
+            BlockTransferError::PayloadLength
+        );
+        let (b, _, len) = t.issue_outgoing().expect("whole remaining");
+        assert!(b.is_bert());
+        assert!(!b.more());
+        assert_eq!(len, 4096);
     }
 }

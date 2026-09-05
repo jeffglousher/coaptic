@@ -21,8 +21,9 @@
 //! [`value`] codecs interpret option values as empty, opaque, uint, or
 //! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
 //! Table 4. Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2
-//! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX. None of those
-//! numbers are in Table 4. [`ParsedMessage::check_rfc7252_formats`] is
+//! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX (SZX 7 is BERT).
+//! Request-Tag (RFC 9175) is opaque. None of those numbers are in Table 4.
+//! [`ParsedMessage::check_rfc7252_formats`] is
 //! optional and separate from wire decode and from
 //! [`ParsedMessage::check_rfc7252_options`].
 //!

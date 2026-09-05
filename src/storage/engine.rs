@@ -24,7 +24,7 @@ use super::SlotError;
 use super::SlotId;
 use super::Storage;
 use super::block::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, OutgoingBlock, QBlockRecover,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
 };
 use crate::error::{BlockTransferError, SlotMessageError};
 use crate::message::{
@@ -37,8 +37,9 @@ use crate::message::{
 /// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
 /// Q-Block body-slot assembly when `S` implements [`BodySlots`].
 /// [`Self::progress`] is one bounded pass (`design.md` §Reference progress
-/// contract), including at most one incoming Q-Block recover. BERT is not
-/// implemented.
+/// contract), including at most one incoming Q-Block recover. BERT (SZX 7)
+/// and Request-Tag / ETag body identity live on [`BlockTransfer`] /
+/// [`BlockKey`].
 ///
 /// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
 /// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
@@ -919,7 +920,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
-    /// separate). Missing Block1 is [`BlockTransferError::MissingBlock`].
+    /// separate). Request-Tag, when present, is stored on the body sidecar.
+    /// Missing Block1 is [`BlockTransferError::MissingBlock`].
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1024,9 +1026,8 @@ impl<S: Storage + BodySlots> Engine<S> {
 
     /// Decode occupied RX `id` and [`Self::apply_q_block1`] using Q-Block1 + Token + endpoint.
     ///
-    /// Identity is Token + Endpoint (same as classic Block). RFC 9177 Q-Block1
-    /// body match uses Request-Tag; that is not applied here. Missing Q-Block1
-    /// is [`BlockTransferError::MissingBlock`].
+    /// Identity is Token + Endpoint plus Request-Tag when present (RFC 9175 /
+    /// RFC 9177). Missing Q-Block1 is [`BlockTransferError::MissingBlock`].
     pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1130,6 +1131,42 @@ impl<S: Storage + BodySlots> Engine<S> {
         )
     }
 
+    /// Issue one outgoing Block1 BERT payload of at most `max_payload` bytes.
+    #[inline]
+    pub fn next_bert1(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_bert1(id, max_payload)
+    }
+
+    /// Issue the next Block1 BERT range and encode it into occupied TX `tx_id`.
+    ///
+    /// Request-Tag comes from the body sidecar when present. Does not invent
+    /// 2.31 / 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    pub fn encode_bert1_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_bert1(body_id, max_payload)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::Block1,
+        )
+    }
+
     /// Copy a complete body into an Outgoing Body Slot and start Block2.
     #[inline]
     pub fn start_block2(
@@ -1163,6 +1200,42 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let issued = self.storage.next_block2(body_id)?;
+        self.finish_outgoing_tx(
+            issued,
+            body_id,
+            tx_id,
+            (ty, code, message_id),
+            OutgoingBlockOpt::Block2,
+        )
+    }
+
+    /// Issue one outgoing Block2 BERT payload of at most `max_payload` bytes.
+    #[inline]
+    pub fn next_bert2(
+        &mut self,
+        id: SlotId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        self.storage.next_bert2(id, max_payload)
+    }
+
+    /// Issue the next Block2 BERT range and encode it into occupied TX `tx_id`.
+    ///
+    /// ETag comes from the body sidecar when present. Does not invent 2.31 /
+    /// 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    pub fn encode_bert2_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        ty: Type,
+        code: Code,
+        message_id: MessageId,
+        max_payload: usize,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let issued = self.storage.next_bert2(body_id, max_payload)?;
         self.finish_outgoing_tx(
             issued,
             body_id,
@@ -1206,8 +1279,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Issue the next Q-Block1 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. Size1 is
-    /// encoded (RFC 9177 §4.6). Request-Tag is caller-owned. The caller
-    /// supplies type, code, and Message ID.
+    /// encoded (RFC 9177 §4.6). Request-Tag is written when the sidecar has
+    /// one. The caller supplies type, code, and Message ID.
     pub fn encode_q_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1279,8 +1352,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Issue the next Q-Block2 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. Size2 is
-    /// encoded (RFC 9177 §4.6). ETag is caller-owned. The caller supplies
-    /// type, code, and Message ID.
+    /// encoded (RFC 9177 §4.6). ETag is written when the sidecar has one.
+    /// The caller supplies type, code, and Message ID.
     pub fn encode_q_block2_tx(
         &mut self,
         body_id: SlotId,
@@ -1347,7 +1420,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Reissue one Q-Block1 payload and encode it into occupied TX `tx_id`.
     ///
     /// Token, Size1, and endpoint come from the body sidecar. Request-Tag is
-    /// caller-owned. The caller supplies type, code, and Message ID.
+    /// written when the sidecar has one. The caller supplies type, code, and
+    /// Message ID.
     pub fn encode_q_block1_reissue_tx(
         &mut self,
         body_id: SlotId,
@@ -1373,7 +1447,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Reissue one Q-Block2 payload and encode it into occupied TX `tx_id`.
     ///
     /// Token, Size2, and endpoint come from the body sidecar. ETag is
-    /// caller-owned. The caller supplies type, code, and Message ID.
+    /// written when the sidecar has one. The caller supplies type, code, and
+    /// Message ID.
     pub fn encode_q_block2_reissue_tx(
         &mut self,
         body_id: SlotId,
@@ -1490,8 +1565,8 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
-        let (token, block, expected, n) = {
+        let mut tmp = [0u8; 4096];
+        let (token, block, expected, identity, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
@@ -1512,14 +1587,15 @@ impl<S: Storage + BodySlots> Engine<S> {
                     None => None,
                 }
             };
+            let identity = which.read_identity(&parsed)?;
             let payload = parsed.payload();
             if payload.len() > tmp.len() {
                 return Err(BlockTransferError::PayloadLength);
             }
             tmp[..payload.len()].copy_from_slice(payload);
-            (parsed.token(), block, expected, payload.len())
+            (parsed.token(), block, expected, identity, payload.len())
         };
-        let key = BlockKey::new(token, endpoint);
+        let key = BlockKey::new(token, endpoint).with_identity(identity);
         match which {
             RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp[..n], expected),
             RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp[..n], expected),
@@ -1544,7 +1620,7 @@ impl<S: Storage + BodySlots> Engine<S> {
             .storage
             .tx_body_transfer(body_id)
             .ok_or(BlockTransferError::NoTransfer)?;
-        let mut tmp = [0u8; BlockValue::SIZE_MAX as usize];
+        let mut tmp = [0u8; 4096];
         let payload = self
             .storage
             .tx_body_payload(body_id)
@@ -1560,19 +1636,46 @@ impl<S: Storage + BodySlots> Engine<S> {
         let encoded = issued.block().encode();
         let size_n = u32::try_from(transfer.filled()).map_err(|_| BlockTransferError::Overflow)?;
         let size = encode_uint(size_n);
-        let q1 = [Opt::q_block1(&encoded), Opt::size1(&size)];
-        let q2 = [Opt::size2(&size), Opt::q_block2(&encoded)];
-        let b1 = [Opt::block1(&encoded)];
-        let b2 = [Opt::block2(&encoded)];
-        let opts: &[Opt<'_>] = match which {
-            OutgoingBlockOpt::Block1 => &b1,
-            OutgoingBlockOpt::Block2 => &b2,
-            OutgoingBlockOpt::QBlock1 => &q1,
-            OutgoingBlockOpt::QBlock2 => &q2,
-        };
+        let identity = transfer.identity();
+        let tag = identity.as_slice();
+        let mut opts = OptionsBuilder::<4>::new();
+        if let Some(tag) = tag {
+            match which {
+                OutgoingBlockOpt::Block1 | OutgoingBlockOpt::QBlock1 => {
+                    opts.push(Opt::request_tag(tag))
+                        .map_err(|_| BlockTransferError::Overflow)?;
+                }
+                OutgoingBlockOpt::Block2 | OutgoingBlockOpt::QBlock2 => {
+                    opts.push(Opt::etag(tag))
+                        .map_err(|_| BlockTransferError::Overflow)?;
+                }
+            }
+        }
+        match which {
+            OutgoingBlockOpt::Block1 => {
+                opts.push(Opt::block1(&encoded))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+            }
+            OutgoingBlockOpt::Block2 => {
+                opts.push(Opt::block2(&encoded))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+            }
+            OutgoingBlockOpt::QBlock1 => {
+                opts.push(Opt::q_block1(&encoded))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+                opts.push(Opt::size1(&size))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+            }
+            OutgoingBlockOpt::QBlock2 => {
+                opts.push(Opt::size2(&size))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+                opts.push(Opt::q_block2(&encoded))
+                    .map_err(|_| BlockTransferError::Overflow)?;
+            }
+        }
         let msg = Message::new(ty, code, message_id)
             .with_token(transfer.token())
-            .with_options(opts)
+            .with_options(opts.as_slice())
             .with_payload(&tmp[..issued.len()]);
         let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
             SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
@@ -1662,6 +1765,14 @@ impl RxBlockOpt {
             Self::QBlock1 => parsed.q_block1(),
             Self::QBlock2 => parsed.q_block2().next(),
         }
+    }
+
+    fn read_identity(self, parsed: &ParsedMessage<'_>) -> Result<BodyTag, BlockTransferError> {
+        let first = match self {
+            Self::Block1 | Self::QBlock1 => parsed.request_tag().next(),
+            Self::Block2 | Self::QBlock2 => parsed.etag().next(),
+        };
+        BodyTag::from_first(first).map_err(BlockTransferError::from)
     }
 }
 

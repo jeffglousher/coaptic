@@ -20,21 +20,22 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#28** on `main` plus the in-crate validation harness on this branch:
+Through squash-merges **#7–#29** on `main` plus this change:
 
 | Domain | In the crate |
 | --- | --- |
-| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs, `OptionsBuilder`, `Ids`, Token mint |
-| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry`, Observe interest, classic Block + Q-Block body paths |
+| Message | Decode/encode, empty ACK/RST, option values, Observe + Block/Q-Block codecs (SZX 7 is BERT), Request-Tag, `OptionsBuilder`, `Ids`, Token mint |
+| Storage | `Engine` / `Memory` / `AllocMemory`, `Endpoint`, Dedup, pending CON + RTO, `ExchangeEntry`, Observe interest, classic Block + Q-Block body paths, [`BodyTag`](src/storage/block.rs) on [`BlockKey`](src/storage/block.rs), BERT multi-block payloads |
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, incoming `QBlockRecover` + outgoing Q-Block reissue |
-| Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`). In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
+| Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
 The core does not send. The caller owns the clock, jitter, and socket.
 
 ## Deferred
 
 - DTLS, OSCORE, 6LoWPAN (and those plugtest suites)
-- BERT, Request-Tag / ETag body identity
+- RST / 4.02 / 2.31 / 4.08 policy (caller-owned)
+- Echo option (RFC 9175) beyond Request-Tag / ETag body identity
 - Public crates.io / public GitHub
 
 Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).

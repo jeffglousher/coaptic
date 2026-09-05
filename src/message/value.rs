@@ -263,12 +263,13 @@ impl From<ContentFormat> for u16 {
 
 /// NUM/M/SZX fields of Block1, Block2, Q-Block1, and Q-Block2.
 ///
-/// Q-Block uses the same bitfields (RFC 9177 §4.2). BERT SZX 7 is rejected.
-/// This type does not assemble bodies. Enabled body slot capacity is a
-/// multiple of [`Self::SIZE_MAX`] (1024); see `design.md` and
-/// `knowledge/memory.md`.
+/// Q-Block uses the same bitfields (RFC 9177 §4.2). SZX 7 is BERT
+/// (`knowledge/rfcs/rfc8323.txt`). This type does not assemble bodies.
+/// Enabled body slot capacity is a multiple of [`Self::SIZE_MAX`] (1024);
+/// see `design.md` and `knowledge/memory.md`.
 ///
-/// See `knowledge/rfcs/rfc7959.txt` and `knowledge/rfcs/rfc9177.txt`.
+/// See `knowledge/rfcs/rfc7959.txt`, `knowledge/rfcs/rfc9177.txt`, and
+/// `knowledge/rfcs/rfc8323.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BlockValue {
     num: u32,
@@ -279,8 +280,10 @@ pub struct BlockValue {
 impl BlockValue {
     /// Smallest legal SZX (block size 16).
     pub const SZX_MIN: u8 = 0;
-    /// Largest legal SZX (block size 1024). SZX 7 is reserved.
+    /// Largest classic SZX (block size 1024).
     pub const SZX_MAX: u8 = 6;
+    /// BERT SZX (`knowledge/rfcs/rfc8323.txt`). Conceptual size is [`Self::SIZE_MAX`].
+    pub const SZX_BERT: u8 = 7;
     /// Largest NUM that fits in a 3-byte Block option value (20 bits).
     pub const NUM_MAX: u32 = 0x000f_ffff;
     /// Smallest legal block size in bytes (SZX 0).
@@ -291,9 +294,9 @@ impl BlockValue {
     /// reassemble block-wise bodies here.
     pub const SIZE_MAX: u16 = 1024;
 
-    /// Build from NUM, M, and SZX.
+    /// Build from NUM, M, and SZX (0..=6, or [`Self::SZX_BERT`]).
     pub const fn new(num: u32, more: bool, szx: u8) -> Result<Self, ValueError> {
-        if szx > Self::SZX_MAX {
+        if szx > Self::SZX_BERT {
             return Err(ValueError::IllegalSzx);
         }
         if num > Self::NUM_MAX {
@@ -322,16 +325,33 @@ impl BlockValue {
         self.more
     }
 
-    /// Size exponent (SZX, 0..=6).
+    /// Size exponent (SZX, 0..=6, or [`Self::SZX_BERT`]).
     #[must_use]
     pub const fn szx(self) -> u8 {
         self.szx
     }
 
-    /// Block size in bytes for this SZX.
+    /// Whether this is a BERT option (SZX 7).
+    ///
+    /// See `knowledge/rfcs/rfc8323.txt`.
+    #[must_use]
+    pub const fn is_bert(self) -> bool {
+        self.szx == Self::SZX_BERT
+    }
+
+    /// NUM/M with SZX 7 (BERT). Conceptual block size is [`Self::SIZE_MAX`].
+    pub const fn bert(num: u32, more: bool) -> Result<Self, ValueError> {
+        Self::new(num, more, Self::SZX_BERT)
+    }
+
+    /// Block size in bytes for this SZX. BERT uses [`Self::SIZE_MAX`].
     #[must_use]
     pub const fn size(self) -> u16 {
-        16 << self.szx
+        if self.is_bert() {
+            Self::SIZE_MAX
+        } else {
+            16 << self.szx
+        }
     }
 
     /// Packed Block / Q-Block uint. See `knowledge/rfcs/rfc7959.txt`.
@@ -348,8 +368,8 @@ impl BlockValue {
 
     /// Decode a Block / Q-Block option value.
     ///
-    /// Rejects more than 3 value bytes (RFC 7959 / RFC 9177 length), SZX 7,
-    /// and NUM above 20 bits. Empty bytes are NUM 0, M unset, SZX 0.
+    /// Rejects more than 3 value bytes (RFC 7959 / RFC 9177 length) and NUM
+    /// above 20 bits. SZX 7 is BERT. Empty bytes are NUM 0, M unset, SZX 0.
     pub fn decode(bytes: &[u8]) -> Result<Self, ValueError> {
         if bytes.len() > 3 {
             return Err(ValueError::UintOverflow);
@@ -370,7 +390,12 @@ impl BlockValue {
     }
 
     /// Block size in bytes for `szx`, or [`ValueError::IllegalSzx`].
+    ///
+    /// BERT (`szx == 7`) is [`Self::SIZE_MAX`].
     pub const fn size_from_szx(szx: u8) -> Result<u16, ValueError> {
+        if szx == Self::SZX_BERT {
+            return Ok(Self::SIZE_MAX);
+        }
         if szx > Self::SZX_MAX {
             return Err(ValueError::IllegalSzx);
         }
@@ -490,6 +515,14 @@ impl<'a> Opt<'a> {
     #[must_use]
     pub const fn etag(tag: &'a [u8]) -> Self {
         Self::opaque(OptionNumber::ETAG, tag)
+    }
+
+    /// Request-Tag (opaque, 0..=8). RFC 9175; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub const fn request_tag(tag: &'a [u8]) -> Self {
+        Self::opaque(OptionNumber::REQUEST_TAG, tag)
     }
 
     /// If-None-Match (empty).
@@ -897,6 +930,16 @@ impl<'a> ParsedMessage<'a> {
         }
     }
 
+    /// Request-Tag values in wire order. RFC 9175; repeatable.
+    ///
+    /// See `knowledge/rfcs/rfc9175.txt`.
+    #[must_use]
+    pub fn request_tag(self) -> OpaqueOptions<'a> {
+        OpaqueOptions {
+            inner: self.get_options(OptionNumber::REQUEST_TAG),
+        }
+    }
+
     /// First known RFC 7252 option whose value has the wrong format.
     #[must_use]
     pub fn bad_option_format(self) -> Option<OptionNumber> {
@@ -1035,6 +1078,9 @@ mod unit_tests {
         assert!(!OptionNumber::BLOCK2.is_rfc7252());
         assert!(!OptionNumber::Q_BLOCK1.is_rfc7252());
         assert!(!OptionNumber::SIZE2.is_rfc7252());
+        assert!(!OptionNumber::REQUEST_TAG.is_rfc7252());
+        assert!(!OptionNumber::REQUEST_TAG.is_critical());
+        assert!(!OptionNumber::REQUEST_TAG.is_unsafe());
     }
 
     #[test]
@@ -1054,7 +1100,11 @@ mod unit_tests {
             assert_eq!(decode_block(encoded.as_bytes()).expect("roundtrip"), value);
             assert_eq!(EncodedUint::from(value).as_bytes(), encoded.as_bytes());
         }
-        assert_eq!(BlockValue::size_from_szx(7), Err(ValueError::IllegalSzx));
+        assert_eq!(
+            BlockValue::size_from_szx(BlockValue::SZX_BERT).expect("bert"),
+            BlockValue::SIZE_MAX
+        );
+        assert_eq!(BlockValue::size_from_szx(8), Err(ValueError::IllegalSzx));
         assert_eq!(BlockValue::szx_from_size(15), Err(ValueError::IllegalSzx));
         assert_eq!(BlockValue::szx_from_size(17), Err(ValueError::IllegalSzx));
         assert_eq!(BlockValue::szx_from_size(2048), Err(ValueError::IllegalSzx));
@@ -1099,7 +1149,12 @@ mod unit_tests {
             Err(ValueError::BlockNumOverflow)
         );
         assert_eq!(decode_block(&[1, 0, 0, 0]), Err(ValueError::UintOverflow));
-        assert_eq!(decode_block(&[0x07]), Err(ValueError::IllegalSzx));
+        let bert = decode_block(&[0x07]).expect("bert szx");
+        assert!(bert.is_bert());
+        assert_eq!(bert.size(), BlockValue::SIZE_MAX);
+        assert_eq!(bert.num(), 0);
+        assert!(!bert.more());
+        assert_eq!(BlockValue::new(0, false, 8), Err(ValueError::IllegalSzx));
         assert_eq!(
             decode_block(&[0, 0x16]).expect("leading zero"),
             BlockValue::new(1, false, 6).expect("num 1 szx 6")
