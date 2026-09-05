@@ -1,6 +1,6 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
-use super::{Reply, Request, Resource, Site};
+use super::{Reply, Request, Site, State, get, post};
 use crate::app::App;
 use crate::message::{
     Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode,
@@ -8,30 +8,28 @@ use crate::message::{
 };
 use crate::storage::{DatagramIo, Endpoint, profiles};
 
-struct Temp {
-    celsius: i16,
+struct Sensors {
+    temp_c: i16,
+    led_on: bool,
 }
 
-impl Resource for Temp {
-    fn get(&mut self, _req: &Request<'_>) -> Reply {
-        let _ = self.celsius;
-        Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
-    }
+fn get_temp(State(s): State<&mut Sensors>, _req: Request<'_>) -> Reply {
+    let _ = s.temp_c;
+    Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-struct Led {
-    on: bool,
+fn get_led(State(s): State<&mut Sensors>, _: Request<'_>) -> Reply {
+    Reply::content(if s.led_on { b"on" } else { b"off" })
 }
 
-impl Resource for Led {
-    fn get(&mut self, _: &Request<'_>) -> Reply {
-        Reply::content(if self.on { b"on" } else { b"off" })
-    }
+fn put_led(State(s): State<&mut Sensors>, req: Request<'_>) -> Reply {
+    s.led_on = req.payload() == b"1";
+    Reply::changed()
+}
 
-    fn put(&mut self, req: &Request<'_>) -> Reply {
-        self.on = req.payload() == b"1";
-        Reply::changed()
-    }
+fn post_led(State(s): State<&mut Sensors>, _: Request<'_>) -> Reply {
+    s.led_on = !s.led_on;
+    Reply::changed()
 }
 
 #[derive(Default)]
@@ -94,14 +92,17 @@ fn encode_req_ty(
     (buf, n)
 }
 
-fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
-    let mut app = App::profile::<profiles::Default>()
+fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback, Sensors> {
+    App::profile::<profiles::Default>()
         .block_wise(false)
+        .state(Sensors {
+            temp_c: 215,
+            led_on: false,
+        })
+        .route(&["sensors", "temp"], get(get_temp))
+        .route(&["leds", "0"], get(get_led).put(put_led))
         .bind(io)
-        .expect("bind");
-    app.at(&["sensors", "temp"], Temp { celsius: 215 })
-        .at(&["leds", "0"], Led { on: false });
-    app
+        .expect("bind")
 }
 
 struct LastReply {
@@ -112,7 +113,7 @@ struct LastReply {
     content_format: Option<ContentFormat>,
 }
 
-fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
+fn last_reply(app: &App<profiles::Default, Loopback, Sensors>) -> LastReply {
     let (_, bytes, n) = app.transport().last_send.expect("sent");
     let parsed = decode(&bytes[..n]).expect("decode reply");
     let mut payload = [0u8; 64];
@@ -179,6 +180,7 @@ fn put_led_then_get_reflects_state() {
     });
     app.poll(0).expect("poll");
     assert_eq!(last_reply(&app).code, Code::CHANGED);
+    assert!(app.state().led_on);
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     app.transport_mut().inbox = Some((peer, wire, n));
@@ -245,11 +247,20 @@ fn no_response_suppresses_success() {
 fn well_known_core_lists_registered_paths() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
-    let mut app = app_with_site(Loopback {
-        inbox: Some((peer, wire, n)),
-        last_send: None,
-    });
-    app.well_known_core();
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .state(Sensors {
+            temp_c: 215,
+            led_on: false,
+        })
+        .route(&["sensors", "temp"], get(get_temp))
+        .route(&["leds", "0"], get(get_led).put(put_led))
+        .well_known_core()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
     app.poll(0).expect("poll");
     let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::CONTENT);
@@ -260,22 +271,68 @@ fn well_known_core_lists_registered_paths() {
 
 #[test]
 fn site_dispatch_table() {
-    let mut site = Site::<4>::new();
-    site.at(&["sensors", "temp"], Temp { celsius: 215 })
-        .at(&["leds", "0"], Led { on: false });
+    let mut site = Site::<Sensors, 4>::new();
+    site.route(&["sensors", "temp"], get(get_temp))
+        .route(&["leds", "0"], get(get_led).put(put_led));
+    let mut state = Sensors {
+        temp_c: 215,
+        led_on: false,
+    };
 
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req =
         Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
-    assert_eq!(site.dispatch(&req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(&mut state, req).code(), Code::CONTENT);
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req =
         Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
-    assert_eq!(site.dispatch(&req).code(), Code::CONTENT);
-    assert_eq!(site.dispatch(&req).payload(), b"off");
+    assert_eq!(site.dispatch(&mut state, req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(&mut state, req).payload(), b"off");
+}
+
+#[test]
+fn route_path_splits_static_uri() {
+    let mut site = Site::<Sensors, 4>::new();
+    site.route_path("/sensors/temp", get(get_temp));
+    let mut state = Sensors {
+        temp_c: 215,
+        led_on: false,
+    };
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req =
+        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    assert_eq!(site.dispatch(&mut state, req).code(), Code::CONTENT);
+}
+
+#[test]
+fn replacing_route_changes_handler() {
+    let mut site = Site::<Sensors, 2>::new();
+    site.route(&["leds", "0"], get(get_led));
+    site.route(&["leds", "0"], post(post_led));
+    let mut state = Sensors {
+        temp_c: 215,
+        led_on: false,
+    };
+
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req =
+        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    assert_eq!(
+        site.dispatch(&mut state, req).code(),
+        Code::METHOD_NOT_ALLOWED
+    );
+
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req =
+        Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
+    assert_eq!(site.dispatch(&mut state, req).code(), Code::CHANGED);
+    assert!(state.led_on);
 }
 
 fn slot0() -> crate::SlotId {
@@ -309,27 +366,4 @@ fn block_wise_bind_uses_body_pools() {
         crate::app::EngineMut::BlockWise(_) => {}
         crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
     }
-}
-
-#[test]
-fn drop_runs_on_replaced_resource() {
-    use core::sync::atomic::{AtomicUsize, Ordering};
-
-    static DROPS: AtomicUsize = AtomicUsize::new(0);
-
-    struct Watched;
-    impl Resource for Watched {}
-    impl Drop for Watched {
-        fn drop(&mut self) {
-            DROPS.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    let mut site = Site::<2>::new();
-    site.at(&["a"], Watched);
-    assert_eq!(DROPS.load(Ordering::SeqCst), 0);
-    site.at(&["a"], Watched);
-    assert_eq!(DROPS.load(Ordering::SeqCst), 1);
-    drop(site);
-    assert_eq!(DROPS.load(Ordering::SeqCst), 2);
 }

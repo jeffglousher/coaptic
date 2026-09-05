@@ -15,6 +15,21 @@ enum Payload {
     },
 }
 
+/// Conversion into a [`Reply`].
+///
+/// Stored handlers are `fn(...) -> Reply`. Implement this if a wrapper
+/// type should become a response.
+pub trait IntoReply {
+    /// Build the response.
+    fn into_reply(self) -> Reply;
+}
+
+impl IntoReply for Reply {
+    fn into_reply(self) -> Reply {
+        self
+    }
+}
+
 /// Outgoing response. No lifetime — `'static` payloads or a small inline copy.
 ///
 /// [`App::poll`](super::App::poll) encodes this into a TX slot and sends it.

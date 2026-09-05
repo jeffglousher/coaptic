@@ -4,7 +4,7 @@ coaptic is a library, not a daemon or socket stack. The core never sends on the 
 
 ## Two paths
 
-**App (happy path).** [`App`](src/app/mod.rs) owns the recv / progress / route / method-hook / reply / send / release loop. You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).bind(io)`), the clock (`now_ms` into [`App::poll`](src/app/mod.rs)), and resource instances moved into the site ([`Resource`](src/app/resource.rs)). You do not touch slots to expose a GET or PUT.
+**App (happy path).** [`App`](src/app/mod.rs) owns the recv / progress / route / handler / reply / send / release loop. You own the socket (passed into [`App::profile`](src/app/mod.rs)`.block_wise(…).state(…).route(…).bind(io)`), the clock (`now_ms` into [`App::poll`](src/app/mod.rs)), and one application [`State`](src/app/routing.rs) value. You do not touch slots to expose a GET or PUT.
 
 **Engine (advanced).** Slots, [`Access`](src/storage/access.rs), Observe notify, Block / Q-Block, and custom RST / 4.xx policy stay on [`Engine`](src/storage/engine.rs). Use this when the façade is not enough. [`DatagramIo`](src/storage/io.rs) is the bind for both paths.
 
@@ -39,7 +39,7 @@ Constructors and named codes exist (`empty_ack` / `empty_rst`, 2.31 / 4.01 / 4.0
 
 ## Resource and If-Match
 
-- **App:** [`App::at`](src/app/mod.rs) stores an owned resource on a URI-Path. [`Resource::get`](src/app/resource.rs) / `put` / `post` / `delete` / `fetch` own semantics and payloads. Unknown path is 4.04; path exists but the method hook is the default is 4.05. [`Reply`](src/app/reply.rs) builders encode the response.
+- **App:** [`AppBuilder::route`](src/app/mod.rs) binds a [`MethodRouter`](src/app/routing.rs) (`get` / `put` / `post` / `delete` / `fetch`, plus `patch` / `ipatch`) on Uri-Path segments. Handlers are `fn(State<&mut S>, Request<'_>) -> Reply`. Shared state is one owned `S` (`State<&mut S>` on each call — no `Arc`). Unknown path is 4.04; path exists but the method is unbound is 4.05. [`Reply`](src/app/reply.rs) builders encode the response.
 - **Engine:** resource selection is still application-owned ([`design.md`](design.md) §Application memory access).
 - `ParsedMessage::precondition(exists, etag)` classifies If-Match / If-None-Match. You decide 2.xx vs 4.12 (or RST). `Reply::precondition_failed` is the 4.12 builder.
 - FETCH / PATCH / iPATCH are named codes; the router binds them if you register `.fetch` / `.patch` / `.ipatch`.
