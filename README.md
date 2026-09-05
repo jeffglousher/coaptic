@@ -4,17 +4,17 @@ Stand-alone `no_std` CoAP library: RFC 7252 message decode/encode plus a bounded
 
 ## Crate surface
 
-Happy-path types live at the crate root (`App`, `State`, `Request`, `Reply`, `get` / `put`, `Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`. Engine slots are the **advanced** path. Taste lock: [`REVIEW.md`](REVIEW.md) §0.1 API surface.
+Happy-path types live at the crate root (`App`, `Request`, `Reply`, `get` / `put`, `Engine`, `Memory`, `Endpoint`, `Progress`, `Access`, `Ids`, keyed table rows, Block/Q-Block types, main errors). Typestate markers, raw `*Table` / `*Pool` types, and backend traits stay under `storage` / `message`. Engine slots are the **advanced** path. Taste lock: [`REVIEW.md`](REVIEW.md) §0.1 API surface.
 
-[`App`](src/app/mod.rs) is how a process exposes routes. The caller still owns the socket, the clock, and one application `State` value. Checklist: [`CALLER.md`](CALLER.md).
+[`App`](src/app/mod.rs) is a routing façade over request/response. The reactor (`Engine` / `progress`) owns per-slot protocol state machines. `App` does **not** take a global mutable shared bag. Domain data that outlives a request is application-owned outside coaptic. Checklist: [`CALLER.md`](CALLER.md).
 
 ### `coaptic::app`
 
-- `App::profile().block_wise(true).state(s).route(path, get(h)).bind(io)` — hides `EngineBuilder` / `Memory`
+- `App::profile().block_wise(true).route(path, get(h)).bind(io)` — hides `EngineBuilder` / `Memory`
 - `.route(&["sensors", "temp"], get(get_temp))` — Uri-Path segments + method router
 - `get` / `put` / `post` / `delete` / `fetch` — freestanding combinators (chain `.put(h)` like Axum)
-- `State<&mut S>` — one owned value in `App`; handlers see `&mut S` (no `Arc`)
-- `Site` — fixed table of fn-pointer routers (`App<_, _, _, N>`, default 8)
+- Handlers are `fn(Request<'_>) -> Reply` — relatively stateless; no `State<T>` on the happy path
+- `Site` — fixed table of fn-pointer routers (`App<_, _, N>`, default 8)
 - `Reply` — no handler lifetime; `'static` payload or a small inline copy
 - `.well_known_core()` — RFC 6690 link-format from registered paths
 - `App::poll(now_ms)` — recv, progress, route, handler, send, release
@@ -58,7 +58,7 @@ Happy-path types live at the crate root (`App`, `State`, `Request`, `Reply`, `ge
 | [REVIEW.md](REVIEW.md) | External-reviewer brief; 0.1 API freeze |
 | [CALLER.md](CALLER.md) | What the caller must own |
 | [ERGONOMICS.md](ERGONOMICS.md) | Code-confirmed feature table; `DatagramIo` last-mile bind |
-| `examples/coap_server.rs` | `std` UDP: `App` + `State` + routes (`GET /sensors/temp` → 2.05) |
+| `examples/coap_server.rs` | `std` UDP: `App` + stateless routes (`GET /sensors/temp` → 2.05) |
 | [design.md](design.md) | Canonical architecture and progress contract |
 | [knowledge/](knowledge/) | OKF bundle: memory names, profiles, plugtest, RFCs |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor entry |
@@ -109,6 +109,8 @@ cargo test --test plugtest inventory -- --nocapture
 ## Architecture (short)
 
 Six core-managed areas: Incoming / Outgoing Datagram Pool, Incoming / Outgoing Body Pool, Dedup Table, Observe Interest Table.
+
+The reactor (`Engine` / `progress`) ships per-slot protocol state machines. `App` is a routing façade — not a shared mutable application bag.
 
 Progress is bounded and rotating. Saturation is a normal operating region. Canonical write-up: [design.md](design.md). Locked crate names: [knowledge/memory.md](knowledge/memory.md). UDP peer sidecar is `Endpoint` (not `Peer`).
 

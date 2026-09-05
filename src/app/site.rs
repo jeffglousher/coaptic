@@ -11,23 +11,23 @@ pub const DEFAULT_ROUTES: usize = 8;
 
 const WELL_KNOWN: &[&str] = &[".well-known", "core"];
 
-struct Entry<S> {
+struct Entry {
     path: Path<'static>,
-    methods: MethodRouter<S>,
+    methods: MethodRouter,
 }
 
 /// Fixed table of path → method router.
 ///
 /// `N` is the maximum number of paths (default 8). GET+PUT on one path
-/// occupies one slot. Application state lives on [`App`](super::App), not
-/// here. This is not an Engine memory area.
-pub struct Site<S, const N: usize = DEFAULT_ROUTES> {
-    entries: [Option<Entry<S>>; N],
+/// occupies one slot. This is a routing table, not an Engine memory area
+/// and not a shared application bag.
+pub struct Site<const N: usize = DEFAULT_ROUTES> {
+    entries: [Option<Entry>; N],
     len: usize,
     well_known: bool,
 }
 
-impl<S, const N: usize> Site<S, N> {
+impl<const N: usize> Site<N> {
     /// Empty site.
     #[must_use]
     pub const fn new() -> Self {
@@ -80,7 +80,7 @@ impl<S, const N: usize> Site<S, N> {
     ///
     /// If the table is full and `segments` is a new path, or if the path has
     /// more than [`MAX_PATH_SEGMENTS`] segments.
-    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter<S>) -> &mut Self {
+    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter) -> &mut Self {
         let path = expect_path(segments);
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
@@ -103,7 +103,7 @@ impl<S, const N: usize> Site<S, N> {
     ///
     /// Same as [`Self::route`], plus if `path` has more than
     /// [`MAX_PATH_SEGMENTS`] segments.
-    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter<S>) -> &mut Self {
+    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
         let mut segments = [""; MAX_PATH_SEGMENTS];
         let n = split_path(path, &mut segments);
         self.route(&segments[..n], methods)
@@ -111,13 +111,13 @@ impl<S, const N: usize> Site<S, N> {
 
     /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
     #[must_use]
-    pub fn dispatch(&mut self, state: &mut S, request: Request<'_>) -> Reply {
-        for entry in self.entries.iter_mut().flatten() {
+    pub fn dispatch(&self, request: Request<'_>) -> Reply {
+        for entry in self.entries.iter().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
             }
             return match request.method() {
-                Some(method) => entry.methods.call(method, state, request),
+                Some(method) => entry.methods.call(method, request),
                 None => Reply::method_not_allowed(),
             };
         }
@@ -131,7 +131,7 @@ impl<S, const N: usize> Site<S, N> {
     }
 }
 
-impl<S, const N: usize> Default for Site<S, N> {
+impl<const N: usize> Default for Site<N> {
     fn default() -> Self {
         Self::new()
     }
@@ -151,7 +151,7 @@ fn path_is_well_known(path: &[&str]) -> bool {
     path == WELL_KNOWN
 }
 
-fn link_format<S, const N: usize>(site: &Site<S, N>) -> Reply {
+fn link_format<const N: usize>(site: &Site<N>) -> Reply {
     let mut buf = [0u8; super::reply::INLINE_PAYLOAD];
     let mut n = 0usize;
     let mut first = true;

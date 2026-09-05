@@ -104,7 +104,7 @@ block-wise outgoing:  application encode -> Outgoing Body Slot
 
 A core area cannot be reused while temporary application access remains valid. Applications that need longer-lived data decode or copy it into application-owned state.
 
-The library owns CoAP protocol mechanics. The application owns resource selection, resource semantics, and deferred application work. The library may provide constrained-friendly dispatch/routing tools without imposing one routing model.
+The library owns CoAP protocol mechanics. The application owns resource selection, resource semantics, and deferred application work. The library may provide constrained-friendly dispatch/routing tools without imposing one routing model. The App façade is a routing table over request/response — not a global mutable shared application bag. Per-slot protocol state machines and bounded progress live on the Engine (reactor).
 
 ## Datagram and Body capacity relationship
 

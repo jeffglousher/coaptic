@@ -1,31 +1,31 @@
-//! Approachable CoAP app: routes, method routers, handler fns, and [`State`].
+//! Approachable CoAP app: a routing façade over request/response.
 //!
 //! [`App::poll`] is one loop step: recv, progress, route, handler, send,
-//! release. The Engine still owns CoAP mechanics ([`design.md`][design]
-//! §Application memory access). This module is a façade — not a seventh
-//! memory area.
+//! release. The reactor ([`Engine`] / [`Progress`](crate::Progress))
+//! ships protocol mechanics on per-slot state machines (pending CON/RTO,
+//! BlockTransfer, ObserveInterest, Dedup, Exchange). This module is not a
+//! seventh memory area and does **not** own a global mutable shared bag.
+//!
+//! Default handlers are relatively stateless: `fn(Request<'_>) -> Reply`.
+//! Application domain data that outlives a request is application-owned
+//! outside `App` ([`design.md`][design] §Application memory access) — a GPIO
+//! write lives in firmware, not in an Axum-style `AppState`.
 //!
 //! ```
 //! use coaptic::{
-//!     App, ContentFormat, DatagramIo, Endpoint, Reply, Request, State, get, profiles,
+//!     App, ContentFormat, DatagramIo, Endpoint, Reply, Request, get, profiles,
 //! };
 //!
-//! struct Sensors {
-//!     temp_c: i16,
-//!     led_on: bool,
-//! }
-//!
-//! fn get_temp(State(s): State<&mut Sensors>, _req: Request<'_>) -> Reply {
-//!     let _ = s.temp_c;
+//! fn get_temp(_req: Request<'_>) -> Reply {
 //!     Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 //! }
 //!
-//! fn get_led(State(s): State<&mut Sensors>, _: Request<'_>) -> Reply {
-//!     Reply::content(if s.led_on { b"on" } else { b"off" })
+//! fn get_led(_: Request<'_>) -> Reply {
+//!     // Demo payload. Real LED state is firmware-owned, not an App bag.
+//!     Reply::content(b"off")
 //! }
 //!
-//! fn put_led(State(s): State<&mut Sensors>, req: Request<'_>) -> Reply {
-//!     s.led_on = req.payload() == b"1";
+//! fn put_led(_req: Request<'_>) -> Reply {
 //!     Reply::changed()
 //! }
 //!
@@ -39,10 +39,6 @@
 //! # }
 //! let mut app = App::profile::<profiles::Default>()
 //!     .block_wise(true)
-//!     .state(Sensors {
-//!         temp_c: 215,
-//!         led_on: false,
-//!     })
 //!     .route(&["sensors", "temp"], get(get_temp))
 //!     .route(&["leds", "0"], get(get_led).put(put_led))
 //!     .well_known_core()
@@ -81,8 +77,7 @@ use crate::storage::{
 pub use reply::{INLINE_PAYLOAD, IntoReply, Reply};
 pub use request::{MAX_PATH_SEGMENTS, Request};
 pub use routing::{
-    HandlerFn, Method, MethodRouter, State, delete, fetch, get, ipatch, patch, post, put,
-    split_path,
+    HandlerFn, Method, MethodRouter, delete, fetch, get, ipatch, patch, post, put, split_path,
 };
 pub use site::{DEFAULT_ROUTES, Site};
 
@@ -94,30 +89,23 @@ enum EngineSlot<P: MemoryProfile> {
     BlockWise(Engine<Memory<P, WithBodies<P>>>),
 }
 
-/// CoAP app: profile memory + transport + owned [`State`] + a bounded [`Site`].
+/// CoAP app: profile memory + transport + a bounded [`Site`].
 ///
-/// `S` is the one owned application value (default `()`). `N` is the
-/// maximum number of routes (default 8). Increase with
-/// [`AppBuilder::routes`] (`App::<_, _, _, 16>` after bind).
-pub struct App<
-    P: MemoryProfile = crate::profiles::Default,
-    T = (),
-    S = (),
-    const N: usize = DEFAULT_ROUTES,
-> {
+/// `N` is the maximum number of routes (default 8). Increase with
+/// [`AppBuilder::routes`] (`App::<_, _, 16>` after bind). `App` does not
+/// own a global mutable shared application bag.
+pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usize = DEFAULT_ROUTES>
+{
     engine: EngineSlot<P>,
     io: T,
-    site: Site<S, N>,
-    state: S,
+    site: Site<N>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
-/// [`state`](AppBuilder::state) → [`route`](AppBuilder::route) →
-/// [`bind`](AppBuilder::bind).
-pub struct AppBuilder<P: MemoryProfile, Block = Missing, S = (), const N: usize = DEFAULT_ROUTES> {
+/// [`route`](AppBuilder::route) → [`bind`](AppBuilder::bind).
+pub struct AppBuilder<P: MemoryProfile, Block = Missing, const N: usize = DEFAULT_ROUTES> {
     block_wise: Option<bool>,
-    state: S,
-    site: Site<S, N>,
+    site: Site<N>,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -128,7 +116,6 @@ impl App {
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
         AppBuilder {
             block_wise: None,
-            state: (),
             site: Site::new(),
             _p: PhantomData,
             _b: PhantomData,
@@ -136,7 +123,7 @@ impl App {
     }
 }
 
-impl<P: MemoryProfile, Block, S, const N: usize> AppBuilder<P, Block, S, N> {
+impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
     /// Site table size (default [`DEFAULT_ROUTES`]). Call before
     /// [`Self::route`].
     ///
@@ -144,7 +131,7 @@ impl<P: MemoryProfile, Block, S, const N: usize> AppBuilder<P, Block, S, N> {
     ///
     /// If a route is already registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, S, M> {
+    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -156,7 +143,6 @@ impl<P: MemoryProfile, Block, S, const N: usize> AppBuilder<P, Block, S, N> {
         }
         AppBuilder {
             block_wise: self.block_wise,
-            state: self.state,
             site,
             _p: PhantomData,
             _b: PhantomData,
@@ -165,14 +151,14 @@ impl<P: MemoryProfile, Block, S, const N: usize> AppBuilder<P, Block, S, N> {
 
     /// Bind `methods` on Uri-Path `segments`.
     #[must_use]
-    pub fn route(mut self, segments: &[&'static str], methods: MethodRouter<S>) -> Self {
+    pub fn route(mut self, segments: &[&'static str], methods: MethodRouter) -> Self {
         self.site.route(segments, methods);
         self
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
     #[must_use]
-    pub fn route_path(mut self, path: &'static str, methods: MethodRouter<S>) -> Self {
+    pub fn route_path(mut self, path: &'static str, methods: MethodRouter) -> Self {
         self.site.route_path(path, methods);
         self
     }
@@ -185,39 +171,12 @@ impl<P: MemoryProfile, Block, S, const N: usize> AppBuilder<P, Block, S, N> {
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, (), N> {
-    /// Own `state`. Call before [`AppBuilder::route`]. Handlers receive
-    /// [`State`]`<&mut S>`.
-    ///
-    /// # Panics
-    ///
-    /// If a route is already registered (handlers would still be typed
-    /// for `()`).
-    #[must_use]
-    pub fn state<S>(self, state: S) -> AppBuilder<P, Block, S, N> {
-        assert!(self.site.is_empty(), "call .state(...) before .route(...)");
-        let well_known = self.site.has_well_known_core();
-        let mut site = Site::new();
-        if well_known {
-            site.well_known_core();
-        }
-        AppBuilder {
-            block_wise: self.block_wise,
-            state,
-            site,
-            _p: PhantomData,
-            _b: PhantomData,
-        }
-    }
-}
-
-impl<P: MemoryProfile, S, const N: usize> AppBuilder<P, Missing, S, N> {
+impl<P: MemoryProfile, const N: usize> AppBuilder<P, Missing, N> {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     #[must_use]
-    pub fn block_wise(self, enabled: bool) -> AppBuilder<P, Present, S, N> {
+    pub fn block_wise(self, enabled: bool) -> AppBuilder<P, Present, N> {
         AppBuilder {
             block_wise: Some(enabled),
-            state: self.state,
             site: self.site,
             _p: PhantomData,
             _b: PhantomData,
@@ -225,9 +184,9 @@ impl<P: MemoryProfile, S, const N: usize> AppBuilder<P, Missing, S, N> {
     }
 }
 
-impl<P: MemoryProfile, S, const N: usize> AppBuilder<P, Present, S, N> {
+impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
     /// Construct profile [`Memory`] and bind `io`.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, S, N>, BuildError> {
+    pub fn bind<T>(self, io: T) -> Result<App<P, T, N>, BuildError> {
         let enabled = self.block_wise.expect("typestate: block_wise was set");
         let engine = if enabled {
             let built = EngineBuilder::new()
@@ -246,20 +205,19 @@ impl<P: MemoryProfile, S, const N: usize> AppBuilder<P, Present, S, N> {
             engine,
             io,
             site: self.site,
-            state: self.state,
         })
     }
 }
 
-impl<P: MemoryProfile, T, S, const N: usize> App<P, T, S, N> {
+impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     /// Bind `methods` on Uri-Path `segments`.
-    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter<S>) -> &mut Self {
+    pub fn route(&mut self, segments: &[&'static str], methods: MethodRouter) -> &mut Self {
         self.site.route(segments, methods);
         self
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
-    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter<S>) -> &mut Self {
+    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
         self.site.route_path(path, methods);
         self
     }
@@ -271,19 +229,8 @@ impl<P: MemoryProfile, T, S, const N: usize> App<P, T, S, N> {
     }
 
     /// The site table.
-    pub fn site(&mut self) -> &mut Site<S, N> {
+    pub fn site(&mut self) -> &mut Site<N> {
         &mut self.site
-    }
-
-    /// Shared application state.
-    #[must_use]
-    pub const fn state(&self) -> &S {
-        &self.state
-    }
-
-    /// Mutable shared application state.
-    pub const fn state_mut(&mut self) -> &mut S {
-        &mut self.state
     }
 
     /// Engine (advanced: slots, Observe, Block).
@@ -321,7 +268,7 @@ impl<P: MemoryProfile, T, S, const N: usize> App<P, T, S, N> {
     }
 }
 
-impl<P, T, S, const N: usize> App<P, T, S, N>
+impl<P, T, const N: usize> App<P, T, N>
 where
     P: MemoryProfile,
     T: DatagramIo,
@@ -341,20 +288,8 @@ where
     /// handle those through [`Self::engine_mut`] if you need them now.
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
-            EngineSlot::Datagram(engine) => poll_engine(
-                engine,
-                &mut self.io,
-                &mut self.site,
-                &mut self.state,
-                now_ms,
-            ),
-            EngineSlot::BlockWise(engine) => poll_engine(
-                engine,
-                &mut self.io,
-                &mut self.site,
-                &mut self.state,
-                now_ms,
-            ),
+            EngineSlot::Datagram(engine) => poll_engine(engine, &mut self.io, &self.site, now_ms),
+            EngineSlot::BlockWise(engine) => poll_engine(engine, &mut self.io, &self.site, now_ms),
         }
     }
 }
@@ -395,11 +330,10 @@ impl<P: MemoryProfile> EngineMut<'_, P> {
     }
 }
 
-fn poll_engine<Mem, T, S, const N: usize>(
+fn poll_engine<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    site: &mut Site<S, N>,
-    state: &mut S,
+    site: &Site<N>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -421,7 +355,7 @@ where
     }
 
     if let Some(rx) = progress.rx_ready().or(received) {
-        dispatch_rx(engine, io, site, state, rx)?;
+        dispatch_rx(engine, io, site, rx)?;
     }
 
     // Phase 2: Observe notify / lifetime / Q-Block recover.
@@ -431,11 +365,10 @@ where
     Ok(())
 }
 
-fn dispatch_rx<Mem, T, S, const N: usize>(
+fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    site: &mut Site<S, N>,
-    state: &mut S,
+    site: &Site<N>,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
@@ -497,7 +430,7 @@ where
     };
     let outcome = match Request::from_decoded(parsed, peer, rx) {
         Ok(request) => {
-            let reply = site.dispatch(state, request);
+            let reply = site.dispatch(request);
             send_reply(engine, io, meta, &reply)
         }
         Err(request::PathError::BadUtf8) => send_reply(engine, io, meta, &Reply::bad_request()),

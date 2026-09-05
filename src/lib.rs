@@ -1,20 +1,20 @@
 //! Stand-alone [`no_std`] CoAP library: messages plus bounded storage.
 //!
-//! Crate-root types are the happy path ([`App`], [`State`], [`Request`],
-//! [`Reply`], [`get`] / [`put`], [`Engine`], [`Memory`], [`Endpoint`],
-//! [`Progress`], [`Access`], [`Ids`], keyed rows, Block/Q-Block types, main
-//! errors). Typestate markers, raw tables/pools, and backend traits live in
-//! [`storage`] / [`message`]. [`app`] is the approachable façade (routes +
-//! handler fns + [`State`]). Engine slots are the advanced path. Caller
-//! contract: `CALLER.md`. Repo map: `README.md`.
+//! Crate-root types are the happy path ([`App`], [`Request`], [`Reply`],
+//! [`get`] / [`put`], [`Engine`], [`Memory`], [`Endpoint`], [`Progress`],
+//! [`Access`], [`Ids`], keyed rows, Block/Q-Block types, main errors).
+//! Typestate markers, raw tables/pools, and backend traits live in
+//! [`storage`] / [`message`]. [`app`] is the routing façade (`Request` to
+//! [`Reply`]). Engine slots are the advanced path: per-slot state machines
+//! and [`Progress`]. Caller contract: `CALLER.md`. Repo map: `README.md`.
 //! Reviewer brief: `REVIEW.md`. Architecture: [`design.md`][design]. Protocol:
 //! [`knowledge/rfcs/`][rfcs]. This rustdoc does not restate wire format.
 //!
 //! # Modules
 //!
 //! - [`app`] — [`App`] + [`Site`](app::Site): [`route`](app::AppBuilder::route),
-//!   [`get`] / [`put`] method routers, handler fns, [`State`], [`Reply`]
-//!   builders, [`App::poll`].
+//!   [`get`] / [`put`] method routers, `fn(Request<'_>) -> Reply` handlers,
+//!   [`Reply`] builders, [`App::poll`]. No global mutable shared bag.
 //! - [`message`] — decode/encode a CoAP datagram. No [`Engine`] required.
 //! - [`storage`] — [`Engine`] generic over [`Storage`]; [`Memory`], pools, tables.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
@@ -75,10 +75,11 @@
 //! # App
 //!
 //! [`App`] is the approachable loop: [`App::profile`], [`block_wise`](app::AppBuilder::block_wise),
-//! [`state`](app::AppBuilder::state), [`route`](app::AppBuilder::route),
-//! [`bind`](app::AppBuilder::bind), then [`App::poll`]. Slots stay on
-//! [`Engine`] for Block / Observe / custom policy (`app.engine_mut()`).
-//! See `examples/coap_server.rs` (`std`).
+//! [`route`](app::AppBuilder::route), [`bind`](app::AppBuilder::bind), then
+//! [`App::poll`]. Handlers are `fn(Request<'_>) -> Reply`. Domain data that
+//! outlives a request stays outside `App`. Slots stay on [`Engine`] for
+//! Block / Observe / custom policy (`app.engine_mut()`). See
+//! `examples/coap_server.rs` (`std`).
 //!
 //! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
 //!
@@ -129,7 +130,7 @@ pub mod storage;
 pub use storage::profiles;
 
 pub use app::{
-    App, IntoReply, Method, Reply, Request, State, delete, fetch, get, ipatch, patch, post, put,
+    App, IntoReply, Method, Reply, Request, delete, fetch, get, ipatch, patch, post, put,
 };
 pub use error::{
     BlockTransferError, BuildError, EncodeError, OptionsFull, ParseError, SlotMessageError,
