@@ -61,6 +61,7 @@ pub(crate) fn try_pin(occupied: &[bool], pinned: &mut [bool], id: SlotId) -> Res
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn unpin(pinned: &mut [bool], id: SlotId) -> Result<(), SlotError> {
     let pin = pinned.get_mut(id.index()).ok_or(SlotError::InvalidSlot)?;
     *pin = false;
@@ -114,6 +115,7 @@ impl<const N: usize> Occupancy<N> {
         try_pin(&self.occupied, &mut self.pinned, id)
     }
 
+    #[cfg(test)]
     pub(crate) fn unpin(&mut self, id: SlotId) -> Result<(), SlotError> {
         unpin(&mut self.pinned, id)
     }
@@ -175,10 +177,6 @@ impl HeapOccupancy {
 
     pub(crate) fn try_pin(&mut self, id: SlotId) -> Result<(), SlotError> {
         try_pin(&self.occupied, &mut self.pinned, id)
-    }
-
-    pub(crate) fn unpin(&mut self, id: SlotId) -> Result<(), SlotError> {
-        unpin(&mut self.pinned, id)
     }
 
     pub(crate) fn pin_flag_mut(&mut self, id: SlotId) -> Option<&mut bool> {

@@ -368,7 +368,7 @@ fn engine_access_rx_and_tx_mut() {
         let mut access = engine.access_tx_mut(tx).expect("access tx");
         assert_eq!(access.id(), tx);
         assert!(access.capacity() >= n);
-        access.as_mut()[..n].copy_from_slice(&buf[..n]);
+        access.bytes_mut()[..n].copy_from_slice(&buf[..n]);
         access.set_len(n).expect("set_len");
         assert_eq!(access.payload(), &buf[..n]);
     }
@@ -393,7 +393,7 @@ fn engine_access_body() {
     let tx = engine.acquire_tx_body().expect("tx body");
     {
         let mut access = engine.access_tx_body_mut(tx).expect("access tx body");
-        access.as_mut()[..4].copy_from_slice(&[1, 2, 3, 4]);
+        access.bytes_mut()[..4].copy_from_slice(&[1, 2, 3, 4]);
         access.set_len(4).expect("set_len");
         assert_eq!(access.payload(), &[1, 2, 3, 4]);
     }
@@ -2146,7 +2146,6 @@ mod alloc_backend {
             .expect("build_alloc")
     }
 
-    #[test]
     #[test]
     fn alloc_access_rx_drop_unpins() {
         let mut engine = build_alloc(false);

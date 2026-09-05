@@ -28,7 +28,7 @@ pub struct Access<'a> {
 
 /// Exclusive write of an occupied slot's byte buffer.
 ///
-/// `as_mut` is the full slot capacity. [`Self::payload`] is the filled
+/// [`Self::bytes_mut`] is the full slot capacity. [`Self::payload`] is the filled
 /// prefix. [`Self::set_len`] records how many bytes are live. Same pin
 /// rule as [`Access`].
 #[must_use = "dropping AccessMut unpins the slot"]
@@ -119,7 +119,7 @@ impl<'a> AccessMut<'a> {
 
     /// Full slot capacity (not only the filled prefix).
     #[must_use]
-    pub fn as_mut(&mut self) -> &mut [u8] {
+    pub fn bytes_mut(&mut self) -> &mut [u8] {
         self.bytes
     }
 
