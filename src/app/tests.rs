@@ -1,29 +1,36 @@
-//! Router and [`Server::poll`] against a loopback [`DatagramIo`].
+//! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
-use super::{Reply, Request, Resource, Server};
+use super::{Reply, Request, Resource, Site};
+use crate::app::App;
 use crate::message::{
     Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode,
     encode,
 };
-use crate::storage::{DatagramIo, Endpoint, EngineBuilder, Memory, profiles};
+use crate::storage::{DatagramIo, Endpoint, profiles};
 
-struct Temp;
+struct Temp {
+    celsius: i16,
+}
 
 impl Resource for Temp {
-    fn handle<'a>(_request: &'a Request<'a>) -> Reply<'a> {
-        Reply::content(b"21.5").with_content_format(ContentFormat::TEXT_PLAIN)
+    fn get(&mut self, _req: &Request<'_>) -> Reply {
+        let _ = self.celsius;
+        Reply::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
     }
 }
 
-struct Led;
+struct Led {
+    on: bool,
+}
 
 impl Resource for Led {
-    fn handle<'a>(request: &'a Request<'a>) -> Reply<'a> {
-        match request.method() {
-            Some(super::Method::Get) => Reply::content(b"off"),
-            Some(super::Method::Put) => Reply::changed(),
-            _ => Reply::method_not_allowed(),
-        }
+    fn get(&mut self, _: &Request<'_>) -> Reply {
+        Reply::content(if self.on { b"on" } else { b"off" })
+    }
+
+    fn put(&mut self, req: &Request<'_>) -> Reply {
+        self.on = req.payload() == b"1";
+        Reply::changed()
     }
 }
 
@@ -58,14 +65,6 @@ impl DatagramIo for Loopback {
     }
 }
 
-fn engine() -> crate::Engine<Memory<profiles::Default>> {
-    EngineBuilder::new()
-        .profile::<profiles::Default>()
-        .block_wise(false)
-        .build(Memory::<profiles::Default>::new())
-        .expect("build")
-}
-
 fn encode_req(code: Code, path: &[&str], payload: &[u8]) -> ([u8; 256], usize) {
     encode_req_ty(Type::Confirmable, code, path, payload, None)
 }
@@ -95,16 +94,14 @@ fn encode_req_ty(
     (buf, n)
 }
 
-fn server_with_routes(io: Loopback) -> Server<Memory<profiles::Default>, Loopback> {
-    let mut server = Server::new(engine(), io);
-    server
-        .router()
-        .at(&["sensors", "temp"])
-        .get(Temp)
-        .at(&["leds", "0"])
-        .get(Led)
-        .put(Led);
-    server
+fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .bind(io)
+        .expect("bind");
+    app.at(&["sensors", "temp"], Temp { celsius: 215 })
+        .at(&["leds", "0"], Led { on: false });
+    app
 }
 
 struct LastReply {
@@ -115,8 +112,8 @@ struct LastReply {
     content_format: Option<ContentFormat>,
 }
 
-fn last_reply(server: &Server<Memory<profiles::Default>, Loopback>) -> LastReply {
-    let (_, bytes, n) = server.transport().last_send.expect("sent");
+fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
+    let (_, bytes, n) = app.transport().last_send.expect("sent");
     let parsed = decode(&bytes[..n]).expect("decode reply");
     let mut payload = [0u8; 64];
     let payload_len = parsed.payload().len().min(64);
@@ -134,66 +131,74 @@ fn last_reply(server: &Server<Memory<profiles::Default>, Loopback>) -> LastReply
 fn get_sensors_temp_is_content() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    let parsed = last_reply(&server);
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
     assert_eq!(parsed.ty, Type::Acknowledgement);
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"21.5");
     assert_eq!(parsed.content_format, Some(ContentFormat::TEXT_PLAIN));
-    assert_eq!(server.engine_mut().rx_occupied(), 0);
-    assert_eq!(server.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
 
 #[test]
 fn unknown_path_is_not_found() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["nope"], &[]);
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    assert_eq!(last_reply(&server).code, Code::NOT_FOUND);
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::NOT_FOUND);
 }
 
 #[test]
 fn wrong_method_is_not_allowed() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["sensors", "temp"], &[]);
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    assert_eq!(last_reply(&server).code, Code::METHOD_NOT_ALLOWED);
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::METHOD_NOT_ALLOWED);
 }
 
 #[test]
-fn put_led_is_changed() {
+fn put_led_then_get_reflects_state() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"on");
-    let mut server = server_with_routes(Loopback {
+    let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    assert_eq!(last_reply(&server).code, Code::CHANGED);
+    app.poll(0).expect("poll");
+    assert_eq!(last_reply(&app).code, Code::CHANGED);
+
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"on");
 }
 
 #[test]
-fn get_led_is_content() {
+fn get_led_off_by_default() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    let parsed = last_reply(&server);
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"off");
 }
@@ -208,12 +213,12 @@ fn non_request_gets_non_response() {
         &[],
         None,
     );
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    let parsed = last_reply(&server);
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
     assert_eq!(parsed.ty, Type::NonConfirmable);
     assert_eq!(parsed.code, Code::CONTENT);
 }
@@ -228,34 +233,49 @@ fn no_response_suppresses_success() {
         &[],
         Some(u32::from(crate::NoResponse::SUPPRESS_2)),
     );
-    let mut server = server_with_routes(Loopback {
+    let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    server.poll(0).expect("poll");
-    assert!(server.transport().last_send.is_none());
+    app.poll(0).expect("poll");
+    assert!(app.transport().last_send.is_none());
 }
 
 #[test]
-fn router_dispatch_table() {
-    let mut router = super::Router::<4>::new();
-    router
-        .at(&["sensors", "temp"])
-        .get(Temp)
-        .at(&["leds", "0"])
-        .put(Led);
+fn well_known_core_lists_registered_paths() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.well_known_core();
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(parsed.content_format, Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(&parsed.payload[..parsed.payload_len]).expect("utf8");
+    assert_eq!(body, "</sensors/temp>,</leds/0>");
+}
+
+#[test]
+fn site_dispatch_table() {
+    let mut site = Site::<4>::new();
+    site.at(&["sensors", "temp"], Temp { celsius: 215 })
+        .at(&["leds", "0"], Led { on: false });
 
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req =
         Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
-    assert_eq!(router.dispatch(&req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(&req).code(), Code::CONTENT);
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req =
         Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), slot0()).expect("req");
-    assert_eq!(router.dispatch(&req).code(), Code::METHOD_NOT_ALLOWED);
+    assert_eq!(site.dispatch(&req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(&req).payload(), b"off");
 }
 
 fn slot0() -> crate::SlotId {
@@ -269,12 +289,47 @@ fn reply_builders() {
     assert_eq!(Reply::method_not_allowed().code(), Code::METHOD_NOT_ALLOWED);
     assert_eq!(Reply::content(b"x").payload(), b"x");
     let cf = Reply::content(b"x")
-        .with_content_format(ContentFormat::LINK_FORMAT)
-        .with_max_age(60)
-        .with_observe(3)
-        .with_etag(b"ab");
-    assert_eq!(cf.content_format(), Some(ContentFormat::LINK_FORMAT));
-    assert_eq!(cf.max_age(), Some(60));
-    assert_eq!(cf.observe(), Some(3));
-    assert_eq!(cf.etag(), Some(&b"ab"[..]));
+        .content_format(ContentFormat::LINK_FORMAT)
+        .max_age(60)
+        .observe(3)
+        .etag(b"ab");
+    assert_eq!(cf.format(), Some(ContentFormat::LINK_FORMAT));
+    assert_eq!(cf.max_age_secs(), Some(60));
+    assert_eq!(cf.observe_seq(), Some(3));
+    assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
+}
+
+#[test]
+fn block_wise_bind_uses_body_pools() {
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .bind(Loopback::default())
+        .expect("bind");
+    match app.engine_mut() {
+        crate::app::EngineMut::BlockWise(_) => {}
+        crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
+    }
+}
+
+#[test]
+fn drop_runs_on_replaced_resource() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Watched;
+    impl Resource for Watched {}
+    impl Drop for Watched {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut site = Site::<2>::new();
+    site.at(&["a"], Watched);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+    site.at(&["a"], Watched);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 1);
+    drop(site);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 2);
 }

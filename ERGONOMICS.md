@@ -1,6 +1,6 @@
 # 0.1 feature inventory and last-mile bind
 
-Code-confirmed against `main` `6e9d6f0` plus this PR’s [`Server`](src/server/mod.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
+Code-confirmed against `main` `b12143f` plus this PR’s [`App`](src/app/mod.rs). Status is **Present** / **Partial** / **Absent**. Citation is `path::item`. This file does not restate RFC wire format.
 
 Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --features std`). Advanced: Engine + [`DatagramIo`](src/storage/io.rs).
 
@@ -20,7 +20,7 @@ Happy path: `examples/coap_server.rs` (`cargo run --example coap_server --featur
 | If-Match / If-None-Match | Present | `src/message/precondition.rs::Precondition`; 4.12 policy **Absent** |
 | FETCH / PATCH / iPATCH | Present (codes only) | `src/message/mod.rs::Code::FETCH`, `PATCH`, `IPATCH`; method policy **Absent** |
 | Named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 | Present (codes only) | `src/message/mod.rs::Code::CONTINUE` and siblings |
-| **Server façade** | Present | `src/server/mod.rs::Server`; `Router::at`; `Resource`; `Reply`; `Server::poll` |
+| **App façade** | Present | `src/app/mod.rs::App`; `App::profile` / `block_wise` / `bind`; `Site::at`; `Resource` method hooks; `Reply`; `App::poll`; `well_known_core` |
 | Engine / Memory / builder | Present | `src/storage/engine.rs::Engine`; `src/storage/memory.rs::Memory`; `src/storage/builder.rs::EngineBuilder` |
 | `Endpoint` sidecar | Present | `src/storage/endpoint.rs::Endpoint` |
 | **Transport bind** | Present | `src/storage/io.rs::DatagramIo`; `Engine::recv_from`, `Engine::send_tx`; `std::net::UdpSocket` impl under `std` |
@@ -73,8 +73,8 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 
 **Intuitive**
 
-- `Server::router().at(&["sensors", "temp"]).get(Temp)` then `server.poll(now_ms)`.
-- `Resource` is a trait (unit struct). `Reply::content` / `changed` / `not_found`.
+- `App::profile().block_wise(true).bind(io)` then `.at(path, Temp { … })` and `app.poll(now_ms)`.
+- `Resource` is an owned instance (`get` / `put` / …). `Reply::content` / `changed` / `not_found`.
 - `decode` / `encode` work with no Engine.
 - Named `Opt` helpers and `EngineBuilder` typestate (`block_wise` is required).
 - `Endpoint` ↔ `SocketAddr` under `std`.
@@ -82,22 +82,22 @@ occupied TX slot  →  Engine::send_tx    →  DatagramIo::send
 
 **Clunky**
 
-- `.get(Temp)` uses the **type** only; the value is not stored. Stateful resources live in `static`s.
+- `ResourceDyn` inline slot is 128 bytes / 16-byte align (`MAX_RESOURCE_BYTES`). Larger types panic; store a handle.
 - `profiles::Default` is not `Default::default()`.
-- `Memory::<P>::with_block_wise()` must match `.block_wise(true)` or `BuildError::SizeMismatch`.
+- `Memory::<P>::with_block_wise()` must match `EngineBuilder` `.block_wise(true)` or `BuildError::SizeMismatch`. `App::bind` constructs the matching `Memory`.
 - `Progress` is five independent `Option` fields, not one enum. Easy to ignore `observe_expired` / `qblock_recover`.
 - `EncodedUint` must outlive `Opt` (`Opt::content_format(&cf)`).
 - Forget `release_rx` on the Engine path and Default’s 4 RX slots saturate (`recv_from` → `Saturated`).
 - `check_rfc7252_options` is Table 4 only: Observe / Block look “unrecognized critical.”
 - Dedup is MID+endpoint history, not a response cache.
 - `Token::mint` / `Ids` / jitter / `now_ms` stay caller-owned (not on `DatagramIo`).
-- Observe notify and Q-Block recover are not inside `Server::poll` yet (Phase 2).
+- Observe notify and Q-Block recover are not inside `App::poll` yet (Phase 2).
 
 **What a 0.1 integrator trips on**
 
-1. Using Engine slots to expose a GET instead of `Server` + `Resource`.
+1. Using Engine slots to expose a GET instead of `App` + `Resource`.
 2. Hand-rolling `recv` + `write_rx` + `access_tx` + `send_to` instead of `recv_from` / `send_tx` (Engine path).
 3. Holding `Access` across `progress` (that slot is skipped).
 4. Releasing a pending-CON TX before the empty ACK.
-5. Expecting Engine to bind a port or skip sends for `NoResponse` (Server honors `NoResponse`).
+5. Expecting Engine to bind a port or skip sends for `NoResponse` (`App` honors `NoResponse`).
 6. Mixing clocks across `progress`, RTO, Observe, and Echo.
