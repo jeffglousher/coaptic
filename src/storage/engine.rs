@@ -170,33 +170,8 @@ impl<S: Storage> Engine<S> {
         }
     }
 
-    /// Acquire one dedup entry.
-    pub fn acquire_dedup(&mut self) -> Option<SlotId> {
-        self.storage.dedup().acquire()
-    }
-
-    /// Release a dedup entry.
-    pub fn release_dedup(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.storage.dedup().release(id)
-    }
-
-    /// Advance the dedup rotating cursor.
-    pub fn rotate_dedup(&mut self) {
-        self.storage.dedup().rotate();
-    }
-
-    /// Acquire one observe entry.
-    pub fn acquire_observe(&mut self) -> Option<SlotId> {
-        self.storage.observe().acquire()
-    }
-
-    /// Release an observe entry.
-    pub fn release_observe(&mut self, id: SlotId) -> Result<(), SlotError> {
-        self.storage.observe().release(id)
-    }
-
-    /// Advance the observe rotating cursor.
-    pub fn rotate_observe(&mut self) {
+    /// Advance the Observe table rotating cursor. Used by progress fairness.
+    pub(crate) fn rotate_observe(&mut self) {
         self.storage.observe().rotate();
     }
 
@@ -713,46 +688,54 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
 impl<S: Storage + BodySlots> Engine<S> {
     /// Read access to an occupied incoming body. Pins `id` until dropped.
+    #[inline]
     pub fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.storage.access_rx_body(id)
     }
 
     /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.
+    #[inline]
     pub fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
         self.storage.access_tx_body_mut(id)
     }
 
     /// Filled incoming body bytes, if `id` is occupied.
+    #[inline]
     #[must_use]
     pub fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
         self.storage.rx_body_payload(id)
     }
 
     /// Filled outgoing body bytes, if `id` is occupied.
+    #[inline]
     #[must_use]
     pub fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
         self.storage.tx_body_payload(id)
     }
 
     /// Incoming Block1 / Block2 sidecar on `id`.
+    #[inline]
     #[must_use]
     pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.storage.rx_body_transfer(id)
     }
 
     /// Outgoing Block1 / Block2 sidecar on `id`.
+    #[inline]
     #[must_use]
     pub fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.storage.tx_body_transfer(id)
     }
 
     /// Incoming body slot matching `key`, if any.
+    #[inline]
     #[must_use]
     pub fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_rx_body(key)
     }
 
     /// Outgoing body slot matching `key`, if any.
+    #[inline]
     #[must_use]
     pub fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_tx_body(key)
@@ -763,6 +746,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
     /// `size1` is the Size1 hint when present. See `design.md` and
     /// `knowledge/rfcs/rfc7959.txt`.
+    #[inline]
     pub fn admit_block1(
         &mut self,
         key: BlockKey,
@@ -777,6 +761,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
     /// Size1. Does not invent 4.08 policy.
+    #[inline]
     pub fn write_block1(
         &mut self,
         id: SlotId,
@@ -787,6 +772,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Admit or continue incoming Block1 for `key`.
+    #[inline]
     pub fn apply_block1(
         &mut self,
         key: BlockKey,
@@ -813,6 +799,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Acquires one Incoming Body Slot. Classic Block starts at NUM 0.
     /// `size2` is the Size2 hint when present. See `design.md` and
     /// `knowledge/rfcs/rfc7959.txt`.
+    #[inline]
     pub fn admit_block2(
         &mut self,
         key: BlockKey,
@@ -827,6 +814,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
     /// Size2. Does not invent 4.08 policy.
+    #[inline]
     pub fn write_block2(
         &mut self,
         id: SlotId,
@@ -837,6 +825,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Admit or continue incoming Block2 for `key`.
+    #[inline]
     pub fn apply_block2(
         &mut self,
         key: BlockKey,
@@ -863,6 +852,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size1` is the
     /// Size1 hint when present. See `design.md` and
     /// `knowledge/rfcs/rfc9177.txt`.
+    #[inline]
     pub fn admit_q_block1(
         &mut self,
         key: BlockKey,
@@ -877,6 +867,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Accepts out-of-order NUMs in the current window. Rejects duplicates
     /// and NUMs outside the window. Does not invent 4.08 policy.
+    #[inline]
     pub fn write_q_block1(
         &mut self,
         id: SlotId,
@@ -887,6 +878,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Admit or continue incoming Q-Block1 for `key`.
+    #[inline]
     pub fn apply_q_block1(
         &mut self,
         key: BlockKey,
@@ -914,6 +906,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// The first datagram may be any NUM in `0..MAX_PAYLOADS`. `size2` is the
     /// Size2 hint when present. See `design.md` and
     /// `knowledge/rfcs/rfc9177.txt`.
+    #[inline]
     pub fn admit_q_block2(
         &mut self,
         key: BlockKey,
@@ -928,6 +921,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Accepts out-of-order NUMs in the current window. Rejects duplicates
     /// and NUMs outside the window. Does not invent 4.08 policy.
+    #[inline]
     pub fn write_q_block2(
         &mut self,
         id: SlotId,
@@ -938,6 +932,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Admit or continue incoming Q-Block2 for `key`.
+    #[inline]
     pub fn apply_q_block2(
         &mut self,
         key: BlockKey,
@@ -961,6 +956,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block1.
+    #[inline]
     pub fn start_block1(
         &mut self,
         key: BlockKey,
@@ -971,6 +967,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next in-order outgoing Block1 range. Bytes stay in the body slot.
+    #[inline]
     pub fn next_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_block1(id)
     }
@@ -1001,6 +998,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block2.
+    #[inline]
     pub fn start_block2(
         &mut self,
         key: BlockKey,
@@ -1011,6 +1009,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next in-order outgoing Block2 range. Bytes stay in the body slot.
+    #[inline]
     pub fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_block2(id)
     }
@@ -1041,6 +1040,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Q-Block1.
+    #[inline]
     pub fn start_q_block1(
         &mut self,
         key: BlockKey,
@@ -1051,6 +1051,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next unsent outgoing Q-Block1 range in the current window.
+    #[inline]
     pub fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_q_block1(id)
     }
@@ -1060,6 +1061,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// `num` is the Q-Block1 NUM from the peer (RFC 9177 §4.3: all blocks
     /// through `num` received). Empty ACK is not a window ACK. Does not invent
     /// 2.31 / 4.08 policy.
+    #[inline]
     pub fn ack_q_block1(
         &mut self,
         id: SlotId,
@@ -1111,6 +1113,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Q-Block2.
+    #[inline]
     pub fn start_q_block2(
         &mut self,
         key: BlockKey,
@@ -1121,6 +1124,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next unsent outgoing Q-Block2 range in the current window.
+    #[inline]
     pub fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_q_block2(id)
     }
@@ -1130,6 +1134,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// `num` is the Continue Q-Block2 NUM (RFC 9177 §4.4: `num % MAX_PAYLOADS
     /// == 0` and `num != 0`). Empty ACK is not a window ACK. Does not invent
     /// 2.31 / 4.08 policy.
+    #[inline]
     pub fn ack_q_block2(
         &mut self,
         id: SlotId,
@@ -1527,10 +1532,12 @@ impl RxBlockOpt {
     }
 }
 
+#[inline]
 fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessageError> {
     crate::message::decode(bytes.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Parse)
 }
 
+#[inline]
 fn encode_occupied(buf: Option<&mut [u8]>, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
     crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?)
         .map_err(SlotMessageError::Encode)

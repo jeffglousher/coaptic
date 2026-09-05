@@ -254,12 +254,20 @@ fn method_by_method_matches_storage() {
 #[test]
 fn tables_acquire_release_rotate() {
     let mut engine = build_default();
-    let d = engine.acquire_dedup().expect("dedup");
-    let o = engine.acquire_observe().expect("observe");
-    engine.rotate_dedup();
-    engine.rotate_observe();
-    engine.release_dedup(d).expect("release dedup");
-    engine.release_observe(o).expect("release observe");
+    let d = engine.storage_mut().dedup().acquire().expect("dedup");
+    let o = engine.storage_mut().observe().acquire().expect("observe");
+    engine.storage_mut().dedup().rotate();
+    engine.storage_mut().observe().rotate();
+    engine
+        .storage_mut()
+        .dedup()
+        .release(d)
+        .expect("release dedup");
+    engine
+        .storage_mut()
+        .observe()
+        .release(o)
+        .expect("release observe");
 }
 
 fn sample_datagram(id: u16) -> ([u8; 16], usize) {

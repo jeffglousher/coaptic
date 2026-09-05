@@ -5,8 +5,9 @@
 //! - [`message`] — decode and encode a CoAP datagram (`&[u8]` / `&mut [u8]`).
 //!   Usable with no [`Engine`].
 //! - [`storage`] — [`Engine`] generic over [`Storage`] (acquire / release /
-//!   rotate), [`Memory`], pools, and tables. Main types are also re-exported
-//!   at the crate root.
+//!   rotate), [`Memory`], pools, and tables. Happy-path types are
+//!   re-exported at the crate root; typestate markers, raw `*Table` /
+//!   `*Pool` types, and backend traits live in [`storage`].
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
@@ -21,8 +22,8 @@
 //! jitter). A different identity from Dedup. Token matching ([`ExchangeEntry`]) is a
 //! compact table keyed by [`Token`] and remote [`Endpoint`], sized from the
 //! TX pool count (not a seventh area). Observe interest ([`ObserveInterest`])
-//! fills the existing [`ObserveTable`] (Token + remote [`Endpoint`]; pending
-//! notify and 24-bit sequence live on the row).
+//! fills the existing [`storage::ObserveTable`] (Token + remote [`Endpoint`];
+//! pending notify and 24-bit sequence live on the row).
 //! Classic Block1 / Block2 body assembly uses a [`BlockTransfer`] sidecar on
 //! Incoming / Outgoing Body Pool slots when `.block_wise(true)` (Token +
 //! remote [`Endpoint`]; see `design.md`). Incoming Q-Block1 / Q-Block2 use
@@ -46,7 +47,7 @@
 //! [`Access`] / [`AccessMut`] pins an occupied RX/TX datagram or body
 //! slot against release (`design.md` §Application memory access). Empty ACK/RST
 //! constructors and [`ParsedMessage`] detectors live in [`message`].
-//! [`message::Ids`] is a wrapping Message ID counter; [`Token::mint`] takes
+//! [`Ids`] is a wrapping Message ID counter; [`Token::mint`] takes
 //! caller entropy ([`message::TokenSource`]; the core does not call an OS
 //! RNG). [`Message::con`] / [`Message::non`] build a CON/NON skeleton
 //! without [`Engine`]. Pending
@@ -64,7 +65,7 @@
 //! Classic incoming Block1 / Block2, incoming
 //! Q-Block1 / Q-Block2, and outgoing Block1 / Block2 / Q-Block1 / Q-Block2
 //! assemble or slice complete bodies in body-pool slots ([`BlockTransfer`])
-//! when [`BodySlots`] is implemented. Optional
+//! when [`storage::BodySlots`] is implemented. Optional
 //! format/critical checks
 //! remain separate calls. The library does not invent 4.02 / RST policy.
 //!
@@ -86,10 +87,11 @@
 //! # Storage backends
 //!
 //! - `no_std` default: [`Memory<P>`](Memory) owns typed arrays sized by
-//!   [`MemoryProfile`] named associated constants. [`profiles::Default`] uses
-//!   1472-byte datagrams; [`profiles::Constrained`] uses 1152. Body pools exist
-//!   only as [`Memory<P, WithBodies<P>>`] when block-wise is enabled (default
-//!   body 4096 = 4 × 1024).
+//!   [`storage::MemoryProfile`] named associated constants.
+//!   [`profiles::Default`] uses 1472-byte datagrams;
+//!   [`profiles::Constrained`] uses 1152. Body pools exist only as
+//!   `Memory<P, storage::WithBodies<P>>` when block-wise is enabled
+//!   (default body 4096 = 4 × 1024).
 //! - `alloc`: [`AllocMemory`] plus runtime [`Capacities`] (heap at init, then no
 //!   growth). Same [`Storage`] trait. Not a carved byte slab.
 //!
@@ -131,19 +133,17 @@ pub use error::{
     ValueError,
 };
 pub use message::{
-    BlockValue, Code, ContentFormat, EncodedUint, Header, Message, MessageId, OBSERVE_DEREGISTER,
-    OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber, OptionValueFormat, Options,
-    OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode, decode_block, decode_observe,
-    decode_uint, decode_uint16, empty_ack, empty_rst, encode, encode_block, encode_observe,
-    encode_uint,
+    BlockValue, Code, ContentFormat, EncodedUint, Header, Ids, Message, MessageId,
+    OBSERVE_DEREGISTER, OBSERVE_REGISTER, OBSERVE_SEQUENCE_MASK, Opt, OptionNumber,
+    OptionValueFormat, Options, OptionsBuilder, ParsedMessage, Token, Transmission, Type, decode,
+    decode_block, decode_observe, decode_uint, decode_uint16, empty_ack, empty_rst, encode,
+    encode_block, encode_observe, encode_uint,
 };
 #[cfg(feature = "alloc")]
 pub use storage::AllocMemory;
 pub use storage::{
-    Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyPool, BodySlots,
-    Capacities, DatagramPool, DatagramSlots, DedupEntry, DedupKey, DedupSlots, DedupTable,
-    Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges, Memory,
-    MemoryProfile, Missing, NoBodies, ObserveInterest, ObserveKey, ObserveSlots, ObserveTable,
-    OutgoingBlock, PendingCon, PendingCons, PendingRto, Present, Progress, QBlockRecover,
-    Retransmit, SlotError, SlotId, SlotPool, Storage, WithBodies,
+    Access, AccessMut, BlockKey, BlockProgress, BlockRole, BlockTransfer, Capacities, DedupEntry,
+    DedupKey, Endpoint, Engine, EngineBuilder, ExchangeEntry, ExchangeKey, Memory, ObserveInterest,
+    ObserveKey, OutgoingBlock, PendingCon, PendingRto, Progress, QBlockRecover, Retransmit,
+    SlotError, SlotId, Storage,
 };

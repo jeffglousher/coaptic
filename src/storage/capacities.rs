@@ -69,10 +69,23 @@ impl Capacities {
     /// Whether all four body fields are present.
     #[must_use]
     pub const fn has_body_pools(&self) -> bool {
-        self.rx_body_slots.is_some()
-            && self.rx_body_bytes.is_some()
-            && self.tx_body_slots.is_some()
-            && self.tx_body_bytes.is_some()
+        self.body_dims().is_some()
+    }
+
+    /// Body slot/byte counts when all four fields are present.
+    #[must_use]
+    pub(crate) const fn body_dims(self) -> Option<(usize, usize, usize, usize)> {
+        match (
+            self.rx_body_slots,
+            self.rx_body_bytes,
+            self.tx_body_slots,
+            self.tx_body_bytes,
+        ) {
+            (Some(rx_slots), Some(rx_bytes), Some(tx_slots), Some(tx_bytes)) => {
+                Some((rx_slots, rx_bytes, tx_slots, tx_bytes))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) const fn body_fields_consistent(&self) -> bool {
@@ -89,13 +102,9 @@ impl Capacities {
             return Err(BuildError::IncompleteBodyCapacities);
         }
         if block_wise {
-            if !self.has_body_pools() {
+            let Some((rx_slots, rx_bytes, tx_slots, tx_bytes)) = self.body_dims() else {
                 return Err(BuildError::MissingBodyPools);
-            }
-            let rx_slots = self.rx_body_slots.expect("checked");
-            let rx_bytes = self.rx_body_bytes.expect("checked");
-            let tx_slots = self.tx_body_slots.expect("checked");
-            let tx_bytes = self.tx_body_bytes.expect("checked");
+            };
             if rx_slots == 0 || rx_bytes == 0 || tx_slots == 0 || tx_bytes == 0 {
                 return Err(BuildError::ZeroBodyCapacity);
             }
