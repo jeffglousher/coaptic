@@ -20,7 +20,7 @@ Body pools exist only when `.block_wise(true)`. Datagram slots hold CoAP UDP-pay
 
 ## Done on this tree
 
-Through squash-merges **#7–#33** on `main` plus this tree's message-layer codes/options:
+Through squash-merges **#7–#34** on `main`:
 
 | Domain | In the crate |
 | --- | --- |
@@ -29,13 +29,13 @@ Through squash-merges **#7–#33** on `main` plus this tree's message-layer code
 | Progress | `Access` pins, `Engine::progress`, Observe notify, Observe Max-Age / client-OFF lifetime, RFC 7641 §4.5 24-hour NON-confirm + notification NSTART on [`ObserveInterest`](src/storage/table.rs), incoming `QBlockRecover` + outgoing Q-Block reissue, first-block Observe on Block2 (`encode_block2_observe_tx`) |
 | Validation | SZX `{16…1024}` × 1..=25 Block/Q-Block sweep (`tests/block_sweep.rs`; `SweepProfile` / `AllocMemory`) plus BERT / Request-Tag identity cases. In-memory CoAP#4 plugtest (`tests/plugtest/`; 52 RUN / 36 SKIP). |
 
-The core does not send. The caller owns the clock, jitter, and socket.
+The core does not send. The caller owns the clock, jitter, and socket. Integration checklist: [`CALLER.md`](CALLER.md).
 
 ## Core CoAP bar
 
 The standing goal is a library that is functional and complete for **core CoAP** on the six areas, plus in-scope CoAP#4 TD passage (`base` / `block` / `link`). That bar is the RFC 7252 message/option surface (including FETCH / PATCH / iPATCH codes, No-Response, Hop-Limit, If-Match / If-None-Match classification), RFC 7641 Observe, RFC 7959 Block, RFC 9177 Q-Block, and RFC 9175 Echo / Request-Tag.
 
-This is not a transport-stack completeness claim. The caller owns send, clock, jitter, and RST / 4.xx policy. UDP / DTLS / OSCORE / 6LoWPAN are not part of that bar.
+This is not a transport-stack completeness claim. The caller owns send, clock, jitter, RST / 4.xx policy, resource / If-Match decisions, and Encode+Access loops ([`CALLER.md`](CALLER.md)). UDP / DTLS / OSCORE / 6LoWPAN are not part of that bar.
 
 ## Not planned
 
@@ -50,6 +50,24 @@ This is not a transport-stack completeness claim. The caller owns send, clock, j
 Harness filters: [`README.md`](README.md) §Validation harness. Policy: [`knowledge/block-testing.md`](knowledge/block-testing.md). TDs: [`knowledge/plugtest/`](knowledge/plugtest/).
 
 `design.md` is the architecture contract. Its Validation and tuning section matches this crate (`Access` pins, `Engine::progress`, Observe notify and Max-Age / client-OFF lifetime, Q-Block recover, BERT and `BodyTag` identity, Echo on `ExchangeEntry`, in-crate harness). Ownership, six areas, datagram = CoAP payload, `Endpoint` sidecar, and block-wise builder rules are unchanged.
+
+## What the caller must own
+
+See [`CALLER.md`](CALLER.md). Short form: send, clock (`now_ms`), jitter / entropy, when to RST or 4.xx (and 2.31), resource / If-Match decisions, Encode+Access loops. Codes and classifiers exist; the library does not invent policy.
+
+## 0.1 API surface freeze
+
+This is the 0.1 public surface. Do not balloon crate-root re-exports. Do not rename unless a name is actively wrong (not taste). Do not start an optimization pass in the same change as a rename.
+
+**Crate root (happy path):** `Engine`, `Memory` / `AllocMemory`, `EngineBuilder`, `Endpoint`, `Progress`, `Access` / `AccessMut`, `Ids`, `decode` / `encode`, `Message` / `ParsedMessage`, `Opt` / `OptionsBuilder`, keyed table rows (`DedupEntry`, `ExchangeEntry`, `ObserveInterest`, and siblings), Block/Q-Block types (`BlockValue`, `BlockTransfer`, `QBlockRecover`, `BodyTag`, and siblings), named option helpers (`Echo`, `HopLimit`, `NoResponse`, `Precondition`), `Transmission` / `ObserveTransmission`, main errors.
+
+**Stay nested:**
+
+- `message::` — `TokenSource`, `message::value` iterators and extra codecs.
+- `storage::` — typestate `Missing` / `Present`, raw `*Table` / `*Pool` types, `MemoryProfile` / `NoBodies` / `WithBodies`, backend traits (`Storage`, `SlotPool`, `DatagramSlots`, and siblings).
+- `profiles` — capacity numbers (`Default`, `Constrained`).
+
+New types default to their module until a second happy-path caller needs them at the root.
 
 ## How to check
 
@@ -70,7 +88,8 @@ CI runs those on pull requests to `main` (and `workflow_dispatch`). No push-to-m
 ## Reading order
 
 1. This file
-2. [`README.md`](README.md) (crate surface)
-3. [`design.md`](design.md) (architecture)
-4. Crate rustdoc (`src/lib.rs`)
-5. [`knowledge/index.md`](knowledge/index.md) → memory, profiles, plugtest, RFCs
+2. [`CALLER.md`](CALLER.md) (what the caller must own)
+3. [`README.md`](README.md) (crate surface)
+4. [`design.md`](design.md) (architecture)
+5. Crate rustdoc (`src/lib.rs`)
+6. [`knowledge/index.md`](knowledge/index.md) → memory, profiles, plugtest, RFCs

@@ -3,7 +3,7 @@
 Humans and agents are the same kind of contributor. Either may author. Either may review.
 
 - Agents: follow [AGENTS.md](AGENTS.md).
-- External review brief: [REVIEW.md](REVIEW.md).
+- External review brief: [REVIEW.md](REVIEW.md). Caller contract: [CALLER.md](CALLER.md).
 - Knowledge: [knowledge/](knowledge/) (OKF v0.2). Protocol copies: [knowledge/rfcs/](knowledge/rfcs/). Plugtest mapping: [knowledge/plugtest/](knowledge/plugtest/).
 - Architecture names: [knowledge/memory.md](knowledge/memory.md). UDP peer sidecar is `Endpoint` (not `Peer`). Application pin is `Access`. One bounded pass is `Engine::progress` → `Progress`.
 - Rules are not forked here. [AGENTS.md](AGENTS.md) is the policy.
