@@ -2,12 +2,15 @@
 //!
 //! Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2 (RFC 9177)
 //! reuse the uint codec. They are not in RFC 7252 Table 4. [`BlockValue`]
-//! holds NUM/M/SZX; Q-Block uses the same bitfields.
+//! holds NUM/M/SZX; Q-Block uses the same bitfields. Hop-Limit (RFC 8768)
+//! and No-Response (RFC 7967) also reuse uint. Request-Tag and Echo
+//! (RFC 9175) are opaque.
 //!
 //! These codecs operate on option *value* bytes after
 //! [`crate::message::decode`] / before [`crate::message::encode`]. They do
 //! not parse option headers. Wire format lives in
 //! `knowledge/rfcs/rfc7252.txt`, `knowledge/rfcs/rfc7959.txt`,
+//! `knowledge/rfcs/rfc7967.txt`, `knowledge/rfcs/rfc8768.txt`,
 //! `knowledge/rfcs/rfc9175.txt`, and `knowledge/rfcs/rfc9177.txt`. This
 //! module does not restate it.
 
@@ -16,7 +19,10 @@ use core::fmt;
 use crate::error::{ParseError, ValueError};
 
 use super::decode::ParsedMessage;
+use super::hop::HopLimit;
+use super::no_response::NoResponse;
 use super::option::{Opt, OptionNumber, Options};
+use super::precondition::Precondition;
 
 /// RFC 7252 default Max-Age (seconds) when the option is absent.
 ///
@@ -33,6 +39,13 @@ pub const OBSERVE_DEREGISTER: u32 = 1;
 ///
 /// See `knowledge/rfcs/rfc7641.txt`.
 pub const OBSERVE_SEQUENCE_MASK: u32 = 0x00ff_ffff;
+
+const fn is_observe_method(code: crate::message::Code) -> bool {
+    matches!(
+        code,
+        crate::message::Code::GET | crate::message::Code::FETCH
+    )
+}
 
 /// RFC 7252 §3.2 option value format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -606,6 +619,22 @@ impl<'a> Opt<'a> {
         Self::uint(OptionNumber::SIZE1, encoded)
     }
 
+    /// Hop-Limit (uint). RFC 8768; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc8768.txt`.
+    #[must_use]
+    pub const fn hop_limit(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::HOP_LIMIT, encoded)
+    }
+
+    /// No-Response (uint bitmap). RFC 7967; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc7967.txt`.
+    #[must_use]
+    pub const fn no_response(encoded: &'a EncodedUint) -> Self {
+        Self::uint(OptionNumber::NO_RESPONSE, encoded)
+    }
+
     /// Size2 (uint). RFC 7959; not in RFC 7252 Table 4.
     #[must_use]
     pub const fn size2(encoded: &'a EncodedUint) -> Self {
@@ -903,18 +932,16 @@ impl<'a> ParsedMessage<'a> {
             .map(|opt| decode_observe(opt.value()))
     }
 
-    /// GET with Observe register (value 0). Sequence 0 on a notification is not this.
+    /// GET or FETCH with Observe register (value 0). Sequence 0 on a notification is not this.
     #[must_use]
     pub fn is_observe_register(self) -> bool {
-        self.code() == crate::message::Code::GET
-            && matches!(self.observe(), Some(Ok(OBSERVE_REGISTER)))
+        is_observe_method(self.code()) && matches!(self.observe(), Some(Ok(OBSERVE_REGISTER)))
     }
 
-    /// GET with Observe deregister (value 1). Sequence 1 on a notification is not this.
+    /// GET or FETCH with Observe deregister (value 1). Sequence 1 on a notification is not this.
     #[must_use]
     pub fn is_observe_deregister(self) -> bool {
-        self.code() == crate::message::Code::GET
-            && matches!(self.observe(), Some(Ok(OBSERVE_DEREGISTER)))
+        is_observe_method(self.code()) && matches!(self.observe(), Some(Ok(OBSERVE_DEREGISTER)))
     }
 
     /// Whether If-None-Match is present (empty vs missing).
@@ -929,6 +956,42 @@ impl<'a> ParsedMessage<'a> {
         OpaqueOptions {
             inner: self.get_options(OptionNumber::IF_MATCH),
         }
+    }
+
+    /// Classify If-Match / If-None-Match against the current representation.
+    ///
+    /// `exists` is whether any representation is stored. `etag` is the
+    /// current ETag when known (used only for a non-empty If-Match). The
+    /// library does not invent 4.12 policy. See
+    /// `knowledge/rfcs/rfc7252.txt` §5.10.8.
+    #[must_use]
+    pub fn precondition(self, exists: bool, etag: Option<&[u8]>) -> Precondition {
+        if self.if_none_match() && exists {
+            return Precondition::FailedIfNoneMatch;
+        }
+        if !self.if_match_holds(exists, etag) {
+            return Precondition::FailedIfMatch;
+        }
+        if self.if_none_match() || self.get_option(OptionNumber::IF_MATCH).is_some() {
+            Precondition::Satisfied
+        } else {
+            Precondition::Unconditional
+        }
+    }
+
+    fn if_match_holds(self, exists: bool, etag: Option<&[u8]>) -> bool {
+        let mut saw = false;
+        for v in self.if_match() {
+            saw = true;
+            if v.is_empty() {
+                if exists {
+                    return true;
+                }
+            } else if exists && etag == Some(v) {
+                return true;
+            }
+        }
+        !saw
     }
 
     /// ETag values in wire order.
@@ -955,6 +1018,26 @@ impl<'a> ParsedMessage<'a> {
     #[must_use]
     pub fn echo(self) -> Option<&'a [u8]> {
         self.get_option(OptionNumber::ECHO).map(Opt::value)
+    }
+
+    /// Hop-Limit, if present. RFC 8768; not in RFC 7252 Table 4.
+    ///
+    /// Missing is `None`. Does not substitute [`HopLimit::DEFAULT`]. See
+    /// `knowledge/rfcs/rfc8768.txt`.
+    #[must_use]
+    pub fn hop_limit(self) -> Option<Result<HopLimit, ValueError>> {
+        self.get_option(OptionNumber::HOP_LIMIT)
+            .map(|opt| HopLimit::decode(opt.value()))
+    }
+
+    /// No-Response, if present. RFC 7967; not in RFC 7252 Table 4.
+    ///
+    /// Missing is `None`. Does not substitute [`NoResponse::DEFAULT`]. See
+    /// `knowledge/rfcs/rfc7967.txt`.
+    #[must_use]
+    pub fn no_response(self) -> Option<Result<NoResponse, ValueError>> {
+        self.get_option(OptionNumber::NO_RESPONSE)
+            .map(|opt| NoResponse::decode(opt.value()))
     }
 
     /// First known RFC 7252 option whose value has the wrong format.
@@ -1103,6 +1186,13 @@ mod unit_tests {
         assert!(!OptionNumber::ECHO.is_unsafe());
         assert!(OptionNumber::ECHO.is_no_cache_key());
         assert_eq!(option_value_format(OptionNumber::ECHO), None);
+        assert!(!OptionNumber::HOP_LIMIT.is_rfc7252());
+        assert!(!OptionNumber::HOP_LIMIT.is_critical());
+        assert!(!OptionNumber::NO_RESPONSE.is_rfc7252());
+        assert!(!OptionNumber::NO_RESPONSE.is_critical());
+        assert!(OptionNumber::NO_RESPONSE.is_unsafe());
+        assert_eq!(option_value_format(OptionNumber::HOP_LIMIT), None);
+        assert_eq!(option_value_format(OptionNumber::NO_RESPONSE), None);
     }
 
     #[test]

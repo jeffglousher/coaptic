@@ -369,6 +369,34 @@ fn code_helpers() {
     assert_eq!((Code::GET.class(), Code::GET.detail()), (0, 1));
     assert_eq!(Type::Confirmable.to_bits(), 0);
     assert_eq!(Type::from_bits(2), Some(Type::Acknowledgement));
+    assert!(Code::FETCH.is_request());
+    assert!(Code::FETCH.is_safe());
+    assert!(Code::FETCH.is_idempotent());
+    assert!(Code::PATCH.is_request());
+    assert!(!Code::PATCH.is_safe());
+    assert!(!Code::PATCH.is_idempotent());
+    assert!(Code::IPATCH.is_request());
+    assert!(!Code::IPATCH.is_safe());
+    assert!(Code::IPATCH.is_idempotent());
+    assert!(Code::PUT.is_idempotent());
+    assert!(!Code::PUT.is_safe());
+    assert!(Code::DELETE.is_idempotent());
+    assert!(!Code::POST.is_safe());
+    assert!(!Code::POST.is_idempotent());
+    assert!(!Code::CONTENT.is_safe());
+    assert!(!Code::CONTENT.is_idempotent());
+    assert_eq!(Code::from_class_detail(0, 5), Some(Code::FETCH));
+    assert_eq!(Code::from_class_detail(0, 6), Some(Code::PATCH));
+    assert_eq!(Code::from_class_detail(0, 7), Some(Code::IPATCH));
+    assert_eq!(Code::from_class_detail(4, 9), Some(Code::CONFLICT));
+    assert_eq!(
+        Code::from_class_detail(4, 22),
+        Some(Code::UNPROCESSABLE_ENTITY)
+    );
+    assert_eq!(Code::from_class_detail(5, 8), Some(Code::HOP_LIMIT_REACHED));
+    assert!(Code::CONFLICT.is_client_error());
+    assert!(Code::UNPROCESSABLE_ENTITY.is_client_error());
+    assert!(Code::HOP_LIMIT_REACHED.is_server_error());
 }
 
 #[test]
@@ -460,6 +488,32 @@ fn observe_option_roundtrip_register_deregister_and_sequence() {
     let n = encode(&msg, &mut buf).expect("encode seq 0");
     let parsed = decode(&buf[..n]).expect("seq 0");
     assert_eq!(parsed.observe(), Some(Ok(0)));
+    assert!(!parsed.is_observe_register());
+}
+
+#[test]
+fn fetch_observe_register_and_deregister() {
+    let register = [Opt::observe_register()];
+    let msg =
+        Message::new(Type::Confirmable, Code::FETCH, MessageId::new(1)).with_options(&register);
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert!(parsed.is_observe_register());
+    assert!(!parsed.is_observe_deregister());
+
+    let deregister = [Opt::observe_deregister()];
+    let msg =
+        Message::new(Type::Confirmable, Code::FETCH, MessageId::new(2)).with_options(&deregister);
+    let n = encode(&msg, &mut buf).expect("encode");
+    let parsed = decode(&buf[..n]).expect("decode");
+    assert!(parsed.is_observe_deregister());
+    assert!(!parsed.is_observe_register());
+
+    let msg =
+        Message::new(Type::Confirmable, Code::POST, MessageId::new(3)).with_options(&register);
+    let n = encode(&msg, &mut buf).expect("encode");
+    let parsed = decode(&buf[..n]).expect("decode");
     assert!(!parsed.is_observe_register());
 }
 

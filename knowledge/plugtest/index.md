@@ -4,7 +4,7 @@ ETSI CoAP plugtest sources and the coaptic mapping. Do not invent TD identifiers
 
 # Requirements
 
-* [coaptic plugtest requirements](requirements.md) - In-scope vs deferred suites; six-area engine constraint.
+* [coaptic plugtest requirements](requirements.md) - In-scope vs deferred vs not-planned suites; six-area engine constraint.
 * [Block testing](/block-testing.md) - Combinatorial Block/Q-Block SZX × 1–25-block sweep; Default is not the test ceiling.
 
 In-repo harness (no sockets): `cargo test --test block_sweep` and `cargo test --test plugtest`.
@@ -18,7 +18,10 @@ In-repo harness (no sockets): `cargo test --test block_sweep` and `cargo test --
 # Deferred
 
 * [DTLS](dtls.md) - `TD_COAP_DTLS_*`. Not required until security work.
-* [6LoWPAN](6lowpan.md) - `TD_6LoWPAN_*`. Not required until security / 6LoWPAN work.
+
+# Not planned
+
+* [6LoWPAN](6lowpan.md) - `TD_6LoWPAN_*`. Not planned (adaptation-layer; not a completeness gap).
 
 # Artifacts
 
