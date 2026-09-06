@@ -1,6 +1,7 @@
 //! Run one TD against a client/server peer pair and grade the pcap.
 
 use std::net::SocketAddr;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -72,8 +73,16 @@ pub struct TdResult {
     pub capture: Capture,
 }
 
+/// One TD at a time: plugtest site state is process-global, and parallel
+/// `cargo test` workers would otherwise interleave `site::reset`.
+pub(crate) fn harness_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Run `id` on `pair` and grade against the golden catalog.
 pub fn run_td(id: &str, pair: Pair) -> TdResult {
+    let _guard = harness_lock();
     if let Some(reason) = catalog::skip_reason(id) {
         return TdResult {
             id: id.to_owned(),
