@@ -94,8 +94,9 @@
 //! complete. Engine BERT (SZX 7) codecs exist; App does not expose them.
 //! OSCORE is not implemented. First-party DTLS is not a library
 //! dependency — the `coaptic-plugtest` harness (feature `dtls`) wraps
-//! webrtc-dtls as a [`DatagramIo`](storage::DatagramIo). 6LoWPAN is not
-//! planned.
+//! webrtc-dtls as a [`DatagramIo`](storage::DatagramIo). Alternative
+//! networks (6LoWPAN, LoRaWAN, …) are the same future / backlog —
+//! contributor opportunities.
 //!
 //! # Features
 //!

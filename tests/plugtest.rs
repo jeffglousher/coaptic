@@ -3,7 +3,7 @@
 //! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no DTLS).
 //! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
 //! does not invent ids. In-memory `dtls` is skipped (no sockets; see
-//! `crates/coaptic-plugtest --features dtls`). The not-planned
+//! `crates/coaptic-plugtest --features dtls`). The future/backlog
 //! `6lowpan` suite is skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated
 //! `ObserveInterest` lifetime (no seventh area).
 //!
@@ -90,14 +90,14 @@ fn deferred_dtls_skipped() {
 }
 
 #[test]
-fn not_planned_6lowpan_skipped() {
+fn backlog_6lowpan_skipped() {
     let yaml = include_str!("plugtest/td-coap4/6lowpan.yml");
     for id in catalog::extract_td_ids(yaml) {
         let reason = catalog::skip_reason(id).unwrap_or_else(|| panic!("{id} must skip"));
         assert!(reason.contains("6LoWPAN"), "{id}: {reason}");
         assert!(
-            reason.contains("not planned"),
-            "{id}: skip reason must say not planned ({reason})"
+            reason.contains("future/backlog"),
+            "{id}: skip reason must say future/backlog ({reason})"
         );
     }
 }
@@ -132,7 +132,7 @@ fn inventory() {
     let lowpan = catalog::extract_td_ids(include_str!("plugtest/td-coap4/6lowpan.yml"));
     skipped += lowpan.len();
     lines.push(format!(
-        "SKIP  6LOWPAN {} TDs (not planned: 6LoWPAN)",
+        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN (contributor opportunity))",
         lowpan.len()
     ));
     eprintln!(

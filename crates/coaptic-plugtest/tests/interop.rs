@@ -24,11 +24,11 @@ fn golden_catalog_parses_and_covers_tds() {
 }
 
 #[test]
-fn not_planned_6lowpan_skipped() {
+fn backlog_6lowpan_skipped() {
     for id in catalog::lowpan_ids() {
         let reason = catalog::skip_reason(id).expect("6LoWPAN must skip");
         assert!(reason.contains("6LoWPAN"), "{id}: {reason}");
-        assert!(reason.contains("not planned"), "{id}: {reason}");
+        assert!(reason.contains("future/backlog"), "{id}: {reason}");
     }
 }
 
@@ -132,7 +132,10 @@ fn inventory() {
     }
     let lowpan = catalog::lowpan_ids();
     skipped += lowpan.len();
-    eprintln!("SKIP  6LOWPAN {} TDs (not planned: 6LoWPAN)", lowpan.len());
+    eprintln!(
+        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN (contributor opportunity))",
+        lowpan.len()
+    );
     eprintln!("interop inventory: {ran} run, {skipped} skip");
     assert!(ran >= 24 + 6 + 13 + 9, "CORE+BLOCK+OBS+LINK must all run");
 }
