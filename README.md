@@ -48,7 +48,7 @@ cargo test -p coaptic-plugtest
 cargo test -p coaptic-plugtest --features dtls
 ```
 
-`TD_6LoWPAN_*` stay skipped (not planned). Tracking: issues [#49](https://github.com/jeffglousher/coaptic/issues/49) and [#56](https://github.com/jeffglousher/coaptic/issues/56).
+DTLS TDs (`--features dtls`) put coaptic behind a harness webrtc-dtls `DatagramIo` so mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`) run. `TD_6LoWPAN_*` stay skipped (not planned). Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49).
 
 ## Example
 

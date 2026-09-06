@@ -170,13 +170,15 @@ pub fn grade_td(td: &str, expect: &ExpectTd, capture: &Capture) -> Result<(), St
 
     let mut echo_mid: Option<u16> = None;
     let mut echo_tok: Option<Vec<u8>> = None;
+    // `cursor` is an index into the filtered `coap` list, not a raw packet
+    // index. Non-CoAP records (DTLS, garbage) must not skip real replies.
     let mut cursor = 0usize;
     for (step, exp) in expect.coap.iter().enumerate() {
         let mut found = None;
-        for (j, view) in coap.iter().skip(cursor) {
+        for (list_i, view) in coap.iter().map(|(_, v)| v).enumerate().skip(cursor) {
             if match_packet(view, exp, echo_mid, echo_tok.as_deref()) {
-                found = Some((*j, view.clone()));
-                cursor = j + 1;
+                found = Some((list_i, view.clone()));
+                cursor = list_i + 1;
                 break;
             }
         }
@@ -590,5 +592,34 @@ mod tests {
         }"#;
         let exp: ExpectTd = serde_json::from_str(json).unwrap();
         grade_td("TD_COAP_CORE_01", &exp, &cap).expect("grade");
+    }
+
+    #[test]
+    fn grades_past_leading_non_coap() {
+        let mut ids = Ids::new(1);
+        let token = Token::from_checked(&[0xAB, 0xCD]);
+        let mut opts = OptionsBuilder::<4>::new();
+        opts.push(Opt::uri_path("test")).ok();
+        let req = ids.con(Code::GET, token).with_options(opts.as_slice());
+        let mut buf = [0u8; 64];
+        let n = encode(&req, &mut buf).unwrap();
+        let cap = Capture::new();
+        let a: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let b: std::net::SocketAddr = "127.0.0.1:2".parse().unwrap();
+        cap.push(a, b, &[0x16, 0xfe, 0xfd, 0, 0, 0, 0], false);
+        cap.push(a, b, &buf[..n], false);
+        let ack = Message::new(Type::Acknowledgement, Code::CONTENT, req.message_id())
+            .with_token(token)
+            .with_payload(b"hi");
+        let n = encode(&ack, &mut buf).unwrap();
+        cap.push(b, a, &buf[..n], false);
+        let json = r#"{
+            "coap": [
+                {"code":"0.01","uri_path":["test"]},
+                {"code":"2.05"}
+            ]
+        }"#;
+        let exp: ExpectTd = serde_json::from_str(json).unwrap();
+        grade_td("lead-noise", &exp, &cap).expect("grade");
     }
 }

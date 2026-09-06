@@ -202,10 +202,12 @@ impl<T: DatagramIo> DatagramIo for CapturingIo<T> {
     }
 
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        let n = self.inner.send(dest, bytes)?;
+        // Log before the syscall. A localhost peer can recv and the runner
+        // can `take_capture` between `send_to` and `push` (CI flake:
+        // request in the pcap, response missing, client already succeeded).
         self.capture
             .push(self.local, SocketAddr::from(dest), bytes, self.decrypted);
-        Ok(n)
+        self.inner.send(dest, bytes)
     }
 }
 
