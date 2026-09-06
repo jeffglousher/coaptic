@@ -130,7 +130,8 @@
 //! [`Outgoing::to`] → [`Outgoing::send`]; `poll` matches Token + peer
 //! on the Exchange table; [`App::take_response`] is a [`Response`]
 //! (code / payload, and [`Response::body`] when Block2 / Q-Block2
-//! assembled). No `SlotId`. The caller owns the destination and must
+//! assembled). Large PUT/POST uses Block1 / Q-Block1 (path reused on
+//! continues). No `SlotId`. The caller owns the destination and must
 //! take responses. Tokens and Message IDs are App counters (no OS RNG).
 //! Observe client stays on the Engine path. Engine remains the
 //! advanced escape hatch for explicit slots, [`Access`](storage::Access),

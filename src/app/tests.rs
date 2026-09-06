@@ -37,6 +37,14 @@ fn put_body(req: Request<'_>) -> Response {
     }
 }
 
+fn put_large(req: Request<'_>) -> Response {
+    if req.body() == Some(&LARGE[..]) {
+        Response::changed()
+    } else {
+        Response::new(Code::BAD_REQUEST)
+    }
+}
+
 fn get_large(_: Request<'_>) -> Response {
     Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
 }
@@ -1146,6 +1154,7 @@ fn pipe_app() -> App<profiles::Default, Pipe> {
     App::profile::<profiles::Default>()
         .block_wise(true)
         .route(&["large"], get(get_large))
+        .route(&["upload"], put(put_large))
         .bind(Pipe::default())
         .expect("bind")
 }
@@ -1154,13 +1163,13 @@ fn poll_until_response(
     app: &mut App<profiles::Default, Pipe>,
     call: crate::Call,
 ) -> crate::Response {
-    for t in 0u64..8 {
+    for t in 0u64..16 {
         app.poll(t).expect("poll");
         if let Some(response) = app.take_response(call) {
             return response;
         }
     }
-    panic!("client Block2/Q-Block2 did not complete");
+    panic!("client block-wise exchange did not complete");
 }
 
 #[test]
@@ -1176,6 +1185,43 @@ fn client_get_block2_assembles_body_without_slot_id() {
     assert_eq!(response.token(), Some(call.token()));
     assert_eq!(response.peer(), Some(peer));
     assert!(app.take_response(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_put_block1_assembles_body_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    let call = app
+        .put(&["upload"])
+        .to(peer)
+        .payload(&LARGE)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .send(0)
+        .expect("send");
+    let response = poll_until_response(&mut app, call);
+    assert_eq!(response.code(), Code::CHANGED);
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(response.peer(), Some(peer));
+    assert!(app.take_response(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_put_q_block1_assembles_body_without_slot_id() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    let call = app
+        .put(&["upload"])
+        .to(peer)
+        .payload(&LARGE)
+        .q_block1()
+        .send(0)
+        .expect("send");
+    let response = poll_until_response(&mut app, call);
+    assert_eq!(response.code(), Code::CHANGED);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
