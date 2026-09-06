@@ -74,18 +74,18 @@ impl DtlsIo {
         let listener = listen("127.0.0.1:0", config)
             .await
             .map_err(|e| format!("dtls listen: {e}"))?;
-        let addr = listener.addr().await.map_err(|e| format!("dtls addr: {e}"))?;
+        let addr = listener
+            .addr()
+            .await
+            .map_err(|e| format!("dtls addr: {e}"))?;
         let (in_tx, in_rx) = std_mpsc::channel();
         let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
         let peer = Arc::new(Mutex::new(addr));
         let peer_t = Arc::clone(&peer);
         tokio::spawn(async move {
-            match listener.accept().await {
-                Ok((conn, raddr)) => {
-                    *peer_t.lock().expect("dtls peer") = raddr;
-                    pump(conn, in_tx, out_rx).await;
-                }
-                Err(_) => {}
+            if let Ok((conn, raddr)) = listener.accept().await {
+                *peer_t.lock().expect("dtls peer") = raddr;
+                pump(conn, in_tx, out_rx).await;
             }
         });
         Ok((
