@@ -208,7 +208,10 @@ fn path_is_well_known(path: &[&str]) -> bool {
 }
 
 fn link_format<const N: usize>(site: &Site<N>) -> Response {
-    let mut buf = [0u8; link_format_capacity::<N>()];
+    // Array size cannot be `link_format_capacity::<N>()` on stable; slice
+    // the Response ceiling to that compile-time N budget.
+    let mut storage = [0u8; RESPONSE_BODY];
+    let buf = &mut storage[..link_format_capacity::<N>()];
     let mut n = 0usize;
     let mut first = true;
     for entry in site.entries.iter().flatten() {
@@ -220,7 +223,7 @@ fn link_format<const N: usize>(site: &Site<N>) -> Response {
             n += 1;
         }
         first = false;
-        if !write_link(&mut buf, &mut n, entry.path.segments()) {
+        if !write_link(buf, &mut n, entry.path.segments()) {
             return Response::internal_error();
         }
     }
