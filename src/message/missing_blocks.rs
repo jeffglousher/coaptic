@@ -34,7 +34,10 @@ impl std::error::Error for MissingBlocksError {}
 /// Encodes as a CBOR Sequence of one or more `uint` values (no array wrapper).
 /// Callers MUST supply unique numbers in ascending order; encode skips a value
 /// that is not strictly greater than the previous written NUM. Default
-/// Content-Format is [`ContentFormat::MISSING_BLOCKS`].
+/// Content-Format is [`ContentFormat::MISSING_BLOCKS`]. On the App face,
+/// [`crate::App::poll`] sends this for Q-Block1 holes via
+/// [`crate::Response::missing_blocks`]. Apply-error 4.08 stays
+/// [`crate::Response::problem`].
 ///
 /// ```
 /// use coaptic::message::MissingBlocks;

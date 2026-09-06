@@ -20,7 +20,8 @@ struct Entry {
 /// Fixed table of path → method router.
 ///
 /// `N` is the maximum number of paths (default 8). GET+PUT on one path
-/// occupies one slot. This is a routing table, not an Engine memory area
+/// occupies one slot. Prefer [`crate::App::route`] / [`crate::app::AppBuilder::route`]
+/// on the happy path. This is a routing table, not an Engine memory area
 /// and not a shared application bag.
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],

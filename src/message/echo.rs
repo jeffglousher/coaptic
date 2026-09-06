@@ -12,7 +12,9 @@ use super::decode::ParsedMessage;
 /// Echo option value (opaque, 1..=40 bytes).
 ///
 /// Not a seventh core area. Outstanding-request copies live on
-/// [`crate::storage::ExchangeEntry`]. See `knowledge/rfcs/rfc9175.txt`.
+/// [`crate::storage::ExchangeEntry`]. [`crate::App`] applies 4.01 with a
+/// minted challenge when [`crate::app::AppBuilder::echo_freshness`] is set.
+/// See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Echo {
     bytes: [u8; Self::MAX_LEN],
@@ -108,8 +110,10 @@ impl Echo {
 
 /// Time-based Echo freshness of one datagram.
 ///
-/// Event-based freshness is equality against a caller-owned [`Echo`]. The
-/// library does not invent 4.01 / RST policy.
+/// Event-based freshness is equality against a caller-owned [`Echo`].
+/// [`crate::App`] maps anything other than [`Self::Fresh`] to 4.01 when
+/// [`crate::app::AppBuilder::echo_freshness`] is set. The library does not
+/// invent 4.01 unless that policy is on.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EchoFreshness {
     /// No Echo option.

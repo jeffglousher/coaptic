@@ -5,181 +5,95 @@
 //! [`Call`], [`Outgoing`], [`get`] / [`put`] / [`post`] / [`delete`] /
 //! [`fetch`] / [`patch`] / [`ipatch`], [`Endpoint`], [`profiles`],
 //! [`Code`], [`ContentFormat`], [`Method`], [`ProblemDetails`], and the
-//! errors from [`bind`](app::AppBuilder::bind) / [`App::poll`] / [`Outgoing::send`].
-//! Engine slots, tables, Block/Q-Block types, [`Ids`](message::Ids), and
-//! [`DatagramIo`](storage::DatagramIo) live in [`storage`] / [`message`].
-//! [`app`] is the routing façade (`Request` to [`Response`]) and the
-//! outbound client face ([`Outgoing`] → [`Response`]). Engine slots are
-//! the advanced path: per-slot state machines and
-//! [`Progress`](storage::Progress). The caller owns the socket
-//! ([`storage::DatagramIo`]), the clock (`now_ms`), the destination of an
-//! outbound request, and domain state that outlives a request — there is
-//! no global App State. Protocol copies: [`knowledge/rfcs/`][rfcs].
-//! Architecture planning: [GitHub project][plan]. This rustdoc does not
-//! restate wire format.
+//! errors from [`bind`](app::AppBuilder::bind) / [`App::poll`] /
+//! [`Outgoing::send`]. Engine slots, tables, Block/Q-Block types,
+//! [`Ids`](message::Ids), and [`DatagramIo`](storage::DatagramIo) live in
+//! [`storage`] / [`message`].
+//!
+//! # Happy path
+//!
+//! ```text
+//! RX slot (+ body) --view--> Request
+//! handler(Request) -> Response
+//! Response --encode--> TX slot (+ body)
+//!
+//! Outgoing (get/put) --encode--> TX slot
+//! poll matches Token + endpoint
+//! RX --copy--> Response
+//! ```
+//!
+//! ```
+//! use coaptic::{App, Request, Response, get, profiles};
+//! # use coaptic::storage::DatagramIo;
+//! # use coaptic::Endpoint;
+//! # struct NullIo;
+//! # impl DatagramIo for NullIo {
+//! #     type Error = &'static str;
+//! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+//! #         Ok(None)
+//! #     }
+//! #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+//! # }
+//!
+//! fn get_temp(_req: Request<'_>) -> Response {
+//!     Response::content(b"21.5")
+//! }
+//!
+//! let mut app = App::profile::<profiles::Default>()
+//!     .block_wise(true)
+//!     .route("sensors/temp", get(get_temp))
+//!     .bind(NullIo)
+//!     .unwrap();
+//! app.poll(0).unwrap();
+//!
+//! let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+//! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
+//! app.poll(0).unwrap();
+//! let _response = app.take_response(call);
+//! ```
+//!
+//! Path arguments accept both `"sensors/temp"` and `&["sensors", "temp"]`
+//! ([`app::IntoPath`]; empty segments are rejected). Handlers are
+//! `fn(Request<'_>) -> Response`. One [`Response`] type covers handler
+//! intent and a completed client exchange ([`App::take_response`]).
+//! Observe subscribe is [`Outgoing::observe`]; the initial representation
+//! and later notifications use the same [`Call`]. [`Outgoing::deregister`]
+//! sends Observe=1. Structured 4.xx bodies use [`Response::problem`]
+//! (RFC 9290). Q-Block1 holes from `poll` use [`Response::missing_blocks`]
+//! (RFC 9177, Content-Format 272). Time-based Echo freshness is
+//! [`app::AppBuilder::echo_freshness`].
+//!
+//! # What you own
+//!
+//! The socket ([`storage::DatagramIo`]), the clock (`now_ms` into
+//! [`App::poll`]), the destination of an outbound request, and any domain
+//! state that outlives a request. There is no global App State. Tokens and
+//! Message IDs are App counters — this crate does not call an OS RNG.
 //!
 //! # Modules
 //!
-//! - [`app`] — [`App`] + [`Site`](app::Site): [`route`](app::AppBuilder::route),
-//!   [`get`] / [`put`] method routers, `fn(Request<'_>) -> Response` handlers,
-//!   [`Response`] builders, [`App::poll`], [`App::notify`](app::App::notify),
-//!   outbound [`App::get`] / [`Outgoing::send`] / [`App::take_response`],
-//!   [`Outgoing::observe`] / [`Outgoing::deregister`].
-//!   No global mutable shared bag.
-//! - [`message`] — decode/encode a CoAP datagram. No
-//!   [`Engine`](storage::Engine) required.
-//! - [`storage`] — [`Engine`](storage::Engine) generic over
-//!   [`Storage`](storage::Storage); [`Memory`](storage::Memory), pools,
-//!   tables, [`DatagramIo`](storage::DatagramIo).
+//! - [`app`] — [`App`]: [`route`](app::AppBuilder::route), method routers,
+//!   `fn(Request<'_>) -> Response`, [`App::poll`], [`App::notify`],
+//!   outbound [`App::get`] / [`Outgoing::send`] / [`App::take_response`].
+//! - [`message`] — [`decode`](message::decode) / [`encode`](message::encode)
+//!   a datagram. No [`Engine`](storage::Engine) required.
+//! - [`storage`] — [`Engine`](storage::Engine) over
+//!   [`Storage`](storage::Storage); pools, tables,
+//!   [`DatagramIo`](storage::DatagramIo). Advanced:
+//!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
-//! # Message
+//! Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture planning:
+//! [GitHub project][plan]. This rustdoc does not restate wire format.
+//! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
 //!
-//! [`decode`](message::decode) / [`encode`](message::encode) a UDP payload.
-//! [`OptionsBuilder`](message::OptionsBuilder) inserts options in any
-//! order. [`Ids`](message::Ids) and [`Token::mint`](message::Token::mint)
-//! ([`message::TokenSource`]) are caller-owned; the core has no OS RNG.
-//! [`Message::con`](message::Message::con) / [`Message::non`](message::Message::non)
-//! build a CON/NON skeleton. Empty ACK/RST live in [`message`].
-//! [`message::value`] covers RFC 7252 empty/opaque/uint/string. Named
-//! [`Opt`](message::Opt) helpers cover Table 4 plus Observe, Block /
-//! Q-Block / Size2 ([`BlockValue`](message::BlockValue)), Request-Tag,
-//! Echo ([`Echo`](message::Echo)), Hop-Limit ([`HopLimit`](message::HopLimit)),
-//! and No-Response ([`NoResponse`](message::NoResponse)).
-//! [`ParsedMessage::precondition`](message::ParsedMessage::precondition)
-//! classifies If-Match / If-None-Match.
-//! [`ObserveTransmission`](message::ObserveTransmission) names RFC 7641
-//! §4.5 constants.
-//! [`QBlockTransmission`](message::QBlockTransmission) names RFC 9177
-//! §7.2 `NON_RECEIVE_TIMEOUT` / `NON_MAX_RETRANSMIT`. [`Code::FETCH`] / [`Code::PATCH`] / [`Code::IPATCH`]
-//! and named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 are codes only — the
-//! library does not invent when to send them. Optional, not used by
-//! [`decode`](message::decode):
+//! # Deferred
 //!
-//! - [`ParsedMessage::check_rfc7252_options`](message::ParsedMessage::check_rfc7252_options)
-//!   — unrecognized critical
-//! - [`ParsedMessage::check_rfc7252_formats`](message::ParsedMessage::check_rfc7252_formats)
-//!   — known option, wrong format
-//!
-//! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR;
-//! Content-Format 257). [`Response::problem`] is the App-facing builder.
-//! App-generated 4.04 / 4.05 and apply-error 4.08 use it. When
-//! [`echo_freshness`](app::AppBuilder::echo_freshness) is set, App-generated
-//! 4.01 uses it plus an Echo option (RFC 9175). Progress-driven Q-Block1
-//! holes use [`Response::missing_blocks`] (RFC 9177
-//! `application/missing-blocks+cbor-seq`, Content-Format 272). Other
-//! Engine-path 4.xx stay caller-opt-in.
-//!
-//! The library does not invent 4.02 / RST policy.
-//!
-//! # Storage and progress
-//!
-//! A datagram slot holds CoAP bytes (UDP payload), not Ethernet.
-//! [`Endpoint`] is sidecar metadata. Not seventh areas: Dedup
-//! ([`DedupEntry`](storage::DedupEntry)), pending CON and RTO
-//! ([`PendingCon`](storage::PendingCon) / [`PendingRto`](storage::PendingRto)),
-//! token matching ([`ExchangeEntry`](storage::ExchangeEntry)), Observe
-//! interest ([`ObserveInterest`](storage::ObserveInterest) /
-//! [`ObserveLifetime`](storage::ObserveLifetime) /
-//! [`ObserveNotifyHold`](storage::ObserveNotifyHold)), Block/Q-Block
-//! ([`BlockTransfer`](storage::BlockTransfer)), Echo freshness
-//! ([`Echo`](message::Echo) on [`ExchangeEntry`](storage::ExchangeEntry)).
-//! Request-Tag / ETag body identity is [`BodyTag`](storage::BodyTag) on
-//! [`BlockKey`](storage::BlockKey). BERT is SZX 7 on
-//! [`BlockValue`](message::BlockValue). Incoming Q-Block holes surface as
-//! [`QBlockRecover`](storage::QBlockRecover) when
-//! [`QBlockReceiveWait`](storage::QBlockReceiveWait) is due
-//! (caller `now_ms`; same clock as CON RTO and Observe Max-Age).
-//!
-//! [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut) pin
-//! occupied bytes against release. [`DatagramIo`](storage::DatagramIo)
-//! binds any caller transport into RX/TX slots
-//! ([`Engine::recv_from`](storage::Engine::recv_from) /
-//! [`Engine::send_tx`](storage::Engine::send_tx)). The core still does
-//! not own a socket. [`bind`](app::AppBuilder::bind) hides construction;
-//! implement [`storage::DatagramIo`] on the socket type.
-//! [`Engine::progress`](storage::Engine::progress) is one bounded pass:
-//! CON retransmit poll, one rotating unpinned RX step, one rotating
-//! Observe notify (skips an endpoint at notification NSTART), at most
-//! one Observe lifetime expiry, at most one due incoming Q-Block recover.
-//! The caller owns clock, jitter, and send. RFC 7641 §4.5 24-hour
-//! NON-confirm is [`ObserveInterest::must_confirm`](storage::ObserveInterest::must_confirm).
-//!
-//! - `no_std` default: [`Memory<P>`](storage::Memory) sized by
-//!   [`storage::MemoryProfile`]. Body pools exist only as
-//!   `Memory<P, storage::WithBodies<P>>` when `.block_wise(true)` (default
-//!   body 4096 = 4 × 1024).
-//! - `alloc`: [`AllocMemory`](storage::AllocMemory) + runtime
-//!   [`Capacities`](storage::Capacities) (heap at init, then no growth).
-//!
-//! [`EngineBuilder`](storage::EngineBuilder) is consuming and
-//! typestate-gated.
-//! [`.block_wise`](storage::EngineBuilder::block_wise)`(false)` omits
-//! body pools.
-//!
-//! # App
-//!
-//! [`App`] is the approachable loop: [`App::profile`],
-//! [`block_wise`](app::AppBuilder::block_wise),
-//! [`route`](app::AppBuilder::route), [`bind`](app::AppBuilder::bind),
-//! then [`App::poll`]. Handlers are `fn(Request<'_>) -> Response`:
-//! borrowed request fields (`payload()`, path, token, options, `body()`
-//! when Block1 / Q-Block1 assembled) and an owned [`Response`]
-//! (`content` / `content_format` / [`Response::problem`] for RFC 9290
-//! CBOR / [`Response::missing_blocks`] for RFC 9177 Q-Block1 holes).
-//! Large responses use the TX body area (Block2, or Q-Block2
-//! when the request asked for it) without exposing
-//! [`SlotId`](storage::SlotId). Observe register / deregister,
-//! [`App::notify`](app::App::notify), and poll-time notify via
-//! [`ObserveSource`](app::ObserveSource) use the Engine Observe table
-//! (no `SlotId` on the happy path). Progress-driven Q-Block2 recover
-//! and incoming Q-Block1 assembly run inside `poll`. The reactor owns
-//! per-slot state machines inside `poll`. Domain data that outlives a
-//! request stays outside `App`. Outbound: [`App::get`] / [`App::put`] →
-//! [`Outgoing::to`] → [`Outgoing::send`]; `poll` matches Token + peer
-//! on the Exchange table; [`App::take_response`] is a [`Response`]
-//! (code / payload, and [`Response::body`] when Block2 / Q-Block2
-//! assembled). Large PUT/POST uses Block1 / Q-Block1 (path reused on
-//! continues). Observe subscribe is [`Outgoing::observe`](app::Outgoing::observe);
-//! the initial representation and later notifications are
-//! [`App::take_response`] on the same [`Call`]. [`Outgoing::deregister`](app::Outgoing::deregister)
-//! sends Observe=1. No `SlotId`. The caller owns the destination and must
-//! take responses. Tokens and Message IDs are App counters (no OS RNG).
-//! Engine remains the
-//! advanced escape hatch for explicit slots, [`Access`](storage::Access),
-//! custom RST / remaining 4.xx, and BERT edges (`app.engine_mut()`). See
-//! `examples/coap_server.rs` (`std`).
-//!
-//! Path arguments accept both `&["sensors", "temp"]` and `"sensors/temp"`
-//! ([`app::IntoPath`]; empty segments are rejected).
-//!
-//! OSCORE is out of scope. DTLS is not a library dependency: the
+//! Engine BERT (SZX 7) is advanced and not on the App face. OSCORE is out
+//! of scope. DTLS is not a first-party library dependency — the
 //! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
-//! `DatagramIo` so `App::poll` is the SUT under DTLS. 6LoWPAN is not planned.
-//!
-//! # Validation harness
-//!
-//! Integration tests (not compiled into this `no_std` crate) live under
-//! `tests/` (no extra library deps) and `crates/coaptic-plugtest` (peer
-//! crates + pcap grader; optional `dtls`).
-//!
-//! | Command | What it runs |
-//! | --- | --- |
-//! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Tracking: [issue #49][plugtest]. |
-//! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
-//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `tests/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). In-memory `dtls` is skipped (no sockets). `6lowpan` is skipped (not planned). |
-//! | `cargo test -p coaptic-plugtest` | Multi-impl UDP harness ([`coaptic-plugtest`](https://github.com/jeffglousher/coaptic/tree/main/crates/coaptic-plugtest)): peer trait, coap-rs backend, pcap + golden JSON grader. |
-//! | `cargo test -p coaptic-plugtest --features dtls` | Same harness plus DTLS TDs (webrtc-dtls `DatagramIo` adapter; mixed pairs with coaptic as SUT). Tracking: [issue #49](https://github.com/jeffglousher/coaptic/issues/49). |
-//! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
-//! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
-//! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
-//! | `cargo test --test plugtest td_coap_obs` | All in-scope `TD_COAP_OBS_*` from `block.yml` (no `TD_COAP_OBS_03`). |
-//! | `cargo test --test plugtest td_coap_link` | All 9 `TD_COAP_LINK_*` from `link.yml`. |
-//! | `cargo test --test plugtest inventory -- --nocapture` | Print RUN vs SKIP for every vendored TD id. |
-//!
-//! TD identifiers are extracted from those YAML files. This crate does not
-//! invent TD numbers. Tracking: [issue #49][plugtest].
+//! [`DatagramIo`](storage::DatagramIo). 6LoWPAN is not planned.
 //!
 //! # Features
 //!
@@ -189,11 +103,11 @@
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
 //! [plan]: https://github.com/users/jeffglousher/projects/2
-//! [plugtest]: https://github.com/jeffglousher/coaptic/issues/49
 
 #![no_std]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(rustdoc::broken_intra_doc_links)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

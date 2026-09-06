@@ -1,12 +1,22 @@
-//! Temporary application [`Access`] to occupied datagram and body bytes.
+//! Temporary pin of occupied datagram or body bytes.
 //!
-//! While an [`Access`] or
-//! [`AccessMut`] is live, the issuing pool pins that [`SlotId`] and
-//! [`SlotPool::release`](super::SlotPool::release) returns
+//! This is the **advanced Engine path**. [`crate::App`] handlers and
+//! [`crate::App::poll`] do not need [`Access`] / [`AccessMut`]: the
+//! reactor pins internally and releases after encode. Reach these types
+//! via [`crate::storage::Engine::access_rx`] (and the TX / body siblings)
+//! or [`crate::App::engine_mut`].
+//!
+//! Use a guard when you drive [`crate::storage::Engine`] yourself and must
+//! read or write occupied slot bytes without racing release.
+//!
+//! # Pin vs release
+//!
+//! While an [`Access`] or [`AccessMut`] is live, the issuing pool pins that
+//! [`SlotId`] and [`SlotPool::release`](super::SlotPool::release) returns
 //! [`SlotError::Pinned`]. [`Drop`] clears the pin. Rotate only moves the
-//! acquire cursor; it does not evict, so a pin does not need to block it.
+//! acquire cursor; it does not evict, so a pin does not block it.
 //!
-//! Assumption: access is exclusive. A second pin of the same slot is
+//! Access is exclusive. A second pin of the same slot is
 //! [`SlotError::Pinned`]. Engine methods take `&mut self`, so two live
 //! accesses from one engine are also rejected at compile time.
 
@@ -18,7 +28,31 @@ use super::slot::{SlotError, SlotId};
 /// Shared read of an occupied slot's filled bytes.
 ///
 /// Holds a borrow of the payload and a pin flag on the pool occupancy word.
-/// Not `Clone`: two guards would unpin twice.
+/// Not `Clone`: two guards would unpin twice. Drop the guard before
+/// [`crate::storage::Engine::release_rx`] (or the matching release).
+///
+/// The [`crate::App`] happy path does not use this type.
+///
+/// ```
+/// use coaptic::profiles;
+/// use coaptic::storage::{EngineBuilder, Memory};
+/// use coaptic::Endpoint;
+///
+/// let mut engine = EngineBuilder::new()
+///     .profile::<profiles::Default>()
+///     .block_wise(false)
+///     .build(Memory::<profiles::Default>::new())
+///     .unwrap();
+/// let id = engine.acquire_rx().unwrap();
+/// engine
+///     .write_rx(id, &[0x40, 0x01, 0x00, 0x01], Endpoint::v4([192, 0, 2, 1], 5683))
+///     .unwrap();
+/// {
+///     let access = engine.access_rx(id).unwrap();
+///     assert_eq!(access.as_bytes(), &[0x40, 0x01, 0x00, 0x01]);
+/// } // unpin
+/// engine.release_rx(id).unwrap();
+/// ```
 #[must_use = "dropping Access unpins the slot"]
 pub struct Access<'a> {
     id: SlotId,
@@ -28,9 +62,10 @@ pub struct Access<'a> {
 
 /// Exclusive write of an occupied slot's byte buffer.
 ///
-/// [`Self::bytes_mut`] is the full slot capacity. [`Self::payload`] is the filled
-/// prefix. [`Self::set_len`] records how many bytes are live. Same pin
-/// rule as [`Access`].
+/// [`Self::bytes_mut`] is the full slot capacity. [`Self::payload`] is the
+/// filled prefix. [`Self::set_len`] records how many bytes are live. Same
+/// pin rule as [`Access`]: release returns [`SlotError::Pinned`] until
+/// drop. The [`crate::App`] happy path does not use this type.
 #[must_use = "dropping AccessMut unpins the slot"]
 pub struct AccessMut<'a> {
     id: SlotId,

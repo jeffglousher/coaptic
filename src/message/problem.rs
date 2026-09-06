@@ -48,7 +48,8 @@ impl std::error::Error for ProblemError {}
 /// non-empty: [`Self::new`] always includes `response-code` (−4), matching
 /// the CoAP code on the message. Title (−1) and detail (−2) are optional
 /// unadorned text. Default Content-Format is
-/// [`ContentFormat::PROBLEM_DETAILS`].
+/// [`ContentFormat::PROBLEM_DETAILS`]. On the App face, build these with
+/// [`crate::Response::problem`].
 ///
 /// ```
 /// use coaptic::message::ProblemDetails;
