@@ -77,20 +77,44 @@ pub fn ecdsa_pair() -> Result<(Config, Config), PeerError> {
     Ok((client_cfg, server_cfg))
 }
 
-/// Run DTLS TDs on mixed pairs (coaptic needs the adapter; coap-rs has built-in DTLS).
+/// Run one DTLS TD.
+///
+/// `coaptic` does not terminate DTLS. The handshake and GET `/secure` run on
+/// coap-rs / webrtc-dtls (same stack as `coap` 0.28). Role-matrix pairs that
+/// name `coaptic` are skipped with that reason — do not label a coap-rs
+/// handshake as mixed interop.
 pub fn run_dtls_pairs(id: &str, pairs: &[Pair]) -> Vec<TdResult> {
-    pairs
-        .iter()
-        .filter(|p| {
-            // Same-impl coaptic DTLS uses the adapter on both sides when we add it;
-            // first land mixed + coaptic server.
-            matches!(
-                (p.client, p.server),
-                ("coap-rs", "coaptic") | ("coaptic", "coap-rs") | ("coaptic", "coaptic")
-            )
-        })
-        .map(|pair| run_one(id, *pair))
-        .collect()
+    let mut out = Vec::new();
+    let mut ran = false;
+    for pair in pairs {
+        let names_coaptic = pair.client == "coaptic" || pair.server == "coaptic";
+        if names_coaptic {
+            out.push(TdResult {
+                id: id.to_owned(),
+                pair: *pair,
+                error: Some(
+                    "SKIP: coaptic does not terminate DTLS (harness uses coap-rs / webrtc-dtls)"
+                        .into(),
+                ),
+                capture: Capture::new(),
+            });
+            continue;
+        }
+        out.push(run_one(id, *pair));
+        ran = true;
+    }
+    if !ran {
+        // default_pairs() is all mixed/same-impl coaptic. Run the real
+        // handshake once under an honest label.
+        out.push(run_one(
+            id,
+            Pair {
+                client: "coap-rs",
+                server: "coap-rs",
+            },
+        ));
+    }
+    out
 }
 
 fn run_one(id: &str, pair: Pair) -> TdResult {

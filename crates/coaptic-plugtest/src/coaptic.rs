@@ -29,7 +29,7 @@ pub struct CoapticPeer {
 struct ServerCtl {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
-    notify: Arc<Mutex<Option<(Vec<String>, Vec<u8>)>>>,
+    notify: crate::peer::NotifyMailbox,
     join: Option<JoinHandle<()>>,
 }
 
@@ -238,7 +238,7 @@ fn server_loop(
     addr: SocketAddr,
     capture: Capture,
     stop: Arc<AtomicBool>,
-    notify: Arc<Mutex<Option<(Vec<String>, Vec<u8>)>>>,
+    notify: crate::peer::NotifyMailbox,
 ) {
     let separate = Arc::new(Mutex::new(Vec::new()));
     let ids = Arc::new(Mutex::new(Ids::new(0x9000)));
@@ -330,10 +330,10 @@ fn client_exchange<T: DatagramIo<Error = std::io::Error>>(
     if req.code == Code::EMPTY {
         return client_ping(&mut io, dest_ep, req.timeout);
     }
-    if req.code == Code::PUT || req.code == Code::POST {
-        if req.payload.len() > 512 || req.path.iter().any(|p| p.starts_with("large")) {
-            return client_block1(&mut io, dest_ep, req);
-        }
+    if (req.code == Code::PUT || req.code == Code::POST)
+        && (req.payload.len() > 512 || req.path.iter().any(|p| p.starts_with("large")))
+    {
+        return client_block1(&mut io, dest_ep, req);
     }
     if req.path.iter().any(|p| p == "large") && req.code == Code::GET {
         return client_block2(&mut io, dest_ep, req);

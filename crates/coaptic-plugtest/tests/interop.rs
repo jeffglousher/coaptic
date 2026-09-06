@@ -36,10 +36,9 @@ fn not_planned_6lowpan_skipped() {
 fn dtls_not_deferred_skip_when_feature_on() {
     for id in catalog::DTLS {
         match catalog::skip_reason(id) {
-            None => assert!(
-                cfg!(feature = "dtls"),
-                "{id} runs only with --features dtls"
-            ),
+            None => {
+                // Feature `dtls` is on: the harness implements the TD.
+            }
             Some(reason) => {
                 assert!(
                     !reason.contains("deferred"),

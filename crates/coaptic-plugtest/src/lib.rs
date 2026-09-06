@@ -27,9 +27,11 @@
 //! # DTLS
 //!
 //! Feature `dtls` pulls **webrtc-dtls** (the same stack coap-rs uses) as a
-//! harness dependency. `coaptic` itself does not terminate DTLS: the harness
-//! wraps [`coaptic::storage::DatagramIo`] so App/Engine still see plaintext
-//! CoAP. Default `no_std` builds of `coaptic` stay zero-dep.
+//! harness dependency. `coaptic` itself does not terminate DTLS. DTLS TDs run
+//! handshake + GET `/secure` on **coap-rs** and inject decrypted CoAP into the
+//! capture so the grader sees GET/2.05. There is no wire tap on the webrtc-dtls
+//! socket, so ClientHello cipher lists are not graded. Default `no_std` builds
+//! of `coaptic` stay zero-dep.
 //!
 //! Raw-public-key TDs (`TD_COAP_DTLS_04`–`07`) run as mutually-authenticated
 //! ECDSA certificates: webrtc-dtls has no RFC 7250 RPK certificate type.

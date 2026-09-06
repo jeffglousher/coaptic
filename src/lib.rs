@@ -141,8 +141,8 @@
 //! ([`app::IntoPath`]; empty segments are rejected).
 //!
 //! OSCORE is out of scope. DTLS is not a library dependency: the
-//! `coaptic-plugtest` harness (feature `dtls`) wraps [`DatagramIo`](storage::DatagramIo)
-//! with webrtc-dtls. 6LoWPAN is not planned.
+//! `coaptic-plugtest` harness (feature `dtls`) runs those TDs on coap-rs /
+//! webrtc-dtls. `coaptic` does not terminate DTLS. 6LoWPAN is not planned.
 //!
 //! # Validation harness
 //!

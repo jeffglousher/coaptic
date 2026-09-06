@@ -8,7 +8,10 @@ use std::time::Duration;
 use coap::Server;
 use coap::client::UdpCoAPClient;
 use coap::request::RequestBuilder;
-use coap_lite::{CoapOption, CoapRequest, ContentFormat as LiteCf, RequestType, ResponseType};
+use coap_lite::{
+    CoapOption, CoapRequest, ContentFormat as LiteCf, MessageClass, MessageType as LiteType,
+    RequestType, ResponseType,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 
@@ -23,7 +26,7 @@ pub struct CoapRsPeer {
     capture: Capture,
     stop: Option<oneshot::Sender<()>>,
     addr: Option<SocketAddr>,
-    notify: Arc<Mutex<Option<(Vec<String>, Vec<u8>)>>>,
+    notify: crate::peer::NotifyMailbox,
 }
 
 impl Default for CoapRsPeer {
@@ -66,13 +69,16 @@ impl Peer for CoapRsPeer {
         let (tx, rx) = oneshot::channel();
         let notify = Arc::clone(&self.notify);
         self.rt.spawn(async move {
-            let server = match Server::new_udp(addr) {
+            let mut server = match Server::new_udp(addr) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("coap-rs Server::new_udp: {e}");
                     return;
                 }
             };
+            // Built-in observe returns 4.04 unless the resource was PUTted first.
+            // Plugtest /obs is GET-only; the handler owns Observe.
+            server.automatic_observe_handling(true).await;
             let run = server.run(move |req| {
                 let n = Arc::clone(&notify);
                 async move { handle_request(req, &n) }
@@ -152,8 +158,19 @@ impl Drop for CoapRsPeer {
 
 fn handle_request(
     mut request: Box<CoapRequest<SocketAddr>>,
-    _notify: &Arc<Mutex<Option<(Vec<String>, Vec<u8>)>>>,
+    _notify: &crate::peer::NotifyMailbox,
 ) -> Box<CoapRequest<SocketAddr>> {
+    // RFC 7252 ping: empty CON → empty RST.
+    if request.message.header.code == MessageClass::Empty
+        && request.message.header.get_type() == LiteType::Confirmable
+    {
+        if let Some(resp) = request.response.as_mut() {
+            resp.message.header.set_type(LiteType::Reset);
+            resp.message.header.code = MessageClass::Empty;
+            resp.message.payload.clear();
+        }
+        return request;
+    }
     let path = request.get_path();
     let method = *request.get_method();
     let query = request

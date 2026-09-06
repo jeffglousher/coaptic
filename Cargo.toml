@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crates/coaptic-plugtest"]
+default-members = ["."]
 resolver = "2"
 
 [package]

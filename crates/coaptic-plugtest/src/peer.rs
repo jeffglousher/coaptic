@@ -1,11 +1,15 @@
 //! Peer adapter: start/stop a server, send a client request, expose the local UDP addr.
 
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use coaptic::message::{Code, Type};
 
 use crate::pcap::Capture;
+
+/// Observe-notify mailbox shared with a background server thread.
+pub type NotifyMailbox = Arc<Mutex<Option<(Vec<String>, Vec<u8>)>>>;
 
 /// How a peer is used in a TD run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

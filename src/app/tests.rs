@@ -128,6 +128,7 @@ struct LastReply {
     payload_len: usize,
     content_format: Option<ContentFormat>,
     block2: Option<BlockValue>,
+    block1: Option<BlockValue>,
 }
 
 fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
@@ -143,6 +144,7 @@ fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
         payload_len,
         content_format: parsed.content_format().and_then(Result::ok),
         block2: parsed.block2().and_then(Result::ok),
+        block1: parsed.block1().and_then(Result::ok),
     }
 }
 
@@ -490,7 +492,11 @@ fn block1_incomplete_is_continue() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CONTINUE);
+    let block1 = reply.block1.expect("RFC 7959 echoes Block1 on 2.31");
+    assert_eq!(block1.num(), 0);
+    assert!(block1.more());
 }
 
 #[test]

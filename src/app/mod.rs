@@ -601,6 +601,7 @@ where
                 no_response: NoResponse::DEFAULT,
                 block2: None,
                 q_block2: None,
+                block1: None,
             };
             send_response(
                 engine,
@@ -681,6 +682,7 @@ where
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
     let block2 = parsed.block2().and_then(Result::ok);
     let q_block2 = parsed.q_block2().next().and_then(Result::ok);
+    let block1 = parsed.block1().and_then(Result::ok);
     let meta = SendResponse {
         dest: peer,
         ty: parsed.ty(),
@@ -689,6 +691,7 @@ where
         no_response,
         block2,
         q_block2,
+        block1,
     };
 
     let assembled = assemble_inbound_body(engine, rx);
@@ -906,6 +909,7 @@ where
         no_response: NoResponse::DEFAULT,
         block2: None,
         q_block2: None,
+        block1: None,
     };
 
     let Some(tx) = engine.acquire_tx() else {
@@ -920,6 +924,7 @@ where
         token,
         &response,
         response.payload(),
+        None,
         None,
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
@@ -1008,6 +1013,7 @@ where
         response,
         response.payload(),
         None,
+        meta.block1,
     ) {
         Ok(()) => finish_send(engine, io, tx, meta.dest, None),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
@@ -1187,6 +1193,7 @@ where
         response,
         &chunk[..n],
         block,
+        meta.block1,
     ) {
         let _ = engine.release_tx(tx);
         return Err(e.into());
@@ -1223,6 +1230,7 @@ fn encode_response<S: Storage + DatagramSlots>(
     response: &Response,
     payload: &[u8],
     block: Option<BlockOpt>,
+    block1: Option<BlockValue>,
 ) -> Result<(), SlotMessageError> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
@@ -1233,6 +1241,7 @@ fn encode_response<S: Storage + DatagramSlots>(
     let size2_enc = block
         .and_then(|b| b.size2)
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
+    let block1_enc = block1.map(|b| b.encode());
     let mut opts = OptionsBuilder::<8>::new();
     if let Some(etag) = response.etag_bytes() {
         let _ = opts.push(Opt::etag(etag));
@@ -1255,6 +1264,9 @@ fn encode_response<S: Storage + DatagramSlots>(
         } else {
             let _ = opts.push(Opt::block2(encoded));
         }
+    }
+    if let Some(ref encoded) = block1_enc {
+        let _ = opts.push(Opt::block1(encoded));
     }
     let msg = Message::new(ty, response.code(), mid)
         .with_token(token)
@@ -1312,6 +1324,8 @@ struct SendResponse {
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
+    /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
+    block1: Option<BlockValue>,
 }
 
 fn copy_rx<S: Storage + DatagramSlots, E>(
