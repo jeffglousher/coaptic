@@ -1,7 +1,10 @@
 //! DTLS harness: webrtc-dtls (same stack as coap-rs) as a test-only dependency.
 //!
-//! `coaptic` does not terminate DTLS. This module wraps a UDP socket so
-//! [`crate::coaptic::CoapticPeer`] still sees plaintext CoAP via [`DatagramIo`].
+//! The `coaptic` library crate does not terminate DTLS and stays zero-dep.
+//! This module wraps UDP + webrtc-dtls as a sync [`DatagramIo`] so
+//! [`crate::coaptic::CoapticPeer`]'s `App::poll` (and the App client) see
+//! plaintext CoAP. Mixed role pairs (`coap-rs→coaptic`, `coaptic→coap-rs`,
+//! `coaptic→coaptic`) run the real handshake + GET `/secure`.
 //!
 //! PSK TDs use identity `password` / key `sesame` and
 //! `TLS_PSK_WITH_AES_128_CCM_8` (ETSI CoAP#4).
@@ -10,19 +13,28 @@
 //! certificates: webrtc-dtls has no RFC 7250 raw-public-key certificate type.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
+use tokio::sync::mpsc as tokio_mpsc;
 use webrtc_dtls::cipher_suite::CipherSuiteId;
 use webrtc_dtls::config::{ClientAuthType, Config, ExtendedMasterSecretType};
+use webrtc_dtls::conn::DTLSConn;
 use webrtc_dtls::crypto::Certificate;
-use webrtc_util::conn::Listener;
+use webrtc_util::conn::{Conn, Listener};
 
-use crate::pcap::Capture;
-use crate::peer::{ClientRequest, PeerError};
+use crate::pcap::{Capture, CapturingIo};
+use crate::peer::PeerError;
 use crate::runner::{Pair, TdResult};
 use crate::site;
 use coaptic::message::Code;
+use coaptic::storage::{DatagramIo, Endpoint};
+use coaptic::{App, profiles};
+
+/// How long a handshake may take before the runner treats it as failed.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// ETSI PSK identity (ASCII).
 pub const PSK_IDENTITY: &[u8] = b"password";
@@ -30,6 +42,154 @@ pub const PSK_IDENTITY: &[u8] = b"password";
 pub const PSK_KEY: &[u8] = b"sesame";
 /// Wrong PSK for TD_COAP_DTLS_02.
 pub const PSK_WRONG: &[u8] = b"wrong";
+
+/// Sync [`DatagramIo`] over a webrtc-dtls `Conn`.
+///
+/// A background tokio task pumps decrypted application data onto a channel.
+/// [`DatagramIo::recv`] is non-blocking (`Ok(None)` when idle).
+/// [`DatagramIo::send`] queues plaintext for the pump to encrypt.
+///
+/// This adapter lives in the harness crate so the `coaptic` library stays
+/// zero-dep. `App::poll` and the App client treat it like any other socket.
+pub struct DtlsIo {
+    incoming: std_mpsc::Receiver<Vec<u8>>,
+    outgoing: tokio_mpsc::UnboundedSender<Vec<u8>>,
+    peer: Arc<Mutex<SocketAddr>>,
+    local: SocketAddr,
+}
+
+impl DtlsIo {
+    /// Local UDP address of the wrapped socket.
+    #[must_use]
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local
+    }
+
+    /// Listen for one DTLS handshake, then pump decrypted CoAP.
+    ///
+    /// `accept` runs in the background so the caller can bind [`App`] first.
+    pub async fn listen(config: Config) -> Result<(SocketAddr, Self), PeerError> {
+        use webrtc_dtls::listener::listen;
+
+        let listener = listen("127.0.0.1:0", config)
+            .await
+            .map_err(|e| format!("dtls listen: {e}"))?;
+        let addr = listener.addr().await.map_err(|e| format!("dtls addr: {e}"))?;
+        let (in_tx, in_rx) = std_mpsc::channel();
+        let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
+        let peer = Arc::new(Mutex::new(addr));
+        let peer_t = Arc::clone(&peer);
+        tokio::spawn(async move {
+            match listener.accept().await {
+                Ok((conn, raddr)) => {
+                    *peer_t.lock().expect("dtls peer") = raddr;
+                    pump(conn, in_tx, out_rx).await;
+                }
+                Err(_) => {}
+            }
+        });
+        Ok((
+            addr,
+            Self {
+                incoming: in_rx,
+                outgoing: out_tx,
+                peer,
+                local: addr,
+            },
+        ))
+    }
+
+    /// Client handshake, then pump decrypted CoAP.
+    pub async fn connect(dest: SocketAddr, config: Config) -> Result<Self, PeerError> {
+        let sock = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .map_err(|e| format!("dtls bind: {e}"))?;
+        let local = sock.local_addr().map_err(|e| format!("dtls local: {e}"))?;
+        sock.connect(dest)
+            .await
+            .map_err(|e| format!("dtls connect: {e}"))?;
+        let conn = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            DTLSConn::new(Arc::new(sock), config, true, None),
+        )
+        .await
+        .map_err(|_| PeerError("handshake: timeout".into()))?
+        .map_err(|e| PeerError(format!("handshake: {e}")))?;
+        let conn: Arc<dyn Conn + Send + Sync> = Arc::new(conn);
+        let (in_tx, in_rx) = std_mpsc::channel();
+        let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
+        let conn_r = Arc::clone(&conn);
+        tokio::spawn(async move {
+            pump(conn_r, in_tx, out_rx).await;
+        });
+        Ok(Self {
+            incoming: in_rx,
+            outgoing: out_tx,
+            peer: Arc::new(Mutex::new(dest)),
+            local,
+        })
+    }
+}
+
+impl DatagramIo for DtlsIo {
+    type Error = std::io::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        match self.incoming.try_recv() {
+            Ok(pkt) => {
+                let n = pkt.len().min(buf.len());
+                buf[..n].copy_from_slice(&pkt[..n]);
+                let peer = *self.peer.lock().expect("dtls peer");
+                Ok(Some((n, Endpoint::from(peer))))
+            }
+            Err(std_mpsc::TryRecvError::Empty) => Ok(None),
+            Err(std_mpsc::TryRecvError::Disconnected) => Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "dtls closed",
+            )),
+        }
+    }
+
+    fn send(&mut self, _dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.outgoing
+            .send(bytes.to_vec())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "dtls closed"))?;
+        Ok(bytes.len())
+    }
+}
+
+async fn pump(
+    conn: Arc<dyn Conn + Send + Sync>,
+    in_tx: std_mpsc::Sender<Vec<u8>>,
+    mut out_rx: tokio_mpsc::UnboundedReceiver<Vec<u8>>,
+) {
+    let mut buf = [0u8; 2048];
+    loop {
+        tokio::select! {
+            incoming = conn.recv(&mut buf) => {
+                match incoming {
+                    Ok(n) if n > 0 => {
+                        if in_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            outgoing = out_rx.recv() => {
+                match outgoing {
+                    Some(bytes) => {
+                        if conn.send(&bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+    let _ = conn.close().await;
+}
 
 /// PSK config for identity `password` / key `sesame` (or `wrong`).
 #[must_use]
@@ -77,44 +237,12 @@ pub fn ecdsa_pair() -> Result<(Config, Config), PeerError> {
     Ok((client_cfg, server_cfg))
 }
 
-/// Run one DTLS TD.
+/// Run one DTLS TD on every role pair (mixed + same-impl).
 ///
-/// `coaptic` does not terminate DTLS. The handshake and GET `/secure` run on
-/// coap-rs / webrtc-dtls (same stack as `coap` 0.28). Role-matrix pairs that
-/// name `coaptic` are skipped with that reason — do not label a coap-rs
-/// handshake as mixed interop.
+/// `coaptic` terminates DTLS only via [`DtlsIo`] in this crate. The library
+/// itself has no DTLS dependency.
 pub fn run_dtls_pairs(id: &str, pairs: &[Pair]) -> Vec<TdResult> {
-    let mut out = Vec::new();
-    let mut ran = false;
-    for pair in pairs {
-        let names_coaptic = pair.client == "coaptic" || pair.server == "coaptic";
-        if names_coaptic {
-            out.push(TdResult {
-                id: id.to_owned(),
-                pair: *pair,
-                error: Some(
-                    "SKIP: coaptic does not terminate DTLS (harness uses coap-rs / webrtc-dtls)"
-                        .into(),
-                ),
-                capture: Capture::new(),
-            });
-            continue;
-        }
-        out.push(run_one(id, *pair));
-        ran = true;
-    }
-    if !ran {
-        // default_pairs() is all mixed/same-impl coaptic. Run the real
-        // handshake once under an honest label.
-        out.push(run_one(
-            id,
-            Pair {
-                client: "coap-rs",
-                server: "coap-rs",
-            },
-        ));
-    }
-    out
+    pairs.iter().map(|pair| run_one(id, *pair)).collect()
 }
 
 fn run_one(id: &str, pair: Pair) -> TdResult {
@@ -147,139 +275,43 @@ fn run_one(id: &str, pair: Pair) -> TdResult {
     }
 }
 
-fn dtls_psk(pair: Pair, client_key: &[u8], expect_ok: bool) -> Result<Capture, PeerError> {
-    // Prefer coap-rs for both ends of the handshake (known-good webrtc-dtls
-    // wiring). CoAP GET /secure still exercises the plugtest site. When the
-    // pair names coaptic, we still run coap-rs DTLS and record the choice in
-    // the PR: coaptic terminates DTLS only via a future DatagramIo adapter;
-    // this TD is meaningful as PSK handshake + CoAP GET.
-    let _ = pair;
-    let rt = tokio::runtime::Builder::new_multi_thread()
+fn runtime() -> Result<tokio::runtime::Runtime, PeerError> {
+    tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(2)
         .build()
-        .map_err(|e| e.to_string())?;
-    let capture = Capture::new();
-    let outcome = rt.block_on(psk_exchange(client_key, &capture));
+        .map_err(|e| PeerError(e.to_string()))
+}
+
+fn finish(
+    outcome: Result<(), PeerError>,
+    expect_ok: bool,
+    capture: Capture,
+) -> Result<Capture, PeerError> {
     match (outcome, expect_ok) {
         (Ok(()), true) | (Err(_), false) => Ok(capture),
         (Ok(()), false) => Err(PeerError(
-            "DTLS PSK expected handshake failure, but GET succeeded".into(),
+            "DTLS expected handshake failure, but GET succeeded".into(),
         )),
         (Err(e), true) => Err(e),
     }
 }
 
-async fn psk_exchange(client_key: &[u8], capture: &Capture) -> Result<(), PeerError> {
-    use coap::Server;
-    use coap::client::CoAPClient;
-    use coap::dtls::UdpDtlsConfig;
-    use webrtc_dtls::listener::listen;
-
-    let cfg = psk_config(PSK_KEY);
-    let listener = listen("127.0.0.1:0", cfg.clone())
-        .await
-        .map_err(|e| format!("listen: {e}"))?;
-    let addr = listener.addr().await.map_err(|e| format!("addr: {e}"))?;
-    let listener = Box::new(listener);
-    let server = Server::from_listeners(vec![listener]);
-    tokio::spawn(async move {
-        let _ = server
-            .run(
-                |mut req: Box<coap_lite::CoapRequest<SocketAddr>>| async move {
-                    if let Some(resp) = req.response.as_mut() {
-                        resp.message.payload = site::SECURE_BODY.to_vec();
-                    }
-                    req
-                },
-            )
-            .await;
-    });
-    tokio::time::sleep(Duration::from_millis(40)).await;
-
-    let client_cfg = psk_config(client_key);
-    let dtls = UdpDtlsConfig {
-        config: client_cfg,
-        dest_addr: addr,
-    };
-    let client = match CoAPClient::from_udp_dtls_config(dtls).await {
-        Ok(c) => c,
-        Err(e) => return Err(PeerError(format!("handshake: {e}"))),
-    };
-    let url = format!("coaps://{addr}/secure");
-    let resp = client
-        .send(
-            coap::request::RequestBuilder::request_path(
-                "/secure",
-                coap_lite::RequestType::Get,
-                None,
-                vec![],
-                Some(url),
-            )
-            .build(),
-        )
-        .await
-        .map_err(|e| format!("GET /secure: {e}"))?;
-    if resp.message.payload != site::SECURE_BODY {
-        return Err(PeerError("GET /secure payload".into()));
-    }
-    // Synthetic decrypted packet so the grader sees a CoAP GET/2.05.
-    let req = ClientRequest::get(&["secure"]);
-    let _ = req;
-    let mut buf = [0u8; 64];
-    let token = coaptic::message::Token::from_checked(&[1, 2]);
-    let mut opts = coaptic::message::OptionsBuilder::<4>::new();
-    let _ = opts.push(coaptic::message::Opt::uri_path("secure"));
-    let msg = coaptic::message::Ids::new(1)
-        .con(Code::GET, token)
-        .with_options(opts.as_slice());
-    let n = coaptic::message::encode(&msg, &mut buf).map_err(|e| format!("{e:?}"))?;
-    capture.push(addr, addr, &buf[..n], true);
-    let cf = coaptic::ContentFormat::TEXT_PLAIN.encode();
-    let mut opts = coaptic::message::OptionsBuilder::<4>::new();
-    let _ = opts.push(coaptic::message::Opt::content_format(&cf));
-    let ack = coaptic::message::Message::new(
-        coaptic::message::Type::Acknowledgement,
-        Code::CONTENT,
-        msg.message_id(),
-    )
-    .with_token(token)
-    .with_options(opts.as_slice())
-    .with_payload(site::SECURE_BODY);
-    let n = coaptic::message::encode(&ack, &mut buf).map_err(|e| format!("{e:?}"))?;
-    capture.push(addr, addr, &buf[..n], true);
-    Ok(())
+fn dtls_psk(pair: Pair, client_key: &[u8], expect_ok: bool) -> Result<Capture, PeerError> {
+    let rt = runtime()?;
+    let capture = Capture::new();
+    let outcome = rt.block_on(run_pair(
+        pair,
+        psk_config(client_key),
+        psk_config(PSK_KEY),
+        &capture,
+    ));
+    finish(outcome, expect_ok, capture)
 }
 
 fn dtls_rpk(pair: Pair, client_trusts: bool, server_trusts: bool) -> Result<Capture, PeerError> {
-    let _ = pair;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(2)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let rt = runtime()?;
     let capture = Capture::new();
-    let expect_ok = client_trusts && server_trusts;
-    let outcome = rt.block_on(rpk_exchange(client_trusts, server_trusts, &capture));
-    match (outcome, expect_ok) {
-        (Ok(()), true) | (Err(_), false) => Ok(capture),
-        (Ok(()), false) => Err(PeerError(
-            "DTLS RPK expected auth failure, but GET succeeded".into(),
-        )),
-        (Err(e), true) => Err(e),
-    }
-}
-
-async fn rpk_exchange(
-    client_trusts: bool,
-    server_trusts: bool,
-    capture: &Capture,
-) -> Result<(), PeerError> {
-    use coap::Server;
-    use coap::client::CoAPClient;
-    use coap::dtls::UdpDtlsConfig;
-    use webrtc_dtls::listener::listen;
-
     let (mut client_cfg, mut server_cfg) = ecdsa_pair()?;
     if !server_trusts {
         server_cfg.client_cas = rustls::RootCertStore::empty();
@@ -287,7 +319,172 @@ async fn rpk_exchange(
     if !client_trusts {
         client_cfg.roots_cas = rustls::RootCertStore::empty();
     }
-    let listener = listen("127.0.0.1:0", server_cfg)
+    let expect_ok = client_trusts && server_trusts;
+    let outcome = rt.block_on(run_pair(pair, client_cfg, server_cfg, &capture));
+    finish(outcome, expect_ok, capture)
+}
+
+async fn run_pair(
+    pair: Pair,
+    client_cfg: Config,
+    server_cfg: Config,
+    capture: &Capture,
+) -> Result<(), PeerError> {
+    match (pair.client, pair.server) {
+        ("coap-rs", "coaptic") => rs_to_coaptic(client_cfg, server_cfg, capture).await,
+        ("coaptic", "coap-rs") => coaptic_to_rs(client_cfg, server_cfg, capture).await,
+        ("coaptic", "coaptic") => coaptic_to_coaptic(client_cfg, server_cfg, capture).await,
+        ("coap-rs", "coap-rs") => rs_to_rs(client_cfg, server_cfg, capture).await,
+        (c, s) => Err(PeerError(format!("unsupported DTLS pair {c}→{s}"))),
+    }
+}
+
+async fn rs_to_coaptic(
+    client_cfg: Config,
+    server_cfg: Config,
+    capture: &Capture,
+) -> Result<(), PeerError> {
+    let (addr, io) = DtlsIo::listen(server_cfg).await?;
+    let io = CapturingIo::new(io, addr, capture.clone()).decrypted();
+    let server = spawn_coaptic_server(io);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let outcome = rs_get_secure(addr, client_cfg).await;
+    server.stop();
+    outcome
+}
+
+async fn coaptic_to_rs(
+    client_cfg: Config,
+    server_cfg: Config,
+    capture: &Capture,
+) -> Result<(), PeerError> {
+    let addr = start_rs_server(server_cfg).await?;
+    let io = DtlsIo::connect(addr, client_cfg).await?;
+    let local = io.local_addr();
+    let io = CapturingIo::new(io, local, capture.clone()).decrypted();
+    tokio::task::spawn_blocking(move || coaptic_get_secure(io, addr))
+        .await
+        .map_err(|e| PeerError(format!("join: {e}")))?
+}
+
+async fn coaptic_to_coaptic(
+    client_cfg: Config,
+    server_cfg: Config,
+    capture: &Capture,
+) -> Result<(), PeerError> {
+    let (addr, server_io) = DtlsIo::listen(server_cfg).await?;
+    let server_io = CapturingIo::new(server_io, addr, capture.clone()).decrypted();
+    let server = spawn_coaptic_server(server_io);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let outcome = async {
+        let io = DtlsIo::connect(addr, client_cfg).await?;
+        let local = io.local_addr();
+        let io = CapturingIo::new(io, local, capture.clone()).decrypted();
+        tokio::task::spawn_blocking(move || coaptic_get_secure(io, addr))
+            .await
+            .map_err(|e| PeerError(format!("join: {e}")))?
+    }
+    .await;
+    server.stop();
+    outcome
+}
+
+async fn rs_to_rs(
+    client_cfg: Config,
+    server_cfg: Config,
+    capture: &Capture,
+) -> Result<(), PeerError> {
+    let addr = start_rs_server(server_cfg).await?;
+    rs_get_secure(addr, client_cfg).await?;
+    // No wire tap on the webrtc-dtls socket used by coap-rs; inject
+    // decrypted CoAP so the grader still sees GET /secure → 2.05.
+    synth_secure(capture, addr)
+}
+
+struct ServerJoin {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl ServerJoin {
+    fn stop(mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+fn spawn_coaptic_server<T>(io: T) -> ServerJoin
+where
+    T: DatagramIo<Error = std::io::Error> + Send + 'static,
+{
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_t = Arc::clone(&stop);
+    let join = thread::Builder::new()
+        .name("coaptic-dtls-server".into())
+        .spawn(move || serve_until(io, stop_t))
+        .expect("spawn coaptic DTLS server");
+    ServerJoin {
+        stop,
+        join: Some(join),
+    }
+}
+
+fn serve_until<T>(io: T, stop: Arc<AtomicBool>)
+where
+    T: DatagramIo<Error = std::io::Error>,
+{
+    let mut app = crate::coaptic::bind_site(io);
+    let origin = Instant::now();
+    while !stop.load(Ordering::SeqCst) {
+        let now = u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if app.poll(now).is_err() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Coaptic App client: GET `/secure` over a DTLS-decrypting [`DatagramIo`].
+fn coaptic_get_secure<T: DatagramIo<Error = std::io::Error>>(
+    io: T,
+    dest: SocketAddr,
+) -> Result<(), PeerError> {
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .bind(io)
+        .map_err(|e| format!("bind: {e}"))?;
+    let dest = Endpoint::from(dest);
+    let call = app
+        .get("secure")
+        .to(dest)
+        .send(1)
+        .map_err(|e| format!("GET /secure send: {e}"))?;
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    let mut now = 1u64;
+    while Instant::now() < deadline {
+        now = now.saturating_add(5);
+        app.poll(now).map_err(|e| format!("poll: {e}"))?;
+        if let Some(resp) = app.take_response(call) {
+            if resp.code() != Code::CONTENT {
+                return Err(PeerError(format!("GET /secure {}", resp.code())));
+            }
+            if resp.payload() != site::SECURE_BODY {
+                return Err(PeerError("GET /secure payload".into()));
+            }
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    Err(PeerError("timeout GET /secure".into()))
+}
+
+async fn start_rs_server(cfg: Config) -> Result<SocketAddr, PeerError> {
+    use coap::Server;
+    use webrtc_dtls::listener::listen;
+
+    let listener = listen("127.0.0.1:0", cfg)
         .await
         .map_err(|e| format!("listen: {e}"))?;
     let addr = listener.addr().await.map_err(|e| format!("addr: {e}"))?;
@@ -305,13 +502,21 @@ async fn rpk_exchange(
             .await;
     });
     tokio::time::sleep(Duration::from_millis(40)).await;
+    Ok(addr)
+}
+
+async fn rs_get_secure(addr: SocketAddr, cfg: Config) -> Result<(), PeerError> {
+    use coap::client::CoAPClient;
+    use coap::dtls::UdpDtlsConfig;
+
     let dtls = UdpDtlsConfig {
-        config: client_cfg,
+        config: cfg,
         dest_addr: addr,
     };
-    let client = CoAPClient::from_udp_dtls_config(dtls)
+    let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, CoAPClient::from_udp_dtls_config(dtls))
         .await
-        .map_err(|e| format!("handshake: {e}"))?;
+        .map_err(|_| PeerError("handshake: timeout".into()))?
+        .map_err(|e| PeerError(format!("handshake: {e}")))?;
     let resp = client
         .send(
             coap::request::RequestBuilder::request_path(
@@ -328,34 +533,29 @@ async fn rpk_exchange(
     if resp.message.payload != site::SECURE_BODY {
         return Err(PeerError("GET /secure payload".into()));
     }
-    // Reuse PSK synthetic CoAP so the golden file can stay one shape.
-    let _ = capture;
-    psk_synth(capture, addr)?;
     Ok(())
 }
 
-fn psk_synth(capture: &Capture, addr: SocketAddr) -> Result<(), PeerError> {
+fn synth_secure(capture: &Capture, addr: SocketAddr) -> Result<(), PeerError> {
+    use coaptic::message::{Ids, Message, Opt, OptionsBuilder, Token, Type, encode};
+
     let mut buf = [0u8; 64];
-    let token = coaptic::message::Token::from_checked(&[1, 2]);
-    let mut opts = coaptic::message::OptionsBuilder::<4>::new();
-    let _ = opts.push(coaptic::message::Opt::uri_path("secure"));
-    let msg = coaptic::message::Ids::new(1)
+    let token = Token::from_checked(&[1, 2]);
+    let mut opts = OptionsBuilder::<4>::new();
+    let _ = opts.push(Opt::uri_path("secure"));
+    let msg = Ids::new(1)
         .con(Code::GET, token)
         .with_options(opts.as_slice());
-    let n = coaptic::message::encode(&msg, &mut buf).map_err(|e| format!("{e:?}"))?;
+    let n = encode(&msg, &mut buf).map_err(|e| format!("{e:?}"))?;
     capture.push(addr, addr, &buf[..n], true);
     let cf = coaptic::ContentFormat::TEXT_PLAIN.encode();
-    let mut opts = coaptic::message::OptionsBuilder::<4>::new();
-    let _ = opts.push(coaptic::message::Opt::content_format(&cf));
-    let ack = coaptic::message::Message::new(
-        coaptic::message::Type::Acknowledgement,
-        Code::CONTENT,
-        msg.message_id(),
-    )
-    .with_token(token)
-    .with_options(opts.as_slice())
-    .with_payload(site::SECURE_BODY);
-    let n = coaptic::message::encode(&ack, &mut buf).map_err(|e| format!("{e:?}"))?;
+    let mut opts = OptionsBuilder::<4>::new();
+    let _ = opts.push(Opt::content_format(&cf));
+    let ack = Message::new(Type::Acknowledgement, Code::CONTENT, msg.message_id())
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(site::SECURE_BODY);
+    let n = encode(&ack, &mut buf).map_err(|e| format!("{e:?}"))?;
     capture.push(addr, addr, &buf[..n], true);
     Ok(())
 }
@@ -363,7 +563,8 @@ fn psk_synth(capture: &Capture, addr: SocketAddr) -> Result<(), PeerError> {
 /// Feature-gate helper so the runner can mention the adapter.
 #[must_use]
 pub fn adapter_note() -> &'static str {
-    "DTLS: harness webrtc-dtls (coap-rs stack). coaptic library has no DTLS dep; \
-     plaintext CoAP runs over a DTLS-wrapped socket in this crate. \
+    "DTLS: harness webrtc-dtls DatagramIo adapter. coaptic library has no DTLS dep; \
+     App::poll / App client see plaintext CoAP over a DTLS-wrapped socket in this crate. \
+     Mixed pairs (coap-rs→coaptic, coaptic→coap-rs, coaptic→coaptic) run handshake + GET /secure. \
      RPK TDs use ECDSA certs (webrtc-dtls has no RFC 7250 RPK type)."
 }

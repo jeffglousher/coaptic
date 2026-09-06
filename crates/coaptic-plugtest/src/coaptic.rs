@@ -272,7 +272,8 @@ fn server_loop(
     }
 }
 
-fn bind_site<T: DatagramIo>(io: T) -> App<profiles::Default, T, 24>
+/// Bind the plugtest site onto `io` (plaintext UDP or a harness DTLS adapter).
+pub(crate) fn bind_site<T: DatagramIo>(io: T) -> App<profiles::Default, T, 24>
 where
     T::Error: std::fmt::Debug,
 {

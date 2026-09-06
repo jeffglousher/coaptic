@@ -141,8 +141,8 @@
 //! ([`app::IntoPath`]; empty segments are rejected).
 //!
 //! OSCORE is out of scope. DTLS is not a library dependency: the
-//! `coaptic-plugtest` harness (feature `dtls`) runs those TDs on coap-rs /
-//! webrtc-dtls. `coaptic` does not terminate DTLS. 6LoWPAN is not planned.
+//! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
+//! `DatagramIo` so `App::poll` is the SUT under DTLS. 6LoWPAN is not planned.
 //!
 //! # Validation harness
 //!
@@ -156,7 +156,7 @@
 //! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
 //! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `tests/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). In-memory `dtls` is skipped (no sockets). `6lowpan` is skipped (not planned). |
 //! | `cargo test -p coaptic-plugtest` | Multi-impl UDP harness ([`coaptic-plugtest`](https://github.com/jeffglousher/coaptic/tree/main/crates/coaptic-plugtest)): peer trait, coap-rs backend, pcap + golden JSON grader. |
-//! | `cargo test -p coaptic-plugtest --features dtls` | Same harness plus DTLS TDs (webrtc-dtls, harness-only). Tracking: [issue #56](https://github.com/jeffglousher/coaptic/issues/56). |
+//! | `cargo test -p coaptic-plugtest --features dtls` | Same harness plus DTLS TDs (webrtc-dtls `DatagramIo` adapter; mixed pairs with coaptic as SUT). Tracking: [issue #49](https://github.com/jeffglousher/coaptic/issues/49). |
 //! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
 //! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
 //! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |
