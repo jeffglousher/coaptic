@@ -745,17 +745,8 @@ where
 
     match engine.apply_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
-            finish_assembled(
-                engine,
-                lives,
-                inbox,
-                parsed,
-                peer,
-                now_ms,
-                via_exchange,
-                rx,
-                progress.id(),
-            );
+            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
+            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
             return Ok(());
         }
         Ok(progress) => {
@@ -775,17 +766,8 @@ where
 
     match engine.apply_q_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
-            finish_assembled(
-                engine,
-                lives,
-                inbox,
-                parsed,
-                peer,
-                now_ms,
-                via_exchange,
-                rx,
-                progress.id(),
-            );
+            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
+            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
             return Ok(());
         }
         Ok(progress) => {
@@ -821,18 +803,14 @@ where
 
 fn finish_assembled<Mem>(
     engine: &mut Engine<Mem>,
-    lives: &ClientLives,
     inbox: &mut ClientInbox,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
-    now_ms: u64,
-    via_exchange: bool,
     rx: SlotId,
     body: SlotId,
 ) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage + DatagramSlots + Exchanges + BodySlots,
 {
-    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
     take_exchange(engine, parsed, peer);
     let evicted = inbox.insert(
         Call::new(parsed.token(), peer),
