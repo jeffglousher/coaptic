@@ -38,7 +38,7 @@ let response = app.take_response(call);
 
 Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial representation and later notifications use the same `Call` / `take_response`. `deregister()` sends Observe=1. Structured 4.xx bodies use `Response::problem` (RFC 9290). Q-Block1 holes from `poll` use `Response::missing_blocks` (RFC 9177, Content-Format 272).
 
-Engine BERT, OSCORE, first-party DTLS, and 6LoWPAN are deferred. DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
+Engine BERT, OSCORE, and first-party DTLS are future / backlog. DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`). 6LoWPAN is not planned.
 
 ## Features
 

@@ -72,7 +72,7 @@
 //! The happy path does not use [`Access`](crate::storage::Access) or
 //! [`SlotId`]. Engine remains the advanced escape hatch
 //! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
-//! and deferred BERT edges.
+//! and BERT edges (future / backlog).
 mod client;
 mod request;
 mod response;
@@ -321,8 +321,8 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     ///
     /// Escape hatch for explicit slots, [`crate::storage::Access`] /
     /// [`crate::storage::AccessMut`], custom RST / remaining 4.xx, and
-    /// deferred BERT edges. [`Self::poll`] already pins and releases; App
-    /// handlers do not need this.
+    /// BERT edges (future / backlog). [`Self::poll`] already pins and
+    /// releases; App handlers do not need this.
     pub fn engine_mut(&mut self) -> EngineMut<'_, P> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => EngineMut::Datagram(engine),
@@ -379,7 +379,7 @@ where
     ///
     /// Retransmit: send on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`]. Advanced slots / [`Access`](crate::storage::Access)
-    /// / remaining RST policy / deferred BERT: [`Self::engine_mut`].
+    /// / remaining RST policy / BERT (future / backlog): [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(
