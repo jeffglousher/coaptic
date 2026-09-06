@@ -132,11 +132,11 @@ pub fn assert_ids_match_yaml() {
 
 /// Skip reason. `None` means this harness implements the TD.
 ///
-/// DTLS runs when the `dtls` feature is on. 6LoWPAN stays not planned.
+/// DTLS runs when the `dtls` feature is on. 6LoWPAN is future / backlog.
 #[must_use]
 pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_6LoWPAN_") {
-        return Some("not planned: 6LoWPAN");
+        return Some("future/backlog: 6LoWPAN (contributor opportunity)");
     }
     if id.starts_with("TD_COAP_DTLS_") && !cfg!(feature = "dtls") {
         return Some("enable crate feature dtls (harness webrtc-dtls adapter)");
