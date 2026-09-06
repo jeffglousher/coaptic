@@ -2,7 +2,7 @@
 //! and the owned snapshot [`App::take_response`](super::App::take_response)
 //! yields for a completed client [`Call`](super::Call).
 
-use crate::message::{Code, ContentFormat, MessageId, ProblemDetails, Token, Type};
+use crate::message::{Code, ContentFormat, Echo, MessageId, ProblemDetails, Token, Type};
 use crate::storage::Endpoint;
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
@@ -76,6 +76,7 @@ pub struct Response {
     body: [u8; RESPONSE_BODY],
     body_len: u16,
     has_body: bool,
+    echo: Option<Echo>,
 }
 
 impl Response {
@@ -97,6 +98,7 @@ impl Response {
             body: [0u8; RESPONSE_BODY],
             body_len: 0,
             has_body: false,
+            echo: None,
         }
     }
 
@@ -204,7 +206,7 @@ impl Response {
     /// and detail are optional ([`Self::title`], [`Self::detail`]). Named
     /// builders such as [`Self::not_found`] stay empty; call this when a
     /// structured body is wanted. [`App`](super::App) uses this for
-    /// generated 4.04 / 4.05 / 4.08.
+    /// generated 4.04 / 4.05 / 4.08, and 4.01 when Echo freshness is on.
     ///
     /// Override the Content-Format with [`Self::content_format`] only when
     /// the peer asked for something else.
@@ -281,6 +283,21 @@ impl Response {
         self.etag[..n].copy_from_slice(&etag[..n]);
         self.etag_len = n as u8;
         self
+    }
+
+    /// Set the Echo option (RFC 9175).
+    ///
+    /// [`App::poll`](super::App::poll) writes this on a freshness 4.01.
+    #[must_use]
+    pub const fn echo(mut self, echo: Echo) -> Self {
+        self.echo = Some(echo);
+        self
+    }
+
+    /// Echo option, if set.
+    #[must_use]
+    pub const fn echo_option(&self) -> Option<Echo> {
+        self.echo
     }
 
     /// Set Max-Age in seconds.

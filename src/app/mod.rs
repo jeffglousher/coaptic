@@ -75,8 +75,9 @@
 //! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
 //! and incoming Q-Block1 assembly reuse Engine body helpers. Engine /
 //! [`DatagramIo`] remain the advanced path
-//! for [`Access`](crate::storage::Access), custom RST / 4.xx, and BERT edges.
-//! Escape: [`App::engine_mut`].
+//! for [`Access`](crate::storage::Access), custom RST / remaining 4.xx, and
+//! BERT edges. Escape: [`App::engine_mut`]. Time-based Echo freshness
+//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`] / [`App::echo_freshness`].
 //!
 //! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
 //! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
@@ -102,8 +103,8 @@ use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, EncodedUint, Ids, Message, MessageId, NoResponse, Opt, OptionsBuilder, Type,
-    decode, encode_uint,
+    BlockValue, Code, Echo, EchoFreshness, EncodedUint, Ids, Message, MessageId, NoResponse, Opt,
+    OptionsBuilder, Type, decode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
@@ -148,6 +149,7 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
     tokens: u32,
     inbox: client::ClientInbox,
     lives: client::ClientLives,
+    echo_fresh_ms: Option<u64>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
@@ -155,6 +157,7 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
 pub struct AppBuilder<P: MemoryProfile, Block = Missing, const N: usize = DEFAULT_ROUTES> {
     block_wise: Option<bool>,
     site: Site<N>,
+    echo_fresh_ms: Option<u64>,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -166,6 +169,7 @@ impl App {
         AppBuilder {
             block_wise: None,
             site: Site::new(),
+            echo_fresh_ms: None,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -193,6 +197,7 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
         AppBuilder {
             block_wise: self.block_wise,
             site,
+            echo_fresh_ms: self.echo_fresh_ms,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -220,6 +225,18 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
         self.site.well_known_core();
         self
     }
+
+    /// Require a time-fresh Echo (RFC 9175) on inbound requests.
+    ///
+    /// [`App::poll`] classifies via [`Engine::echo_freshness`]. Missing,
+    /// invalid, or stale Echo is 4.01 with RFC 9290 problem details and a
+    /// minted Echo challenge. [`EchoFreshness::Fresh`] continues to the
+    /// site. Off by default.
+    #[must_use]
+    pub const fn echo_freshness(mut self, fresh_ms: u64) -> Self {
+        self.echo_fresh_ms = Some(fresh_ms);
+        self
+    }
 }
 
 impl<P: MemoryProfile, const N: usize> AppBuilder<P, Missing, N> {
@@ -229,6 +246,7 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Missing, N> {
         AppBuilder {
             block_wise: Some(enabled),
             site: self.site,
+            echo_fresh_ms: self.echo_fresh_ms,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -260,6 +278,7 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
             tokens: 0,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
+            echo_fresh_ms: self.echo_fresh_ms,
         })
     }
 }
@@ -282,6 +301,13 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     /// Serve `/.well-known/core` from registered paths.
     pub const fn well_known_core(&mut self) -> &mut Self {
         self.site.well_known_core();
+        self
+    }
+
+    /// Require a time-fresh Echo on inbound requests. See
+    /// [`AppBuilder::echo_freshness`].
+    pub const fn echo_freshness(&mut self, fresh_ms: u64) -> &mut Self {
+        self.echo_fresh_ms = Some(fresh_ms);
         self
     }
 
@@ -357,17 +383,21 @@ where
     /// client-OFF rows are dropped. When `progress` yields `observe_notify`
     /// and the route has an [`ObserveSource`], that snapshot is encoded
     /// (ordinary TX or first-block Block2). Caller-built notifications use
-    /// [`Self::notify`]. Custom RST / 4.xx, [`Access`](crate::storage::Access), and
-    /// BERT edges stay on [`Engine`] ([`Self::engine_mut`]).
+    /// [`Self::notify`]. Custom RST / remaining 4.xx,
+    /// [`Access`](crate::storage::Access), and BERT edges stay on
+    /// [`Engine`] ([`Self::engine_mut`]).
     ///
     /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`].
     ///
     /// Incoming requests are dispatched through the site (4.04 / 4.05
     /// when no match). Those codes, and App-generated 4.08, carry RFC 9290
-    /// problem details (CBOR). Echo 4.01 and Engine-path 4.xx stay
-    /// caller-built ([`Response::problem`](crate::Response::problem) when a
-    /// body is wanted). CON is answered with a piggybacked ACK.
+    /// problem details (CBOR). When [`Self::echo_freshness`] is set,
+    /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with
+    /// problem details and a minted Echo option (RFC 9175). Other
+    /// Engine-path 4.xx stay caller-built
+    /// ([`Response::problem`](crate::Response::problem) when a body is
+    /// wanted). CON is answered with a piggybacked ACK.
     ///
     /// Outbound: a response whose Token and peer match an outstanding
     /// [`Call`] is copied into a [`Response`] for [`Self::take_response`]. A
@@ -390,6 +420,7 @@ where
                 &mut self.ids,
                 &mut self.inbox,
                 &mut self.lives,
+                self.echo_fresh_ms,
                 now_ms,
             ),
             EngineSlot::BlockWise(engine) => poll_engine(
@@ -399,6 +430,7 @@ where
                 &mut self.ids,
                 &mut self.inbox,
                 &mut self.lives,
+                self.echo_fresh_ms,
                 now_ms,
             ),
         }
@@ -489,6 +521,7 @@ impl<P: MemoryProfile> EngineMut<'_, P> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn poll_engine<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -496,6 +529,7 @@ fn poll_engine<Mem, T, const N: usize>(
     ids: &mut Ids,
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
+    echo_fresh_ms: Option<u64>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -518,7 +552,17 @@ where
     }
 
     if let Some(rx) = progress.rx_ready().or(received) {
-        dispatch_rx(engine, io, site, inbox, lives, ids, now_ms, rx)?;
+        dispatch_rx(
+            engine,
+            io,
+            site,
+            inbox,
+            lives,
+            ids,
+            echo_fresh_ms,
+            now_ms,
+            rx,
+        )?;
     }
 
     if let Some(expiry) = progress.observe_expired() {
@@ -631,6 +675,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
     ids: &mut Ids,
+    echo_fresh_ms: Option<u64>,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -701,6 +746,17 @@ where
         q_block2,
         block1,
     };
+
+    if let Some(fresh_ms) = echo_fresh_ms {
+        match Engine::<Mem>::echo_freshness(&parsed, now_ms, fresh_ms) {
+            EchoFreshness::Fresh => {}
+            EchoFreshness::Missing | EchoFreshness::Invalid | EchoFreshness::Stale => {
+                let outcome = send_response(engine, io, meta, &unauthorized_echo(now_ms));
+                let _ = engine.release_rx(rx);
+                return outcome;
+            }
+        }
+    }
 
     let assembled = assemble_inbound_body(engine, rx);
     match assembled {
@@ -1257,6 +1313,7 @@ fn encode_response<S: Storage + DatagramSlots>(
         .and_then(|b| b.size2)
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
     let block1_enc = block1.map(|b| b.encode());
+    let echo = response.echo_option();
     let mut opts = OptionsBuilder::<8>::new();
     if let Some(etag) = response.etag_bytes() {
         let _ = opts.push(Opt::etag(etag));
@@ -1282,6 +1339,9 @@ fn encode_response<S: Storage + DatagramSlots>(
     }
     if let Some(ref encoded) = block1_enc {
         let _ = opts.push(Opt::block1(encoded));
+    }
+    if let Some(ref echo) = echo {
+        let _ = opts.push(Opt::echo(echo.as_slice()));
     }
     let msg = Message::new(ty, response.code(), mid)
         .with_token(token)
@@ -1314,6 +1374,13 @@ where
     let _ = engine.release_tx(tx);
     send?;
     Ok(())
+}
+
+fn unauthorized_echo(now_ms: u64) -> Response {
+    let challenge = Echo::mint(now_ms, &[]).expect("timestamp Echo");
+    Response::problem(Code::UNAUTHORIZED)
+        .title("Unauthorized")
+        .echo(challenge)
 }
 
 fn szx_for(block2: Option<BlockValue>, q_block2: Option<BlockValue>) -> u8 {

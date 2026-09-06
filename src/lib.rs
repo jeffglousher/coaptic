@@ -62,8 +62,10 @@
 //!
 //! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR;
 //! Content-Format 257). [`Response::problem`] is the App-facing builder.
-//! App-generated 4.04 / 4.05 / 4.08 use it. Echo 4.01 and other
-//! Engine-path 4.xx stay caller-opt-in.
+//! App-generated 4.04 / 4.05 / 4.08 use it. When
+//! [`echo_freshness`](app::AppBuilder::echo_freshness) is set, App-generated
+//! 4.01 uses it plus an Echo option (RFC 9175). Other Engine-path 4.xx
+//! stay caller-opt-in.
 //!
 //! The library does not invent 4.02 / RST policy.
 //!
@@ -139,7 +141,7 @@
 //! take responses. Tokens and Message IDs are App counters (no OS RNG).
 //! Engine remains the
 //! advanced escape hatch for explicit slots, [`Access`](storage::Access),
-//! custom RST / 4.xx, and BERT edges (`app.engine_mut()`). See
+//! custom RST / remaining 4.xx, and BERT edges (`app.engine_mut()`). See
 //! `examples/coap_server.rs` (`std`).
 //!
 //! Path arguments accept both `&["sensors", "temp"]` and `"sensors/temp"`
