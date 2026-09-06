@@ -140,18 +140,23 @@
 //! Path arguments accept both `&["sensors", "temp"]` and `"sensors/temp"`
 //! ([`app::IntoPath`]; empty segments are rejected).
 //!
-//! OSCORE and DTLS are out of scope. 6LoWPAN is not planned.
+//! OSCORE is out of scope. DTLS is not a library dependency: the
+//! `coaptic-plugtest` harness (feature `dtls`) wraps [`DatagramIo`](storage::DatagramIo)
+//! with webrtc-dtls. 6LoWPAN is not planned.
 //!
 //! # Validation harness
 //!
 //! Integration tests (not compiled into this `no_std` crate) live under
-//! `tests/`. They may use `std`. No extra Cargo dependencies.
+//! `tests/` (no extra library deps) and `crates/coaptic-plugtest` (peer
+//! crates + pcap grader; optional `dtls`).
 //!
 //! | Command | What it runs |
 //! | --- | --- |
 //! | `cargo test --test block_sweep` | Combinatorial SZX `{16…1024}` × body length in blocks `1…25` for classic Block1/Block2 and Q-Block windowed paths. Uses a large test profile (32 × 1024 body bytes). Default 4096 is not the ceiling. Tracking: [issue #49][plugtest]. |
 //! | `cargo test --test block_sweep --all-features` | Same sweep plus `AllocMemory` 25 × 1024. |
-//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `tests/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). `dtls` is skipped (deferred). `6lowpan` is skipped (not planned). |
+//! | `cargo test --test plugtest` | In-scope CoAP#4 TDs from `tests/plugtest/td-coap4/{base,block,link}.yml` on a two-Engine loopback (datagram bytes only). In-memory `dtls` is skipped (no sockets). `6lowpan` is skipped (not planned). |
+//! | `cargo test -p coaptic-plugtest` | Multi-impl UDP harness ([`coaptic-plugtest`](https://github.com/jeffglousher/coaptic/tree/main/crates/coaptic-plugtest)): peer trait, coap-rs backend, pcap + golden JSON grader. |
+//! | `cargo test -p coaptic-plugtest --features dtls` | Same harness plus DTLS TDs (webrtc-dtls, harness-only). Tracking: [issue #56](https://github.com/jeffglousher/coaptic/issues/56). |
 //! | `cargo test --test plugtest catalog` | Hand-maintained TD lists match vendored YAML keys. |
 //! | `cargo test --test plugtest td_coap_core` | All 24 `TD_COAP_CORE_*` from `base.yml`. |
 //! | `cargo test --test plugtest td_coap_block` | All 6 `TD_COAP_BLOCK_*` from `block.yml`. |

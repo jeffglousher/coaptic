@@ -1,10 +1,8 @@
-//! TD identifiers extracted from vendored CoAP#4 YAML.
+//! TD identifiers from vendored CoAP#4 YAML (same files as `tests/plugtest`).
 //!
-//! Hand-maintained lists must match the `TD_*` keys in
-//! `tests/plugtest/td-coap4/*.yml`. Do not invent identifiers.
-//! Extraction is a line scan for `TD_…:` keys (no YAML crate).
+//! Do not invent TD identifiers. Extraction is a line scan for `TD_…:` keys.
 
-/// In-scope CORE TDs from `base.yml` (same order as the file).
+/// In-scope CORE TDs from `base.yml`.
 pub const CORE: &[&str] = &[
     "TD_COAP_CORE_01",
     "TD_COAP_CORE_02",
@@ -72,8 +70,7 @@ pub const LINK: &[&str] = &[
     "TD_COAP_LINK_09",
 ];
 
-/// DTLS TDs. The in-memory Engine pair cannot terminate DTLS; the
-/// `coaptic-plugtest` harness runs them (`cargo test -p coaptic-plugtest --features dtls`).
+/// DTLS TDs from `dtls.yml`. Run in this harness (`dtls` feature).
 pub const DTLS: &[&str] = &[
     "TD_COAP_DTLS_01",
     "TD_COAP_DTLS_02",
@@ -84,11 +81,11 @@ pub const DTLS: &[&str] = &[
     "TD_COAP_DTLS_07",
 ];
 
-const BASE_YML: &str = include_str!("td-coap4/base.yml");
-const BLOCK_YML: &str = include_str!("td-coap4/block.yml");
-const LINK_YML: &str = include_str!("td-coap4/link.yml");
-const DTLS_YML: &str = include_str!("td-coap4/dtls.yml");
-const LOWPAN_YML: &str = include_str!("td-coap4/6lowpan.yml");
+const BASE_YML: &str = include_str!("../../../tests/plugtest/td-coap4/base.yml");
+const BLOCK_YML: &str = include_str!("../../../tests/plugtest/td-coap4/block.yml");
+const LINK_YML: &str = include_str!("../../../tests/plugtest/td-coap4/link.yml");
+const DTLS_YML: &str = include_str!("../../../tests/plugtest/td-coap4/dtls.yml");
+const LOWPAN_YML: &str = include_str!("../../../tests/plugtest/td-coap4/6lowpan.yml");
 
 /// Keys that look like `TD_…:` at the start of a YAML line.
 #[must_use]
@@ -133,14 +130,22 @@ pub fn assert_ids_match_yaml() {
     assert!(!lowpan.is_empty(), "6lowpan.yml must contain TD keys");
 }
 
-/// Skip reason for a deferred or not-planned TD. `None` means implement.
+/// Skip reason. `None` means this harness implements the TD.
+///
+/// DTLS runs when the `dtls` feature is on. 6LoWPAN stays not planned.
 #[must_use]
 pub fn skip_reason(id: &str) -> Option<&'static str> {
-    if id.starts_with("TD_COAP_DTLS_") {
-        return Some("in-memory: no DTLS (see crates/coaptic-plugtest --features dtls)");
-    }
     if id.starts_with("TD_6LoWPAN_") {
         return Some("not planned: 6LoWPAN");
     }
+    if id.starts_with("TD_COAP_DTLS_") && !cfg!(feature = "dtls") {
+        return Some("enable crate feature dtls (harness webrtc-dtls adapter)");
+    }
     None
+}
+
+/// Vendored `TD_6LoWPAN_*` keys.
+#[must_use]
+pub fn lowpan_ids() -> Vec<&'static str> {
+    extract_td_ids(LOWPAN_YML)
 }

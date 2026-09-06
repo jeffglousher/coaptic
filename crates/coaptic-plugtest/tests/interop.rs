@@ -1,0 +1,139 @@
+//! Multi-impl plugtest + pcap grade (`cargo test -p coaptic-plugtest`).
+
+use coaptic_plugtest::catalog;
+use coaptic_plugtest::grade::Catalog;
+use coaptic_plugtest::runner::{self, Pair};
+
+#[test]
+fn catalog_matches_vendored_yaml() {
+    catalog::assert_ids_match_yaml();
+}
+
+#[test]
+fn golden_catalog_parses_and_covers_tds() {
+    let cat = Catalog::load().expect("expectations/catalog.json");
+    for id in catalog::CORE
+        .iter()
+        .chain(catalog::BLOCK)
+        .chain(catalog::OBS)
+        .chain(catalog::LINK)
+        .chain(catalog::DTLS)
+    {
+        assert!(cat.tds.contains_key(*id), "golden file missing {id}");
+    }
+}
+
+#[test]
+fn not_planned_6lowpan_skipped() {
+    for id in catalog::lowpan_ids() {
+        let reason = catalog::skip_reason(id).expect("6LoWPAN must skip");
+        assert!(reason.contains("6LoWPAN"), "{id}: {reason}");
+        assert!(reason.contains("not planned"), "{id}: {reason}");
+    }
+}
+
+#[test]
+fn dtls_not_deferred_skip_when_feature_on() {
+    for id in catalog::DTLS {
+        match catalog::skip_reason(id) {
+            None => assert!(
+                cfg!(feature = "dtls"),
+                "{id} runs only with --features dtls"
+            ),
+            Some(reason) => {
+                assert!(
+                    !reason.contains("deferred"),
+                    "{id}: DTLS must not be deferred ({reason})"
+                );
+                assert!(
+                    reason.contains("dtls"),
+                    "{id}: skip should name the dtls feature ({reason})"
+                );
+            }
+        }
+    }
+}
+
+fn assert_suite(name: &str, ids: &[&str], pairs: &[Pair]) {
+    let results = runner::run_suite(ids, pairs);
+    let mut failed = Vec::new();
+    for r in &results {
+        match &r.error {
+            Some(e) if e.starts_with("SKIP:") => {
+                eprintln!("SKIP  {name} {} {}  ({e})", r.id, r.pair.label());
+            }
+            Some(e) => {
+                eprintln!("FAIL  {name} {} {}  {e}", r.id, r.pair.label());
+                failed.push(format!("{} {}: {e}", r.id, r.pair.label()));
+            }
+            None => {
+                eprintln!("PASS  {name} {} {}", r.id, r.pair.label());
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{name} failures:\n{}", failed.join("\n"));
+}
+
+/// Base GETs must grade green on mixed + same-impl coaptic (success criterion 1).
+#[test]
+fn td_core_01_pcap_green() {
+    assert_suite("CORE_01", &["TD_COAP_CORE_01"], &runner::default_pairs());
+}
+
+#[test]
+fn td_coap_core() {
+    assert_suite("CORE", catalog::CORE, &runner::default_pairs());
+}
+
+#[test]
+fn td_coap_block() {
+    assert_suite("BLOCK", catalog::BLOCK, &runner::default_pairs());
+}
+
+#[test]
+fn td_coap_link() {
+    assert_suite("LINK", catalog::LINK, &runner::default_pairs());
+}
+
+#[test]
+fn td_coap_obs() {
+    assert_suite("OBS", catalog::OBS, &runner::default_pairs());
+}
+
+#[test]
+#[cfg(feature = "dtls")]
+fn td_coap_dtls() {
+    assert_suite("DTLS", catalog::DTLS, &runner::default_pairs());
+}
+
+#[test]
+fn inventory() {
+    catalog::assert_ids_match_yaml();
+    let mut ran = 0usize;
+    let mut skipped = 0usize;
+    for (suite, ids) in [
+        ("CORE", catalog::CORE),
+        ("BLOCK", catalog::BLOCK),
+        ("OBS", catalog::OBS),
+        ("LINK", catalog::LINK),
+        ("DTLS", catalog::DTLS),
+    ] {
+        for id in ids {
+            match catalog::skip_reason(id) {
+                Some(reason) => {
+                    skipped += 1;
+                    eprintln!("SKIP  {suite} {id}  ({reason})");
+                }
+                None => {
+                    ran += 1;
+                    eprintln!("RUN   {suite} {id}");
+                }
+            }
+        }
+    }
+    let lowpan = catalog::lowpan_ids();
+    skipped += lowpan.len();
+    eprintln!("SKIP  6LOWPAN {} TDs (not planned: 6LoWPAN)", lowpan.len());
+    eprintln!("interop inventory: {ran} run, {skipped} skip");
+    assert!(ran >= 24 + 6 + 13 + 9, "CORE+BLOCK+OBS+LINK must all run");
+}
