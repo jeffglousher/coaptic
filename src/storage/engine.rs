@@ -25,8 +25,7 @@ use super::SlotError;
 use super::SlotId;
 use super::Storage;
 use super::block::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,
-    QBlockRecover,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
 };
 use crate::error::{BlockTransferError, SlotMessageError, ValueError};
 use crate::message::{
@@ -1022,7 +1021,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.rx_body_transfer(id)
     }
 
-    /// Arm or clear incoming Q-Block [`QBlockReceiveWait`] from caller `now_ms`.
+    /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
     ///
     /// [`Self::apply_q_block1`] / [`Self::apply_q_block2`] do not take a clock.
     /// App::poll calls this after apply so the wait starts at receive time.

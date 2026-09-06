@@ -1177,6 +1177,10 @@ impl BodyOps for AllocBodyPool {
         AllocBodyPool::transfer(self, id)
     }
 
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+        AllocBodyPool::set_transfer(self, id, transfer)
+    }
+
     fn lookup(&self, key: BlockKey) -> Option<SlotId> {
         AllocBodyPool::lookup(self, key)
     }

@@ -773,6 +773,10 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         BodyPool::transfer(self, id)
     }
 
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+        BodyPool::set_transfer(self, id, transfer)
+    }
+
     fn lookup(&self, key: BlockKey) -> Option<SlotId> {
         BodyPool::lookup(self, key)
     }

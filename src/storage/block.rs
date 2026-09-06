@@ -1485,6 +1485,7 @@ pub(crate) fn store_incoming(
 pub(crate) trait BodyOps {
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError>;
     fn lookup(&self, key: BlockKey) -> Option<SlotId>;
     fn admit_incoming(
         &mut self,

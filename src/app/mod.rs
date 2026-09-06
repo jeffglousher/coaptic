@@ -105,7 +105,7 @@ use core::marker::PhantomData;
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, EncodedUint, Ids, Message, MessageId, NoResponse, Opt,
-    OptionsBuilder, QBlockTransmission, Type, decode, encode_uint,
+    OptionsBuilder, Type, decode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
@@ -373,8 +373,8 @@ where
     /// transfer is answered with 2.31 and does not run the handler. Apply
     /// errors are 4.08 with RFC 9290 problem details. Progress-driven
     /// Q-Block1 holes are 4.08 with RFC 9177 missing-blocks CBOR-seq,
-    /// after [`QBlockTransmission::NON_RECEIVE_TIMEOUT_MS`] (caller
-    /// `now_ms`; Engine arms the wait on apply / first progress). When
+    /// after [`crate::message::QBlockTransmission::NON_RECEIVE_TIMEOUT_MS`]
+    /// (caller `now_ms`; Engine arms the wait on apply / first progress). When
     /// `progress` yields a Q-Block2 [`QBlockRecover`], `poll` encodes
     /// repeatable Q-Block2 recover (NON GET) and `send_tx`. When
     /// block-wise is off, a payload that does not fit one datagram fails
