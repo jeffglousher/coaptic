@@ -86,7 +86,9 @@
 //! from [`Outgoing::send`]. No `SlotId`. The caller owns the destination
 //! endpoint and must take
 //! responses. Tokens and Message IDs are App counters (no OS RNG).
-//! Observe client stays Engine-only.
+//! Observe subscribe: [`Outgoing::observe`] then the same [`Call`] /
+//! [`App::take_response`] for the initial representation and later
+//! notifications. [`Outgoing::deregister`] sends Observe=1.
 mod client;
 mod request;
 mod response;
@@ -111,7 +113,7 @@ use crate::storage::{
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
-const DEFAULT_MAX_AGE_SECS: u32 = 60;
+pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
@@ -376,7 +378,9 @@ where
     /// body. Classic Block2 Continue and Q-Block2 window Continue are
     /// sent from `poll` without exposing [`SlotId`]. Large PUT/POST uses
     /// Block1 / Q-Block1; continues reuse the Uri-Path recorded at
-    /// [`Outgoing::send`].
+    /// [`Outgoing::send`]. An Observe subscribe ([`Outgoing::observe`])
+    /// keeps matching the Token after the Exchange is cleared; later
+    /// notifications use the same [`Call`] / [`Self::take_response`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(
