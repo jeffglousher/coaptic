@@ -10,16 +10,18 @@
 //! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId). [`App::poll`](super::App::poll)
 //! advances this alongside site routing on the same Engine and socket.
 //! Classic Block2 Continue and Q-Block2 window Continue reuse the path
-//! recorded at [`Outgoing::send`]. Q-Block2 recover stays on `poll`.
+//! recorded at [`Outgoing::send`]. Large PUT/POST uses Block1 / Q-Block1
+//! the same way: Engine `encode_block1_tx` writes Block1 + token only, so
+//! continues carry the stored Uri-Path. Q-Block2 recover stays on `poll`.
 
-use crate::error::BlockTransferError;
+use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage,
-    Token, Type,
+    Token, Type, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeKey,
-    Exchanges, Missing, PendingCons, Present, SlotId, Storage,
+    Exchanges, Missing, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
@@ -150,9 +152,10 @@ struct LiveCall {
     path: Path<'static>,
     code: Code,
     ty: Type,
+    content_format: Option<ContentFormat>,
 }
 
-/// Path / type for an outstanding client request (Block2 Continue).
+/// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientLives {
     rows: [Option<LiveCall>; RESPONSE_INBOX],
@@ -204,8 +207,9 @@ impl ClientLives {
 /// Outbound request builder: [`App::get`](super::App::get) / [`App::put`](super::App::put).
 ///
 /// Chain [`.to`](Self::to), optional [`.payload`](Self::payload) /
-/// [`.non`](Self::non) / [`.q_block2`](Self::q_block2), then
-/// [`.send`](Self::send). Default type is CON.
+/// [`.non`](Self::non) / [`.q_block1`](Self::q_block1) /
+/// [`.q_block2`](Self::q_block2), then [`.send`](Self::send). Default type
+/// is CON.
 ///
 /// ```
 /// # use coaptic::storage::DatagramIo;
@@ -238,6 +242,7 @@ where
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    q_block1: bool,
     q_block2: bool,
     _dest: core::marker::PhantomData<Dest>,
 }
@@ -302,6 +307,7 @@ where
             path: path_from_into(path),
             payload: &[],
             content_format: None,
+            q_block1: false,
             q_block2: false,
             _dest: core::marker::PhantomData,
         }
@@ -346,12 +352,15 @@ where
             path: self.path,
             payload: self.payload,
             content_format: self.content_format,
+            q_block1: self.q_block1,
             q_block2: self.q_block2,
             _dest: core::marker::PhantomData,
         }
     }
 
-    /// Datagram payload (this request; not Block1).
+    /// Request body. A payload that does not fit one datagram is sent as
+    /// Block1 (or Q-Block1 after [`.q_block1`](Self::q_block1)) when
+    /// block-wise is enabled.
     #[must_use]
     pub const fn payload(mut self, payload: &'a [u8]) -> Self {
         self.payload = payload;
@@ -372,6 +381,13 @@ where
         self
     }
 
+    /// Send a large body with Q-Block1 (windowed) instead of classic Block1.
+    #[must_use]
+    pub const fn q_block1(mut self) -> Self {
+        self.q_block1 = true;
+        self
+    }
+
     /// Ask for Q-Block2 (NUM 0, SZX 1024). The peer may still use classic Block2.
     #[must_use]
     pub const fn q_block2(mut self) -> Self {
@@ -384,19 +400,21 @@ impl<P, T, const N: usize> Outgoing<'_, P, T, N, Present>
 where
     P: crate::storage::MemoryProfile,
     T: DatagramIo,
-    crate::storage::Memory<P>: Storage + DatagramSlots + PendingCons + Exchanges,
+    crate::storage::Memory<P>: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     crate::storage::Memory<P, crate::storage::WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + Exchanges,
+        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
 {
     /// Encode the request, record the Exchange, and send.
     ///
     /// `now_ms` starts CON RTO (caller clock; jitter is 0). Returns a [`Call`]
     /// for [`App::take_response`](App::take_response). Tokens and Message IDs are
-    /// App counters — this crate does not call an OS RNG.
+    /// App counters — this crate does not call an OS RNG. A payload that does
+    /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
         let token = self.app.next_token();
+        let q_block1 = self.q_block1;
         let q_block2 = self.q_block2;
         let call = match &mut self.app.engine {
             super::EngineSlot::Datagram(engine) => send_client(
@@ -411,6 +429,7 @@ where
                 path.segments(),
                 self.payload,
                 self.content_format,
+                q_block1,
                 q_block2,
             ),
             super::EngineSlot::BlockWise(engine) => send_client(
@@ -425,6 +444,7 @@ where
                 path.segments(),
                 self.payload,
                 self.content_format,
+                q_block1,
                 q_block2,
             ),
         }?;
@@ -433,6 +453,7 @@ where
             path,
             code: self.code,
             ty: self.ty,
+            content_format: self.content_format,
         });
         Ok(call)
     }
@@ -461,55 +482,140 @@ fn send_client<Mem, T>(
     path: &[&str],
     payload: &[u8],
     content_format: Option<ContentFormat>,
+    q_block1: bool,
     q_block2: bool,
 ) -> Result<Call, Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges,
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
     if path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
-    let mut opts = OptionsBuilder::<16>::new();
-    for segment in path {
-        let _ = opts.push(Opt::uri_path(segment));
-    }
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
+    let mid = ids.next();
     let cf = content_format.map(ContentFormat::encode);
-    if let Some(ref encoded) = cf {
-        let _ = opts.push(Opt::content_format(encoded));
-    }
     let q2 = q_block2
         .then(|| BlockValue::new(0, false, BlockValue::SZX_MAX))
         .and_then(Result::ok)
         .map(BlockValue::encode);
+    let mut opts = OptionsBuilder::<16>::new();
+    for segment in path {
+        let _ = opts.push(Opt::uri_path(segment));
+    }
+    if let Some(ref encoded) = cf {
+        let _ = opts.push(Opt::content_format(encoded));
+    }
     if let Some(ref encoded) = q2 {
         let _ = opts.push(Opt::q_block2(encoded));
     }
-    let mid = ids.next();
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(payload);
-    let Some(tx) = engine.acquire_tx() else {
-        return Err(Error::Saturated);
-    };
-    if let Err(e) = engine.encode_tx(tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(Error::Message(e));
-    }
-    match engine.record_request(tx, dest) {
-        Ok(Some(_)) => {}
-        Ok(None) => {
+    match engine.encode_tx(tx, &msg) {
+        Ok(_) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
+            .map(|()| Call::new(token, dest)),
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => send_client_block1(
+            engine,
+            io,
+            ids,
+            now_ms,
+            dest,
+            ty,
+            code,
+            token,
+            path,
+            payload,
+            content_format,
+            q_block1,
+            tx,
+        ),
+        Err(e) => {
             let _ = engine.release_tx(tx);
-            return Err(Error::Saturated);
+            Err(Error::Message(e))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_client_block1<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    payload: &[u8],
+    content_format: Option<ContentFormat>,
+    q_block1: bool,
+    tx: SlotId,
+) -> Result<Call, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let key = BlockKey::new(token, dest);
+    let started = if q_block1 {
+        engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
+    } else {
+        engine.start_block1(key, payload, BlockValue::SZX_MAX)
+    };
+    let body = match started {
+        Ok(id) => id,
+        Err(BlockTransferError::NoBodyPools) => {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )));
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
-            return Err(e.into());
+            return Err(Error::Block(e));
         }
+    };
+    let outcome = if q_block1 {
+        issue_q_block1_window(
+            engine,
+            io,
+            ids,
+            now_ms,
+            dest,
+            ty,
+            code,
+            token,
+            path,
+            content_format,
+            body,
+            Some(tx),
+            None,
+        )
+        .map(|_| ())
+    } else {
+        issue_block1(
+            engine,
+            io,
+            ids,
+            now_ms,
+            dest,
+            ty,
+            code,
+            token,
+            path,
+            content_format,
+            body,
+            Some(tx),
+        )
+    };
+    if outcome.is_err() {
+        let _ = engine.release_tx_body(body);
     }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
-    super::finish_send(engine, io, tx, dest, pending)?;
+    outcome?;
     Ok(Call::new(token, dest))
 }
 
@@ -541,6 +647,23 @@ where
     }
     if let Some(tx) = engine.take_pending_con(parsed.message_id(), peer) {
         let _ = engine.release_tx(tx);
+    }
+
+    if let Some(body) = engine.lookup_tx_body(BlockKey::new(parsed.token(), peer)) {
+        if let Some(transfer) = engine.tx_body_transfer(body) {
+            if matches!(
+                transfer.role(),
+                BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+            ) {
+                if parsed.code() == Code::CONTINUE {
+                    let outcome =
+                        continue_block1_tx(engine, io, lives, ids, now_ms, parsed, peer, body);
+                    let _ = engine.release_rx(rx);
+                    return outcome;
+                }
+                let _ = engine.release_tx_body(body);
+            }
+        }
     }
 
     match engine.apply_block2_rx(rx) {
@@ -648,8 +771,12 @@ fn drop_client<Mem>(
     Mem: Storage + Exchanges + BodySlots,
 {
     take_exchange(engine, parsed, peer);
-    if let Some(id) = engine.lookup_rx_body(BlockKey::new(parsed.token(), peer)) {
+    let key = BlockKey::new(parsed.token(), peer);
+    if let Some(id) = engine.lookup_rx_body(key) {
         let _ = engine.release_rx_body(id);
+    }
+    if let Some(id) = engine.lookup_tx_body(key) {
+        let _ = engine.release_tx_body(id);
     }
     lives.remove(Call::new(parsed.token(), peer));
     let _ = engine.release_rx(rx);
@@ -794,6 +921,281 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn continue_block1_tx<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    lives: &ClientLives,
+    ids: &mut Ids,
+    now_ms: u64,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+    body: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return Ok(());
+    };
+    if transfer.is_complete() {
+        return Ok(());
+    }
+    let live = lives.get(Call::new(parsed.token(), peer));
+    let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
+    let code = live.map(|live| live.code).unwrap_or(Code::PUT);
+    let path = live.map(|live| live.path);
+    let content_format = live.and_then(|live| live.content_format);
+    let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
+    match transfer.role() {
+        BlockRole::OutgoingBlock1 => {
+            take_exchange(engine, parsed, peer);
+            issue_block1(
+                engine,
+                io,
+                ids,
+                now_ms,
+                peer,
+                ty,
+                code,
+                parsed.token(),
+                segments,
+                content_format,
+                body,
+                None,
+            )
+        }
+        BlockRole::OutgoingQBlock1 => {
+            if let Some(Ok(q)) = parsed.q_block1() {
+                engine.ack_q_block1(body, q.num()).map_err(Error::Block)?;
+            }
+            issue_q_block1_window(
+                engine,
+                io,
+                ids,
+                now_ms,
+                peer,
+                ty,
+                code,
+                parsed.token(),
+                segments,
+                content_format,
+                body,
+                None,
+                Some((parsed.token(), peer)),
+            )
+            .map(|_| ())
+        }
+        _ => Ok(()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn issue_block1<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    content_format: Option<ContentFormat>,
+    body: SlotId,
+    tx: Option<SlotId>,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let issued = engine.next_block1(body).map_err(Error::Block)?;
+    send_block1_issued(
+        engine,
+        io,
+        ids,
+        now_ms,
+        dest,
+        ty,
+        code,
+        token,
+        path,
+        content_format,
+        issued,
+        false,
+        tx,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn issue_q_block1_window<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    dest: Endpoint,
+    first_ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    content_format: Option<ContentFormat>,
+    body: SlotId,
+    mut tx: Option<SlotId>,
+    take_first: Option<(Token, Endpoint)>,
+) -> Result<bool, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let mut sent = false;
+    let mut extra = 0u16;
+    loop {
+        let issued = match engine.next_q_block1(body) {
+            Ok(issued) => issued,
+            Err(BlockTransferError::OutsideWindow) => return Ok(sent),
+            Err(e) => return Err(Error::Block(e)),
+        };
+        if !sent {
+            if let Some((tok, ep)) = take_first {
+                let _ = engine.take_exchange(ExchangeKey::new(tok, ep));
+            }
+        }
+        let ty = if extra == 0 {
+            first_ty
+        } else {
+            Type::NonConfirmable
+        };
+        send_block1_issued(
+            engine,
+            io,
+            ids,
+            now_ms,
+            dest,
+            ty,
+            code,
+            token,
+            path,
+            content_format,
+            issued,
+            true,
+            tx.take(),
+        )?;
+        sent = true;
+        extra = extra.saturating_add(1);
+        if issued.complete() {
+            return Ok(true);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_block1_issued<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    content_format: Option<ContentFormat>,
+    issued: OutgoingBlock,
+    q_block1: bool,
+    tx: Option<SlotId>,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let mut chunk = [0u8; 1024];
+    let n = copy_tx_range(engine, issued, &mut chunk).map_err(Error::Block)?;
+    let size1 = engine
+        .tx_body_transfer(issued.id())
+        .map(|t| t.filled())
+        .and_then(|len| u32::try_from(len).ok());
+    let tx = match tx {
+        Some(tx) => tx,
+        None => engine.acquire_tx().ok_or(Error::Saturated)?,
+    };
+    let mid = ids.next();
+    let cf = content_format.map(ContentFormat::encode);
+    let blk = issued.block().encode();
+    let size = size1.map(encode_uint);
+    let mut opts = OptionsBuilder::<16>::new();
+    for segment in path {
+        let _ = opts.push(Opt::uri_path(segment));
+    }
+    if let Some(ref encoded) = cf {
+        let _ = opts.push(Opt::content_format(encoded));
+    }
+    if q_block1 {
+        let _ = opts.push(Opt::q_block1(&blk));
+    } else {
+        let _ = opts.push(Opt::block1(&blk));
+    }
+    if let Some(ref encoded) = size {
+        let _ = opts.push(Opt::size1(encoded));
+    }
+    let msg = Message::new(ty, code, mid)
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(&chunk[..n]);
+    if let Err(e) = engine.encode_tx(tx, &msg) {
+        let _ = engine.release_tx(tx);
+        return Err(Error::Message(e));
+    }
+    finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
+}
+
+fn finish_client_send<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    tx: SlotId,
+    dest: Endpoint,
+    ty: Type,
+    now_ms: u64,
+    mid: MessageId,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges,
+    T: DatagramIo,
+{
+    match engine.record_request(tx, dest) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Saturated);
+        }
+        Err(e) => {
+            let _ = engine.release_tx(tx);
+            return Err(e.into());
+        }
+    }
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    super::finish_send(engine, io, tx, dest, pending)
+}
+
+fn copy_tx_range<Mem: Storage + BodySlots>(
+    engine: &Engine<Mem>,
+    issued: OutgoingBlock,
+    dest: &mut [u8],
+) -> Result<usize, BlockTransferError> {
+    let payload = engine
+        .tx_body_payload(issued.id())
+        .ok_or(BlockTransferError::NoTransfer)?;
+    let end = issued
+        .offset()
+        .checked_add(issued.len())
+        .ok_or(BlockTransferError::Overflow)?;
+    if end > payload.len() || issued.len() > dest.len() {
+        return Err(BlockTransferError::Overflow);
+    }
+    dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+    Ok(issued.len())
+}
+
 fn rx_body_payload<P>(engine: &super::EngineSlot<P>, id: SlotId) -> Option<&[u8]>
 where
     P: crate::storage::MemoryProfile,
@@ -837,8 +1239,12 @@ where
         }
         let key = entry.key();
         let _ = engine.take_exchange(key);
-        if let Some(body) = engine.lookup_rx_body(BlockKey::new(key.token(), key.endpoint())) {
+        let block = BlockKey::new(key.token(), key.endpoint());
+        if let Some(body) = engine.lookup_rx_body(block) {
             let _ = engine.release_rx_body(body);
+        }
+        if let Some(body) = engine.lookup_tx_body(block) {
+            let _ = engine.release_tx_body(body);
         }
         lives.remove(Call::new(key.token(), key.endpoint()));
         return;

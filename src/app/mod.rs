@@ -81,8 +81,10 @@
 //! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
 //! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
 //! via the Exchange table. [`App::take_response`] is a [`Response`] (code /
-//! payload, and [`Response::body`] when Block2 / Q-Block2 assembled). No
-//! `SlotId`. The caller owns the destination endpoint and must take
+//! payload, and [`Response::body`] when Block2 / Q-Block2 assembled). A
+//! large request body is Block1 / Q-Block1; continues reuse the path
+//! from [`Outgoing::send`]. No `SlotId`. The caller owns the destination
+//! endpoint and must take
 //! responses. Tokens and Message IDs are App counters (no OS RNG).
 //! Observe client stays Engine-only.
 mod client;
@@ -372,7 +374,9 @@ where
     /// Exchange (`take_response` stays `None`). Block2 / Q-Block2 fragments
     /// assemble in the RX body area; [`Response::body`] is the complete
     /// body. Classic Block2 Continue and Q-Block2 window Continue are
-    /// sent from `poll` without exposing [`SlotId`].
+    /// sent from `poll` without exposing [`SlotId`]. Large PUT/POST uses
+    /// Block1 / Q-Block1; continues reuse the Uri-Path recorded at
+    /// [`Outgoing::send`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(
@@ -997,7 +1001,14 @@ where
 
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = engine.lookup_tx_body(key) {
-        return continue_outgoing(engine, io, meta, response, ty, id);
+        if engine.tx_body_transfer(id).is_some_and(|t| {
+            matches!(
+                t.role(),
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            )
+        }) {
+            return continue_outgoing(engine, io, meta, response, ty, id);
+        }
     }
 
     let Some(tx) = engine.acquire_tx() else {
