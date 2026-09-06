@@ -88,12 +88,14 @@
 //! [GitHub project][plan]. This rustdoc does not restate wire format.
 //! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
 //!
-//! # Deferred
+//! # Future / backlog
 //!
-//! Engine BERT (SZX 7) is advanced and not on the App face. OSCORE is out
-//! of scope. DTLS is not a first-party library dependency — the
-//! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
-//! [`DatagramIo`](storage::DatagramIo). 6LoWPAN is not planned.
+//! Ready for future. Focused fully. Core CoAP for the accepted set is
+//! complete. Engine BERT (SZX 7) codecs exist; App does not expose them.
+//! OSCORE is not implemented. First-party DTLS is not a library
+//! dependency — the `coaptic-plugtest` harness (feature `dtls`) wraps
+//! webrtc-dtls as a [`DatagramIo`](storage::DatagramIo). 6LoWPAN is not
+//! planned.
 //!
 //! # Features
 //!
