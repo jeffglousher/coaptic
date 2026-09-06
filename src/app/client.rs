@@ -12,7 +12,10 @@
 //! Classic Block2 Continue and Q-Block2 window Continue reuse the path
 //! recorded at [`Outgoing::send`]. Large PUT/POST uses Block1 / Q-Block1
 //! the same way: Engine `encode_block1_tx` writes Block1 + token only, so
-//! continues carry the stored Uri-Path. Q-Block2 recover stays on `poll`.
+//! continues carry the stored Uri-Path. Observe subscribe
+//! ([`Outgoing::observe`]) inserts Engine [`ObserveInterest`] after the
+//! first Observe-bearing success; later notifications match that row
+//! (Exchange is cleared). Q-Block2 recover stays on `poll`.
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
@@ -21,7 +24,8 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeKey,
-    Exchanges, Missing, OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    Exchanges, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
+    PendingCons, Present, SlotId, Storage,
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
@@ -68,6 +72,7 @@ struct ReplyMeta {
     payload: [u8; INLINE_PAYLOAD],
     payload_len: u16,
     content_format: Option<ContentFormat>,
+    observe: Option<u32>,
 }
 
 impl ReplyMeta {
@@ -85,11 +90,12 @@ impl ReplyMeta {
             payload,
             payload_len: n as u16,
             content_format: parsed.content_format().and_then(Result::ok),
+            observe: parsed.observe().and_then(Result::ok),
         }
     }
 
     fn into_response(self) -> Response {
-        Response::from_client(
+        let response = Response::from_client(
             self.code,
             self.ty,
             self.token,
@@ -97,7 +103,11 @@ impl ReplyMeta {
             self.peer,
             &self.payload[..usize::from(self.payload_len)],
             self.content_format,
-        )
+        );
+        match self.observe {
+            Some(seq) => response.observe(seq),
+            None => response,
+        }
     }
 }
 
@@ -153,6 +163,7 @@ struct LiveCall {
     code: Code,
     ty: Type,
     content_format: Option<ContentFormat>,
+    observe: OutgoingObserve,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
@@ -202,12 +213,27 @@ impl ClientLives {
             *slot = None;
         }
     }
+
+    fn token_for(&self, path: Path<'static>, peer: Endpoint) -> Option<Token> {
+        self.rows.iter().copied().find_map(|row| {
+            row.filter(|row| row.call.peer == peer && row.path == path)
+                .map(|row| row.call.token)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutgoingObserve {
+    Off,
+    Register,
+    Deregister,
 }
 
 /// Outbound request builder: [`App::get`](super::App::get) / [`App::put`](super::App::put).
 ///
 /// Chain [`.to`](Self::to), optional [`.payload`](Self::payload) /
-/// [`.non`](Self::non) / [`.q_block1`](Self::q_block1) /
+/// [`.non`](Self::non) / [`.observe`](Self::observe) /
+/// [`.deregister`](Self::deregister) / [`.q_block1`](Self::q_block1) /
 /// [`.q_block2`](Self::q_block2), then [`.send`](Self::send). Default type
 /// is CON.
 ///
@@ -244,6 +270,7 @@ where
     content_format: Option<ContentFormat>,
     q_block1: bool,
     q_block2: bool,
+    observe: OutgoingObserve,
     _dest: core::marker::PhantomData<Dest>,
 }
 
@@ -309,6 +336,7 @@ where
             content_format: None,
             q_block1: false,
             q_block2: false,
+            observe: OutgoingObserve::Off,
             _dest: core::marker::PhantomData,
         }
     }
@@ -317,16 +345,23 @@ where
 impl<P, T, const N: usize> App<P, T, N>
 where
     P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: crate::storage::BodySlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: crate::storage::BodySlots,
+    crate::storage::Memory<P>: crate::storage::BodySlots + ObserveSlots,
+    crate::storage::Memory<P, crate::storage::WithBodies<P>>:
+        crate::storage::BodySlots + ObserveSlots,
 {
     /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll) has completed it.
     ///
     /// When Block2 / Q-Block2 assembled, copies the RX body into
     /// [`Response::body`] and releases that body slot.
+    ///
+    /// After [`Outgoing::observe`], the same `call` yields the initial
+    /// representation and later notifications. Lives stay while Engine
+    /// Observe interest is still registered.
     pub fn take_response(&mut self, call: Call) -> Option<Response> {
         let (mut response, body) = self.inbox.take(call)?;
-        self.lives.remove(call);
+        if !client_observe_live(&self.engine, call) {
+            self.lives.remove(call);
+        }
         if let Some(id) = body {
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
                 response.copy_body(bytes);
@@ -354,6 +389,7 @@ where
             content_format: self.content_format,
             q_block1: self.q_block1,
             q_block2: self.q_block2,
+            observe: self.observe,
             _dest: core::marker::PhantomData,
         }
     }
@@ -394,15 +430,32 @@ where
         self.q_block2 = true;
         self
     }
+
+    /// GET/FETCH Observe=0 (register). Later notifications use the same
+    /// [`Call`] / [`App::take_response`](App::take_response).
+    #[must_use]
+    pub const fn observe(mut self) -> Self {
+        self.observe = OutgoingObserve::Register;
+        self
+    }
+
+    /// GET/FETCH Observe=1 (deregister). Reuses the Token of an existing
+    /// subscribe to the same path and peer when one is live.
+    #[must_use]
+    pub const fn deregister(mut self) -> Self {
+        self.observe = OutgoingObserve::Deregister;
+        self
+    }
 }
 
 impl<P, T, const N: usize> Outgoing<'_, P, T, N, Present>
 where
     P: crate::storage::MemoryProfile,
     T: DatagramIo,
-    crate::storage::Memory<P>: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    crate::storage::Memory<P>:
+        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
     crate::storage::Memory<P, crate::storage::WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     /// Encode the request, record the Exchange, and send.
     ///
@@ -413,7 +466,14 @@ where
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
-        let token = self.app.next_token();
+        let observe = self.observe;
+        let token = match observe {
+            OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest),
+            OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token(),
+        };
+        if observe == OutgoingObserve::Deregister {
+            take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
+        }
         let q_block1 = self.q_block1;
         let q_block2 = self.q_block2;
         let call = match &mut self.app.engine {
@@ -431,6 +491,7 @@ where
                 self.content_format,
                 q_block1,
                 q_block2,
+                observe,
             ),
             super::EngineSlot::BlockWise(engine) => send_client(
                 engine,
@@ -446,6 +507,7 @@ where
                 self.content_format,
                 q_block1,
                 q_block2,
+                observe,
             ),
         }?;
         self.app.lives.insert(LiveCall {
@@ -454,6 +516,7 @@ where
             code: self.code,
             ty: self.ty,
             content_format: self.content_format,
+            observe,
         });
         Ok(call)
     }
@@ -484,6 +547,7 @@ fn send_client<Mem, T>(
     content_format: Option<ContentFormat>,
     q_block1: bool,
     q_block2: bool,
+    observe: OutgoingObserve,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
@@ -502,6 +566,15 @@ where
         .and_then(Result::ok)
         .map(BlockValue::encode);
     let mut opts = OptionsBuilder::<16>::new();
+    match observe {
+        OutgoingObserve::Register => {
+            let _ = opts.push(Opt::observe_register());
+        }
+        OutgoingObserve::Deregister => {
+            let _ = opts.push(Opt::observe_deregister());
+        }
+        OutgoingObserve::Off => {}
+    }
     for segment in path {
         let _ = opts.push(Opt::uri_path(segment));
     }
@@ -632,10 +705,14 @@ pub(crate) fn complete_client<Mem, T>(
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
     T: DatagramIo,
 {
-    if matching_exchange(engine, parsed, peer).is_none() {
+    let via_exchange = matching_exchange(engine, parsed, peer).is_some();
+    let via_observe = engine
+        .lookup_observe(ObserveKey::new(parsed.token(), peer))
+        .is_some();
+    if !via_exchange && !via_observe {
         let _ = engine.release_rx(rx);
         return Ok(());
     }
@@ -668,7 +745,17 @@ where
 
     match engine.apply_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
-            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+            finish_assembled(
+                engine,
+                lives,
+                inbox,
+                parsed,
+                peer,
+                now_ms,
+                via_exchange,
+                rx,
+                progress.id(),
+            );
             return Ok(());
         }
         Ok(progress) => {
@@ -688,7 +775,17 @@ where
 
     match engine.apply_q_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
-            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+            finish_assembled(
+                engine,
+                lives,
+                inbox,
+                parsed,
+                peer,
+                now_ms,
+                via_exchange,
+                rx,
+                progress.id(),
+            );
             return Ok(());
         }
         Ok(progress) => {
@@ -708,6 +805,7 @@ where
         }
     }
 
+    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
     take_exchange(engine, parsed, peer);
     let evicted = inbox.insert(
         Call::new(parsed.token(), peer),
@@ -723,14 +821,18 @@ where
 
 fn finish_assembled<Mem>(
     engine: &mut Engine<Mem>,
+    lives: &ClientLives,
     inbox: &mut ClientInbox,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
+    now_ms: u64,
+    via_exchange: bool,
     rx: SlotId,
     body: SlotId,
 ) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots,
+    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots,
 {
+    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
     take_exchange(engine, parsed, peer);
     let evicted = inbox.insert(
         Call::new(parsed.token(), peer),
@@ -768,9 +870,10 @@ fn drop_client<Mem>(
     peer: Endpoint,
     rx: SlotId,
 ) where
-    Mem: Storage + Exchanges + BodySlots,
+    Mem: Storage + Exchanges + BodySlots + ObserveSlots,
 {
     take_exchange(engine, parsed, peer);
+    let _ = engine.take_observe(ObserveKey::new(parsed.token(), peer));
     let key = BlockKey::new(parsed.token(), peer);
     if let Some(id) = engine.lookup_rx_body(key) {
         let _ = engine.release_rx_body(id);
@@ -882,6 +985,9 @@ where
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
     let mut opts = OptionsBuilder::<16>::new();
     if let Some(live) = live {
+        if live.observe == OutgoingObserve::Register {
+            let _ = opts.push(Opt::observe_register());
+        }
         for segment in live.path.segments() {
             let _ = opts.push(Opt::uri_path(segment));
         }
@@ -1224,9 +1330,109 @@ where
     }
 }
 
+fn client_observe_live<P>(engine: &super::EngineSlot<P>, call: Call) -> bool
+where
+    P: crate::storage::MemoryProfile,
+    crate::storage::Memory<P>: ObserveSlots,
+    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
+{
+    let key = ObserveKey::new(call.token(), call.peer());
+    match engine {
+        super::EngineSlot::Datagram(engine) => engine.lookup_observe(key).is_some(),
+        super::EngineSlot::BlockWise(engine) => engine.lookup_observe(key).is_some(),
+    }
+}
+
+fn take_client_observe<P>(engine: &mut super::EngineSlot<P>, key: ObserveKey)
+where
+    P: crate::storage::MemoryProfile,
+    crate::storage::Memory<P>: ObserveSlots,
+    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
+{
+    match engine {
+        super::EngineSlot::Datagram(engine) => {
+            let _ = engine.take_observe(key);
+        }
+        super::EngineSlot::BlockWise(engine) => {
+            let _ = engine.take_observe(key);
+        }
+    }
+}
+
+fn reuse_observe_token<P, T, const N: usize>(
+    app: &mut App<P, T, N>,
+    path: Path<'static>,
+    dest: Endpoint,
+) -> Token
+where
+    P: crate::storage::MemoryProfile,
+    crate::storage::Memory<P>: ObserveSlots,
+    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
+{
+    if let Some(token) = app.lives.token_for(path, dest) {
+        return token;
+    }
+    let resource = ObserveResource::from_path(path.segments());
+    let found = match &app.engine {
+        super::EngineSlot::Datagram(engine) => observe_token_on(engine, resource, dest),
+        super::EngineSlot::BlockWise(engine) => observe_token_on(engine, resource, dest),
+    };
+    found.unwrap_or_else(|| app.next_token())
+}
+
+fn observe_token_on<Mem>(
+    engine: &Engine<Mem>,
+    resource: ObserveResource,
+    dest: Endpoint,
+) -> Option<Token>
+where
+    Mem: Storage + ObserveSlots,
+{
+    let n = engine.capacities().observe_entries;
+    (0..n).find_map(|i| {
+        engine
+            .observe_interest(SlotId::from_index(i))
+            .and_then(|row| {
+                (row.endpoint() == dest && row.resource() == resource).then_some(row.token())
+            })
+    })
+}
+
+fn accept_client_observe<Mem>(
+    engine: &mut Engine<Mem>,
+    lives: &ClientLives,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+    now_ms: u64,
+    via_exchange: bool,
+) where
+    Mem: Storage + ObserveSlots,
+{
+    let key = ObserveKey::new(parsed.token(), peer);
+    let live = lives.get(Call::new(parsed.token(), peer));
+    if live.is_some_and(|live| live.observe == OutgoingObserve::Deregister) {
+        let _ = engine.take_observe(key);
+        return;
+    }
+    if parsed.observe().is_some() && parsed.code().is_success() {
+        let resource = live
+            .map(|live| ObserveResource::from_path(live.path.segments()))
+            .unwrap_or(ObserveResource::NONE);
+        let _ = engine
+            .insert_observe(ObserveInterest::new(parsed.token(), peer).with_resource(resource));
+        let max_age = parsed
+            .max_age()
+            .and_then(Result::ok)
+            .unwrap_or(super::DEFAULT_MAX_AGE_SECS);
+        let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
+    } else if via_exchange {
+        let _ = engine.take_observe(key);
+    }
+}
+
 pub(crate) fn forget_exchange_tx<Mem>(engine: &mut Engine<Mem>, lives: &mut ClientLives, tx: SlotId)
 where
-    Mem: Storage + Exchanges + BodySlots,
+    Mem: Storage + Exchanges + BodySlots + ObserveSlots,
 {
     let n = engine.capacities().tx_datagram_slots;
     for i in 0..n {
@@ -1239,6 +1445,7 @@ where
         }
         let key = entry.key();
         let _ = engine.take_exchange(key);
+        let _ = engine.take_observe(ObserveKey::new(key.token(), key.endpoint()));
         let block = BlockKey::new(key.token(), key.endpoint());
         if let Some(body) = engine.lookup_rx_body(block) {
             let _ = engine.release_rx_body(body);

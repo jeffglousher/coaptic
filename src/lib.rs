@@ -23,7 +23,8 @@
 //! - [`app`] — [`App`] + [`Site`](app::Site): [`route`](app::AppBuilder::route),
 //!   [`get`] / [`put`] method routers, `fn(Request<'_>) -> Response` handlers,
 //!   [`Response`] builders, [`App::poll`], [`App::notify`](app::App::notify),
-//!   outbound [`App::get`] / [`Outgoing::send`] / [`App::take_response`].
+//!   outbound [`App::get`] / [`Outgoing::send`] / [`App::take_response`],
+//!   [`Outgoing::observe`] / [`Outgoing::deregister`].
 //!   No global mutable shared bag.
 //! - [`message`] — decode/encode a CoAP datagram. No
 //!   [`Engine`](storage::Engine) required.
@@ -131,9 +132,12 @@
 //! on the Exchange table; [`App::take_response`] is a [`Response`]
 //! (code / payload, and [`Response::body`] when Block2 / Q-Block2
 //! assembled). Large PUT/POST uses Block1 / Q-Block1 (path reused on
-//! continues). No `SlotId`. The caller owns the destination and must
+//! continues). Observe subscribe is [`Outgoing::observe`](app::Outgoing::observe);
+//! the initial representation and later notifications are
+//! [`App::take_response`] on the same [`Call`]. [`Outgoing::deregister`](app::Outgoing::deregister)
+//! sends Observe=1. No `SlotId`. The caller owns the destination and must
 //! take responses. Tokens and Message IDs are App counters (no OS RNG).
-//! Observe client stays on the Engine path. Engine remains the
+//! Engine remains the
 //! advanced escape hatch for explicit slots, [`Access`](storage::Access),
 //! custom RST / 4.xx, and BERT edges (`app.engine_mut()`). See
 //! `examples/coap_server.rs` (`std`).

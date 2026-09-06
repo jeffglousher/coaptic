@@ -368,7 +368,7 @@ impl Response {
         self.max_age
     }
 
-    /// Observe sequence, if set.
+    /// Observe sequence, if set (handler intent or a client snapshot).
     #[must_use]
     pub const fn observe_seq(&self) -> Option<u32> {
         self.observe

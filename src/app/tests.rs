@@ -1273,3 +1273,74 @@ fn client_empty_path_segment_is_error() {
         .expect_err("empty slice");
     assert_eq!(err, Error::Path);
 }
+
+fn echo_obs_app() -> App<profiles::Default, Echo> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(Echo::default())
+        .expect("bind")
+}
+
+fn client_observe_live(app: &App<profiles::Default, Echo>, call: crate::Call) -> bool {
+    let key = ObserveKey::new(call.token(), call.peer());
+    match app.engine() {
+        crate::app::EngineRef::Datagram(engine) => engine.lookup_observe(key).is_some(),
+        crate::app::EngineRef::BlockWise(engine) => engine.lookup_observe(key).is_some(),
+    }
+}
+
+#[test]
+fn client_observe_register_notify_deregister() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_obs_app();
+    let call = app
+        .get("sensors/temp")
+        .observe()
+        .to(peer)
+        .send(0)
+        .expect("send");
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let initial = app.take_response(call).expect("initial");
+    assert_eq!(initial.code(), Code::CONTENT);
+    assert_eq!(initial.payload(), b"obs-0");
+    assert_eq!(initial.observe_seq(), Some(0));
+    assert_eq!(initial.token(), Some(call.token()));
+    assert!(client_observe_live(&app, call));
+
+    let sent = app
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("notify");
+    assert_eq!(sent, 1);
+    app.poll(10).expect("client notify");
+    let note = app.take_response(call).expect("notification");
+    assert_eq!(note.payload(), b"obs-1");
+    assert_eq!(note.observe_seq(), Some(1));
+    assert_eq!(note.token(), Some(call.token()));
+    assert_eq!(note.peer(), Some(peer));
+
+    let stop = app
+        .get("sensors/temp")
+        .deregister()
+        .to(peer)
+        .send(20)
+        .expect("deregister");
+    assert_eq!(stop, call);
+    assert!(!client_observe_live(&app, call));
+    app.poll(20).expect("server deregister");
+    app.poll(20).expect("client deregister reply");
+    let _ = app.take_response(call);
+
+    let sent = app
+        .notify(30, &["sensors", "temp"], Response::content(b"obs-2"))
+        .expect("notify after stop");
+    assert_eq!(sent, 0);
+    app.poll(30).expect("no notify");
+    assert!(app.take_response(call).is_none());
+    assert!(!client_observe_live(&app, call));
+}
