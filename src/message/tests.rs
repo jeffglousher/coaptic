@@ -629,6 +629,7 @@ fn helpers_content_format_examples() {
         (ContentFormat::JSON, &[50u8] as &[u8]),
         (ContentFormat::OCTET_STREAM, &[42u8] as &[u8]),
         (ContentFormat::PROBLEM_DETAILS, &[1u8, 1] as &[u8]),
+        (ContentFormat::MISSING_BLOCKS, &[1u8, 16] as &[u8]),
     ] {
         let encoded = cf.encode();
         assert_eq!(encoded.as_bytes(), raw);

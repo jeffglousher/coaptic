@@ -62,10 +62,12 @@
 //!
 //! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR;
 //! Content-Format 257). [`Response::problem`] is the App-facing builder.
-//! App-generated 4.04 / 4.05 / 4.08 use it. When
+//! App-generated 4.04 / 4.05 and apply-error 4.08 use it. When
 //! [`echo_freshness`](app::AppBuilder::echo_freshness) is set, App-generated
-//! 4.01 uses it plus an Echo option (RFC 9175). Other Engine-path 4.xx
-//! stay caller-opt-in.
+//! 4.01 uses it plus an Echo option (RFC 9175). Progress-driven Q-Block1
+//! holes use [`Response::missing_blocks`] (RFC 9177
+//! `application/missing-blocks+cbor-seq`, Content-Format 272). Other
+//! Engine-path 4.xx stay caller-opt-in.
 //!
 //! The library does not invent 4.02 / RST policy.
 //!
@@ -121,7 +123,8 @@
 //! borrowed request fields (`payload()`, path, token, options, `body()`
 //! when Block1 / Q-Block1 assembled) and an owned [`Response`]
 //! (`content` / `content_format` / [`Response::problem`] for RFC 9290
-//! CBOR). Large responses use the TX body area (Block2, or Q-Block2
+//! CBOR / [`Response::missing_blocks`] for RFC 9177 Q-Block1 holes).
+//! Large responses use the TX body area (Block2, or Q-Block2
 //! when the request asked for it) without exposing
 //! [`SlotId`](storage::SlotId). Observe register / deregister,
 //! [`App::notify`](app::App::notify), and poll-time notify via

@@ -16,7 +16,7 @@
 //! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
 //! `payload()`, and `body()` when Block1 / Q-Block1 has assembled).
 //! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
-//! `not_found` / [`Response::problem`]).
+//! `not_found` / [`Response::problem`] / [`Response::missing_blocks`]).
 //! Borrows last only for the handler call; `poll` encodes and then releases.
 //! The reactor ([`Engine`] / [`Progress`](crate::storage::Progress)) owns per-slot
 //! state machines under the hood (pending CON/RTO, BlockTransfer,
@@ -370,7 +370,9 @@ where
     /// see [`SlotId`]. Incoming Block1 / Q-Block1 is assembled so
     /// [`Request::body`] can borrow the complete body; an incomplete
     /// transfer is answered with 2.31 and does not run the handler. Apply
-    /// errors and progress-driven Q-Block1 holes are 4.08. When
+    /// errors are 4.08 with RFC 9290 problem details. Progress-driven
+    /// Q-Block1 holes are 4.08 with RFC 9177 missing-blocks CBOR-seq.
+    /// When
     /// `progress` yields a Q-Block2 [`QBlockRecover`], `poll` encodes
     /// repeatable Q-Block2 recover (NON GET) and `send_tx`. When
     /// block-wise is off, a payload that does not fit one datagram fails
@@ -391,8 +393,9 @@ where
     /// [`Retransmit::GiveUp`].
     ///
     /// Incoming requests are dispatched through the site (4.04 / 4.05
-    /// when no match). Those codes, and App-generated 4.08, carry RFC 9290
-    /// problem details (CBOR). When [`Self::echo_freshness`] is set,
+    /// when no match). Those codes, and apply-error 4.08, carry RFC 9290
+    /// problem details (CBOR). Q-Block1 recover 4.08 uses
+    /// [`Response::missing_blocks`] (RFC 9177). When [`Self::echo_freshness`] is set,
     /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with
     /// problem details and a minted Echo option (RFC 9175). Other
     /// Engine-path 4.xx stay caller-built
@@ -645,6 +648,8 @@ where
             Ok(())
         }
         BlockRole::IncomingQBlock1 => {
+            let mut nums = [0u32; 16];
+            let n = recover.copy_missing_nums(&mut nums);
             let meta = SendResponse {
                 dest: recover.key().endpoint(),
                 ty: Type::NonConfirmable,
@@ -659,8 +664,7 @@ where
                 engine,
                 io,
                 meta,
-                &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
-                    .title("Request Entity Incomplete"),
+                &Response::missing_blocks(nums.into_iter().take(n)),
             )
         }
         _ => Ok(()),
@@ -766,6 +770,8 @@ where
             return outcome;
         }
         InboundBody::IncompleteEntity => {
+            // Apply errors (duplicate NUM, SZX mismatch, overflow, …).
+            // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
             let outcome = send_response(
                 engine,
                 io,
