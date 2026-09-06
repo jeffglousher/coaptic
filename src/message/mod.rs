@@ -13,6 +13,8 @@
 //! [`crate::storage::Engine`]. [`Transmission`] names RFC 7252 §4.8 defaults and
 //! [`Transmission::initial_timeout_ms`] (caller jitter). Retransmit
 //! scheduling lives on [`crate::storage::PendingCon`].
+//! [`QBlockTransmission`] names RFC 9177 §7.2 `NON_RECEIVE_TIMEOUT`;
+//! the wait lives on [`crate::storage::QBlockReceiveWait`].
 //!
 //! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 and
 //! Block / Q-Block helpers) in any order and yields a slice for
@@ -538,4 +540,25 @@ impl ObserveTransmission {
     pub const CONFIRM_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
     /// Default NON notify spacing when the caller has no RTT estimate.
     pub const NON_TIMEOUT_MS: u32 = 3_000;
+}
+
+/// RFC 9177 §7.2 NON receive-pacing defaults.
+///
+/// The caller owns the clock (`now_ms`). Engine arms
+/// [`crate::storage::QBlockReceiveWait`] on an incoming Q-Block sidecar
+/// ([`crate::storage::Engine::note_q_receive`] or the first
+/// [`crate::storage::Engine::progress`] that sees holes) and surfaces
+/// [`crate::storage::QBlockRecover`] when [`Self::NON_RECEIVE_TIMEOUT_MS`]
+/// (exponentially doubled) is due. App::poll sends Q-Block2 recover or
+/// Q-Block1 4.08 missing-blocks. See `knowledge/rfcs/rfc9177.txt` §7.2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QBlockTransmission;
+
+impl QBlockTransmission {
+    /// `NON_TIMEOUT` (same default as [`Transmission::ACK_TIMEOUT_MS`]).
+    pub const NON_TIMEOUT_MS: u32 = Transmission::ACK_TIMEOUT_MS;
+    /// `NON_RECEIVE_TIMEOUT` (twice [`Self::NON_TIMEOUT_MS`]).
+    pub const NON_RECEIVE_TIMEOUT_MS: u32 = Self::NON_TIMEOUT_MS.saturating_mul(2);
+    /// `NON_MAX_RETRANSMIT` (same default as [`Transmission::MAX_RETRANSMIT`]).
+    pub const NON_MAX_RETRANSMIT: u8 = Transmission::MAX_RETRANSMIT;
 }

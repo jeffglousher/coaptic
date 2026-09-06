@@ -102,11 +102,15 @@ impl Progress {
 
     /// One incoming Q-Block recover opportunity, if any.
     ///
-    /// At most one per pass, from a rotating Incoming Body Pool step. The
-    /// caller encodes a recover request (repeatable Q-Block2) or owns any
-    /// 4.08 (Q-Block1). This pass does not send, acquire TX, or invent 4.08
-    /// / 2.31 / RST. `.block_wise(false)` stays `None`. See
-    /// `knowledge/rfcs/rfc9177.txt`.
+    /// At most one per pass, from a rotating Incoming Body Pool step, and
+    /// only when [`super::QBlockReceiveWait`] is due at the caller `now_ms`
+    /// (`NON_RECEIVE_TIMEOUT`, doubled after each recover). The caller
+    /// encodes a recover request (repeatable Q-Block2) or owns any 4.08
+    /// (Q-Block1). This pass does not send, acquire TX, or invent 4.08 /
+    /// 2.31 / RST. After [`crate::message::QBlockTransmission::NON_MAX_RETRANSMIT`]
+    /// recovers without a filling receive, this pass releases the partial
+    /// body and returns `None`. `.block_wise(false)` stays `None`. See
+    /// `knowledge/rfcs/rfc9177.txt` §7.2.
     #[must_use]
     pub const fn qblock_recover(self) -> Option<QBlockRecover> {
         self.qblock_recover
@@ -128,10 +132,13 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     ///    table cursor whose endpoint is below notification NSTART
     ///    ([`Progress::observe_notify`]).
     /// 5. Q-Block missing-block recovery — at most one incoming window
-    ///    hole ([`Progress::qblock_recover`]).
+    ///    hole whose [`super::QBlockReceiveWait`] is due
+    ///    ([`Progress::qblock_recover`]). Unarmed holes are armed from
+    ///    `now_ms` and do not fire on this pass.
     ///
     /// Does not allocate, grow storage, or send on the wire. Does not release
-    /// pinned slots. Does not invent 4.02 / RST / 2.31 / 4.08 policy.
+    /// pinned slots (except a Q-Block body exhausted after
+    /// `NON_MAX_RETRANSMIT`). Does not invent 4.02 / RST / 2.31 / 4.08 policy.
     pub fn progress(&mut self, now_ms: u64) -> Progress {
         let retransmit = self.poll_retransmit(now_ms);
         if let Some(Retransmit::GiveUp(pending)) = retransmit {
@@ -144,7 +151,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             rx_ready,
             observe_notify: progress_observe(self, now_ms),
             observe_expired,
-            qblock_recover: progress_qblock(self),
+            qblock_recover: progress_qblock(self, now_ms),
         }
     }
 }
@@ -198,27 +205,53 @@ fn progress_observe<S: Storage + ObserveSlots>(
     }
 }
 
-/// First incoming Q-Block window with known holes, starting at the body cursor.
+/// First incoming Q-Block window whose receive wait is due, starting at the
+/// body cursor.
 ///
-/// Advances the Incoming Body Pool cursor past that slot so the next call
-/// does not restart at slot zero. Does not acquire TX or encode a recover
-/// request. Absent body pools (`None` from [`Storage::rx_body`]) yield
-/// `None`.
-fn progress_qblock<S: Storage + BodySlots>(engine: &mut Engine<S>) -> Option<QBlockRecover> {
+/// Unarmed holes are armed from `now_ms` ([`super::QBlockReceiveWait::new`])
+/// and skipped this pass. A due wait that has already sent
+/// [`crate::message::QBlockTransmission::NON_MAX_RETRANSMIT`] recovers
+/// releases that partial body (one give-up per pass). Advances the Incoming
+/// Body Pool cursor past a fired or given-up slot. Does not acquire TX or
+/// encode a recover request. Absent body pools yield `None`.
+fn progress_qblock<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    now_ms: u64,
+) -> Option<QBlockRecover> {
     let n = engine.storage_mut().rx_body()?.slot_count();
     if n == 0 {
         return None;
     }
     let start = engine.storage_mut().rx_body()?.cursor();
     let mut found = None;
+    let mut give_up = None;
     for offset in 0..n {
         let id = SlotId::from_index((start + offset) % n);
-        let Some(transfer) = engine.rx_body_transfer(id) else {
+        let Some(mut transfer) = engine.rx_body_transfer(id) else {
             continue;
         };
         let Some((missing_num, hole_mask)) = transfer.q_holes() else {
             continue;
         };
+        let Some(wait) = transfer.q_receive() else {
+            transfer.note_q_receive(now_ms);
+            let _ = engine.storage_mut().set_rx_body_transfer(id, transfer);
+            continue;
+        };
+        if !wait.is_due(now_ms) {
+            continue;
+        }
+        if transfer.note_q_recover(now_ms).is_none() {
+            give_up = Some((id, offset));
+            break;
+        }
+        if engine
+            .storage_mut()
+            .set_rx_body_transfer(id, transfer)
+            .is_err()
+        {
+            continue;
+        }
         found = Some((
             offset,
             QBlockRecover::new(
@@ -232,6 +265,13 @@ fn progress_qblock<S: Storage + BodySlots>(engine: &mut Engine<S>) -> Option<QBl
             ),
         ));
         break;
+    }
+    if let Some((id, offset)) = give_up {
+        let _ = engine.release_rx_body(id);
+        for _ in 0..=offset {
+            engine.rotate_rx_body();
+        }
+        return None;
     }
     match found {
         Some((offset, recover)) => {

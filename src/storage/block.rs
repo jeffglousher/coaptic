@@ -4,11 +4,13 @@
 //! the Block or Q-Block state for that body. Individual CoAP
 //! messages stay in ordinary datagram slots. Incoming and outgoing Q-Block1 /
 //! Q-Block2 use a fixed `MAX_PAYLOADS` window (RFC 9177 §7.2 default 10).
-//! Incoming window holes surface as [`QBlockRecover`]; outgoing reissue reads
-//! the complete body without changing window state. BERT (SZX 7) packs
-//! multiple 1024-byte ranges into one payload. Request-Tag / ETag body
-//! identity lives on [`BlockKey`]. CON RTO lives on [`super::PendingCon`],
-//! not on this sidecar. See `knowledge/rfcs/rfc7959.txt`,
+//! Incoming window holes surface as [`QBlockRecover`] when
+//! [`QBlockReceiveWait`] is due; outgoing reissue reads the complete body
+//! without changing window state. BERT (SZX 7) packs multiple 1024-byte
+//! ranges into one payload. Request-Tag / ETag body identity lives on
+//! [`BlockKey`]. CON RTO lives on [`super::PendingCon`], not on this sidecar.
+//! Q-Block `NON_RECEIVE_TIMEOUT` lives on [`QBlockReceiveWait`] here. See
+//! `knowledge/rfcs/rfc7959.txt`,
 //! `knowledge/rfcs/rfc9175.txt`, `knowledge/rfcs/rfc9177.txt`, and
 //! `knowledge/rfcs/rfc8323.txt`.
 
@@ -17,7 +19,7 @@ use super::AccessMut;
 use super::endpoint::Endpoint;
 use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, ValueError};
-use crate::message::{BlockValue, Token};
+use crate::message::{BlockValue, QBlockTransmission, Token};
 
 /// Request-Tag or ETag body identity (opaque, 0..=8 bytes).
 ///
@@ -294,8 +296,10 @@ impl OutgoingBlock {
 /// known missing: below the highest received NUM in that window, or at/before
 /// the M=0 NUM. [`hole_mask`](Self::hole_mask) bit `i` is window-relative
 /// (`window_base + i`). The core does not send and does not invent 4.08 /
-/// 2.31 / RST. Incoming Q-Block2 recover uses repeatable Q-Block2 options
-/// (RFC 9177 §4.4); incoming Q-Block1 4.08 encoding stays with the caller.
+/// 2.31 / RST. [`Engine::progress`](super::Engine::progress) surfaces this
+/// only when [`QBlockReceiveWait`] is due (caller `now_ms`). Incoming Q-Block2
+/// recover uses repeatable Q-Block2 options (RFC 9177 §4.4); incoming
+/// Q-Block1 4.08 encoding stays with the caller (App uses missing-blocks).
 ///
 /// See `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -406,6 +410,77 @@ impl QBlockRecover {
     }
 }
 
+/// Incoming Q-Block `NON_RECEIVE_TIMEOUT` wait (RFC 9177 §7.2).
+///
+/// The caller owns the clock. [`Self::new`] arms from `now_ms` +
+/// [`QBlockTransmission::NON_RECEIVE_TIMEOUT_MS`]. [`Engine::progress`](super::Engine::progress)
+/// fires [`QBlockRecover`] when [`Self::is_due`]; each fire doubles the wait
+/// (same posture as [`super::PendingRto`]). After
+/// [`QBlockTransmission::NON_MAX_RETRANSMIT`] recovers without a filling
+/// receive, progress releases the partial body. See
+/// `knowledge/rfcs/rfc9177.txt` §7.2.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct QBlockReceiveWait {
+    attempts: u8,
+    next_timeout_ms: u64,
+    timeout_ms: u32,
+}
+
+impl QBlockReceiveWait {
+    /// Initial wait: recover counter 0, due at `now_ms + NON_RECEIVE_TIMEOUT`.
+    #[must_use]
+    pub const fn new(now_ms: u64) -> Self {
+        let timeout_ms = QBlockTransmission::NON_RECEIVE_TIMEOUT_MS;
+        Self {
+            attempts: 0,
+            timeout_ms,
+            next_timeout_ms: now_ms.saturating_add(timeout_ms as u64),
+        }
+    }
+
+    /// Recover requests already sent for this wait (0 after arm / last receive).
+    #[must_use]
+    pub const fn attempts(self) -> u8 {
+        self.attempts
+    }
+
+    /// Absolute millisecond time when this wait fires (`now_ms` domain).
+    #[must_use]
+    pub const fn next_timeout_ms(self) -> u64 {
+        self.next_timeout_ms
+    }
+
+    /// Current wait duration in milliseconds.
+    #[must_use]
+    pub const fn timeout_ms(self) -> u32 {
+        self.timeout_ms
+    }
+
+    /// Whether `now_ms` is at or past [`Self::next_timeout_ms`].
+    #[must_use]
+    pub const fn is_due(self, now_ms: u64) -> bool {
+        now_ms >= self.next_timeout_ms
+    }
+
+    /// After a due recover: doubled wait and incremented counter, or `None`
+    /// when [`QBlockTransmission::NON_MAX_RETRANSMIT`] is already reached.
+    ///
+    /// Next due is `now_ms` plus the doubled timeout (late polls shift the
+    /// schedule; the core does not burst catch-up).
+    #[must_use]
+    pub const fn next_attempt(self, now_ms: u64) -> Option<Self> {
+        if self.attempts >= QBlockTransmission::NON_MAX_RETRANSMIT {
+            return None;
+        }
+        let timeout_ms = self.timeout_ms.saturating_mul(2);
+        Some(Self {
+            attempts: self.attempts.saturating_add(1),
+            timeout_ms,
+            next_timeout_ms: now_ms.saturating_add(timeout_ms as u64),
+        })
+    }
+}
+
 /// Current Q-Block `MAX_PAYLOADS_SET` (RFC 9177 §2 / §7.2).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct QWindow {
@@ -436,6 +511,7 @@ pub struct BlockTransfer {
     complete: bool,
     expected_len: Option<u32>,
     q: Option<QWindow>,
+    q_receive: Option<QBlockReceiveWait>,
 }
 
 impl BlockTransfer {
@@ -471,6 +547,7 @@ impl BlockTransfer {
             complete: false,
             expected_len,
             q: None,
+            q_receive: None,
         };
         transfer.accept_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -547,6 +624,7 @@ impl BlockTransfer {
                 final_num: None,
                 final_payload_len: 0,
             }),
+            q_receive: None,
         };
         transfer.accept_q_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -663,6 +741,7 @@ impl BlockTransfer {
                 complete: false,
                 expected_len: Some(len),
                 q,
+                q_receive: None,
             })
         } else {
             Err(BlockTransferError::Overflow)
@@ -852,6 +931,36 @@ impl BlockTransfer {
         } else {
             Some((q.base + holes.trailing_zeros(), holes))
         }
+    }
+
+    /// Armed [`QBlockReceiveWait`] for incoming Q-Block holes, if any.
+    #[must_use]
+    pub const fn q_receive(self) -> Option<QBlockReceiveWait> {
+        self.q_receive
+    }
+
+    /// Arm or clear [`QBlockReceiveWait`] from caller `now_ms`.
+    ///
+    /// Holes reset the wait to [`QBlockReceiveWait::new`]. A complete window
+    /// or a contiguous prefix still in flight clears it. No-op for classic
+    /// Block and outgoing Q-Block. Does not send.
+    pub fn note_q_receive(&mut self, now_ms: u64) {
+        if !self.role.is_incoming() || !self.role.is_q_block() {
+            return;
+        }
+        if self.q_holes().is_some() {
+            self.q_receive = Some(QBlockReceiveWait::new(now_ms));
+        } else {
+            self.q_receive = None;
+        }
+    }
+
+    /// Record a due recover: doubled wait, or `None` when max retransmit is
+    /// already reached (caller should drop the partial body).
+    pub fn note_q_recover(&mut self, now_ms: u64) -> Option<QBlockReceiveWait> {
+        let next = self.q_receive.and_then(|wait| wait.next_attempt(now_ms))?;
+        self.q_receive = Some(next);
+        Some(next)
     }
 
     /// Accept one in-order incoming block. Returns the write offset.
@@ -1450,7 +1559,7 @@ pub(crate) fn write_range(
 mod tests {
     use super::{BlockKey, BlockRole, BlockTransfer, BodyTag};
     use crate::error::{BlockTransferError, ValueError};
-    use crate::message::{BlockValue, Token};
+    use crate::message::{BlockValue, QBlockTransmission, Token};
     use crate::storage::Endpoint;
 
     fn key() -> BlockKey {
@@ -1950,6 +2059,35 @@ mod tests {
         m0.accept_q_incoming(szx16(1, true), 16, 4096).expect("1");
         assert!(m0.is_complete());
         assert_eq!(m0.q_holes(), None);
+    }
+
+    #[test]
+    fn incoming_q_receive_wait_arms_and_doubles() {
+        let mut t =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, None).expect("0");
+        t.note_q_receive(10);
+        assert!(t.q_receive().is_none());
+        t.accept_q_incoming(szx16(2, false), 8, 4096).expect("2");
+        t.note_q_receive(10);
+        let wait = t.q_receive().expect("armed");
+        assert_eq!(wait.attempts(), 0);
+        assert_eq!(
+            wait.next_timeout_ms(),
+            10 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS)
+        );
+        assert!(!wait.is_due(10));
+        assert!(wait.is_due(10 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS)));
+        let next = t
+            .note_q_recover(10 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+            .expect("double");
+        assert_eq!(next.attempts(), 1);
+        assert_eq!(
+            next.timeout_ms(),
+            QBlockTransmission::NON_RECEIVE_TIMEOUT_MS.saturating_mul(2)
+        );
+        t.accept_q_incoming(szx16(1, true), 16, 4096).expect("fill");
+        t.note_q_receive(100);
+        assert!(t.q_receive().is_none());
     }
 
     #[test]

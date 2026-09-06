@@ -517,6 +517,17 @@ impl BodySlots for AllocMemory {
         self.rx_body.as_ref()?.transfer(id)
     }
 
+    fn set_rx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.rx_body
+            .as_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .set_transfer(id, transfer)
+    }
+
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.tx_body.as_ref()?.transfer(id)
     }
@@ -904,6 +915,22 @@ impl AllocBodyPool {
             return None;
         }
         self.slots.get(id.index())?.transfer
+    }
+
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        let slot = self
+            .slots
+            .get_mut(id.index())
+            .ok_or(SlotError::InvalidSlot)?;
+        slot.transfer = Some(transfer);
+        Ok(())
     }
 
     fn lookup(&self, key: BlockKey) -> Option<SlotId> {

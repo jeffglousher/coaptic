@@ -531,6 +531,14 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         None
     }
 
+    fn set_rx_body_transfer(
+        &mut self,
+        _id: SlotId,
+        _transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        Err(SlotError::InvalidSlot)
+    }
+
     fn tx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer> {
         None
     }
@@ -767,6 +775,14 @@ where
 
     fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.bodies.rx.transfer(id)
+    }
+
+    fn set_rx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.bodies.rx.set_transfer(id, transfer)
     }
 
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {

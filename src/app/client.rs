@@ -766,11 +766,13 @@ where
 
     match engine.apply_q_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
+            let _ = engine.note_q_receive(progress.id(), now_ms);
             accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
             finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
             return Ok(());
         }
         Ok(progress) => {
+            let _ = engine.note_q_receive(progress.id(), now_ms);
             let outcome = if needs_q_continue(engine, progress.id()) {
                 take_exchange(engine, parsed, peer);
                 send_q_block2_continue(engine, io, lives, ids, now_ms, parsed, peer, progress.id())
