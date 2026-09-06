@@ -1001,7 +1001,14 @@ where
 
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = engine.lookup_tx_body(key) {
-        return continue_outgoing(engine, io, meta, response, ty, id);
+        if engine.tx_body_transfer(id).is_some_and(|t| {
+            matches!(
+                t.role(),
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            )
+        }) {
+            return continue_outgoing(engine, io, meta, response, ty, id);
+        }
     }
 
     let Some(tx) = engine.acquire_tx() else {

@@ -921,6 +921,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn continue_block1_tx<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
