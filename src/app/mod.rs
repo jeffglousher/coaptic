@@ -521,6 +521,7 @@ impl<P: MemoryProfile> EngineMut<'_, P> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn poll_engine<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
