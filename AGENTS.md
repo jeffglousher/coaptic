@@ -11,6 +11,7 @@ cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
 cargo test
+cargo test -p coaptic-plugtest --features dtls
 cargo doc --no-deps --all-features
 ```
 

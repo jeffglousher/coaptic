@@ -39,6 +39,17 @@ let response = app.take_response(call);
 
 Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies `alloc`). Zero crate dependencies.
 
+## Plugtest harness
+
+Classic in-crate loopback: `cargo test --test plugtest`. Multi-implementation UDP + pcap grading (coap-rs peer, golden JSON, optional DTLS) lives in a workspace crate so the library stays zero-dep:
+
+```bash
+cargo test -p coaptic-plugtest
+cargo test -p coaptic-plugtest --features dtls
+```
+
+`TD_6LoWPAN_*` stay skipped (not planned). Tracking: issues [#49](https://github.com/jeffglousher/coaptic/issues/49) and [#56](https://github.com/jeffglousher/coaptic/issues/56).
+
 ## Example
 
 ```bash

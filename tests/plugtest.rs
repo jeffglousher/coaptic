@@ -2,8 +2,9 @@
 //!
 //! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no DTLS).
 //! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
-//! does not invent ids. The deferred `dtls` suite and the not-planned
-//! `6lowpan` suite are skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated
+//! does not invent ids. In-memory `dtls` is skipped (no sockets; see
+//! `crates/coaptic-plugtest --features dtls`). The not-planned
+//! `6lowpan` suite is skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated
 //! `ObserveInterest` lifetime (no seventh area).
 //!
 //! ```text
@@ -16,7 +17,8 @@
 //! cargo test --test plugtest inventory -- --nocapture
 //! ```
 //!
-//! Tracking: <https://github.com/jeffglousher/coaptic/issues/49>.
+//! Tracking: <https://github.com/jeffglousher/coaptic/issues/49>,
+//! <https://github.com/jeffglousher/coaptic/issues/56>.
 
 #![allow(clippy::too_many_lines)]
 

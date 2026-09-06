@@ -1,0 +1,29 @@
+[package]
+name = "coaptic-plugtest"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Multi-implementation CoAP#4 plugtest harness + pcap grader (not the library crate)"
+repository = "https://github.com/jeffglousher/coaptic"
+
+[features]
+default = []
+# Real DTLS (same webrtc-dtls 0.8 stack as coap 0.28). Harness-only.
+dtls = ["coap/dtls", "dep:webrtc-dtls", "dep:webrtc-util", "dep:rustls"]
+
+[dependencies]
+coaptic = { path = "../..", features = ["std"] }
+coap = { version = "0.28", default-features = false }
+coap-lite = "0.13"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+webrtc-dtls = { version = "0.8", optional = true }
+webrtc-util = { version = "0.8", optional = true }
+rustls = { version = "0.21", optional = true }
+
+[[test]]
+name = "interop"
+path = "tests/interop.rs"
