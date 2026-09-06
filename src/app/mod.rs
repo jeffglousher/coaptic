@@ -105,7 +105,7 @@ pub use response::{INLINE_PAYLOAD, IntoResponse, RESPONSE_BODY, Response};
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
-pub use site::{DEFAULT_ROUTES, Site};
+pub use site::{DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, Site, link_format_capacity};
 
 /// Scratch for one inbound or outbound datagram (crate Default profile).
 const DATAGRAM_SCRATCH: usize = 1472;
@@ -209,6 +209,9 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
     }
 
     /// Serve `/.well-known/core` from registered paths.
+    ///
+    /// Catalog capacity is compile-time ([`link_format_capacity`] after
+    /// [`Self::routes`]). Overflow is 5.00, not a truncated list.
     #[must_use]
     pub fn well_known_core(mut self) -> Self {
         self.site.well_known_core();
@@ -288,6 +291,8 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     }
 
     /// Serve `/.well-known/core` from registered paths.
+    ///
+    /// See [`AppBuilder::well_known_core`].
     pub const fn well_known_core(&mut self) -> &mut Self {
         self.site.well_known_core();
         self

@@ -4,11 +4,32 @@ use crate::message::{Code, ContentFormat};
 use crate::storage::ObserveResource;
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, Request, path_from_into};
-use super::response::Response;
+use super::response::{INLINE_PAYLOAD, RESPONSE_BODY, Response};
 use super::routing::{Method, MethodRouter, ObserveSource};
 
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
+
+/// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
+///
+/// The `/.well-known/core` scratch buffer is [`link_format_capacity`]:
+/// `N ×` this, floored at [`super::INLINE_PAYLOAD`] and capped at
+/// [`super::RESPONSE_BODY`]. A catalog that still does not fit is 5.00,
+/// never a silently truncated list.
+pub const LINK_FORMAT_PER_ROUTE: usize = 24;
+
+/// Compile-time `/.well-known/core` payload bytes for a [`Site`] of `N` routes.
+#[must_use]
+pub const fn link_format_capacity<const N: usize>() -> usize {
+    let n = N.saturating_mul(LINK_FORMAT_PER_ROUTE);
+    if n < INLINE_PAYLOAD {
+        INLINE_PAYLOAD
+    } else if n > RESPONSE_BODY {
+        RESPONSE_BODY
+    } else {
+        n
+    }
+}
 
 const WELL_KNOWN: &[&str] = &[".well-known", "core"];
 
@@ -22,7 +43,8 @@ struct Entry {
 /// `N` is the maximum number of paths (default 8). GET+PUT on one path
 /// occupies one slot. Prefer [`crate::App::route`] / [`crate::app::AppBuilder::route`]
 /// on the happy path. This is a routing table, not an Engine memory area
-/// and not a shared application bag.
+/// and not a shared application bag. `/.well-known/core` uses a
+/// compile-time catalog buffer ([`link_format_capacity`]).
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],
     len: usize,
@@ -71,6 +93,10 @@ impl<const N: usize> Site<N> {
     }
 
     /// Serve `/.well-known/core` from registered paths (RFC 6690 link-format).
+    ///
+    /// The catalog is written into a stack buffer sized by
+    /// [`link_format_capacity`] for this `N`. Paths that do not fit
+    /// yield 5.00; registered links are never dropped silently.
     pub const fn well_known_core(&mut self) -> &mut Self {
         self.well_known = true;
         self
@@ -182,50 +208,52 @@ fn path_is_well_known(path: &[&str]) -> bool {
 }
 
 fn link_format<const N: usize>(site: &Site<N>) -> Response {
-    let mut buf = [0u8; super::response::INLINE_PAYLOAD];
+    let mut buf = [0u8; link_format_capacity::<N>()];
     let mut n = 0usize;
     let mut first = true;
     for entry in site.entries.iter().flatten() {
         if !first {
             if n >= buf.len() {
-                break;
+                return Response::internal_error();
             }
             buf[n] = b',';
             n += 1;
         }
         first = false;
         if !write_link(&mut buf, &mut n, entry.path.segments()) {
-            break;
+            return Response::internal_error();
         }
     }
-    Response::content_copy(&buf[..n]).content_format(ContentFormat::LINK_FORMAT)
+    Response::new(Code::CONTENT)
+        .payload_copy_full(&buf[..n])
+        .content_format(ContentFormat::LINK_FORMAT)
+}
+
+fn link_bytes(segments: &[&str]) -> usize {
+    if segments.is_empty() {
+        3
+    } else {
+        2 + segments.iter().map(|s| 1 + s.len()).sum::<usize>()
+    }
 }
 
 fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
-    if *n >= buf.len() {
+    let need = link_bytes(segments);
+    if buf.len().saturating_sub(*n) < need {
         return false;
     }
     buf[*n] = b'<';
     *n += 1;
     if segments.is_empty() {
-        if *n >= buf.len() {
-            return false;
-        }
         buf[*n] = b'/';
         *n += 1;
     } else {
         for segment in segments {
-            if *n + 1 + segment.len() >= buf.len() {
-                return false;
-            }
             buf[*n] = b'/';
             *n += 1;
             buf[*n..*n + segment.len()].copy_from_slice(segment.as_bytes());
             *n += segment.len();
         }
-    }
-    if *n >= buf.len() {
-        return false;
     }
     buf[*n] = b'>';
     *n += 1;

@@ -21,6 +21,9 @@ enum Payload {
         bytes: [u8; INLINE_PAYLOAD],
         len: u16,
     },
+    /// Handler-generated payload stored in [`Response::body`] (larger than
+    /// [`INLINE_PAYLOAD`], still no heap). [`Response::body`] stays `None`.
+    Extended,
 }
 
 /// Conversion into a [`Response`].
@@ -387,6 +390,25 @@ impl Response {
         self
     }
 
+    /// Copy `payload` without the [`INLINE_PAYLOAD`] cap.
+    ///
+    /// Lengths that fit inline use [`Self::payload_copy`]. Larger bodies
+    /// use the existing assembled-body buffer (capped at
+    /// [`RESPONSE_BODY`]) so a well-known catalog can exceed 128 bytes
+    /// without growing every [`Response`] inline slot.
+    #[must_use]
+    pub(crate) fn payload_copy_full(mut self, payload: &[u8]) -> Self {
+        if payload.len() <= INLINE_PAYLOAD {
+            return self.payload_copy(payload);
+        }
+        let n = payload.len().min(RESPONSE_BODY);
+        self.body[..n].copy_from_slice(&payload[..n]);
+        self.body_len = n as u16;
+        self.has_body = false;
+        self.payload = Payload::Extended;
+        self
+    }
+
     /// Response code.
     #[must_use]
     pub const fn code(&self) -> Code {
@@ -400,6 +422,7 @@ impl Response {
             Payload::Empty => &[],
             Payload::Static(bytes) => bytes,
             Payload::Inline { ref bytes, len } => &bytes[..usize::from(len)],
+            Payload::Extended => &self.body[..usize::from(self.body_len)],
         }
     }
 

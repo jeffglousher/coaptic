@@ -1,6 +1,9 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
-use super::{Error, Request, Response, Site, get, post, put};
+use super::{
+    Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Request, Response, Site, get,
+    link_format_capacity, post, put,
+};
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
@@ -443,6 +446,109 @@ fn well_known_core_lists_registered_paths() {
     assert!(body.contains("</b>"), "{body}");
     assert!(!body.contains(".well-known"), "{body}");
     assert_eq!(body, "</a>,</b>");
+}
+
+/// Sixteen short registered paths. Catalog is 143 bytes — past
+/// [`INLINE_PAYLOAD`] (128), so a 128-byte write would silently drop links.
+const TEN_PLUS_ROUTES: [&str; 16] = [
+    "ep/00", "ep/01", "ep/02", "ep/03", "ep/04", "ep/05", "ep/06", "ep/07", "ep/08", "ep/09",
+    "ep/10", "ep/11", "ep/12", "ep/13", "ep/14", "ep/15",
+];
+
+const TEN_PLUS_CATALOG: &str = concat!(
+    "</ep/00>,</ep/01>,</ep/02>,</ep/03>,</ep/04>,</ep/05>,</ep/06>,</ep/07>,",
+    "</ep/08>,</ep/09>,</ep/10>,</ep/11>,</ep/12>,</ep/13>,</ep/14>,</ep/15>"
+);
+
+fn well_known_request() -> ([u8; 256], usize) {
+    encode_req(Code::GET, &[".well-known", "core"], &[])
+}
+
+fn dispatch_well_known<const N: usize>(site: &Site<N>) -> Response {
+    let (wire, n) = well_known_request();
+    let parsed = decode(&wire[..n]).expect("decode");
+    let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
+    site.dispatch(req)
+}
+
+fn assert_full_catalog(body: &str) {
+    assert!(
+        TEN_PLUS_CATALOG.len() > INLINE_PAYLOAD,
+        "catalog must exceed INLINE_PAYLOAD so a 128-byte write would truncate"
+    );
+    assert_eq!(body, TEN_PLUS_CATALOG);
+    assert_eq!(
+        body.bytes().filter(|&b| b == b',').count(),
+        TEN_PLUS_ROUTES.len() - 1
+    );
+    for path in TEN_PLUS_ROUTES {
+        assert_eq!(body.matches(path).count(), 1, "{path} in {body}");
+    }
+}
+
+#[test]
+fn well_known_core_lists_all_registered_routes_past_inline() {
+    const _: () = assert!(link_format_capacity::<16>() == 16 * LINK_FORMAT_PER_ROUTE);
+    const _: () = assert!(link_format_capacity::<16>() > INLINE_PAYLOAD);
+
+    let mut site = Site::<16>::new();
+    for path in TEN_PLUS_ROUTES {
+        site.route(path, get(get_temp));
+    }
+    site.well_known_core();
+    assert_eq!(site.len(), 16);
+    assert_eq!(site.capacity(), 16);
+
+    let response = dispatch_well_known(&site);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(response.payload()).expect("utf8");
+    assert_full_catalog(body);
+}
+
+#[test]
+fn well_known_core_poll_lists_every_upfront_route() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = well_known_request();
+    let mut builder = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .routes::<16>();
+    for path in TEN_PLUS_ROUTES {
+        builder = builder.route(path, get(get_temp));
+    }
+    let mut app = builder
+        .well_known_core()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    assert_eq!(app.site().len(), 16);
+    assert_eq!(app.site().capacity(), 16);
+    app.poll(0).expect("poll");
+
+    let (_, bytes, sent) = app.transport().last_send.expect("sent");
+    let parsed = decode(&bytes[..sent]).expect("decode reply");
+    assert_eq!(parsed.code(), Code::CONTENT);
+    assert_eq!(
+        parsed.content_format().and_then(Result::ok),
+        Some(ContentFormat::LINK_FORMAT)
+    );
+    let body = core::str::from_utf8(parsed.payload()).expect("utf8");
+    assert_full_catalog(body);
+}
+
+#[test]
+fn well_known_core_overflow_is_internal_error() {
+    const TOO_LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    const _: () = assert!(TOO_LONG.len() + 3 > INLINE_PAYLOAD);
+
+    let mut site = Site::<1>::new();
+    site.route(TOO_LONG, get(get_temp)).well_known_core();
+    let response = dispatch_well_known(&site);
+    assert_eq!(response.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(response.payload().is_empty());
+    assert_ne!(response.format(), Some(ContentFormat::LINK_FORMAT));
 }
 
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
