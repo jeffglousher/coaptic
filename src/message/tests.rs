@@ -366,6 +366,18 @@ fn code_helpers() {
         24 * 60 * 60 * 1_000
     );
     assert_eq!(crate::message::ObserveTransmission::NON_TIMEOUT_MS, 3_000);
+    assert_eq!(
+        crate::message::QBlockTransmission::NON_TIMEOUT_MS,
+        crate::message::Transmission::ACK_TIMEOUT_MS
+    );
+    assert_eq!(
+        crate::message::QBlockTransmission::NON_RECEIVE_TIMEOUT_MS,
+        4_000
+    );
+    assert_eq!(
+        crate::message::QBlockTransmission::NON_MAX_RETRANSMIT,
+        crate::message::Transmission::MAX_RETRANSMIT
+    );
     assert_eq!((Code::GET.class(), Code::GET.detail()), (0, 1));
     assert_eq!(Type::Confirmable.to_bits(), 0);
     assert_eq!(Type::from_bits(2), Some(Type::Acknowledgement));

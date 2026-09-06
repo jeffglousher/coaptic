@@ -73,7 +73,8 @@
 //! representations with [`App::notify`]. Optional
 //! [`MethodRouter::observe`](MethodRouter::observe) supplies a snapshot
 //! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
-//! and incoming Q-Block1 assembly reuse Engine body helpers. Engine /
+//! (after `NON_RECEIVE_TIMEOUT`) and incoming Q-Block1 assembly reuse Engine
+//! body helpers. Engine /
 //! [`DatagramIo`] remain the advanced path
 //! for [`Access`](crate::storage::Access), custom RST / remaining 4.xx, and
 //! BERT edges. Escape: [`App::engine_mut`]. Time-based Echo freshness
@@ -371,8 +372,9 @@ where
     /// [`Request::body`] can borrow the complete body; an incomplete
     /// transfer is answered with 2.31 and does not run the handler. Apply
     /// errors are 4.08 with RFC 9290 problem details. Progress-driven
-    /// Q-Block1 holes are 4.08 with RFC 9177 missing-blocks CBOR-seq.
-    /// When
+    /// Q-Block1 holes are 4.08 with RFC 9177 missing-blocks CBOR-seq,
+    /// after [`crate::message::QBlockTransmission::NON_RECEIVE_TIMEOUT_MS`]
+    /// (caller `now_ms`; Engine arms the wait on apply / first progress). When
     /// `progress` yields a Q-Block2 [`QBlockRecover`], `poll` encodes
     /// repeatable Q-Block2 recover (NON GET) and `send_tx`. When
     /// block-wise is off, a payload that does not fit one datagram fails
@@ -597,7 +599,7 @@ enum InboundBody {
     Complete(SlotId),
 }
 
-fn assemble_inbound_body<Mem>(engine: &mut Engine<Mem>, rx: SlotId) -> InboundBody
+fn assemble_inbound_body<Mem>(engine: &mut Engine<Mem>, rx: SlotId, now_ms: u64) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
 {
@@ -608,8 +610,14 @@ where
         Err(_) => return InboundBody::IncompleteEntity,
     }
     match engine.apply_q_block1_rx(rx) {
-        Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
-        Ok(_) => InboundBody::Continue,
+        Ok(progress) if progress.complete() => {
+            let _ = engine.note_q_receive(progress.id(), now_ms);
+            InboundBody::Complete(progress.id())
+        }
+        Ok(progress) => {
+            let _ = engine.note_q_receive(progress.id(), now_ms);
+            InboundBody::Continue
+        }
         Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
             InboundBody::None
         }
@@ -762,7 +770,7 @@ where
         }
     }
 
-    let assembled = assemble_inbound_body(engine, rx);
+    let assembled = assemble_inbound_body(engine, rx, now_ms);
     match assembled {
         InboundBody::Continue => {
             let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE));

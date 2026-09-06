@@ -5,7 +5,8 @@ use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
-    MissingBlocks, Opt, OptionsBuilder, ProblemDetails, Token, Type, decode, encode, encode_uint,
+    MissingBlocks, Opt, OptionsBuilder, ProblemDetails, QBlockTransmission, Token, Type, decode,
+    encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -726,7 +727,10 @@ fn qblock1_holes_are_request_entity_incomplete() {
 
     app.transport_mut().inbox = None;
     app.transport_mut().last_send = None;
-    app.poll(2).expect("recover");
+    app.poll(2).expect("armed");
+    assert!(app.transport().last_send.is_none());
+    app.poll(1 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+        .expect("recover");
     let parsed = last_reply(&app);
     assert_eq!(parsed.ty, Type::NonConfirmable);
     assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
@@ -800,7 +804,10 @@ fn qblock2_recover_sent_from_poll() {
         }
         crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
     }
-    app.poll(0).expect("poll recover");
+    app.poll(0).expect("arm");
+    assert!(app.transport().last_send.is_none());
+    app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+        .expect("poll recover");
     let (_, bytes, n) = app.transport().last_send.expect("sent recover");
     let parsed = decode(&bytes[..n]).expect("decode recover");
     assert_eq!(parsed.ty(), Type::NonConfirmable);

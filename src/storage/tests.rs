@@ -37,9 +37,13 @@ use super::profiles;
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, Message, MessageId, OBSERVE_SEQUENCE_MASK,
-    ObserveTransmission, Opt, Token, Transmission, Type, empty_ack, empty_rst, encode,
-    encode_observe, encode_uint,
+    ObserveTransmission, Opt, QBlockTransmission, Token, Transmission, Type, empty_ack, empty_rst,
+    encode, encode_observe, encode_uint,
 };
+
+const fn q_nrt() -> u64 {
+    QBlockTransmission::NON_RECEIVE_TIMEOUT_MS as u64
+}
 
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
@@ -918,7 +922,8 @@ fn progress_qblock_recover_gap_then_fill() {
     engine
         .apply_q_block2(key, b2, &body[32..], Some(40))
         .expect("2");
-    let outcome = engine.progress(0);
+    assert!(engine.progress(0).qblock_recover().is_none());
+    let outcome = engine.progress(q_nrt());
     let recover = outcome.qblock_recover().expect("gap");
     assert_eq!(recover.key(), key);
     assert_eq!(recover.role(), BlockRole::IncomingQBlock2);
@@ -934,7 +939,7 @@ fn progress_qblock_recover_gap_then_fill() {
     engine
         .apply_q_block2(key, b1, &body[16..32], Some(40))
         .expect("fill");
-    assert!(engine.progress(0).qblock_recover().is_none());
+    assert!(engine.progress(q_nrt()).qblock_recover().is_none());
 }
 
 #[test]
@@ -954,8 +959,9 @@ fn progress_qblock_recover_rotating_fairness() {
             .apply_q_block2(key, b2, &body[32..], Some(40))
             .expect("2");
     }
-    let first = engine.progress(0).qblock_recover().expect("first");
-    let second = engine.progress(0).qblock_recover().expect("second");
+    assert!(engine.progress(0).qblock_recover().is_none());
+    let first = engine.progress(q_nrt()).qblock_recover().expect("first");
+    let second = engine.progress(q_nrt()).qblock_recover().expect("second");
     assert_ne!(first.id(), second.id());
     assert!(first.key() == key_a || first.key() == key_b);
     assert!(second.key() == key_a || second.key() == key_b);
@@ -984,6 +990,97 @@ fn progress_qblock_recover_skips_classic_and_prefix() {
         .apply_q_block2(q, block, &[1u8; 16], None)
         .expect("prefix");
     assert!(engine.progress(0).qblock_recover().is_none());
+    assert!(engine.progress(q_nrt()).qblock_recover().is_none());
+}
+
+#[test]
+fn progress_qblock_recover_waits_non_receive_timeout() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xc2]), Endpoint::v4([192, 0, 2, 98], 5683));
+    let body: [u8; 40] = core::array::from_fn(|i| i as u8);
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(0, true, 16).expect("0"),
+            &body[..16],
+            Some(40),
+        )
+        .expect("0");
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(2, false, 16).expect("2"),
+            &body[32..],
+            Some(40),
+        )
+        .expect("2");
+    let id = engine.lookup_rx_body(key).expect("id");
+    engine.note_q_receive(id, 100).expect("arm");
+    assert!(engine.progress(100).qblock_recover().is_none());
+    assert!(
+        engine
+            .progress(100 + q_nrt() - 1)
+            .qblock_recover()
+            .is_none()
+    );
+    let recover = engine
+        .progress(100 + q_nrt())
+        .qblock_recover()
+        .expect("first due");
+    assert_eq!(recover.missing_num(), 1);
+    assert!(engine.progress(100 + q_nrt()).qblock_recover().is_none());
+    let doubled = 100 + q_nrt() + q_nrt().saturating_mul(2);
+    let again = engine.progress(doubled).qblock_recover().expect("backoff");
+    assert_eq!(again.missing_num(), 1);
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(1, true, 16).expect("1"),
+            &body[16..32],
+            Some(40),
+        )
+        .expect("fill");
+    engine.note_q_receive(id, doubled).expect("cleared");
+    assert!(
+        engine
+            .progress(doubled + q_nrt())
+            .qblock_recover()
+            .is_none()
+    );
+}
+
+#[test]
+fn progress_qblock_recover_give_up_after_non_max_retransmit() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xc3]), Endpoint::v4([192, 0, 2, 99], 5683));
+    let body: [u8; 40] = core::array::from_fn(|i| i as u8);
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(0, true, 16).expect("0"),
+            &body[..16],
+            Some(40),
+        )
+        .expect("0");
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(2, false, 16).expect("2"),
+            &body[32..],
+            Some(40),
+        )
+        .expect("2");
+    assert!(engine.progress(0).qblock_recover().is_none());
+    let mut now = q_nrt();
+    for attempt in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+        assert!(
+            engine.progress(now).qblock_recover().is_some(),
+            "recover {attempt}"
+        );
+        now += q_nrt() << (attempt + 1);
+    }
+    assert!(engine.progress(now).qblock_recover().is_none());
+    assert!(engine.lookup_rx_body(key).is_none());
 }
 
 #[test]
@@ -3177,7 +3274,8 @@ fn q_block2_recover_encodes_repeatable_options() {
             Some(40),
         )
         .expect("2");
-    let recover = engine.progress(0).qblock_recover().expect("gap");
+    assert!(engine.progress(0).qblock_recover().is_none());
+    let recover = engine.progress(q_nrt()).qblock_recover().expect("gap");
     let tx = engine.acquire_tx().expect("tx");
     engine
         .encode_q_block2_recover_tx(
@@ -3224,7 +3322,8 @@ fn q_block1_recover_is_structured_not_encoded() {
             Some(40),
         )
         .expect("2");
-    let recover = engine.progress(0).qblock_recover().expect("gap");
+    assert!(engine.progress(0).qblock_recover().is_none());
+    let recover = engine.progress(q_nrt()).qblock_recover().expect("gap");
     assert_eq!(recover.role(), BlockRole::IncomingQBlock1);
     assert_eq!(recover.missing_num(), 1);
     let tx = engine.acquire_tx().expect("tx");
@@ -3378,7 +3477,8 @@ mod alloc_backend {
                 Some(40),
             )
             .expect("2");
-        let recover = engine.progress(0).qblock_recover().expect("gap");
+        assert!(engine.progress(0).qblock_recover().is_none());
+        let recover = engine.progress(q_nrt()).qblock_recover().expect("gap");
         assert_eq!(recover.missing_num(), 1);
         engine
             .apply_q_block2(
@@ -3388,7 +3488,7 @@ mod alloc_backend {
                 Some(40),
             )
             .expect("fill");
-        assert!(engine.progress(0).qblock_recover().is_none());
+        assert!(engine.progress(q_nrt()).qblock_recover().is_none());
     }
 
     #[test]

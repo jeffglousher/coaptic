@@ -455,6 +455,19 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         self.transfers.get(id.index()).copied().flatten()
     }
 
+    /// Replace the sidecar on an occupied slot.
+    pub fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied
+            } else {
+                SlotError::InvalidSlot
+            });
+        }
+        self.transfers[id.index()] = Some(transfer);
+        Ok(())
+    }
+
     /// Read access to the filled body. Pins `id` until the guard is dropped.
     pub fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.occ.try_pin(id)?;
@@ -758,6 +771,10 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
 
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         BodyPool::transfer(self, id)
+    }
+
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+        BodyPool::set_transfer(self, id, transfer)
     }
 
     fn lookup(&self, key: BlockKey) -> Option<SlotId> {

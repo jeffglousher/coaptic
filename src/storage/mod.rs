@@ -22,7 +22,8 @@
 //! Block1/Block2, outgoing Block1/Block2), including BERT (SZX 7).
 //! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`].
 //! Incoming and outgoing Q-Block1 / Q-Block2 reuse the same slots with a
-//! `MAX_PAYLOADS` window.
+//! `MAX_PAYLOADS` window. Incoming Q-Block `NON_RECEIVE_TIMEOUT` is
+//! [`QBlockReceiveWait`] on that sidecar (caller `now_ms`).
 //! They do not invent 4.02 / 2.31 / RST policy.
 //! [`DatagramIo`] is the transport bind ([`Engine::recv_from`] /
 //! [`Engine::send_tx`]). Temporary application [`Access`] / [`AccessMut`]
@@ -30,7 +31,7 @@
 //! [`Engine::progress`] is one bounded
 //! pass: pending CON retransmit poll, one rotating unpinned RX step, one
 //! rotating Observe notify, at most one Observe lifetime expiry, and at
-//! most one incoming Q-Block recover. They do not invent 4.08 /
+//! most one due incoming Q-Block recover. They do not invent 4.08 /
 //! 2.31 / RST policy.
 
 mod access;
@@ -60,7 +61,8 @@ pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
 pub use block::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,
+    QBlockRecover,
 };
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
@@ -292,6 +294,13 @@ pub trait BodySlots {
 
     /// Incoming Block1 / Block2 sidecar, if `id` holds a transfer.
     fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+
+    /// Write the sidecar into an already-occupied incoming body slot.
+    fn set_rx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError>;
 
     /// Outgoing Block1 / Block2 sidecar, if `id` holds a transfer.
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;

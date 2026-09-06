@@ -55,7 +55,7 @@ use crate::message::{
 /// [`Self::progress`] polls that once, takes one rotating unpinned RX
 /// step, surfaces at most one pending Observe notify (skipping an endpoint
 /// at notification NSTART), at most one Observe lifetime expiry, and at
-/// most one incoming Q-Block recover per call.
+/// most one due incoming Q-Block recover per call (`NON_RECEIVE_TIMEOUT`).
 /// When `S` implements [`Exchanges`], outstanding CON/NON requests are
 /// recorded by Token and remote [`Endpoint`] and taken on a matching
 /// response. Empty ACK (code 0.00) is not a token-matching response;
@@ -1019,6 +1019,19 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[must_use]
     pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.storage.rx_body_transfer(id)
+    }
+
+    /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
+    ///
+    /// [`Self::apply_q_block1`] / [`Self::apply_q_block2`] do not take a clock.
+    /// App::poll calls this after apply so the wait starts at receive time.
+    /// [`Self::progress`] lazy-arms when holes exist and no wait is stored.
+    /// `None` when `id` has no incoming transfer.
+    pub fn note_q_receive(&mut self, id: SlotId, now_ms: u64) -> Option<BlockTransfer> {
+        let mut transfer = self.storage.rx_body_transfer(id)?;
+        transfer.note_q_receive(now_ms);
+        self.storage.set_rx_body_transfer(id, transfer).ok()?;
+        Some(transfer)
     }
 
     /// Outgoing Block1 / Block2 sidecar on `id`.

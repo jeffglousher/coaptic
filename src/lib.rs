@@ -50,7 +50,9 @@
 //! [`ParsedMessage::precondition`](message::ParsedMessage::precondition)
 //! classifies If-Match / If-None-Match.
 //! [`ObserveTransmission`](message::ObserveTransmission) names RFC 7641
-//! §4.5 constants. [`Code::FETCH`] / [`Code::PATCH`] / [`Code::IPATCH`]
+//! §4.5 constants.
+//! [`QBlockTransmission`](message::QBlockTransmission) names RFC 9177
+//! §7.2 `NON_RECEIVE_TIMEOUT` / `NON_MAX_RETRANSMIT`. [`Code::FETCH`] / [`Code::PATCH`] / [`Code::IPATCH`]
 //! and named 2.31 / 4.08 / 4.09 / 4.22 / 5.08 are codes only — the
 //! library does not invent when to send them. Optional, not used by
 //! [`decode`](message::decode):
@@ -86,7 +88,9 @@
 //! Request-Tag / ETag body identity is [`BodyTag`](storage::BodyTag) on
 //! [`BlockKey`](storage::BlockKey). BERT is SZX 7 on
 //! [`BlockValue`](message::BlockValue). Incoming Q-Block holes surface as
-//! [`QBlockRecover`](storage::QBlockRecover).
+//! [`QBlockRecover`](storage::QBlockRecover) when
+//! [`QBlockReceiveWait`](storage::QBlockReceiveWait) is due
+//! (caller `now_ms`; same clock as CON RTO and Observe Max-Age).
 //!
 //! [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut) pin
 //! occupied bytes against release. [`DatagramIo`](storage::DatagramIo)
@@ -98,7 +102,7 @@
 //! [`Engine::progress`](storage::Engine::progress) is one bounded pass:
 //! CON retransmit poll, one rotating unpinned RX step, one rotating
 //! Observe notify (skips an endpoint at notification NSTART), at most
-//! one Observe lifetime expiry, at most one incoming Q-Block recover.
+//! one Observe lifetime expiry, at most one due incoming Q-Block recover.
 //! The caller owns clock, jitter, and send. RFC 7641 §4.5 24-hour
 //! NON-confirm is [`ObserveInterest::must_confirm`](storage::ObserveInterest::must_confirm).
 //!
