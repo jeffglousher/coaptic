@@ -1,4 +1,5 @@
-//! [`Request`]: borrowed view of inbound work the reactor already holds.
+//! [`Request`]: borrowed view of inbound work [`App::poll`](super::App::poll)
+//! already holds.
 
 use crate::error::ValueError;
 use crate::message::{
@@ -24,11 +25,13 @@ pub enum PathError {
     EmptySegment,
 }
 
-/// Convert a bind/client path into Uri-Path segments without allocating.
+/// Convert a bind or client path into Uri-Path segments without allocating.
 ///
 /// Accepts `&[&'static str]` (and `&[&'static str; N]`), or a `'static`
 /// slash-separated string (`"sensors/temp"`). Leading `/` is ignored.
-/// Empty segments are rejected.
+/// Empty segments (`""`, `"sensors//temp"`, trailing `/`) are
+/// [`PathError::EmptySegment`]. Used by [`super::AppBuilder::route`] and
+/// [`crate::App::get`] / [`crate::App::put`].
 pub trait IntoPath {
     /// Fill `out` with Uri-Path segments. Returns the count.
     fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError>;
@@ -102,13 +105,22 @@ pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathE
 
 /// Borrowed view of one inbound request.
 ///
-/// Handlers see path, method, token, message ID, peer, option accessors, and
+/// Handlers see path, method, token, message ID, peer, options, and
 /// [`Self::payload`] (this datagram). When Block1 / Q-Block1 has assembled
-/// a complete body on the RX body area, [`Self::body`] / [`Self::has_body`]
-/// borrow those bytes. Ordinary handlers do not see Engine slot identifiers.
+/// a complete body, [`Self::body`] borrows those bytes. Ordinary handlers
+/// do not see Engine slot identifiers. The borrow lasts only for the
+/// handler call — [`App::poll`](super::App::poll) encodes the
+/// [`Response`](super::Response) and then releases.
 ///
-/// Borrows are valid only for the handler call. [`App::poll`](super::App::poll)
-/// encodes the [`Response`](super::Response) and then releases.
+/// ```
+/// use coaptic::{Request, Response};
+///
+/// fn echo(req: Request<'_>) -> Response {
+///     let body = req.body().unwrap_or(req.payload());
+///     Response::content_copy(body)
+/// }
+/// # let _ = echo;
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Request<'a> {
     message: ParsedMessage<'a>,

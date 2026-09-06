@@ -1,38 +1,24 @@
 //! Bounded storage: [`Engine`], [`Memory`], pools, and tables.
 //!
-//! Acquire / release / rotate is written once against [`Storage`]. Message
-//! parse and encode live in [`crate::message`]. [`Engine`] methods
-//! [`Engine::decode_rx`] / [`Engine::encode_tx`] (and the TX/RX mirrors)
-//! glue those codecs to occupied datagram slots when the backend implements
-//! [`DatagramSlots`]. [`Engine::write_rx`] associates an [`Endpoint`] sidecar
-//! when RX bytes are written. Pending CON state is sidecar on TX slots
-//! ([`PendingCon`] / [`PendingRto`]); empty ACK/RST matching is not the
-//! Dedup Table. [`Engine::poll_retransmit`] walks due TX slots.
-//! Token matching ([`ExchangeEntry`]) is a compact table keyed by Token and
-//! remote [`Endpoint`], sized from the TX pool count, not a seventh area.
-//! Echo (RFC 9175) sent on the request and a response challenge are sidecar
-//! on that row.
-//! Observe interest rows ([`ObserveInterest`]) fill the existing
-//! [`ObserveTable`] (Token + remote [`Endpoint`]; RFC 7641 observer-list
-//! key). Max-Age / CON-wait lifetime is colocated on the row
-//! ([`ObserveLifetime`]). RFC 7641 §4.5 / §4.5.1 24-hour NON-confirm and
-//! per-endpoint notification NSTART live on the same row
-//! ([`ObserveNotifyHold`]). Classic Block1 / Block2 body assembly uses a [`BlockTransfer`]
-//! sidecar on body-pool slots when block-wise is enabled (incoming
-//! Block1/Block2, outgoing Block1/Block2), including BERT (SZX 7).
-//! Request-Tag / ETag body identity is [`BodyTag`] on [`BlockKey`].
-//! Incoming and outgoing Q-Block1 / Q-Block2 reuse the same slots with a
-//! `MAX_PAYLOADS` window. Incoming Q-Block `NON_RECEIVE_TIMEOUT` is
-//! [`QBlockReceiveWait`] on that sidecar (caller `now_ms`).
-//! They do not invent 4.02 / 2.31 / RST policy.
-//! [`DatagramIo`] is the transport bind ([`Engine::recv_from`] /
-//! [`Engine::send_tx`]). Temporary application [`Access`] / [`AccessMut`]
-//! pins an occupied datagram or body slot against [`SlotPool::release`].
-//! [`Engine::progress`] is one bounded
-//! pass: pending CON retransmit poll, one rotating unpinned RX step, one
-//! rotating Observe notify, at most one Observe lifetime expiry, and at
-//! most one due incoming Q-Block recover. They do not invent 4.08 /
-//! 2.31 / RST policy.
+//! This is the **advanced path**. [`crate::App`] already runs
+//! [`Engine::progress`], routing, Observe, and Block/Q-Block inside
+//! [`crate::App::poll`]. Come here for explicit slots, a custom
+//! [`DatagramIo`], or [`Access`] / [`AccessMut`].
+//!
+//! Acquire / release / rotate is written once against [`Storage`].
+//! Message parse and encode live in [`crate::message`]. [`Engine`] glues
+//! those codecs to occupied datagram slots ([`DatagramSlots`]). Token
+//! matching, Observe interest, pending CON, Dedup, and Block/Q-Block
+//! sidecars are tables on those slots — not a seventh memory area.
+//! Incoming Q-Block `NON_RECEIVE_TIMEOUT` is [`QBlockReceiveWait`]
+//! (caller `now_ms`). Engine BERT (SZX 7) is deferred on the App face.
+//!
+//! [`Access`] / [`AccessMut`] pin occupied datagram or body bytes against
+//! [`SlotPool::release`]. The App happy path does not need them.
+//! [`Engine::progress`] is one bounded pass: CON retransmit, one unpinned
+//! RX step, one Observe notify, at most one Observe expiry, at most one
+//! due Q-Block recover. This module does not invent 4.02 / 4.08 / 2.31 /
+//! RST policy.
 
 mod access;
 mod block;
@@ -201,6 +187,8 @@ pub trait DatagramSlots {
     ) -> Option<SlotId>;
 
     /// Read access to an occupied RX datagram. Pins `id` until dropped.
+    ///
+    /// See [`Access`]. The [`crate::App`] happy path does not need this.
     fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
 
     /// Read access to an occupied TX datagram. Pins `id` until dropped.
@@ -500,6 +488,8 @@ pub trait BodySlots {
     ) -> Result<BlockProgress, crate::error::BlockTransferError>;
 
     /// Read access to an occupied incoming body. Pins `id` until dropped.
+    ///
+    /// See [`Access`]. The [`crate::App`] happy path does not need this.
     fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
 
     /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.

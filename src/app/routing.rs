@@ -2,10 +2,9 @@
 //!
 //! Taste is Axum (`get(h).put(p)`) and Ohkami (per-method bits on one path).
 //! Stored handlers are fn pointers — no boxes, no allocator, no `unsafe`.
-//!
-//! [`App`](super::App) is a routing façade. It does not own a global mutable
-//! shared bag. Domain data that outlives a request stays application-owned
-//! outside `App`.
+//! These are the **site** routers ([`get`], [`put`], …). Distinct from the
+//! outbound builders [`App::get`](super::App::get) / [`App::put`](super::App::put).
+//! Domain data that outlives a request stays outside [`App`](super::App).
 
 use crate::message::Code;
 
@@ -27,7 +26,18 @@ pub type ObserveSource = fn() -> Response;
 ///
 /// Built with [`get`], [`put`], [`post`], [`delete`], [`fetch`], [`patch`],
 /// [`ipatch`]. One route occupies one site slot regardless of how many
-/// methods are set.
+/// methods are set. Unknown method on a matching path is 4.05
+/// ([`Response::problem`]).
+///
+/// ```
+/// use coaptic::{Request, Response, get};
+///
+/// fn read(_: Request<'_>) -> Response { Response::content(b"ok") }
+/// fn write(_: Request<'_>) -> Response { Response::changed() }
+///
+/// let methods = get(read).put(write);
+/// # let _ = methods;
+/// ```
 #[derive(Clone, Copy)]
 pub struct MethodRouter {
     handlers: [Option<HandlerFn>; METHOD_COUNT],
@@ -124,7 +134,9 @@ impl Default for MethodRouter {
     }
 }
 
-/// GET (0.01) router. Chain [`.put`](MethodRouter::put) and siblings.
+/// GET (0.01) **site** router. Chain [`.put`](MethodRouter::put) and siblings.
+///
+/// Distinct from the outbound builder [`App::get`](super::App::get).
 #[must_use]
 pub const fn get(handler: HandlerFn) -> MethodRouter {
     MethodRouter::new().get(handler)

@@ -41,20 +41,17 @@ impl IntoResponse for Response {
 /// Owned response: handler intent, or a client snapshot from
 /// [`App::take_response`](super::App::take_response).
 ///
-/// Handlers return this. [`App::poll`](super::App::poll) writes a payload
-/// that fits one datagram with `encode_tx`. A larger payload (within the
-/// configured TX body capacity) is copied into a TX body area and shipped
-/// as outgoing Block2, or Q-Block2 when that is the request's transfer.
-/// Handlers do not opt in and do not see slot identifiers. The reactor
-/// owns per-slot state machines inside that loop.
+/// One type on both faces. Handlers return this; [`App::poll`](super::App::poll)
+/// encodes it (one datagram, or Block2 / Q-Block2 from the TX body when
+/// the payload is large). Handlers do not opt in and do not see slot
+/// identifiers.
 ///
-/// A completed client exchange is the same type: [`Self::code`] /
-/// [`Self::payload`] / [`Self::body`] / [`Self::problem_details`] /
-/// [`Self::missing_block_nums`] (and
-/// [`Self::ty`] / [`Self::token`] / [`Self::peer`] when the snapshot
-/// carried them). [`Self::payload`] is this datagram (truncated at
-/// [`INLINE_PAYLOAD`]). [`Self::body`] is the assembled Block2 /
-/// Q-Block2 body when present (truncated at [`RESPONSE_BODY`]).
+/// A completed [`Call`](super::Call) is the same type: [`Self::code`] /
+/// [`Self::payload`] (this datagram, truncated at [`INLINE_PAYLOAD`]) /
+/// [`Self::body`] (assembled Block2 / Q-Block2, truncated at
+/// [`RESPONSE_BODY`]) / [`Self::problem_details`] /
+/// [`Self::missing_block_nums`]. Snapshot [`Self::ty`] / [`Self::token`] /
+/// [`Self::peer`] are `Some` after a completed client exchange.
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};

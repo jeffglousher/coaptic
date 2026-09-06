@@ -4,12 +4,21 @@ use core::fmt;
 
 /// UDP peer address stored beside a datagram slot, not in its byte buffer.
 ///
-/// A datagram slot holds CoAP message bytes (the UDP payload). [`Endpoint`] is
-/// sidecar metadata for that slot.
+/// A datagram slot holds CoAP message bytes (the UDP payload). [`Endpoint`]
+/// is sidecar metadata: the peer on a [`crate::Request`], the destination
+/// of [`crate::Outgoing::to`], and the match key (with Token) for a
+/// [`crate::Call`].
 ///
-/// This type does not use [`std::net`] on the default `no_std` path. The `std`
-/// feature adds conversions. IPv6 flowinfo and scope id are not stored; they
-/// are zero when converting to [`std::net::SocketAddrV6`].
+/// This type does not use [`std::net`] on the default `no_std` path. The
+/// `std` feature adds conversions. IPv6 flowinfo and scope id are not
+/// stored; they are zero when converting to [`std::net::SocketAddrV6`].
+///
+/// ```
+/// use coaptic::Endpoint;
+///
+/// let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+/// assert_eq!(peer.port(), 5683);
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Endpoint {
     /// IPv4 address and UDP port (network-order octets).

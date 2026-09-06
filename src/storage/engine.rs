@@ -33,46 +33,20 @@ use crate::message::{
     ParsedMessage, Token, Type, encode_uint,
 };
 
-/// Protocol engine, generic over [`Storage`].
+/// Protocol engine over bounded [`Storage`].
 ///
-/// Storage engine: occupancy, acquire/release, rotating cursors, and Block /
-/// Q-Block body-slot assembly when `S` implements [`BodySlots`].
-/// [`Self::progress`] is one bounded pass, including at most one incoming
-/// Q-Block recover. BERT (SZX 7)
-/// and Request-Tag / ETag body identity live on [`BlockTransfer`] /
-/// [`BlockKey`].
+/// This is the **advanced path**. [`crate::App`] already runs
+/// [`Self::progress`], routing, Observe, and Block/Q-Block inside
+/// [`crate::App::poll`]. Reach here via [`crate::App::engine_mut`] only
+/// when you need explicit slots, [`Access`] / [`AccessMut`], or policy
+/// App does not apply. Engine BERT (SZX 7) is deferred on the App face.
 ///
-/// When `S` implements [`DatagramSlots`], [`Self::decode_rx`] /
-/// [`Self::encode_tx`] (and the TX/RX mirrors) call [`crate::message`]
-/// against occupied datagram slots and record `set_len` on encode.
-/// [`Self::write_rx`] copies bytes and sets the sidecar [`Endpoint`].
-/// [`Self::recv_from`] / [`Self::send_tx`] bind a [`super::DatagramIo`].
-/// When `S` implements [`DedupSlots`], insert / lookup / remove store
-/// [`DedupEntry`] values in the Dedup Table (O(n) in configured capacity).
-/// When `S` implements [`PendingCons`], outgoing CON slots are marked
-/// pending on the TX datagram sidecar (RTO included) and matched against
-/// empty ACK/RST. [`Self::poll_retransmit`] returns due TX slots.
-/// [`Self::progress`] polls that once, takes one rotating unpinned RX
-/// step, surfaces at most one pending Observe notify (skipping an endpoint
-/// at notification NSTART), at most one Observe lifetime expiry, and at
-/// most one due incoming Q-Block recover per call (`NON_RECEIVE_TIMEOUT`).
-/// When `S` implements [`Exchanges`], outstanding CON/NON requests are
-/// recorded by Token and remote [`Endpoint`] and taken on a matching
-/// response. Empty ACK (code 0.00) is not a token-matching response;
-/// a piggybacked ACK with a response code is. Echo (RFC 9175) sent on the
-/// request and a response Echo challenge are sidecar on [`ExchangeEntry`].
-/// [`Self::echo_freshness`] classifies time-based freshness; the caller
-/// owns 4.01. When `S` implements
-/// [`ObserveSlots`], GET Observe register (0) / deregister (1) insert or
-/// take [`ObserveInterest`] rows (Token + remote [`Endpoint`]). When `S`
-/// implements [`BodySlots`], incoming Block1 / Block2 / Q-Block1 / Q-Block2
-/// assemble into the Incoming Body Pool and outgoing Block1 / Block2 /
-/// Q-Block1 / Q-Block2 slice the Outgoing Body Pool. Dedup,
-/// pending CON, exchange matching, Observe interest, and body-slot
-/// transfers are different identities. Temporary [`Access`] / [`AccessMut`]
-/// pins an occupied datagram or body slot against release. Optional format and
-/// unrecognized-critical checks stay on [`ParsedMessage`]. This type does
-/// not invent 4.02 / 4.08 / 2.31 / RST policy.
+/// One [`Self::progress`] pass: CON retransmit, one unpinned RX step, one
+/// Observe notify (skips an endpoint at notification NSTART), at most one
+/// Observe expiry, at most one due Q-Block recover. The caller owns
+/// clock, socket ([`super::DatagramIo`]), and RST / remaining 4.xx
+/// policy. [`Self::echo_freshness`] classifies; App applies 4.01 when
+/// configured. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
 #[derive(Debug)]
 pub struct Engine<S: Storage> {
     storage: S,
@@ -329,17 +303,23 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 
     /// Read access to an occupied RX datagram. Pins `id` until dropped.
     ///
-    /// Release of `id` returns [`SlotError::Pinned`] while the guard is live.
+    /// Release of `id` returns [`SlotError::Pinned`] while the guard is
+    /// live. The [`crate::App`] happy path does not need this; see
+    /// [`Access`].
     pub fn access_rx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.storage.access_rx(id)
     }
 
     /// Read access to an occupied TX datagram. Pins `id` until dropped.
+    ///
+    /// See [`Access`]. The [`crate::App`] happy path does not need this.
     pub fn access_tx(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.storage.access_tx(id)
     }
 
     /// Write access to an occupied TX datagram buffer. Pins `id` until dropped.
+    ///
+    /// See [`AccessMut`]. The [`crate::App`] happy path does not need this.
     pub fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
         self.storage.access_tx_mut(id)
     }
@@ -989,12 +969,16 @@ fn poll_observe_lifetime<S: Storage + ObserveSlots>(
 
 impl<S: Storage + BodySlots> Engine<S> {
     /// Read access to an occupied incoming body. Pins `id` until dropped.
+    ///
+    /// See [`Access`]. The [`crate::App`] happy path does not need this.
     #[inline]
     pub fn access_rx_body(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
         self.storage.access_rx_body(id)
     }
 
     /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.
+    ///
+    /// See [`AccessMut`]. The [`crate::App`] happy path does not need this.
     #[inline]
     pub fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
         self.storage.access_tx_body_mut(id)

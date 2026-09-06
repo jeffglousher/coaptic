@@ -1,33 +1,21 @@
-//! Approachable CoAP app: a routing façade over request/response.
-//!
-//! Memory areas become handler items inside [`App::poll`]:
+//! Approachable CoAP app: route inbound work, send outbound requests.
 //!
 //! ```text
 //! RX slot (+ body) --view--> Request
 //! handler(Request) -> Response
-//! Response --encode--> TX slot (+ TX body when the payload needs Block2)
+//! Response --encode--> TX slot (+ body)
 //!
 //! Outgoing (get/put) --encode--> TX slot
-//! poll matches Token + endpoint (Exchange table)
-//! RX datagram --copy--> Response
-//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
+//! poll matches Token + endpoint
+//! RX --copy--> Response
 //! ```
 //!
-//! [`Request`] is a borrowed view (path, method, token, mid, peer, options,
-//! `payload()`, and `body()` when Block1 / Q-Block1 has assembled).
-//! [`Response`] is owned intent (`content` / `content_copy` / `changed` /
-//! `not_found` / [`Response::problem`] / [`Response::missing_blocks`]).
-//! Borrows last only for the handler call; `poll` encodes and then releases.
-//! The reactor ([`Engine`] / [`Progress`](crate::storage::Progress)) owns per-slot
-//! state machines under the hood (pending CON/RTO, BlockTransfer,
-//! ObserveInterest, Dedup, Exchange). This module is not a seventh memory
-//! area and does **not** own a global mutable shared bag.
-//!
-//! Default handlers are relatively stateless: `fn(Request<'_>) -> Response`.
-//! Application domain data that outlives a request is application-owned
-//! outside `App` — a GPIO write lives in firmware, not in an Axum-style
-//! `AppState`. The caller owns the socket ([`DatagramIo`]), the clock
-//! (`now_ms` into [`App::poll`]), and that domain state.
+//! [`Request`] is a borrowed view for the handler call only. [`Response`] is
+//! owned intent — the same type [`App::take_response`] yields for a
+//! completed [`Call`]. The reactor owns per-slot state machines inside
+//! [`App::poll`]. This module is not a seventh memory area and does **not**
+//! own a global mutable shared bag. Domain data that outlives a request
+//! stays outside `App`.
 //!
 //! ```
 //! use coaptic::storage::DatagramIo;
@@ -64,33 +52,27 @@
 //!     .bind(NullIo)
 //!     .unwrap();
 //! app.poll(0).unwrap();
+//!
+//! let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+//! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
+//! app.poll(0).unwrap();
+//! let _ = app.take_response(call);
 //! ```
 //!
-//! Site capacity defaults to [`DEFAULT_ROUTES`] (8). Raise it with
-//! [`.routes::<16>()`](AppBuilder::routes) before [`AppBuilder::bind`].
-//! Observe: a successful GET with Observe=0 whose [`Response`] includes
-//! [`.observe`](Response::observe) registers on the Engine table. Send later
-//! representations with [`App::notify`]. Optional
-//! [`MethodRouter::observe`](MethodRouter::observe) supplies a snapshot
-//! when `poll` sees `observe_notify`. Progress-driven Q-Block2 recover
-//! (after `NON_RECEIVE_TIMEOUT`) and incoming Q-Block1 assembly reuse Engine
-//! body helpers. Engine /
-//! [`DatagramIo`] remain the advanced path
-//! for [`Access`](crate::storage::Access), custom RST / remaining 4.xx, and
-//! BERT edges. Escape: [`App::engine_mut`]. Time-based Echo freshness
-//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`] / [`App::echo_freshness`].
+//! Site capacity defaults to [`DEFAULT_ROUTES`] (8); raise it with
+//! [`.routes::<16>()`](AppBuilder::routes) before bind. Paths accept
+//! `"sensors/temp"` or `&["sensors", "temp"]` ([`IntoPath`]).
 //!
-//! Outbound (same Engine / socket): [`App::get`] / [`App::put`] builder →
-//! [`Outgoing::to`] → [`Outgoing::send`]. [`App::poll`] matches the response
-//! via the Exchange table. [`App::take_response`] is a [`Response`] (code /
-//! payload, and [`Response::body`] when Block2 / Q-Block2 assembled). A
-//! large request body is Block1 / Q-Block1; continues reuse the path
-//! from [`Outgoing::send`]. No `SlotId`. The caller owns the destination
-//! endpoint and must take
-//! responses. Tokens and Message IDs are App counters (no OS RNG).
-//! Observe subscribe: [`Outgoing::observe`] then the same [`Call`] /
-//! [`App::take_response`] for the initial representation and later
-//! notifications. [`Outgoing::deregister`] sends Observe=1.
+//! Observe: return [`.observe`](Response::observe) on a successful GET, or
+//! attach [`MethodRouter::observe`]; later representations are
+//! [`App::notify`]. Client subscribe is [`Outgoing::observe`] /
+//! [`Outgoing::deregister`] on the same [`Call`]. Echo freshness
+//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`].
+//!
+//! The happy path does not use [`Access`](crate::storage::Access) or
+//! [`SlotId`]. Engine remains the advanced escape hatch
+//! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
+//! and deferred BERT edges.
 mod client;
 mod request;
 mod response;
@@ -136,11 +118,12 @@ enum EngineSlot<P: MemoryProfile> {
 /// CoAP app: profile memory + transport + a bounded [`Site`].
 ///
 /// Handlers see a borrowed [`Request`] and return an owned [`Response`].
-/// The reactor owns per-slot state machines inside [`App::poll`]. `N` is
-/// the maximum number of routes (default 8). Increase with
-/// [`AppBuilder::routes`] (`App::<_, _, 16>` after bind). `App` does not
-/// own a global mutable shared application bag. Engine remains the
-/// advanced escape hatch ([`App::engine_mut`]).
+/// Outbound work is [`Self::get`] / [`Self::put`] → [`Outgoing::send`] →
+/// [`Self::take_response`]. The reactor owns per-slot state machines
+/// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
+/// raise it with [`AppBuilder::routes`]. `App` does not own a global
+/// mutable shared bag. You do not need [`crate::storage::Access`] on this
+/// path — [`Self::engine_mut`] is the advanced escape hatch.
 pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usize = DEFAULT_ROUTES>
 {
     engine: EngineSlot<P>,
@@ -153,8 +136,11 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
     echo_fresh_ms: Option<u64>,
 }
 
-/// Builder: [`App::profile`] → [`block_wise`](AppBuilder::block_wise) →
-/// [`route`](AppBuilder::route) → [`bind`](AppBuilder::bind).
+/// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
+/// [`route`](Self::route) → [`bind`](Self::bind).
+///
+/// [`Self::block_wise`] is required before bind (typestate). `true` enables
+/// body pools for Block / Q-Block; `false` keeps datagram slots only.
 pub struct AppBuilder<P: MemoryProfile, Block = Missing, const N: usize = DEFAULT_ROUTES> {
     block_wise: Option<bool>,
     site: Site<N>,
@@ -206,7 +192,9 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
 
     /// Bind `methods` on Uri-Path `path`.
     ///
-    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
+    /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
+    /// `methods` is a site router ([`get`], [`put`], …), not an outbound
+    /// [`App::get`] builder.
     #[must_use]
     pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
         self.site.route(path, methods);
@@ -229,10 +217,10 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
 
     /// Require a time-fresh Echo (RFC 9175) on inbound requests.
     ///
-    /// [`App::poll`] classifies via [`Engine::echo_freshness`]. Missing,
-    /// invalid, or stale Echo is 4.01 with RFC 9290 problem details and a
-    /// minted Echo challenge. [`EchoFreshness::Fresh`] continues to the
-    /// site. Off by default.
+    /// Off by default. When set, [`App::poll`] classifies via
+    /// [`Engine::echo_freshness`]. Missing, invalid, or stale Echo is 4.01
+    /// with [`Response::problem`] and a minted Echo challenge. Fresh
+    /// requests continue to the site. Handlers do not implement this.
     #[must_use]
     pub const fn echo_freshness(mut self, fresh_ms: u64) -> Self {
         self.echo_fresh_ms = Some(fresh_ms);
@@ -317,7 +305,10 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
         &mut self.site
     }
 
-    /// Engine (advanced: slots, Observe, Block).
+    /// Borrow the Engine (advanced path).
+    ///
+    /// The happy path is [`Self::poll`]. Use this when you need explicit
+    /// slots or [`crate::storage::Access`].
     #[must_use]
     pub fn engine(&self) -> EngineRef<'_, P> {
         match &self.engine {
@@ -326,7 +317,12 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
         }
     }
 
-    /// Mutable Engine (advanced).
+    /// Mutably borrow the Engine (advanced path).
+    ///
+    /// Escape hatch for explicit slots, [`crate::storage::Access`] /
+    /// [`crate::storage::AccessMut`], custom RST / remaining 4.xx, and
+    /// deferred BERT edges. [`Self::poll`] already pins and releases; App
+    /// handlers do not need this.
     pub fn engine_mut(&mut self) -> EngineMut<'_, P> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => EngineMut::Datagram(engine),
@@ -362,60 +358,28 @@ where
 {
     /// One loop step: recv, progress, route, handler, send, release.
     ///
-    /// Handlers receive a borrowed [`Request`] and return an owned
-    /// [`Response`]. A payload that fits one datagram uses `encode_tx`. A
-    /// larger payload (within the configured TX body capacity) is copied
-    /// into a TX body area and shipped as outgoing Block2, or Q-Block2
-    /// when the request carried Q-Block2. Subsequent client Block2 /
-    /// Q-Block2 Continue requests reuse that body; the handler does not
-    /// see [`SlotId`]. Incoming Block1 / Q-Block1 is assembled so
-    /// [`Request::body`] can borrow the complete body; an incomplete
-    /// transfer is answered with 2.31 and does not run the handler. Apply
-    /// errors are 4.08 with RFC 9290 problem details. Progress-driven
-    /// Q-Block1 holes are 4.08 with RFC 9177 missing-blocks CBOR-seq,
-    /// after [`crate::message::QBlockTransmission::NON_RECEIVE_TIMEOUT_MS`]
-    /// (caller `now_ms`; Engine arms the wait on apply / first progress). When
-    /// `progress` yields a Q-Block2 [`QBlockRecover`], `poll` encodes
-    /// repeatable Q-Block2 recover (NON GET) and `send_tx`. When
-    /// block-wise is off, a payload that does not fit one datagram fails
-    /// clearly (no silent heap).
+    /// `now_ms` is the caller clock (CON RTO, Observe Max-Age, Q-Block
+    /// wait). No [`SlotId`] on this path.
     ///
-    /// Observe: a successful GET/FETCH with Observe=0 whose [`Response`]
-    /// includes an Observe sequence (or whose route has
-    /// [`MethodRouter::observe`]) is registered on the Engine
-    /// [`ObserveInterest`] table. Observe=1 deregisters. Expired Max-Age /
-    /// client-OFF rows are dropped. When `progress` yields `observe_notify`
-    /// and the route has an [`ObserveSource`], that snapshot is encoded
-    /// (ordinary TX or first-block Block2). Caller-built notifications use
-    /// [`Self::notify`]. Custom RST / remaining 4.xx,
-    /// [`Access`](crate::storage::Access), and BERT edges stay on
-    /// [`Engine`] ([`Self::engine_mut`]).
+    /// **Inbound.** Handlers see a borrowed [`Request`] and return an owned
+    /// [`Response`]. Incomplete Block1 / Q-Block1 is 2.31 (handler not
+    /// run); a complete body is [`Request::body`]. A large response ships
+    /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
+    /// with [`Response::problem`]. Apply-error 4.08 uses problem details;
+    /// Q-Block1 holes after `NON_RECEIVE_TIMEOUT` use
+    /// [`Response::missing_blocks`]. When [`Self::echo_freshness`] is set,
+    /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with a
+    /// minted Echo. Observe register / deregister and [`ObserveSource`]
+    /// notify run here; caller-built notifications use [`Self::notify`].
     ///
-    /// Retransmit: `send_tx` on [`Retransmit::Due`], release on
-    /// [`Retransmit::GiveUp`].
+    /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
+    /// is the [`Response`] ([`Response::body`] when Block2 / Q-Block2
+    /// assembled). Continues reuse the path from [`Outgoing::send`]. An
+    /// Observe subscribe ([`Outgoing::observe`]) uses the same [`Call`].
     ///
-    /// Incoming requests are dispatched through the site (4.04 / 4.05
-    /// when no match). Those codes, and apply-error 4.08, carry RFC 9290
-    /// problem details (CBOR). Q-Block1 recover 4.08 uses
-    /// [`Response::missing_blocks`] (RFC 9177). When [`Self::echo_freshness`] is set,
-    /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with
-    /// problem details and a minted Echo option (RFC 9175). Other
-    /// Engine-path 4.xx stay caller-built
-    /// ([`Response::problem`](crate::Response::problem) when a body is
-    /// wanted). CON is answered with a piggybacked ACK.
-    ///
-    /// Outbound: a response whose Token and peer match an outstanding
-    /// [`Call`] is copied into a [`Response`] for [`Self::take_response`]. A
-    /// piggybacked ACK releases the pending CON. A separate CON response
-    /// is acknowledged with an empty ACK. Retransmit give-up drops the
-    /// Exchange (`take_response` stays `None`). Block2 / Q-Block2 fragments
-    /// assemble in the RX body area; [`Response::body`] is the complete
-    /// body. Classic Block2 Continue and Q-Block2 window Continue are
-    /// sent from `poll` without exposing [`SlotId`]. Large PUT/POST uses
-    /// Block1 / Q-Block1; continues reuse the Uri-Path recorded at
-    /// [`Outgoing::send`]. An Observe subscribe ([`Outgoing::observe`])
-    /// keeps matching the Token after the Exchange is cleared; later
-    /// notifications use the same [`Call`] / [`Self::take_response`].
+    /// Retransmit: send on [`Retransmit::Due`], release on
+    /// [`Retransmit::GiveUp`]. Advanced slots / [`Access`](crate::storage::Access)
+    /// / remaining RST policy / deferred BERT: [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(
@@ -443,12 +407,10 @@ where
 
     /// Send the current representation to every observer of `path`.
     ///
-    /// Looks up [`ObserveInterest`] rows by [`ObserveResource`] (same
-    /// Engine table). Honors notification NSTART. Each matching interest
-    /// gets the next sequence, an ordinary TX or first-block Block2 when
-    /// the payload is large, and `send_tx`. CON is used when the row
+    /// Honors notification NSTART. CON when the row
     /// [`ObserveInterest::must_confirm`]; otherwise NON. Returns how many
-    /// notifications were sent. Domain data stays in `response`.
+    /// notifications were sent. Domain data stays in `response` — `App`
+    /// does not hold it.
     pub fn notify(
         &mut self,
         now_ms: u64,
@@ -491,6 +453,8 @@ where
 }
 
 /// Borrowed Engine after `.block_wise(false)` or `.block_wise(true)`.
+///
+/// Advanced path. Prefer [`App::poll`]; see [`App::engine`].
 pub enum EngineRef<'a, P: MemoryProfile> {
     /// Datagram pools only.
     Datagram(&'a Engine<Memory<P>>),
@@ -499,6 +463,8 @@ pub enum EngineRef<'a, P: MemoryProfile> {
 }
 
 /// Mutable Engine after `.block_wise(false)` or `.block_wise(true)`.
+///
+/// Advanced path. Prefer [`App::poll`]; see [`App::engine_mut`].
 pub enum EngineMut<'a, P: MemoryProfile> {
     /// Datagram pools only.
     Datagram(&'a mut Engine<Memory<P>>),
@@ -1468,7 +1434,7 @@ where
     Ok(())
 }
 
-/// Failure of [`App::poll`].
+/// Failure of [`App::poll`] or [`Outgoing::send`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error<E> {
     /// [`Engine::recv_from`] / [`Engine::send_tx`].

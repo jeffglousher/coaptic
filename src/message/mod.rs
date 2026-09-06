@@ -1,40 +1,24 @@
 //! CoAP messages: header, token, options, and payload.
 //!
 //! [`decode`] and [`encode`] operate on a datagram buffer (the UDP payload).
-//! They do not require [`crate::storage::Engine`].
+//! They do not require [`crate::storage::Engine`]. The [`crate::App`] happy
+//! path does not call these directly — handlers see [`crate::Request`] /
+//! [`crate::Response`].
 //!
-//! [`empty_ack`] and [`empty_rst`] build the empty ACK / RST messages used to
-//! confirm or reject a CON. [`ParsedMessage::is_empty_ack`] /
-//! [`ParsedMessage::is_empty_rst`] detect them after decode.
-//! [`Ids`] is a wrapping Message ID counter; [`Token::mint`] /
-//! [`Token::mint_from`] copy caller entropy ([`TokenSource`]). The core
-//! does not call an OS RNG. [`Message::con`] / [`Message::non`] and
-//! [`Ids::request`] build a CON/NON skeleton (next MID + token) with no
-//! [`crate::storage::Engine`]. [`Transmission`] names RFC 7252 §4.8 defaults and
-//! [`Transmission::initial_timeout_ms`] (caller jitter). Retransmit
-//! scheduling lives on [`crate::storage::PendingCon`].
-//! [`QBlockTransmission`] names RFC 9177 §7.2 `NON_RECEIVE_TIMEOUT`;
-//! the wait lives on [`crate::storage::QBlockReceiveWait`].
+//! [`Ids`] is a wrapping Message ID counter; [`Token::mint`] copies caller
+//! entropy ([`TokenSource`]). The core does not call an OS RNG.
+//! [`OptionsBuilder`] collects [`Opt`] values in any order.
+//! [`ProblemDetails`] is RFC 9290 concise problem details (crate-root;
+//! [`crate::Response::problem`]). [`MissingBlocks`] is RFC 9177
+//! missing-blocks CBOR-seq ([`crate::Response::missing_blocks`]).
+//! [`Echo`] is RFC 9175; App applies 4.01 when
+//! [`crate::app::AppBuilder::echo_freshness`] is set. [`BlockValue`] SZX 7
+//! is Engine BERT (deferred on the App face).
 //!
-//! [`OptionsBuilder`] collects [`Opt`] values (including Table 4 and
-//! Block / Q-Block helpers) in any order and yields a slice for
-//! [`Message::with_options`].
-//!
-//! [`value`] codecs interpret option values as empty, opaque, uint, or
-//! string. Observe (option 6) reuses the uint codec; it is not in RFC 7252
-//! Table 4. Block1 / Block2 / Size2 (RFC 7959) and Q-Block1 / Q-Block2
-//! (RFC 9177) also reuse uint; [`BlockValue`] is NUM/M/SZX (SZX 7 is BERT).
-//! Request-Tag and Echo (RFC 9175) are opaque. Hop-Limit (RFC 8768) and
-//! No-Response (RFC 7967) reuse uint. None of those numbers are in Table 4.
-//! [`ParsedMessage::precondition`] classifies If-Match / If-None-Match.
-//! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR).
-//! [`MissingBlocks`] encodes RFC 9177 missing-blocks CBOR-seq (Content-Format 272).
-//! [`ParsedMessage::check_rfc7252_formats`] is
-//! optional and separate from wire decode and from
-//! [`ParsedMessage::check_rfc7252_options`].
-//!
-//! Wire format lives in `knowledge/rfcs/rfc7252.txt`. This module does not
-//! restate it.
+//! Optional, not used by [`decode`]:
+//! [`ParsedMessage::check_rfc7252_options`] (unrecognized critical) and
+//! [`ParsedMessage::check_rfc7252_formats`] (known option, wrong format).
+//! Wire format lives in `knowledge/rfcs/`. This module does not restate it.
 
 mod builder;
 mod decode;

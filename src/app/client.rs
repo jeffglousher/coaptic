@@ -1,21 +1,17 @@
-//! Outbound App request: encode TX, match Exchange, take a [`Response`].
+//! Outbound App request: encode TX, match Token + peer, take a [`Response`].
 //!
 //! ```text
 //! Outgoing --encode--> TX slot
-//! poll matches Token + endpoint (Exchange table)
-//! RX datagram --copy--> Response
+//! poll matches Token + endpoint
+//! RX --copy--> Response
 //! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
 //! ```
 //!
-//! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId). [`App::poll`](super::App::poll)
-//! advances this alongside site routing on the same Engine and socket.
-//! Classic Block2 Continue and Q-Block2 window Continue reuse the path
-//! recorded at [`Outgoing::send`]. Large PUT/POST uses Block1 / Q-Block1
-//! the same way: Engine `encode_block1_tx` writes Block1 + token only, so
-//! continues carry the stored Uri-Path. Observe subscribe
-//! ([`Outgoing::observe`]) inserts Engine [`ObserveInterest`] after the
-//! first Observe-bearing success; later notifications match that row
-//! (Exchange is cleared). Q-Block2 recover stays on `poll`.
+//! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId).
+//! [`App::poll`](super::App::poll) advances this alongside site routing on
+//! the same socket. Continues reuse the path recorded at
+//! [`Outgoing::send`]. Observe subscribe ([`Outgoing::observe`]) keeps the
+//! same [`Call`] after the Exchange is cleared.
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
@@ -34,7 +30,31 @@ use super::{App, Error, Method};
 
 /// Outstanding client exchange (Token + destination).
 ///
-/// Identity for [`App::take_response`](super::App::take_response). Not a slot.
+/// Identity for [`App::take_response`](super::App::take_response). Not a
+/// slot. After [`Outgoing::observe`], the same `Call` yields the initial
+/// representation and later notifications.
+///
+/// ```
+/// # use coaptic::storage::DatagramIo;
+/// # use coaptic::{App, Endpoint, profiles};
+/// # struct NullIo;
+/// # impl DatagramIo for NullIo {
+/// #     type Error = &'static str;
+/// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+/// #         Ok(None)
+/// #     }
+/// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+/// # }
+/// let mut app = App::profile::<profiles::Default>()
+///     .block_wise(false)
+///     .bind(NullIo)
+///     .unwrap();
+/// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+/// let call = app.get("sensors/temp").to(peer).send(0).unwrap();
+/// app.poll(0).unwrap();
+/// let response = app.take_response(call);
+/// # let _ = response;
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Call {
     token: Token,
@@ -231,11 +251,13 @@ enum OutgoingObserve {
 
 /// Outbound request builder: [`App::get`](super::App::get) / [`App::put`](super::App::put).
 ///
+/// Distinct from the site routers [`get`](super::get) / [`put`](super::put).
 /// Chain [`.to`](Self::to), optional [`.payload`](Self::payload) /
 /// [`.non`](Self::non) / [`.observe`](Self::observe) /
 /// [`.deregister`](Self::deregister) / [`.q_block1`](Self::q_block1) /
 /// [`.q_block2`](Self::q_block2), then [`.send`](Self::send). Default type
-/// is CON.
+/// is CON. Path sugar is [`super::IntoPath`] (`"sensors/temp"` or
+/// `&["sensors", "temp"]`).
 ///
 /// ```
 /// # use coaptic::storage::DatagramIo;
@@ -281,7 +303,7 @@ where
     /// CON GET builder. Next: [`Outgoing::to`].
     ///
     /// Distinct from the site router [`get`](super::get).
-    /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
+    /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
     pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
         self.request(Method::Get, path)
@@ -349,14 +371,13 @@ where
     crate::storage::Memory<P, crate::storage::WithBodies<P>>:
         crate::storage::BodySlots + ObserveSlots,
 {
-    /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll) has completed it.
+    /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll)
+    /// has completed it.
     ///
     /// When Block2 / Q-Block2 assembled, copies the RX body into
-    /// [`Response::body`] and releases that body slot.
-    ///
-    /// After [`Outgoing::observe`], the same `call` yields the initial
-    /// representation and later notifications. Lives stay while Engine
-    /// Observe interest is still registered.
+    /// [`Response::body`] and releases that body slot. After
+    /// [`Outgoing::observe`], the same `call` yields the initial
+    /// representation and later notifications.
     pub fn take_response(&mut self, call: Call) -> Option<Response> {
         let (mut response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
