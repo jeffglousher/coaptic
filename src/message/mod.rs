@@ -26,6 +26,7 @@
 //! No-Response (RFC 7967) reuse uint. None of those numbers are in Table 4.
 //! [`ParsedMessage::precondition`] classifies If-Match / If-None-Match.
 //! [`ProblemDetails`] encodes RFC 9290 concise problem details (CBOR).
+//! [`MissingBlocks`] encodes RFC 9177 missing-blocks CBOR-seq (Content-Format 272).
 //! [`ParsedMessage::check_rfc7252_formats`] is
 //! optional and separate from wire decode and from
 //! [`ParsedMessage::check_rfc7252_options`].
@@ -39,6 +40,7 @@ mod echo;
 mod encode;
 mod hop;
 mod id;
+mod missing_blocks;
 mod no_response;
 mod option;
 mod precondition;
@@ -54,6 +56,7 @@ pub use echo::{Echo, EchoFreshness};
 pub use encode::{Message, encode};
 pub use hop::HopLimit;
 pub use id::{Ids, TokenSource};
+pub use missing_blocks::{MissingBlocks, MissingBlocksError};
 pub use no_response::NoResponse;
 pub use option::{Opt, OptionNumber, Options};
 pub use precondition::Precondition;

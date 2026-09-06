@@ -4,8 +4,8 @@ use super::{Error, Request, Response, Site, get, post, put};
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId, Opt,
-    OptionsBuilder, ProblemDetails, Token, Type, decode, encode, encode_uint,
+    BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
+    MissingBlocks, Opt, OptionsBuilder, ProblemDetails, Token, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -730,13 +730,12 @@ fn qblock1_holes_are_request_entity_incomplete() {
     let parsed = last_reply(&app);
     assert_eq!(parsed.ty, Type::NonConfirmable);
     assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
-    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
-    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
-    assert_eq!(
-        details.response_code(),
-        Some(Code::REQUEST_ENTITY_INCOMPLETE)
-    );
-    assert_eq!(details.title_text(), Some("Request Entity Incomplete"));
+    assert_eq!(parsed.content_format, Some(ContentFormat::MISSING_BLOCKS));
+    let mut nums = [0u32; 4];
+    let n =
+        MissingBlocks::decode(&parsed.payload[..parsed.payload_len], &mut nums).expect("cbor-seq");
+    assert_eq!(&nums[..n], &[1]);
+    assert!(ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).is_err());
 }
 
 #[test]
@@ -762,6 +761,12 @@ fn qblock1_apply_error_is_request_entity_incomplete() {
     let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
     assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(
+        details.response_code(),
+        Some(Code::REQUEST_ENTITY_INCOMPLETE)
+    );
+    assert_eq!(details.title_text(), Some("Request Entity Incomplete"));
 }
 
 #[test]

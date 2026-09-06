@@ -2,7 +2,9 @@
 //! and the owned snapshot [`App::take_response`](super::App::take_response)
 //! yields for a completed client [`Call`](super::Call).
 
-use crate::message::{Code, ContentFormat, Echo, MessageId, ProblemDetails, Token, Type};
+use crate::message::{
+    Code, ContentFormat, Echo, MessageId, MissingBlocks, ProblemDetails, Token, Type,
+};
 use crate::storage::Endpoint;
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
@@ -47,7 +49,8 @@ impl IntoResponse for Response {
 /// owns per-slot state machines inside that loop.
 ///
 /// A completed client exchange is the same type: [`Self::code`] /
-/// [`Self::payload`] / [`Self::body`] / [`Self::problem_details`] (and
+/// [`Self::payload`] / [`Self::body`] / [`Self::problem_details`] /
+/// [`Self::missing_block_nums`] (and
 /// [`Self::ty`] / [`Self::token`] / [`Self::peer`] when the snapshot
 /// carried them). [`Self::payload`] is this datagram (truncated at
 /// [`INLINE_PAYLOAD`]). [`Self::body`] is the assembled Block2 /
@@ -206,7 +209,9 @@ impl Response {
     /// and detail are optional ([`Self::title`], [`Self::detail`]). Named
     /// builders such as [`Self::not_found`] stay empty; call this when a
     /// structured body is wanted. [`App`](super::App) uses this for
-    /// generated 4.04 / 4.05 / 4.08, and 4.01 when Echo freshness is on.
+    /// generated 4.04 / 4.05, apply-error 4.08, and 4.01 when Echo
+    /// freshness is on. Progress-driven Q-Block1 holes use
+    /// [`Self::missing_blocks`] instead.
     ///
     /// Override the Content-Format with [`Self::content_format`] only when
     /// the peer asked for something else.
@@ -224,6 +229,44 @@ impl Response {
     #[must_use]
     pub fn problem(code: Code) -> Self {
         Self::new(code).with_problem(None, None)
+    }
+
+    /// 4.08 with RFC 9177 missing-blocks CBOR-seq (Content-Format 272).
+    ///
+    /// Encodes `nums` as a CBOR Sequence of unsigned integers (no array
+    /// wrapper). [`App`](super::App) uses this for progress-driven Q-Block1
+    /// holes. Apply errors and other 4.08 stay [`Self::problem`].
+    ///
+    /// ```
+    /// use coaptic::{Code, ContentFormat, Response};
+    ///
+    /// let response = Response::missing_blocks([1, 9]);
+    /// assert_eq!(response.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+    /// assert_eq!(response.format(), Some(ContentFormat::MISSING_BLOCKS));
+    /// let mut nums = [0u32; 4];
+    /// assert_eq!(response.missing_block_nums(&mut nums), Some(&[1, 9][..]));
+    /// ```
+    #[must_use]
+    pub fn missing_blocks(nums: impl IntoIterator<Item = u32>) -> Self {
+        let mut buf = [0u8; INLINE_PAYLOAD];
+        match MissingBlocks::encode(nums, &mut buf) {
+            Ok(n) => Self::new(Code::REQUEST_ENTITY_INCOMPLETE)
+                .content_format(ContentFormat::MISSING_BLOCKS)
+                .payload_copy(&buf[..n]),
+            Err(_) => Self::new(Code::REQUEST_ENTITY_INCOMPLETE)
+                .content_format(ContentFormat::MISSING_BLOCKS),
+        }
+    }
+
+    /// Decode the payload as RFC 9177 missing-blocks NUMs when the
+    /// Content-Format is [`ContentFormat::MISSING_BLOCKS`].
+    #[must_use]
+    pub fn missing_block_nums<'a>(&self, out: &'a mut [u32]) -> Option<&'a [u32]> {
+        if self.content_format != Some(ContentFormat::MISSING_BLOCKS) {
+            return None;
+        }
+        let n = MissingBlocks::decode(self.payload(), out).ok()?;
+        Some(&out[..n])
     }
 
     /// Set the RFC 9290 title (−1) and keep (or set) problem-details CBOR.

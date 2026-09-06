@@ -245,6 +245,8 @@ impl ContentFormat {
     pub const JSON: Self = Self(50);
     /// `application/concise-problem-details+cbor` (RFC 9290).
     pub const PROBLEM_DETAILS: Self = Self(257);
+    /// `application/missing-blocks+cbor-seq` (RFC 9177).
+    pub const MISSING_BLOCKS: Self = Self(272);
 
     /// Wrap a raw Content-Format ID.
     #[must_use]
@@ -1126,6 +1128,8 @@ mod unit_tests {
         );
         assert_eq!(ContentFormat::PROBLEM_DETAILS.get(), 257);
         assert_eq!(ContentFormat::PROBLEM_DETAILS.encode().as_bytes(), &[1, 1]);
+        assert_eq!(ContentFormat::MISSING_BLOCKS.get(), 272);
+        assert_eq!(ContentFormat::MISSING_BLOCKS.encode().as_bytes(), &[1, 16]);
     }
 
     #[test]

@@ -33,7 +33,7 @@ app.poll(now_ms)?;
 let response = app.take_response(call);
 ```
 
-`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). `App::poll` recv / progress / route / send / release, and matches outbound exchanges. Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial representation and later notifications use the same `Call` / `take_response`. `deregister()` sends Observe=1. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
+`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. Structured 4.xx bodies use `Response::problem` (RFC 9290 CBOR). Q-Block1 holes from `poll` use `Response::missing_blocks` (RFC 9177 CBOR-seq, Content-Format 272). `App::poll` recv / progress / route / send / release, and matches outbound exchanges. Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial representation and later notifications use the same `Call` / `take_response`. `deregister()` sends Observe=1. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
 
 ## Features
 
