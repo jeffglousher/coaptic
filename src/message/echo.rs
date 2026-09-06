@@ -123,6 +123,15 @@ pub enum EchoFreshness {
 }
 
 impl EchoFreshness {
+    /// Whether this is not [`Self::Fresh`] (missing, invalid, or stale).
+    ///
+    /// App uses this when [`crate::app::AppBuilder::echo_freshness`] is set.
+    /// The library still does not invent 4.01 unless App applies that policy.
+    #[must_use]
+    pub const fn needs_challenge(self) -> bool {
+        !matches!(self, Self::Fresh)
+    }
+
     /// Classify the Echo option on `parsed` using caller `now_ms` / `fresh_ms`.
     #[must_use]
     pub fn of(parsed: &ParsedMessage<'_>, now_ms: u64, fresh_ms: u64) -> Self {
@@ -182,6 +191,10 @@ mod unit_tests {
         let parsed = decode(&buf[..n]).expect("decode");
         assert_eq!(Echo::from_message(&parsed), Ok(None));
         assert_eq!(EchoFreshness::of(&parsed, 10, 5), EchoFreshness::Missing);
+        assert!(EchoFreshness::Missing.needs_challenge());
+        assert!(EchoFreshness::Invalid.needs_challenge());
+        assert!(EchoFreshness::Stale.needs_challenge());
+        assert!(!EchoFreshness::Fresh.needs_challenge());
 
         let empty = [Opt::echo(&[])];
         let msg = Message::new(Type::Confirmable, Code::PUT, mid).with_options(&empty);

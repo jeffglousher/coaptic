@@ -4,8 +4,8 @@ use super::{Error, Request, Response, Site, get, post, put};
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
-    ProblemDetails, Token, Type, decode, encode, encode_uint,
+    BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId, Opt,
+    OptionsBuilder, ProblemDetails, Token, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -92,7 +92,23 @@ impl DatagramIo for Loopback {
 }
 
 fn encode_req(code: Code, path: &[&str], payload: &[u8]) -> ([u8; 256], usize) {
-    encode_req_ty(Type::Confirmable, code, path, payload, None)
+    encode_req_echo(Type::Confirmable, code, path, payload, None, None)
+}
+
+fn encode_req_with_echo(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+    echo: &EchoOpt,
+) -> ([u8; 256], usize) {
+    encode_req_echo(
+        Type::Confirmable,
+        code,
+        path,
+        payload,
+        None,
+        Some(echo.as_slice()),
+    )
 }
 
 fn encode_req_ty(
@@ -102,6 +118,17 @@ fn encode_req_ty(
     payload: &[u8],
     no_response: Option<u32>,
 ) -> ([u8; 256], usize) {
+    encode_req_echo(ty, code, path, payload, no_response, None)
+}
+
+fn encode_req_echo(
+    ty: Type,
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+    no_response: Option<u32>,
+    echo: Option<&[u8]>,
+) -> ([u8; 256], usize) {
     let token = Token::new(&[0xA1]).expect("token");
     let mut opts = OptionsBuilder::<8>::new();
     for segment in path {
@@ -110,6 +137,9 @@ fn encode_req_ty(
     let nr = no_response.map(EncodedUint::new);
     if let Some(ref encoded) = nr {
         opts.push(Opt::no_response(encoded)).expect("nr");
+    }
+    if let Some(echo) = echo {
+        opts.push(Opt::echo(echo)).expect("echo");
     }
     let msg = Message::new(ty, code, MessageId::new(0x1001))
         .with_token(token)
@@ -137,6 +167,7 @@ struct LastReply {
     content_format: Option<ContentFormat>,
     block2: Option<BlockValue>,
     block1: Option<BlockValue>,
+    echo: Option<EchoOpt>,
 }
 
 fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
@@ -153,6 +184,7 @@ fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
         content_format: parsed.content_format().and_then(Result::ok),
         block2: parsed.block2().and_then(Result::ok),
         block1: parsed.block1().and_then(Result::ok),
+        echo: EchoOpt::from_option(parsed.echo()),
     }
 }
 
@@ -227,6 +259,88 @@ fn put_led_is_changed() {
     let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"off");
+}
+
+const ECHO_FRESH_MS: u64 = 5;
+
+fn assert_echo_401(app: &App<profiles::Default, Loopback>, now_ms: u64) -> EchoOpt {
+    let parsed = last_reply(app);
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.code, Code::UNAUTHORIZED);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(details.response_code(), Some(Code::UNAUTHORIZED));
+    assert_eq!(details.title_text(), Some("Unauthorized"));
+    let echo = parsed.echo.expect("RFC 9175 Echo on 4.01");
+    assert!(echo.is_time_fresh(now_ms, ECHO_FRESH_MS));
+    assert_eq!(echo.issued_at(), Some(now_ms));
+    echo
+}
+
+#[test]
+fn echo_freshness_missing_is_401_problem() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.echo_freshness(ECHO_FRESH_MS);
+    app.poll(10).expect("poll");
+    let challenge = assert_echo_401(&app, 10);
+
+    let (wire, n) = encode_req_with_echo(Code::PUT, &["leds", "0"], b"1", &challenge);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(11).expect("retry");
+    assert_eq!(last_reply(&app).code, Code::CHANGED);
+}
+
+#[test]
+fn echo_freshness_stale_is_401_problem() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let stale = EchoOpt::mint(9, &[]).expect("mint");
+    let (wire, n) = encode_req_with_echo(Code::PUT, &["leds", "0"], b"1", &stale);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.echo_freshness(ECHO_FRESH_MS);
+    app.poll(15).expect("poll");
+    assert_echo_401(&app, 15);
+}
+
+#[test]
+fn echo_freshness_fresh_runs_handler() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let fresh = EchoOpt::mint(9, &[]).expect("mint");
+    let (wire, n) = encode_req_with_echo(Code::PUT, &["leds", "0"], b"1", &fresh);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.echo_freshness(ECHO_FRESH_MS);
+    app.poll(10).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CHANGED);
+    assert!(parsed.echo.is_none());
+}
+
+#[test]
+fn echo_freshness_builder_missing_is_401_problem() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
+    let mut app = App::profile::<profiles::Default>()
+        .echo_freshness(ECHO_FRESH_MS)
+        .block_wise(false)
+        .route(&["leds", "0"], get(get_led).put(put_led))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(10).expect("poll");
+    assert_echo_401(&app, 10);
 }
 
 #[test]
@@ -383,6 +497,11 @@ fn response_builders() {
     assert_eq!(cf.max_age_secs(), Some(60));
     assert_eq!(cf.observe_seq(), Some(3));
     assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
+    let echo = EchoOpt::mint(9, &[]).expect("mint");
+    assert_eq!(
+        Response::unauthorized().echo(echo).echo_option(),
+        Some(echo)
+    );
 
     let problem = Response::problem(Code::BAD_REQUEST)
         .title("Bad Request")
