@@ -5,8 +5,8 @@ use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
-    MissingBlocks, Opt, OptionsBuilder, ProblemDetails, QBlockTransmission, Token, Type, decode,
-    encode, encode_uint,
+    MissingBlocks, Opt, OptionNumber, OptionsBuilder, ProblemDetails, QBlockTransmission, Token,
+    Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -143,6 +143,29 @@ fn encode_req_echo(
         opts.push(Opt::echo(echo)).expect("echo");
     }
     let msg = Message::new(ty, code, MessageId::new(0x1001))
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("encode");
+    (buf, n)
+}
+
+fn encode_req_extra(
+    code: Code,
+    path: &[&str],
+    extra: &[Opt<'_>],
+    payload: &[u8],
+) -> ([u8; 256], usize) {
+    let token = Token::new(&[0xA1]).expect("token");
+    let mut opts = OptionsBuilder::<8>::new();
+    for segment in path {
+        opts.push(Opt::uri_path(segment)).expect("path");
+    }
+    for opt in extra {
+        opts.push(*opt).expect("extra");
+    }
+    let msg = Message::new(Type::Confirmable, code, MessageId::new(0x1001))
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(payload);
@@ -400,10 +423,11 @@ fn no_response_suppresses_success() {
 fn well_known_core_lists_registered_paths() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    // Catalog must be generated from these `.route` registrations (not a stored string).
     let mut app = App::profile::<profiles::Default>()
         .block_wise(false)
-        .route(&["sensors", "temp"], get(get_temp))
-        .route(&["leds", "0"], get(get_led).put(put_led))
+        .route(&["a"], get(get_temp))
+        .route(&["b"], get(get_led))
         .well_known_core()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -415,7 +439,71 @@ fn well_known_core_lists_registered_paths() {
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(parsed.content_format, Some(ContentFormat::LINK_FORMAT));
     let body = core::str::from_utf8(&parsed.payload[..parsed.payload_len]).expect("utf8");
-    assert_eq!(body, "</sensors/temp>,</leds/0>");
+    assert!(body.contains("</a>"), "{body}");
+    assert!(body.contains("</b>"), "{body}");
+    assert!(!body.contains(".well-known"), "{body}");
+    assert_eq!(body, "</a>,</b>");
+}
+
+/// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
+/// critical options can be 4.02, so this number is safe to carry through decode.
+#[derive(Clone, Copy)]
+struct Experimental(OptionNumber);
+
+impl Experimental {
+    const fn new() -> Self {
+        Self(OptionNumber::new(65000))
+    }
+
+    const fn number(self) -> OptionNumber {
+        self.0
+    }
+}
+
+fn put_std_and_custom(req: Request<'_>) -> Response {
+    let experimental = Experimental::new();
+    match (req.content_format(), req.get_option(experimental.number())) {
+        (Some(Ok(ContentFormat::JSON)), Some(opt)) => Response::changed().payload_copy(opt.value()),
+        _ => Response::new(Code::BAD_REQUEST),
+    }
+}
+
+#[test]
+fn request_carries_standard_and_custom_option() {
+    let experimental = Experimental::new();
+    assert!(!experimental.number().is_critical());
+
+    let cf = ContentFormat::JSON.encode();
+    let extra = [
+        Opt::content_format(&cf),
+        Opt::new(experimental.number(), b"vendor-x"),
+    ];
+    let (wire, n) = encode_req_extra(Code::PUT, &["probe"], &extra, &[]);
+
+    let parsed = decode(&wire[..n]).expect("decode");
+    assert_eq!(
+        parsed.content_format().and_then(Result::ok),
+        Some(ContentFormat::JSON)
+    );
+    assert_eq!(
+        parsed.get_option(experimental.number()).map(Opt::value),
+        Some(&b"vendor-x"[..])
+    );
+    parsed.check_rfc7252_options().expect("elective custom");
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["probe"], put(put_std_and_custom))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CHANGED);
+    assert_eq!(&reply.payload[..reply.payload_len], b"vendor-x");
 }
 
 #[test]
