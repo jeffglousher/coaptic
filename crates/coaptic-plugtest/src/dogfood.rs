@@ -897,6 +897,13 @@ fn run_coap_rs_client(cfg: &Config, dest: SocketAddr) -> Result<PairReport, Peer
             i,
             "OBS GET /obs",
         )?;
+        // Fresh UDP client per send_request: Observe=1 cannot match the
+        // registration Token. DELETE /obs drops the resource's observers
+        // so high-N does not fill the 4-row table.
+        let mut del = ClientRequest::request(Code::DELETE, &["obs"]);
+        del.timeout = cfg.timeout;
+        let got = client.send_request(dest, &del)?;
+        expect_codes("DELETE /obs", i, got.code, &[Code::DELETED])?;
         one_rs(
             &mut client,
             dest,
@@ -1346,8 +1353,9 @@ mod tests {
         let mut buf = Vec::new();
         let json_path =
             std::env::temp_dir().join(format!("coaptic-dogfood-smoke-{}.json", std::process::id()));
+        // 5 > Default observe table (4) so a missing deregister fails the run.
         let cfg = Config {
-            iterations: 2,
+            iterations: 5,
             json_path: Some(json_path.clone()),
             ..Config::default()
         };
@@ -1360,16 +1368,16 @@ mod tests {
         assert!(s.contains("LOOP (all verbs)"), "{s}");
         assert!(s.contains("app.metrics()"), "{s}");
         assert!(s.contains("rx_accepted="), "{s}");
-        assert!(s.contains("observe  collected=2"), "{s}");
+        assert!(s.contains("observe  collected=5"), "{s}");
         assert!(s.contains("dogfood  ok"), "{s}");
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&json_path).expect("json file")).expect("json");
         let _ = std::fs::remove_file(&json_path);
         assert_eq!(report["schema"], "coaptic-dogfood/1");
-        assert_eq!(report["iterations"], 2);
-        assert_eq!(report["observe_collected"], 2);
+        assert_eq!(report["iterations"], 5);
+        assert_eq!(report["observe_collected"], 5);
         assert!(
-            report["observe_notify"].as_u64().unwrap_or(0) >= 2,
+            report["observe_notify"].as_u64().unwrap_or(0) >= 5,
             "{report}"
         );
         eprintln!("{s}");
