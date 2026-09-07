@@ -92,13 +92,15 @@ pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
         + ObserveSlots
         + BodySlots
         + Exchanges
+        + DedupSlots
         + Default;
 }
 
 impl<P> MemoryLayout<false> for P
 where
     P: MemoryProfile,
-    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+    Memory<P>:
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
 {
     type Store = Memory<P>;
 }
@@ -107,7 +109,7 @@ impl<P> MemoryLayout<true> for P
 where
     P: MemoryProfile,
     Memory<P, WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
 {
     type Store = Memory<P, WithBodies<P>>;
 }

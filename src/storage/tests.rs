@@ -1189,8 +1189,26 @@ fn engine_dedup_insert_lookup_remove() {
     let id = engine.insert_dedup(entry).expect("insert");
     assert_eq!(engine.lookup_dedup(key), Some(id));
     assert_eq!(engine.dedup_entry(id), Some(entry));
+    assert_eq!(entry.due_ms(), 0);
+    assert!(entry.replay().is_none());
+    assert!(entry.tx_pin().is_none());
     assert!(engine.remove_dedup(key));
     assert_eq!(engine.lookup_dedup(key), None);
+}
+
+#[test]
+fn dedup_entry_replay_fits_or_stays_empty() {
+    let ep = Endpoint::v4([198, 51, 100, 7], 5683);
+    let small = DedupEntry::new(MessageId::new(1), ep).with_replay(&[1, 2, 3]);
+    assert_eq!(small.replay(), Some(&[1, 2, 3][..]));
+    assert!(small.tx_pin().is_none());
+    let too_big = [0u8; DedupEntry::REPLAY_MAX + 1];
+    let skipped = DedupEntry::new(MessageId::new(1), ep).with_replay(&too_big);
+    assert!(skipped.replay().is_none());
+    assert_eq!(skipped.due_ms(), 0);
+    let pinned = DedupEntry::new(MessageId::new(1), ep).with_tx_pin(SlotId::from_index(2));
+    assert_eq!(pinned.tx_pin().map(|id| id.index()), Some(2));
+    assert!(pinned.replay().is_none());
 }
 
 #[test]

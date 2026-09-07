@@ -52,7 +52,7 @@ macro_rules! impl_profile {
 /// | --- | ---: | ---: |
 /// | RX / TX datagram | 4 | **1472** |
 /// | RX / TX body (block-wise enabled only) | 2 | **4096** (= 4 × 1024) |
-/// | Dedup entries | 8 | — |
+/// | Dedup entries | 8 | compact replay + optional TX pin |
 /// | Observe entries | 4 | — |
 ///
 /// 1472 is IPv4 UDP max on Ethernet (`1500 − 20 − 8`). 4096 is four max-size
@@ -75,7 +75,7 @@ impl_profile! {
 /// | --- | ---: | ---: |
 /// | RX / TX datagram | 2 | **1152** |
 /// | RX / TX body (block-wise enabled only) | 1 | 4096 |
-/// | Dedup entries | 4 | — |
+/// | Dedup entries | 4 | compact replay + optional TX pin |
 /// | Observe entries | 2 | — |
 ///
 /// Body bytes are not locked for this profile; 4096 is used when block-wise is

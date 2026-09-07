@@ -1,5 +1,7 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use super::{
     AppAssembled, DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method,
     RESPONSE_BODY, Request, Response, Site, fetch, get, ipatch, link_format_capacity, patch, post,
@@ -13,7 +15,8 @@ use crate::message::{
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, DatagramIo, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile, ObserveKey, profiles,
+    BlockKey, DatagramIo, DedupEntry, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile,
+    ObserveKey, profiles,
 };
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
@@ -204,7 +207,11 @@ impl DatagramIo for RecordIo {
 }
 
 fn encode_req(code: Code, path: &[&str], payload: &[u8]) -> ([u8; 256], usize) {
-    encode_req_echo(Type::Confirmable, code, path, payload, None, None)
+    encode_req_mid(code, path, payload, 0x1001)
+}
+
+fn encode_req_mid(code: Code, path: &[&str], payload: &[u8], mid: u16) -> ([u8; 256], usize) {
+    encode_req_echo(Type::Confirmable, code, path, payload, None, None, mid)
 }
 
 fn encode_req_with_echo(
@@ -220,6 +227,25 @@ fn encode_req_with_echo(
         payload,
         None,
         Some(echo.as_slice()),
+        0x1001,
+    )
+}
+
+fn encode_req_with_echo_mid(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+    echo: &EchoOpt,
+    mid: u16,
+) -> ([u8; 256], usize) {
+    encode_req_echo(
+        Type::Confirmable,
+        code,
+        path,
+        payload,
+        None,
+        Some(echo.as_slice()),
+        mid,
     )
 }
 
@@ -230,7 +256,7 @@ fn encode_req_ty(
     payload: &[u8],
     no_response: Option<u32>,
 ) -> ([u8; 256], usize) {
-    encode_req_echo(ty, code, path, payload, no_response, None)
+    encode_req_echo(ty, code, path, payload, no_response, None, 0x1001)
 }
 
 fn encode_req_echo(
@@ -240,6 +266,7 @@ fn encode_req_echo(
     payload: &[u8],
     no_response: Option<u32>,
     echo: Option<&[u8]>,
+    mid: u16,
 ) -> ([u8; 256], usize) {
     let token = Token::new(&[0xA1]).expect("token");
     let mut opts = OptionsBuilder::<8>::new();
@@ -253,7 +280,7 @@ fn encode_req_echo(
     if let Some(echo) = echo {
         opts.push(Opt::echo(echo)).expect("echo");
     }
-    let msg = Message::new(ty, code, MessageId::new(0x1001))
+    let msg = Message::new(ty, code, MessageId::new(mid))
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(payload);
@@ -393,6 +420,211 @@ fn created_response_carries_location_path_and_query() {
     assert!(qs.next().is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn duplicate_con_get_replays_without_second_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+    let (_, first, first_n) = app.transport().sent[0].expect("ack");
+    let parsed = decode(&first[..first_n]).expect("decode");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CONTENT);
+    assert_eq!(parsed.payload(), b"21.5");
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "handler must not re-run");
+    assert_eq!(app.transport().sent_n, 2);
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn duplicate_con_post_does_not_reinvoke_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_post(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["leds", "0"], post(counting_post))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "POST must not re-run");
+    assert_eq!(app.transport().sent_n, 2);
+    let (_, first, first_n) = app.transport().sent[0].expect("first ack");
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+    let parsed = decode(&replay[..replay_n]).expect("decode");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CHANGED);
+}
+
+#[test]
+fn duplicate_con_patch_does_not_reinvoke_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_patch(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed().payload_copy(b"patched")
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::PATCH, &["delta"], b"p");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["delta"], patch(counting_patch))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "PATCH must not re-run");
+    let (_, first, first_n) = app.transport().sent[0].expect("first");
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+}
+
+#[test]
+fn duplicate_con_fetch_does_not_reinvoke_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_fetch(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content_copy(b"sel").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::FETCH, &["query"], b"sel");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["query"], fetch(counting_fetch))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(
+        HITS.load(Ordering::SeqCst),
+        1,
+        "FETCH must not re-run (App policy; RFC 8132 calls FETCH idempotent)"
+    );
+    let (_, first, first_n) = app.transport().sent[0].expect("first");
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+}
+
+#[test]
+fn duplicate_con_separate_replays_empty_ack() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_separate(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"separate-payload")
+            .content_format(ContentFormat::TEXT_PLAIN)
+            .separate()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let req_mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["separate"], get(counting_separate))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 2, "empty ACK then CON");
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "pending CON");
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "handler must not re-run");
+    assert_eq!(app.transport().sent_n, 3, "replay empty ACK only");
+    let (_, replay, replay_n) = app.transport().sent[2].expect("replay ACK");
+    let ack = decode(&replay[..replay_n]).expect("decode");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), req_mid);
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "body CON still pending");
+}
+
+#[test]
+fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+    let live = u64::from(Transmission::EXCHANGE_LIFETIME_MS) - 1;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(live).expect("still live");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .expect("expired");
+    assert_eq!(HITS.load(Ordering::SeqCst), 2);
 }
 
 #[test]
@@ -626,7 +858,7 @@ fn put_led_is_changed() {
     app.poll(0).expect("poll");
     assert_eq!(last_reply(&app).code, Code::CHANGED);
 
-    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let (wire, n) = encode_req_mid(Code::GET, &["leds", "0"], &[], 0x1002);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(1).expect("poll");
@@ -663,7 +895,7 @@ fn echo_freshness_missing_is_401_problem() {
     app.poll(10).expect("poll");
     let challenge = assert_echo_401(&app, 10);
 
-    let (wire, n) = encode_req_with_echo(Code::PUT, &["leds", "0"], b"1", &challenge);
+    let (wire, n) = encode_req_with_echo_mid(Code::PUT, &["leds", "0"], b"1", &challenge, 0x1002);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(11).expect("retry");
@@ -1549,6 +1781,51 @@ where
     let n = app.transport().send_n;
     assert!(n > 0, "expected a send");
     decode(&app.transport().sends[n - 1][..app.transport().send_lens[n - 1]]).expect("decode")
+}
+
+#[test]
+fn duplicate_con_post_oversize_ack_replays_from_tx_pin() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    static BODY: [u8; DedupEntry::REPLAY_MAX + 16] = [b'P'; DedupEntry::REPLAY_MAX + 16];
+    fn counting_post(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed().payload_copy_full(&BODY)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::POST, &["bulk"], &[], 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["bulk"], post(counting_post))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "oversize ACK pins TX");
+    let first_n = app.transport().send_lens[0];
+    let mut first = [0u8; WIRE];
+    first[..first_n].copy_from_slice(&app.transport().sends[0][..first_n]);
+    let parsed = decode(&first[..first_n]).expect("decode");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CHANGED);
+    assert!(first_n > DedupEntry::REPLAY_MAX);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "POST must not re-run");
+    assert_eq!(app.transport().send_n, 2);
+    assert_eq!(app.transport().send_lens[1], first_n);
+    assert_eq!(
+        &app.transport().sends[1][..first_n],
+        &first[..first_n],
+        "replay must match pinned ACK bytes"
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
 }
 
 #[test]
