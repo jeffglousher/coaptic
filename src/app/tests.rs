@@ -1,5 +1,7 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use super::{
     Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, Request, Response, Site, fetch, get,
     ipatch, link_format_capacity, patch, post, put,
@@ -330,6 +332,151 @@ fn created_response_carries_location_path_and_query() {
     assert!(qs.next().is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn duplicate_con_get_replays_without_second_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+    let (_, first, first_n) = app.transport().sent[0].expect("ack");
+    let parsed = decode(&first[..first_n]).expect("decode");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CONTENT);
+    assert_eq!(parsed.payload(), b"21.5");
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "handler must not re-run");
+    assert_eq!(app.transport().sent_n, 2);
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn duplicate_con_post_does_not_reinvoke_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_post(_: Request<'_>) -> Response {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["leds", "0"], post(counting_post))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "POST must not re-run");
+    assert_eq!(app.transport().sent_n, 2);
+    let (_, first, first_n) = app.transport().sent[0].expect("first ack");
+    let (_, replay, replay_n) = app.transport().sent[1].expect("replay");
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+    let parsed = decode(&replay[..replay_n]).expect("decode");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CHANGED);
+}
+
+#[test]
+fn duplicate_con_separate_replays_empty_ack() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_separate(_: Request<'_>) -> Response {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"separate-payload")
+            .content_format(ContentFormat::TEXT_PLAIN)
+            .separate()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let req_mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["separate"], get(counting_separate))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 2, "empty ACK then CON");
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "pending CON");
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "handler must not re-run");
+    assert_eq!(app.transport().sent_n, 3, "replay empty ACK only");
+    let (_, replay, replay_n) = app.transport().sent[2].expect("replay ACK");
+    let ack = decode(&replay[..replay_n]).expect("decode");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), req_mid);
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "body CON still pending");
+}
+
+#[test]
+fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+    let live = u64::from(Transmission::EXCHANGE_LIFETIME_MS) - 1;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(live).expect("still live");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .expect("expired");
+    assert_eq!(HITS.load(Ordering::SeqCst), 2);
 }
 
 #[test]

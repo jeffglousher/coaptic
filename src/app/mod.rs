@@ -87,13 +87,13 @@ use core::marker::PhantomData;
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, EncodedUint, Ids, Message, MessageId, NoResponse, Opt,
-    OptionsBuilder, Type, decode, encode_uint,
+    OptionsBuilder, ParsedMessage, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
-    EngineBuilder, Exchanges, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey,
-    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit,
-    SlotError, SlotId, Storage, WithBodies,
+    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
+    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, Memory, MemoryProfile,
+    Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
+    PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage, WithBodies,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -357,9 +357,10 @@ impl<P, T, const N: usize> App<P, T, N>
 where
     P: MemoryProfile,
     T: DatagramIo,
-    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+    Memory<P>:
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     Memory<P, WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
 {
     /// One loop step: recv, progress, route, handler, send, release.
     ///
@@ -378,7 +379,10 @@ where
     /// minted Echo. Location-Path / Location-Query on the [`Response`]
     /// are written on the wire. [`Response::separate`] is an empty ACK
     /// to a CON request, then the representation in a later CON (new
-    /// Message ID; NON request → NON). Observe register / deregister and
+    /// Message ID; NON request → NON). A retransmitted CON request (same
+    /// Message ID + peer) is answered from the Dedup Table without a
+    /// second handler call while the row is live (`EXCHANGE_LIFETIME`).
+    /// Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`].
     ///
@@ -519,10 +523,11 @@ fn poll_engine<Mem, T, const N: usize>(
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
     let received = engine.recv_from(io)?;
+    expire_request_dedup(engine, now_ms);
     let progress = engine.progress(now_ms);
 
     if let Some(retransmit) = progress.retransmit() {
@@ -567,7 +572,7 @@ where
     }
 
     if let Some(recover) = progress.qblock_recover() {
-        send_qblock_recover(engine, io, ids, recover)?;
+        send_qblock_recover(engine, io, ids, now_ms, recover)?;
     }
     Ok(())
 }
@@ -610,10 +615,11 @@ fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    now_ms: u64,
     recover: QBlockRecover,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + BodySlots,
+    Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     match recover.role() {
@@ -654,6 +660,7 @@ where
                 io,
                 meta,
                 &Response::missing_blocks(nums.into_iter().take(n)),
+                now_ms,
             )
         }
         _ => Ok(()),
@@ -673,7 +680,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {
@@ -725,6 +732,16 @@ where
         return client::complete_client(engine, io, inbox, lives, ids, now_ms, peer, &parsed, rx);
     }
 
+    if parsed.ty() == Type::Confirmable {
+        match replay_con_request(engine, io, peer, &parsed, now_ms) {
+            Replay::Hit(outcome) => {
+                let _ = engine.release_rx(rx);
+                return outcome;
+            }
+            Replay::Miss => {}
+        }
+    }
+
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
     let block2 = parsed.block2().and_then(Result::ok);
     let q_block2 = parsed.q_block2().next().and_then(Result::ok);
@@ -744,7 +761,7 @@ where
         match Engine::<Mem>::echo_freshness(&parsed, now_ms, fresh_ms) {
             EchoFreshness::Fresh => {}
             EchoFreshness::Missing | EchoFreshness::Invalid | EchoFreshness::Stale => {
-                let outcome = send_response(engine, io, meta, &unauthorized_echo(now_ms));
+                let outcome = send_response(engine, io, meta, &unauthorized_echo(now_ms), now_ms);
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -754,7 +771,7 @@ where
     let assembled = assemble_inbound_body(engine, rx, now_ms);
     match assembled {
         InboundBody::Continue => {
-            let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE));
+            let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE), now_ms);
             let _ = engine.release_rx(rx);
             return outcome;
         }
@@ -767,6 +784,7 @@ where
                 meta,
                 &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
                     .title("Request Entity Incomplete"),
+                now_ms,
             );
             let _ = engine.release_rx(rx);
             return outcome;
@@ -806,7 +824,7 @@ where
     let outcome = if response.is_separate() {
         send_separate(engine, io, ids, now_ms, meta, &response)
     } else {
-        send_response(engine, io, meta, &response)
+        send_response(engine, io, meta, &response, now_ms)
     };
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
@@ -1047,7 +1065,7 @@ fn send_separate<S, T>(
     response: &Response,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let key = BlockKey::new(meta.token, meta.dest);
@@ -1070,6 +1088,7 @@ where
     let ty = match meta.ty {
         Type::Confirmable => {
             send_empty_ack(engine, io, meta.dest, meta.mid)?;
+            remember_empty_ack(engine, meta.dest, meta.mid, now_ms);
             Type::Confirmable
         }
         Type::NonConfirmable => Type::NonConfirmable,
@@ -1116,9 +1135,10 @@ fn send_response<S, T>(
     io: &mut T,
     meta: SendResponse,
     response: &Response,
+    now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     if meta.no_response.suppresses(response.code()) {
@@ -1158,7 +1178,10 @@ where
         None,
         meta.block1,
     ) {
-        Ok(()) => finish_send(engine, io, tx, meta.dest, None),
+        Ok(()) => {
+            remember_tx_reply(engine, tx, meta.dest, meta.mid, meta.ty, now_ms);
+            finish_send(engine, io, tx, meta.dest, None)
+        }
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
             let _ = engine.release_tx(tx);
             start_outgoing(engine, io, meta, response, ty, key)
@@ -1426,6 +1449,126 @@ fn encode_response<S: Storage + DatagramSlots>(
         .with_options(opts.as_slice())
         .with_payload(payload);
     engine.encode_tx(tx, &msg).map(|_| ())
+}
+
+enum Replay<E> {
+    Hit(Result<(), Error<E>>),
+    Miss,
+}
+
+fn replay_con_request<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    peer: Endpoint,
+    parsed: &ParsedMessage<'_>,
+    now_ms: u64,
+) -> Replay<T::Error>
+where
+    S: Storage + DatagramSlots + DedupSlots,
+    T: DatagramIo,
+{
+    let Some(id) = engine.lookup_dedup(DedupKey::new(parsed.message_id(), peer)) else {
+        return Replay::Miss;
+    };
+    let Some(entry) = engine.dedup_entry(id) else {
+        return Replay::Miss;
+    };
+    let now32 = u32::try_from(now_ms).unwrap_or(u32::MAX);
+    if entry.due_ms() != 0 && now32 >= entry.due_ms() {
+        let _ = engine.remove_dedup(entry.key());
+        return Replay::Miss;
+    }
+    if let Some(bytes) = entry.replay() {
+        return Replay::Hit(send_replay(engine, io, peer, bytes));
+    }
+    if parsed.code().is_idempotent() {
+        Replay::Miss
+    } else {
+        Replay::Hit(Ok(()))
+    }
+}
+
+fn send_replay<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    dest: Endpoint,
+    bytes: &[u8],
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots,
+    T: DatagramIo,
+{
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
+    if let Err(e) = engine.write_tx(tx, bytes, dest) {
+        let _ = engine.release_tx(tx);
+        return Err(Error::Slot(e));
+    }
+    let send = engine.send_tx(io, tx);
+    let _ = engine.release_tx(tx);
+    send?;
+    Ok(())
+}
+
+fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    dest: Endpoint,
+    mid: MessageId,
+    request_ty: Type,
+    now_ms: u64,
+) {
+    if request_ty != Type::Confirmable {
+        return;
+    }
+    let due = dedup_due_ms(now_ms);
+    let mut entry = DedupEntry::new(mid, dest).with_due_ms(due);
+    if let Ok(access) = engine.access_tx(tx) {
+        entry = entry.with_replay(access.as_bytes());
+    }
+    store_request_dedup(engine, entry);
+}
+
+fn remember_empty_ack<S: Storage + DedupSlots>(
+    engine: &mut Engine<S>,
+    dest: Endpoint,
+    mid: MessageId,
+    now_ms: u64,
+) {
+    let mut buf = [0u8; 16];
+    let Ok(n) = encode(&Message::empty_ack(mid), &mut buf) else {
+        return;
+    };
+    store_request_dedup(
+        engine,
+        DedupEntry::new(mid, dest)
+            .with_due_ms(dedup_due_ms(now_ms))
+            .with_replay(&buf[..n]),
+    );
+}
+
+fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) {
+    let _ = engine.remove_dedup(entry.key());
+    let _ = engine.insert_dedup(entry);
+}
+
+fn dedup_due_ms(now_ms: u64) -> u32 {
+    u32::try_from(now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)))
+        .unwrap_or(u32::MAX)
+}
+
+fn expire_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, now_ms: u64) {
+    let now32 = u32::try_from(now_ms).unwrap_or(u32::MAX);
+    let n = engine.capacities().dedup_entries;
+    for i in 0..n {
+        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+            continue;
+        };
+        if entry.due_ms() != 0 && now32 >= entry.due_ms() {
+            let _ = engine.remove_dedup(entry.key());
+        }
+    }
 }
 
 pub(crate) fn finish_send<S, T>(

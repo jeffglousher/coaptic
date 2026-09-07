@@ -41,20 +41,52 @@ impl DedupKey {
 
 /// Occupied Dedup Table payload.
 ///
-/// Stored in the table slot itself. Timing and retransmission state are not
-/// modeled here.
+/// Stored in the table slot itself. [`Self::due_ms`] `0` means the row does
+/// not expire (Engine-pair / manual insert). A compact replay buffer is
+/// sidecar on this row so App can retransmit a piggybacked ACK without a
+/// seventh memory area. See `knowledge/rfcs/rfc7252.txt` §4.5.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupEntry {
     key: DedupKey,
+    due_ms: u32,
+    replay_len: u16,
+    replay: [u8; Self::REPLAY_MAX],
 }
 
 impl DedupEntry {
+    /// Bytes of encoded response cached for CON retransmission.
+    pub const REPLAY_MAX: usize = 256;
+
     /// History row for `message_id` from `endpoint`.
     #[must_use]
     pub const fn new(message_id: MessageId, endpoint: Endpoint) -> Self {
         Self {
             key: DedupKey::new(message_id, endpoint),
+            due_ms: 0,
+            replay_len: 0,
+            replay: [0; Self::REPLAY_MAX],
         }
+    }
+
+    /// Absolute expiry on the caller clock. `0` is never.
+    #[must_use]
+    pub const fn with_due_ms(mut self, due_ms: u32) -> Self {
+        self.due_ms = due_ms;
+        self
+    }
+
+    /// Cache encoded reply bytes when they fit [`Self::REPLAY_MAX`].
+    ///
+    /// Larger datagrams are not truncated: replay stays empty so a later
+    /// duplicate cannot send a lie.
+    #[must_use]
+    pub fn with_replay(mut self, bytes: &[u8]) -> Self {
+        if bytes.len() > Self::REPLAY_MAX {
+            return self;
+        }
+        self.replay[..bytes.len()].copy_from_slice(bytes);
+        self.replay_len = bytes.len() as u16;
+        self
     }
 
     /// Lookup identity.
@@ -74,11 +106,27 @@ impl DedupEntry {
     pub const fn endpoint(self) -> Endpoint {
         self.key.endpoint()
     }
+
+    /// Absolute expiry (`0` = never).
+    #[must_use]
+    pub const fn due_ms(self) -> u32 {
+        self.due_ms
+    }
+
+    /// Cached piggybacked / empty-ACK bytes, if stored.
+    #[must_use]
+    pub fn replay(&self) -> Option<&[u8]> {
+        if self.replay_len == 0 {
+            None
+        } else {
+            Some(&self.replay[..usize::from(self.replay_len)])
+        }
+    }
 }
 
 impl From<DedupKey> for DedupEntry {
     fn from(key: DedupKey) -> Self {
-        Self { key }
+        Self::new(key.message_id(), key.endpoint())
     }
 }
 
