@@ -57,7 +57,7 @@ fn put_body(req: Request<'_>) -> Response {
 
 fn fetch_query(req: Request<'_>) -> Response {
     assert_eq!(req.method(), Some(Method::Fetch));
-    Response::content(req.payload()).content_format(ContentFormat::TEXT_PLAIN)
+    Response::content_copy(req.payload()).content_format(ContentFormat::TEXT_PLAIN)
 }
 
 fn patch_doc(req: Request<'_>) -> Response {
@@ -432,17 +432,20 @@ fn wrong_method_is_not_allowed() {
 fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
     App::profile::<profiles::Default>()
         .block_wise(false)
-        .route(
-            &["doc"],
-            fetch(fetch_query).patch(patch_doc).ipatch(ipatch_doc),
-        )
+        .route(&["query"], fetch(fetch_query))
+        .route(&["delta"], patch(patch_doc))
+        .route(&["idem"], ipatch(ipatch_doc))
         .bind(io)
         .expect("bind")
 }
 
-fn poll_rfc8132(code: Code, payload: &[u8]) -> (LastReply, App<profiles::Default, Loopback>) {
+fn poll_rfc8132(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+) -> (LastReply, App<profiles::Default, Loopback>) {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let (wire, n) = encode_req(code, &["doc"], payload);
+    let (wire, n) = encode_req(code, path, payload);
     let mut app = rfc8132_loopback(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
@@ -454,7 +457,7 @@ fn poll_rfc8132(code: Code, payload: &[u8]) -> (LastReply, App<profiles::Default
 
 #[test]
 fn fetch_query_is_content() {
-    let (parsed, mut app) = poll_rfc8132(Code::FETCH, b"sel");
+    let (parsed, mut app) = poll_rfc8132(Code::FETCH, &["query"], b"sel");
     assert_eq!(parsed.ty, Type::Acknowledgement);
     assert_eq!(parsed.code, Code::CONTENT);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"sel");
@@ -465,7 +468,7 @@ fn fetch_query_is_content() {
 
 #[test]
 fn patch_delta_is_changed() {
-    let (parsed, mut app) = poll_rfc8132(Code::PATCH, b"delta");
+    let (parsed, mut app) = poll_rfc8132(Code::PATCH, &["delta"], b"delta");
     assert_eq!(parsed.ty, Type::Acknowledgement);
     assert_eq!(parsed.code, Code::CHANGED);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"delta");
@@ -475,7 +478,7 @@ fn patch_delta_is_changed() {
 
 #[test]
 fn ipatch_delta_is_changed() {
-    let (parsed, mut app) = poll_rfc8132(Code::IPATCH, b"delta");
+    let (parsed, mut app) = poll_rfc8132(Code::IPATCH, &["idem"], b"delta");
     assert_eq!(parsed.ty, Type::Acknowledgement);
     assert_eq!(parsed.code, Code::CHANGED);
     assert_eq!(&parsed.payload[..parsed.payload_len], b"idempotent");
@@ -1632,10 +1635,9 @@ fn client_put_round_trip_without_slot_id() {
 fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
     App::profile::<profiles::Default>()
         .block_wise(false)
-        .route(
-            &["doc"],
-            fetch(fetch_query).patch(patch_doc).ipatch(ipatch_doc),
-        )
+        .route(&["query"], fetch(fetch_query))
+        .route(&["delta"], patch(patch_doc))
+        .route(&["idem"], ipatch(ipatch_doc))
         .bind(Echo::default())
         .expect("bind")
 }
@@ -1664,7 +1666,7 @@ fn client_rfc8132_round_trip(
 fn client_fetch_round_trip_without_slot_id() {
     client_rfc8132_round_trip(
         |app, peer| {
-            app.fetch(&["doc"])
+            app.fetch(&["query"])
                 .to(peer)
                 .payload(b"sel")
                 .content_format(ContentFormat::TEXT_PLAIN)
@@ -1680,7 +1682,7 @@ fn client_fetch_round_trip_without_slot_id() {
 fn client_patch_round_trip_without_slot_id() {
     client_rfc8132_round_trip(
         |app, peer| {
-            app.patch(&["doc"])
+            app.patch(&["delta"])
                 .to(peer)
                 .payload(b"delta")
                 .send(0)
@@ -1695,7 +1697,7 @@ fn client_patch_round_trip_without_slot_id() {
 fn client_ipatch_round_trip_without_slot_id() {
     client_rfc8132_round_trip(
         |app, peer| {
-            app.ipatch(&["doc"])
+            app.ipatch(&["idem"])
                 .to(peer)
                 .payload(b"delta")
                 .send(0)
