@@ -79,7 +79,9 @@
 //!   a datagram. No [`Engine`](storage::Engine) required.
 //! - [`storage`] — [`Engine`](storage::Engine) over
 //!   [`Storage`](storage::Storage); pools, tables,
-//!   [`DatagramIo`](storage::DatagramIo). Advanced:
+//!   [`DatagramIo`](storage::DatagramIo), wrapping
+//!   [`Metrics`](storage::Metrics) (`Engine::metrics` /
+//!   [`App::metrics`](App::metrics)). Advanced:
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
@@ -131,4 +133,4 @@ pub use app::{
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};
-pub use storage::Endpoint;
+pub use storage::{Endpoint, Metrics};

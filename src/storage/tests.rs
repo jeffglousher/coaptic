@@ -3433,6 +3433,149 @@ fn q_block2_outgoing_reissue_encodes_same_range() {
     assert_eq!(parsed.payload(), &body[16..32]);
 }
 
+#[test]
+fn engine_metrics_progress_retransmit_give_up() {
+    let mut engine = build_default();
+    assert_eq!(engine.metrics(), super::Metrics::ZERO);
+    let idle = engine.progress(0);
+    assert!(idle.is_idle());
+    assert_eq!(engine.metrics().progress, 1);
+
+    let ep = Endpoint::v4([192, 0, 2, 80], 5683);
+    let tx = record_pending_at(&mut engine, ep, 4, 0, 0);
+    engine.reset_metrics();
+    let mut now = 0;
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for _ in 0..Transmission::MAX_RETRANSMIT {
+        now += u64::from(timeout);
+        match engine.poll_retransmit(now).expect("due") {
+            Retransmit::Due(pending) => {
+                timeout = pending.rto().timeout_ms();
+                now = pending.rto().next_timeout_ms() - u64::from(timeout);
+            }
+            Retransmit::GiveUp(_) => panic!("give-up before MAX_RETRANSMIT"),
+        }
+    }
+    assert_eq!(
+        engine.metrics().con_retransmit,
+        u32::from(Transmission::MAX_RETRANSMIT)
+    );
+    now += u64::from(timeout);
+    match engine.poll_retransmit(now).expect("give up") {
+        Retransmit::GiveUp(pending) => assert_eq!(pending.tx_slot(), tx),
+        Retransmit::Due(_) => panic!("should give up"),
+    }
+    assert_eq!(engine.metrics().give_up, 1);
+    engine.release_tx(tx).expect("release");
+}
+
+#[test]
+fn engine_metrics_empty_ack_and_rst() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 81], 5683);
+    let tx = record_pending_at(&mut engine, ep, 3, 0, 0);
+    let parsed = crate::message::decode(&[0x60, 0x00, 0x00, 0x03]).expect("ack");
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), Some(tx));
+    assert_eq!(engine.metrics().empty_ack, 1);
+    assert_eq!(engine.metrics().empty_rst, 0);
+    engine.release_tx(tx).expect("release");
+
+    let tx = record_pending_at(&mut engine, ep, 9, 0, 0);
+    let rst = empty_rst(MessageId::new(9));
+    let mut buf = [0u8; 8];
+    let n = encode(&rst, &mut buf).expect("rst");
+    let parsed = crate::message::decode(&buf[..n]).expect("rst");
+    assert_eq!(engine.match_empty_ack_rst(&parsed, ep), Some(tx));
+    assert_eq!(engine.metrics().empty_rst, 1);
+    engine.release_tx(tx).expect("release");
+}
+
+#[test]
+fn engine_metrics_observe_register_cancel() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 82], 5683);
+    let tok = sample_token(&[0x01]);
+    let rx = engine.acquire_rx().expect("rx");
+    let register = observe_get(tok, 9, &[Opt::observe_register()]);
+    let (buf, n) = encode_into(&register);
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    engine
+        .register_observe_rx(rx)
+        .expect("decode")
+        .expect("register");
+    assert_eq!(engine.metrics().observe_register, 1);
+
+    engine
+        .record_observe_notify(ObserveKey::new(tok, ep), 0, MessageId::new(1), false)
+        .expect("notify");
+    assert_eq!(engine.metrics().observe_notify, 1);
+
+    let rx2 = engine.acquire_rx().expect("rx2");
+    let deregister = observe_get(tok, 11, &[Opt::observe_deregister()]);
+    let (buf, n) = encode_into(&deregister);
+    engine.write_rx(rx2, &buf[..n], ep).expect("write");
+    engine
+        .deregister_observe_rx(rx2)
+        .expect("decode")
+        .expect("cancel");
+    assert_eq!(engine.metrics().observe_cancel, 1);
+}
+
+#[test]
+fn engine_metrics_block_assemble() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 21], 5683);
+    let token = sample_token(&[0xab]);
+    let payload = b"abcdef";
+    let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
+    let size1 = encode_uint(payload.len() as u32);
+    let opts = [Opt::block1(&blk), Opt::size1(&size1)];
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(7))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(payload);
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    engine.apply_block1_rx(rx).expect("apply");
+    assert_eq!(engine.metrics().block1_assemble, 1);
+
+    let size2 = encode_uint(payload.len() as u32);
+    let opts = [Opt::block2(&blk), Opt::size2(&size2)];
+    let msg = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(8))
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(payload);
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx2 = engine.acquire_rx().expect("rx2");
+    engine.write_rx(rx2, &buf[..n], ep).expect("write");
+    engine.apply_block2_rx(rx2).expect("apply");
+    assert_eq!(engine.metrics().block2_assemble, 1);
+}
+
+#[test]
+fn engine_metrics_nstart_and_reset() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 83], 5683);
+    let _a = record_pending_at(&mut engine, ep, 10, 0, 0);
+    let b = engine.acquire_tx().expect("tx b");
+    engine
+        .encode_tx(
+            b,
+            &Message::new(Type::Confirmable, Code::GET, MessageId::new(11)),
+        )
+        .expect("encode");
+    assert!(
+        engine
+            .record_pending_con(b, ep, MessageId::new(11), 0, 0)
+            .is_none()
+    );
+    assert_eq!(engine.metrics().nstart_reject, 1);
+    engine.reset_metrics();
+    assert_eq!(engine.metrics(), super::Metrics::ZERO);
+}
+
 #[cfg(feature = "alloc")]
 mod alloc_backend {
     use super::*;

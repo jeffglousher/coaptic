@@ -12,6 +12,7 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::Metrics;
 use super::ObserveExpiry;
 use super::ObserveInterest;
 use super::ObserveKey;
@@ -27,6 +28,7 @@ use super::Storage;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
 };
+use super::pending::outstanding_pending;
 use crate::error::{BlockTransferError, SlotMessageError, ValueError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
@@ -48,9 +50,13 @@ use crate::message::{
 /// clock, socket ([`super::DatagramIo`]), and RST / remaining 4.xx
 /// policy. [`Self::echo_freshness`] classifies; App applies 4.01 when
 /// configured. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
+///
+/// Wrapping [`Metrics`] sit on this type. Copy with [`Self::metrics`];
+/// [`crate::App::metrics`] is the same snapshot from the happy path.
 #[derive(Debug)]
 pub struct Engine<S: Storage> {
     storage: S,
+    metrics: Metrics,
 }
 
 /// Stack temp while splitting Engine borrows (decode RX then `&mut` body,
@@ -62,7 +68,31 @@ const BLOCK_IO_SCRATCH: usize = 1472;
 
 impl<S: Storage> Engine<S> {
     pub(crate) fn from_storage(storage: S) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            metrics: Metrics::ZERO,
+        }
+    }
+
+    /// Copy of wrapping reactor counters.
+    ///
+    /// Always-on `u32` fields (64 bytes). A `std` dogfood bin can print
+    /// after a run (`format!("{}", engine.metrics())` or `"{snap:?}"`).
+    /// [`crate::App::metrics`] forwards here. Reset with
+    /// [`Self::reset_metrics`].
+    #[must_use]
+    pub const fn metrics(&self) -> Metrics {
+        self.metrics
+    }
+
+    /// Zero all reactor counters.
+    pub fn reset_metrics(&mut self) {
+        self.metrics = Metrics::ZERO;
+    }
+
+    #[inline]
+    pub(crate) fn metrics_mut(&mut self) -> &mut Metrics {
+        &mut self.metrics
     }
 
     /// Borrow the backing store.
@@ -104,7 +134,13 @@ impl<S: Storage> Engine<S> {
 
     /// Acquire one RX datagram slot, or `None` if the pool is saturated.
     pub fn acquire_rx(&mut self) -> Option<SlotId> {
-        self.storage.rx_datagram().acquire()
+        match self.storage.rx_datagram().acquire() {
+            Some(id) => Some(id),
+            None => {
+                Metrics::inc(&mut self.metrics.saturated);
+                None
+            }
+        }
     }
 
     /// Release an RX datagram slot.
@@ -124,7 +160,13 @@ impl<S: Storage> Engine<S> {
 
     /// Acquire one TX datagram slot, or `None` if the pool is saturated.
     pub fn acquire_tx(&mut self) -> Option<SlotId> {
-        self.storage.tx_datagram().acquire()
+        match self.storage.tx_datagram().acquire() {
+            Some(id) => Some(id),
+            None => {
+                Metrics::inc(&mut self.metrics.saturated);
+                None
+            }
+        }
     }
 
     /// Release a TX datagram slot.
@@ -139,7 +181,11 @@ impl<S: Storage> Engine<S> {
 
     /// Acquire one RX body slot. `None` if body pools are absent or saturated.
     pub fn acquire_rx_body(&mut self) -> Option<SlotId> {
-        self.storage.rx_body()?.acquire()
+        let id = self.storage.rx_body()?.acquire();
+        if id.is_none() {
+            Metrics::inc(&mut self.metrics.saturated);
+        }
+        id
     }
 
     /// Release an RX body slot.
@@ -164,7 +210,11 @@ impl<S: Storage> Engine<S> {
 
     /// Acquire one TX body slot. `None` if body pools are absent or saturated.
     pub fn acquire_tx_body(&mut self) -> Option<SlotId> {
-        self.storage.tx_body()?.acquire()
+        let id = self.storage.tx_body()?.acquire();
+        if id.is_none() {
+            Metrics::inc(&mut self.metrics.saturated);
+        }
+        id
     }
 
     /// Release a TX body slot.
@@ -387,8 +437,17 @@ impl<S: Storage + PendingCons> Engine<S> {
         now_ms: u64,
         jitter_ms: u32,
     ) -> Option<SlotId> {
-        self.storage
-            .record_pending_con(id, endpoint, message_id, now_ms, jitter_ms)
+        let recorded = self
+            .storage
+            .record_pending_con(id, endpoint, message_id, now_ms, jitter_ms);
+        if recorded.is_none() {
+            let n = self.storage.capacities().tx_datagram_slots;
+            let outstanding = outstanding_pending(n, endpoint, |sid| self.storage.pending_con(sid));
+            if outstanding >= usize::from(crate::message::Transmission::NSTART) {
+                Metrics::inc(&mut self.metrics.nstart_reject);
+            }
+        }
+        recorded
     }
 
     /// Occupied TX slot pending for `message_id` and `endpoint`, if any. O(n).
@@ -428,6 +487,11 @@ impl<S: Storage + PendingCons> Engine<S> {
         if !parsed.is_empty_ack_or_rst() {
             return None;
         }
+        if parsed.is_empty_ack() {
+            Metrics::inc(&mut self.metrics.empty_ack);
+        } else {
+            Metrics::inc(&mut self.metrics.empty_rst);
+        }
         self.storage.take_pending_con(parsed.message_id(), endpoint)
     }
 
@@ -437,12 +501,21 @@ impl<S: Storage + PendingCons> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let (message_id, is_empty) = {
+        let (message_id, is_empty, is_ack) = {
             let parsed = decode_occupied(self.storage.rx_payload(id))?;
-            (parsed.message_id(), parsed.is_empty_ack_or_rst())
+            (
+                parsed.message_id(),
+                parsed.is_empty_ack_or_rst(),
+                parsed.is_empty_ack(),
+            )
         };
         if !is_empty {
             return Ok(None);
+        }
+        if is_ack {
+            Metrics::inc(&mut self.metrics.empty_ack);
+        } else {
+            Metrics::inc(&mut self.metrics.empty_rst);
         }
         Ok(self.storage.take_pending_con(message_id, endpoint))
     }
@@ -455,7 +528,13 @@ impl<S: Storage + PendingCons> Engine<S> {
     /// [`crate::App::poll`] sends Due and releases GiveUp. See
     /// `knowledge/rfcs/rfc7252.txt` §4.2.
     pub fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
-        self.storage.poll_retransmit(now_ms)
+        let event = self.storage.poll_retransmit(now_ms);
+        match event {
+            Some(Retransmit::Due(_)) => Metrics::inc(&mut self.metrics.con_retransmit),
+            Some(Retransmit::GiveUp(_)) => Metrics::inc(&mut self.metrics.give_up),
+            None => {}
+        }
+        event
     }
 }
 
@@ -612,7 +691,16 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// the configured capacity (O(n)). Does not use Dedup, pending CON, or
     /// exchange matching.
     pub fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
-        self.storage.insert_observe(interest)
+        match self.storage.insert_observe(interest) {
+            Some(id) => {
+                Metrics::inc(&mut self.metrics.observe_register);
+                Some(id)
+            }
+            None => {
+                Metrics::inc(&mut self.metrics.saturated);
+                None
+            }
+        }
     }
 
     /// Occupied Observe slot matching `key`, if any. O(n) in capacity.
@@ -623,12 +711,20 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
     /// Release the Observe slot matching `key`, if occupied. O(n) in capacity.
     pub fn remove_observe(&mut self, key: ObserveKey) -> bool {
-        self.storage.remove_observe(key)
+        let removed = self.storage.remove_observe(key);
+        if removed {
+            Metrics::inc(&mut self.metrics.observe_cancel);
+        }
+        removed
     }
 
     /// Remove and return the Observe interest matching `key`, if any.
     pub fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
-        self.storage.take_observe(key)
+        let taken = self.storage.take_observe(key);
+        if taken.is_some() {
+            Metrics::inc(&mut self.metrics.observe_cancel);
+        }
+        taken
     }
 
     /// Occupied Observe payload at `id`.
@@ -720,10 +816,12 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             >= usize::from(crate::message::Transmission::NSTART)
             && !interest.is_notify_held(now_ms)
         {
+            Metrics::inc(&mut self.metrics.nstart_reject);
             return None;
         }
         interest.record_notify(now_ms, message_id, confirmable);
         self.storage.set_observe_interest(id, interest).ok()?;
+        Metrics::inc(&mut self.metrics.observe_notify);
         Some(id)
     }
 
@@ -740,7 +838,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     ) -> Option<ObserveInterest> {
         let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
         let interest = self.storage.observe_interest(id)?;
-        self.storage.take_observe(interest.key())
+        self.take_observe(interest.key())
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.
@@ -765,7 +863,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if !parsed.is_observe_register() {
             return None;
         }
-        self.storage.insert_observe(
+        self.insert_observe(
             ObserveInterest::new(parsed.token(), endpoint)
                 .with_resource(observe_resource_from_message(parsed)),
         )
@@ -782,8 +880,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if !parsed.is_observe_deregister() {
             return None;
         }
-        self.storage
-            .take_observe(ObserveKey::new(parsed.token(), endpoint))
+        self.take_observe(ObserveKey::new(parsed.token(), endpoint))
     }
 
     /// Decode occupied RX `id` and [`Self::register_observe`] using its sidecar endpoint.
@@ -803,9 +900,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if !is_register {
             return Ok(None);
         }
-        Ok(self
-            .storage
-            .insert_observe(ObserveInterest::new(token, endpoint).with_resource(resource)))
+        Ok(self.insert_observe(ObserveInterest::new(token, endpoint).with_resource(resource)))
     }
 
     /// Decode occupied RX `id` and [`Self::deregister_observe`] using its sidecar endpoint.
@@ -824,7 +919,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if !is_deregister {
             return Ok(None);
         }
-        Ok(self.storage.take_observe(ObserveKey::new(token, endpoint)))
+        Ok(self.take_observe(ObserveKey::new(token, endpoint)))
     }
 
     /// Assign the next 24-bit notification sequence on `id` (same as progress).
@@ -896,7 +991,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             if interest.resource() != resource {
                 continue;
             }
-            if self.storage.take_observe(interest.key()).is_some() {
+            if self.take_observe(interest.key()).is_some() {
                 dropped += 1;
             }
         }
@@ -1129,7 +1224,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         payload: &[u8],
         size1: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.storage.apply_block1(key, block, payload, size1)
+        let result = self.storage.apply_block1(key, block, payload, size1);
+        self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+        result
     }
 
     /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
@@ -1183,7 +1280,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         payload: &[u8],
         size2: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.storage.apply_block2(key, block, payload, size2)
+        let result = self.storage.apply_block2(key, block, payload, size2);
+        self.metrics.tally_block(result.as_ref().map(|_| ()), false);
+        result
     }
 
     /// Decode occupied RX `id` and [`Self::apply_block2`] using Block2 + Token + endpoint.
@@ -1235,7 +1334,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         payload: &[u8],
         size1: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.storage.apply_q_block1(key, block, payload, size1)
+        let result = self.storage.apply_q_block1(key, block, payload, size1);
+        self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+        result
     }
 
     /// Decode occupied RX `id` and [`Self::apply_q_block1`] using Q-Block1 + Token + endpoint.
@@ -1287,7 +1388,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         payload: &[u8],
         size2: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        self.storage.apply_q_block2(key, block, payload, size2)
+        let result = self.storage.apply_q_block2(key, block, payload, size2);
+        self.metrics.tally_block(result.as_ref().map(|_| ()), false);
+        result
     }
 
     /// Decode occupied RX `id` and [`Self::apply_q_block2`] using Q-Block2 + Token + endpoint.
