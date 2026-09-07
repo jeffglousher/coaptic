@@ -11,7 +11,9 @@ use crate::message::{
     MissingBlocks, ObserveTransmission, Opt, OptionNumber, OptionsBuilder, ProblemDetails,
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
-use crate::storage::{BlockKey, DatagramIo, Endpoint, MemoryLayout, ObserveKey, profiles};
+use crate::storage::{
+    BlockKey, DatagramIo, Endpoint, ExchangeKey, MemoryLayout, ObserveKey, profiles,
+};
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
@@ -388,7 +390,7 @@ fn created_max_location_etag_observe_echo_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1480,7 +1482,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["loud"], &[], 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -2016,7 +2018,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
 fn client_full_path_query_and_extras_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -2560,14 +2562,7 @@ fn client_second_con_nstart_does_not_leak_tx() {
         let (_, bytes, n) = app.transport().sent[0].expect("first wire");
         decode(&bytes[..n]).expect("decode first").message_id()
     };
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
 
     let err = app
         .get(&["sensors", "temp"])
@@ -2581,13 +2576,105 @@ fn client_second_con_nstart_does_not_leak_tx() {
         "second CON must not go on the wire without RTO"
     );
     assert_eq!(app.engine_mut().tx_occupied(), 1, "no orphan TX");
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
     assert!(app.take_response(first).is_none());
+}
+
+fn client_exchange_live(app: &App<profiles::Default, RecordIo>, call: crate::Call) -> bool {
+    let key = ExchangeKey::new(call.token(), call.peer());
+    app.engine().lookup_exchange(key).is_some()
+}
+
+fn inject_empty(app: &mut App<profiles::Default, RecordIo>, peer: Endpoint, msg: Message<'_>) {
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("empty");
+    app.transport_mut().inbox = Some((peer, buf, n));
+}
+
+#[test]
+fn client_empty_rst_forgets_outstanding_call() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert!(client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    let mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("wire");
+        decode(&bytes[..n]).expect("decode").message_id()
+    };
+
+    inject_empty(&mut app, peer, Message::empty_rst(mid));
+    app.poll(0).expect("rst");
+    let response = app.take_response(call).expect("rst completes Call");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
+#[test]
+fn client_empty_ack_then_silence_expires_exchange() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("wire");
+        decode(&bytes[..n]).expect("decode").message_id()
+    };
+
+    inject_empty(&mut app, peer, Message::empty_ack(mid));
+    app.poll(0).expect("ack");
+    assert!(
+        app.take_response(call).is_none(),
+        "empty ACK is not a response"
+    );
+    assert!(
+        client_exchange_live(&app, call),
+        "exchange waits for the separate body"
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+
+    let life = u64::from(Transmission::EXCHANGE_LIFETIME_MS);
+    app.poll(life - 1).expect("before lifetime");
+    assert!(client_exchange_live(&app, call));
+    assert!(app.take_response(call).is_none());
+
+    app.poll(life).expect("expire");
+    let response = app.take_response(call).expect("lifetime snapshot");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_non_loss_expires_exchange() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .non()
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert!(client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0, "NON releases TX");
+
+    let life = u64::from(Transmission::NON_LIFETIME_MS);
+    app.poll(life - 1).expect("before NON lifetime");
+    assert!(client_exchange_live(&app, call));
+    assert!(app.take_response(call).is_none());
+
+    app.poll(life).expect("expire NON");
+    let response = app.take_response(call).expect("NON lifetime snapshot");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
