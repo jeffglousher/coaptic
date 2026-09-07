@@ -48,6 +48,8 @@ impl OptionNumber {
     pub const URI_PORT: Self = Self(7);
     /// Location-Path (8).
     pub const LOCATION_PATH: Self = Self(8);
+    /// OSCORE (9). RFC 8613; not in RFC 7252 Table 4.
+    pub const OSCORE: Self = Self(9);
     /// Uri-Path (11).
     pub const URI_PATH: Self = Self(11);
     /// Content-Format (12).

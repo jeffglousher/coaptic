@@ -568,6 +568,15 @@ impl<'a> Opt<'a> {
         Self::string(OptionNumber::LOCATION_PATH, segment)
     }
 
+    /// OSCORE option (opaque compressed COSE). RFC 8613; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc8613.txt`. An all-zero flag byte is encoded as
+    /// an empty value, not `0x00`.
+    #[must_use]
+    pub const fn oscore(value: &'a [u8]) -> Self {
+        Self::opaque(OptionNumber::OSCORE, value)
+    }
+
     /// Uri-Path segment (string).
     #[must_use]
     pub const fn uri_path(segment: &'a str) -> Self {
@@ -843,6 +852,15 @@ impl<'a> ParsedMessage<'a> {
         StringOptions {
             inner: self.get_options(OptionNumber::LOCATION_PATH),
         }
+    }
+
+    /// OSCORE option value, if present. RFC 8613; not in RFC 7252 Table 4.
+    ///
+    /// See `knowledge/rfcs/rfc8613.txt`. An empty value is a valid
+    /// all-zero flag byte (typical OSCORE response).
+    #[must_use]
+    pub fn oscore(self) -> Option<&'a [u8]> {
+        self.get_option(OptionNumber::OSCORE).map(Opt::value)
     }
 
     /// Location-Query values in wire order.

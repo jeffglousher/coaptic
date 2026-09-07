@@ -66,9 +66,11 @@
 //! # What you own
 //!
 //! The socket ([`storage::DatagramIo`]), the clock (`now_ms` into
-//! [`App::poll`]), the destination of an outbound request, and any domain
-//! state that outlives a request. There is no global App State. Tokens and
-//! Message IDs are App counters — this crate does not call an OS RNG.
+//! [`App::poll`]), the destination of an outbound request, any domain
+//! state that outlives a request, and — when the `oscore` feature is on —
+//! the OSCORE `SecurityContext` (Master Secret, Sender/Recipient IDs,
+//! replay window; feature `oscore`). There is no global App State. Tokens
+//! and Message IDs are App counters — this crate does not call an OS RNG.
 //!
 //! # Modules
 //!
@@ -83,6 +85,8 @@
 //!   [`Metrics`] (`Engine::metrics` /
 //!   [`App::metrics`](App::metrics)). Advanced:
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
+//! - `oscore` — pairwise OSCORE (feature `oscore`): caller-owned
+//!   `SecurityContext`, `App::set_oscore`.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
@@ -96,16 +100,21 @@
 //!
 //! Ready for future. Focused fully. Core CoAP for the accepted set is
 //! complete. Engine BERT (SZX 7) codecs exist; App does not expose them.
-//! OSCORE is not implemented. First-party DTLS is not a library
-//! dependency — the `coaptic-plugtest` harness (feature `dtls`) wraps
-//! webrtc-dtls as a [`DatagramIo`](storage::DatagramIo). Alternative
-//! networks (6LoWPAN, LoRaWAN, …) are the same future / backlog —
-//! contributor opportunities.
+//! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
+//! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
+//! window). `App::set_oscore` attaches it; Engine does not store keys.
+//! Group OSCORE, other ciphers, Observe/Block-over-OSCORE, and
+//! first-party DTLS remain backlog — the `coaptic-plugtest` harness
+//! (feature `dtls`) wraps webrtc-dtls as a
+//! [`DatagramIo`](storage::DatagramIo). Alternative networks (6LoWPAN,
+//! LoRaWAN, …) are the same future / backlog.
 //!
 //! # Features
 //!
 //! - `alloc` — enable the allocator. Off by default.
 //! - `std` — enable the standard library. Implies `alloc`.
+//! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
+//!   `ccm` / `hkdf` / `sha2`. Off by default so the crate stays zero-dep.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
@@ -125,6 +134,8 @@ extern crate std;
 pub mod app;
 pub mod error;
 pub mod message;
+#[cfg(feature = "oscore")]
+pub mod oscore;
 pub mod storage;
 
 pub use storage::profiles;
