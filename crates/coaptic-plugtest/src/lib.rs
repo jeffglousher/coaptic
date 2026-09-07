@@ -12,7 +12,7 @@
 //! # Architecture
 //!
 //! - [`peer::Peer`] — start/stop a server, send a client request, poll, local
-//!   UDP address. Backends: [`coaptic::CoapticPeer`] (App + Engine) and
+//!   UDP address. Backends: [`coaptic::CoapticPeer`] (App server + App client) and
 //!   [`coap_rs::CoapRsPeer`] (`coap` / coap-rs). Add a new backend by
 //!   implementing [`peer::Peer`].
 //! - [`runner`] — each vendored TD × useful role pairs (coaptic server /

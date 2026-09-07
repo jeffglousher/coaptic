@@ -31,7 +31,6 @@ use crate::runner::{Pair, TdResult};
 use crate::site;
 use coaptic::message::Code;
 use coaptic::storage::{DatagramIo, Endpoint};
-use coaptic::{App, profiles};
 
 /// How long a handshake may take before the runner treats it as failed.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -452,33 +451,15 @@ fn coaptic_get_secure<T: DatagramIo<Error = std::io::Error>>(
     io: T,
     dest: SocketAddr,
 ) -> Result<(), PeerError> {
-    let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
-        .bind(io)
-        .map_err(|e| format!("bind: {e}"))?;
-    let dest = Endpoint::from(dest);
-    let call = app
-        .get("secure")
-        .to(dest)
-        .send(1)
-        .map_err(|e| format!("GET /secure send: {e}"))?;
-    let deadline = Instant::now() + Duration::from_millis(1500);
-    let mut now = 1u64;
-    while Instant::now() < deadline {
-        now = now.saturating_add(5);
-        app.poll(now).map_err(|e| format!("poll: {e}"))?;
-        if let Some(resp) = app.take_response(call) {
-            if resp.code() != Code::CONTENT {
-                return Err(PeerError(format!("GET /secure {}", resp.code())));
-            }
-            if resp.payload() != site::SECURE_BODY {
-                return Err(PeerError("GET /secure payload".into()));
-            }
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(5));
+    let got =
+        crate::coaptic::app_exchange(io, dest, &crate::peer::ClientRequest::get(&["secure"]))?;
+    if got.code != Code::CONTENT {
+        return Err(PeerError(format!("GET /secure {}", got.code)));
     }
-    Err(PeerError("timeout GET /secure".into()))
+    if got.payload != site::SECURE_BODY {
+        return Err(PeerError("GET /secure payload".into()));
+    }
+    Ok(())
 }
 
 async fn start_rs_server(cfg: Config) -> Result<SocketAddr, PeerError> {

@@ -384,8 +384,10 @@ where
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
     /// is the [`Response`] ([`Response::body`] when Block2 / Q-Block2
-    /// assembled). Continues reuse the path from [`Outgoing::send`]. An
-    /// Observe subscribe ([`Outgoing::observe`]) uses the same [`Call`].
+    /// assembled). Continues reuse the path from [`Outgoing::send`]. Uri-Query,
+    /// Accept, ETag, If-Match / If-None-Match, and early Block2 are set on
+    /// [`Outgoing`]. An Observe subscribe ([`Outgoing::observe`]) uses the
+    /// same [`Call`].
     ///
     /// Retransmit: send on [`Retransmit::Due`], release on
     /// [`Retransmit::GiveUp`]. Advanced slots / [`Access`](crate::storage::Access)

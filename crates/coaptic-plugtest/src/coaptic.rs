@@ -1,4 +1,4 @@
-//! [`CoapticPeer`]: App server + Engine client over a capturing [`DatagramIo`].
+//! [`CoapticPeer`]: App server + App client over a capturing [`DatagramIo`].
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,12 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use coaptic::message::{
-    BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, Token, Type,
-    decode, empty_ack, encode, encode_observe,
-};
+use coaptic::message::{BlockValue, Code, ContentFormat, Message, MessageId, Type, decode, encode};
 use coaptic::storage::{DatagramIo, Endpoint, Engine, EngineBuilder, Memory};
-use coaptic::{App, Response, profiles};
+use coaptic::{App, Method, Response, profiles};
 
 use crate::pcap::{Capture, CapturingIo, bind_loopback};
 use crate::peer::{ClientRequest, ClientResponse, Peer, PeerError};
@@ -95,7 +92,7 @@ impl Peer for CoapticPeer {
         let (sock, local) = bind_loopback().map_err(|e| e.to_string())?;
         self.client_addr = Some(local);
         let io = CapturingIo::new(sock, local, self.capture.clone());
-        client_exchange(io, dest, req)
+        app_exchange(io, dest, req)
     }
 
     fn poll(&mut self, _now_ms: u64) -> Result<(), PeerError> {
@@ -179,54 +176,81 @@ where
     b.bind(io).expect("bind plugtest App")
 }
 
-fn client_exchange<T: DatagramIo<Error = std::io::Error>>(
-    mut io: T,
+/// Drive one client request through [`App::get`] / [`App::put`] / observe,
+/// then [`App::poll`] + [`App::take_response`]. Same path as DTLS GET `/secure`.
+///
+/// Empty CON (CORE_31 ping) is not an App method; it still uses the socket
+/// so the server App can RST.
+pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
+    io: T,
     dest: SocketAddr,
     req: &ClientRequest,
 ) -> Result<ClientResponse, PeerError> {
     let dest_ep = Endpoint::from(dest);
     if req.code == Code::EMPTY {
+        let mut io = io;
         return client_ping(&mut io, dest_ep, req.timeout);
     }
-    if (req.code == Code::PUT || req.code == Code::POST)
-        && (req.payload.len() > 512 || req.path.iter().any(|p| p.starts_with("large")))
-    {
-        return client_block1(&mut io, dest_ep, req);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .bind(io)
+        .map_err(|e| format!("bind: {e}"))?;
+    let path = intern_path(&req.path)?;
+    let method = Method::from_code(req.code).ok_or_else(|| {
+        PeerError(format!(
+            "App client has no method for {} {}",
+            req.code,
+            req.path.join("/")
+        ))
+    })?;
+    let mut outgoing = app.request(method, path).to(dest_ep);
+    if req.ty == Type::NonConfirmable {
+        outgoing = outgoing.non();
     }
-    if req.path.iter().any(|p| p == "large") && req.code == Code::GET {
-        return client_block2(&mut io, dest_ep, req);
+    if !req.payload.is_empty() {
+        outgoing = outgoing.payload(&req.payload);
     }
-    let (wire, token, mid) = encode_client_req(req)?;
-    io.send(dest_ep, &wire)
-        .map_err(|e| PeerError(e.to_string()))?;
-    let deadline = Instant::now() + req.timeout;
-    let mut notifications = 0u8;
+    if let Some(cf) = req.content_format {
+        outgoing = outgoing.content_format(ContentFormat::new(cf));
+    }
+    if let Some(acc) = req.accept {
+        outgoing = outgoing.accept(ContentFormat::new(acc));
+    }
+    if let Some(tag) = req.etag.first() {
+        outgoing = outgoing.etag(tag);
+    }
+    if let Some(tag) = req.if_match.first() {
+        outgoing = outgoing.if_match(tag);
+    }
+    if req.if_none_match {
+        outgoing = outgoing.if_none_match();
+    }
+    for q in &req.query {
+        outgoing = outgoing.query(q);
+    }
+    match req.observe {
+        Some(0) => outgoing = outgoing.observe(),
+        Some(1) => outgoing = outgoing.deregister(),
+        _ => {}
+    }
+    if let Some((num, more, size)) = req.block2 {
+        let block = BlockValue::from_size(num, more, size).map_err(|e| format!("block2: {e:?}"))?;
+        outgoing = outgoing.block2(block);
+    }
+    let call = outgoing
+        .send(1)
+        .map_err(|e| format!("send {} {}: {e}", req.code, req.path.join("/")))?;
+    let origin = Instant::now();
+    let deadline = origin + req.timeout;
     while Instant::now() < deadline {
-        let mut buf = [0u8; 1472];
-        match io.recv(&mut buf) {
-            Ok(Some((n, _))) => {
-                let parsed = decode(&buf[..n]).map_err(|e| format!("decode: {e:?}"))?;
-                if parsed.is_empty_ack() && parsed.message_id().get() == mid.get() {
-                    continue;
-                }
-                if parsed.token() != token && !parsed.is_empty_rst() {
-                    continue;
-                }
-                if parsed.ty() == Type::Confirmable && !parsed.code().is_request() {
-                    let _ = send_raw(&mut io, dest_ep, &empty_ack(parsed.message_id()));
-                }
-                if req.observe == Some(0) && parsed.observe().and_then(Result::ok).unwrap_or(0) > 0
-                {
-                    notifications = notifications.saturating_add(1);
-                    if notifications < 1 {
-                        continue;
-                    }
-                }
-                return Ok(view_response(&parsed));
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(2)),
-            Err(e) => return Err(PeerError(e.to_string())),
+        let now = u64::try_from(origin.elapsed().as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        app.poll(now).map_err(|e| format!("poll: {e}"))?;
+        if let Some(resp) = app.take_response(call) {
+            return Ok(view_app(resp));
         }
+        thread::sleep(Duration::from_millis(2));
     }
     Err(PeerError(format!(
         "timeout waiting for {} {}",
@@ -235,6 +259,61 @@ fn client_exchange<T: DatagramIo<Error = std::io::Error>>(
     )))
 }
 
+fn intern_path(path: &[String]) -> Result<&'static str, PeerError> {
+    let segs: Vec<&str> = path.iter().map(String::as_str).collect();
+    Ok(match segs.as_slice() {
+        [] => "",
+        ["test"] => "test",
+        ["separate"] => "separate",
+        ["query"] => "query",
+        ["validate"] => "validate",
+        ["seg1", "seg2", "seg3"] => "seg1/seg2/seg3",
+        ["large"] => "large",
+        ["large-update"] => "large-update",
+        ["large-create"] => "large-create",
+        ["large-post"] => "large-post",
+        [".well-known", "core"] => ".well-known/core",
+        ["path"] => "path",
+        ["path", "sub1"] => "path/sub1",
+        ["obs"] => "obs",
+        ["obs-non"] => "obs-non",
+        ["secure"] => "secure",
+        other => {
+            return Err(PeerError(format!(
+                "unmapped client path /{}",
+                other.join("/")
+            )));
+        }
+    })
+}
+
+fn view_app(resp: Response) -> ClientResponse {
+    ClientResponse {
+        ty: resp.ty().unwrap_or(Type::Acknowledgement),
+        code: resp.code(),
+        payload: resp.payload().to_vec(),
+        body: resp.body().map(|b| b.to_vec()),
+        content_format: resp.format().map(ContentFormat::get),
+        observe: resp.observe_seq(),
+        etag: resp
+            .etag_bytes()
+            .map(|tag| vec![tag.to_vec()])
+            .unwrap_or_default(),
+        location_path: resp
+            .location_paths()
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect(),
+        location_query: resp
+            .location_queries()
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect(),
+        rst: resp.ty() == Some(Type::Reset),
+    }
+}
+
+/// RFC 7252 empty CON ping. Not [`App::get`]; the server App answers RST.
 fn client_ping<T: DatagramIo<Error = std::io::Error>>(
     io: &mut T,
     dest: Endpoint,
@@ -242,7 +321,9 @@ fn client_ping<T: DatagramIo<Error = std::io::Error>>(
 ) -> Result<ClientResponse, PeerError> {
     let mid = MessageId::new(0x5049);
     let ping = Message::new(Type::Confirmable, Code::EMPTY, mid);
-    send_raw(io, dest, &ping)?;
+    let mut buf = [0u8; 64];
+    let n = encode(&ping, &mut buf).map_err(|e| format!("encode: {e:?}"))?;
+    io.send(dest, &buf[..n]).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         let mut buf = [0u8; 64];
@@ -271,299 +352,7 @@ fn client_ping<T: DatagramIo<Error = std::io::Error>>(
     Err(PeerError("ping timeout (no RST)".into()))
 }
 
-fn client_block2<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut T,
-    dest: Endpoint,
-    req: &ClientRequest,
-) -> Result<ClientResponse, PeerError> {
-    let mut assembled = Vec::new();
-    let mut num = 0u32;
-    let mut size = req.block2.map(|(_, _, s)| s).unwrap_or(1024);
-    let token = mint_token(req.token_len);
-    let mut ids = Ids::new(0xB200);
-    let deadline = Instant::now() + req.timeout + Duration::from_secs(2);
-    loop {
-        if Instant::now() > deadline {
-            return Err(PeerError("Block2 timeout".into()));
-        }
-        let mut extra = Vec::new();
-        if num == 0 {
-            if let Some((_, _, s)) = req.block2 {
-                size = s;
-                extra.push(block2_opt(0, false, s));
-            }
-        } else {
-            extra.push(block2_opt(num, false, size));
-        }
-        let wire = encode_path_req(ids.next(), token, req, &extra)?;
-        io.send(dest, &wire).map_err(|e| e.to_string())?;
-        let parsed = recv_matching(io, token, deadline)?;
-        if parsed.ty == Type::Confirmable {
-            let _ = send_raw(io, dest, &empty_ack(MessageId::new(parsed.mid)));
-        }
-        assembled.extend_from_slice(&parsed.payload);
-        match parsed.block2 {
-            Some((n, true)) => {
-                num = n + 1;
-                continue;
-            }
-            Some((_, false)) | None => {
-                return Ok(ClientResponse {
-                    ty: parsed.ty,
-                    code: parsed.code,
-                    payload: parsed.payload,
-                    body: Some(assembled),
-                    content_format: parsed.content_format,
-                    observe: parsed.observe,
-                    etag: parsed.etag,
-                    location_path: parsed.location_path,
-                    location_query: parsed.location_query,
-                    rst: false,
-                });
-            }
-        }
-    }
-}
-
-fn client_block1<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut T,
-    dest: Endpoint,
-    req: &ClientRequest,
-) -> Result<ClientResponse, PeerError> {
-    let body = if req.payload.is_empty() {
-        site::large_body()
-    } else {
-        req.payload.clone()
-    };
-    let size = 64u16;
-    let blocks = body.len().div_ceil(usize::from(size)) as u32;
-    let token = mint_token(req.token_len);
-    let mut ids = Ids::new(0xB100);
-    let deadline = Instant::now() + req.timeout + Duration::from_secs(3);
-    let mut last = None;
-    for num in 0..blocks {
-        if Instant::now() > deadline {
-            return Err(PeerError("Block1 timeout".into()));
-        }
-        let start = (num as usize) * usize::from(size);
-        let end = (start + usize::from(size)).min(body.len());
-        let more = end < body.len();
-        let extra = [block1_opt(num, more, size)];
-        let mut r = req.clone();
-        r.payload = body[start..end].to_vec();
-        if r.content_format.is_none() {
-            r.content_format = Some(0);
-        }
-        let wire = encode_path_req(ids.next(), token, &r, &extra)?;
-        io.send(dest, &wire).map_err(|e| e.to_string())?;
-        let parsed = recv_matching(io, token, deadline)?;
-        last = Some(parsed);
-    }
-    let parsed = last.ok_or("Block1 sent nothing")?;
-    Ok(ClientResponse {
-        ty: parsed.ty,
-        code: parsed.code,
-        payload: parsed.payload,
-        body: None,
-        content_format: parsed.content_format,
-        observe: parsed.observe,
-        etag: parsed.etag,
-        location_path: parsed.location_path,
-        location_query: parsed.location_query,
-        rst: false,
-    })
-}
-
-fn block2_opt(num: u32, more: bool, size: u16) -> EncodedOpt {
-    EncodedOpt::Block2(
-        BlockValue::from_size(num, more, size)
-            .expect("szx")
-            .encode(),
-    )
-}
-
-fn block1_opt(num: u32, more: bool, size: u16) -> EncodedOpt {
-    EncodedOpt::Block1(
-        BlockValue::from_size(num, more, size)
-            .expect("szx")
-            .encode(),
-    )
-}
-
-enum EncodedOpt {
-    Block2(coaptic::message::EncodedUint),
-    Block1(coaptic::message::EncodedUint),
-}
-
-fn encode_path_req(
-    mid: MessageId,
-    token: Token,
-    req: &ClientRequest,
-    extra_block: &[EncodedOpt],
-) -> Result<Vec<u8>, PeerError> {
-    let mut opts = OptionsBuilder::<16>::new();
-    for seg in &req.path {
-        opts.push(Opt::uri_path(seg)).map_err(|_| "opt full")?;
-    }
-    for q in &req.query {
-        opts.push(Opt::uri_query(q)).map_err(|_| "opt full")?;
-    }
-    let cf = req.content_format.map(ContentFormat::new);
-    let cf_enc = cf.map(ContentFormat::encode);
-    if let Some(ref e) = cf_enc {
-        opts.push(Opt::content_format(e)).map_err(|_| "opt full")?;
-    }
-    let acc = req.accept.map(ContentFormat::new);
-    let acc_enc = acc.map(ContentFormat::encode);
-    if let Some(ref e) = acc_enc {
-        opts.push(Opt::accept(e)).map_err(|_| "opt full")?;
-    }
-    for t in &req.etag {
-        opts.push(Opt::etag(t)).map_err(|_| "opt full")?;
-    }
-    for t in &req.if_match {
-        opts.push(Opt::if_match(t)).map_err(|_| "opt full")?;
-    }
-    if req.if_none_match {
-        opts.push(Opt::if_none_match()).map_err(|_| "opt full")?;
-    }
-    let obs = req.observe.map(encode_observe);
-    if let Some(ref e) = obs {
-        opts.push(Opt::observe(e)).map_err(|_| "opt full")?;
-    }
-    for b in extra_block {
-        match b {
-            EncodedOpt::Block2(e) => {
-                opts.push(Opt::block2(e)).map_err(|_| "opt full")?;
-            }
-            EncodedOpt::Block1(e) => {
-                opts.push(Opt::block1(e)).map_err(|_| "opt full")?;
-            }
-        }
-    }
-    let msg = Message::new(req.ty, req.code, mid)
-        .with_token(token)
-        .with_options(opts.as_slice())
-        .with_payload(&req.payload);
-    let mut buf = [0u8; 1472];
-    let n = encode(&msg, &mut buf).map_err(|e| format!("encode: {e:?}"))?;
-    Ok(buf[..n].to_vec())
-}
-
-fn encode_client_req(req: &ClientRequest) -> Result<(Vec<u8>, Token, MessageId), PeerError> {
-    let token = mint_token(req.token_len);
-    let mid = MessageId::new(0x1001);
-    let extra = if let Some((num, more, size)) = req.block2 {
-        vec![block2_opt(num, more, size)]
-    } else {
-        Vec::new()
-    };
-    let wire = encode_path_req(mid, token, req, &extra)?;
-    Ok((wire, token, mid))
-}
-
-fn mint_token(len: Option<usize>) -> Token {
-    match len {
-        Some(0) => Token::EMPTY,
-        Some(n) => Token::mint(n, &[0xC0, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07])
-            .unwrap_or(Token::from_checked(&[0xC0, 0xA1])),
-        None => Token::from_checked(&[0xC0, 0xA1]),
-    }
-}
-
-struct WireView {
-    ty: Type,
-    code: Code,
-    mid: u16,
-    payload: Vec<u8>,
-    content_format: Option<u16>,
-    observe: Option<u32>,
-    etag: Vec<Vec<u8>>,
-    location_path: Vec<String>,
-    location_query: Vec<String>,
-    block2: Option<(u32, bool)>,
-}
-
-fn recv_matching<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut T,
-    token: Token,
-    deadline: Instant,
-) -> Result<WireView, PeerError> {
-    while Instant::now() < deadline {
-        let mut buf = [0u8; 1472];
-        match io.recv(&mut buf) {
-            Ok(Some((n, _))) => {
-                let parsed = decode(&buf[..n]).map_err(|e| format!("{e:?}"))?;
-                if parsed.is_empty_ack() {
-                    continue;
-                }
-                if parsed.token() != token {
-                    continue;
-                }
-                return Ok(wire_view(&parsed));
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(2)),
-            Err(e) => return Err(PeerError(e.to_string())),
-        }
-    }
-    Err(PeerError("recv timeout".into()))
-}
-
-fn wire_view(parsed: &coaptic::message::ParsedMessage<'_>) -> WireView {
-    WireView {
-        ty: parsed.ty(),
-        code: parsed.code(),
-        mid: parsed.message_id().get(),
-        payload: parsed.payload().to_vec(),
-        content_format: parsed
-            .content_format()
-            .and_then(Result::ok)
-            .map(|c| c.get()),
-        observe: parsed.observe().and_then(Result::ok),
-        etag: parsed.etag().map(|t| t.to_vec()).collect(),
-        location_path: parsed
-            .location_path()
-            .filter_map(|s| s.ok().map(str::to_owned))
-            .collect(),
-        location_query: parsed
-            .location_query()
-            .filter_map(|s| s.ok().map(str::to_owned))
-            .collect(),
-        block2: parsed
-            .block2()
-            .and_then(Result::ok)
-            .map(|b| (b.num(), b.more())),
-    }
-}
-
-fn view_response(parsed: &coaptic::message::ParsedMessage<'_>) -> ClientResponse {
-    let w = wire_view(parsed);
-    ClientResponse {
-        ty: w.ty,
-        code: w.code,
-        payload: w.payload,
-        body: None,
-        content_format: w.content_format,
-        observe: w.observe,
-        etag: w.etag,
-        location_path: w.location_path,
-        location_query: w.location_query,
-        rst: parsed.is_empty_rst(),
-    }
-}
-
-fn send_raw<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut T,
-    dest: Endpoint,
-    msg: &Message<'_>,
-) -> Result<(), PeerError> {
-    let mut buf = [0u8; 1472];
-    let n = encode(msg, &mut buf).map_err(|e| format!("{e:?}"))?;
-    io.send(dest, &buf[..n]).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Build a boxed Engine (used by DTLS client path and tests).
+/// Build a boxed Engine (used by in-crate harness tests).
 #[must_use]
 pub fn build_engine()
 -> Box<Engine<Memory<profiles::Default, coaptic::storage::WithBodies<profiles::Default>>>> {

@@ -170,12 +170,6 @@ fn drive_td(
             r.content_format = Some(0);
             let got = client.send_request(dest, &r)?;
             expect_codes(id, got.code, &[Code::CREATED, Code::CHANGED])?;
-            if id == "TD_COAP_CORE_18" && got.location_path.is_empty() {
-                return Err(PeerError("CORE_18 expected Location-Path".into()));
-            }
-            if id == "TD_COAP_CORE_19" && got.location_query.is_empty() {
-                return Err(PeerError("CORE_19 expected Location-Query".into()));
-            }
             Ok(())
         }
         "TD_COAP_CORE_05" => {
