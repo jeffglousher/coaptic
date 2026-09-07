@@ -1,8 +1,9 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
 use super::{
-    DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, RESPONSE_BODY, Request,
-    Response, Site, fetch, get, ipatch, link_format_capacity, patch, post, put,
+    AppAssembled, DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method,
+    RESPONSE_BODY, Request, Response, Site, fetch, get, ipatch, link_format_capacity, patch, post,
+    put,
 };
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
@@ -306,7 +307,7 @@ fn last_reply<const BLOCK_WISE: bool>(
     app: &App<profiles::Default, Loopback, DEFAULT_ROUTES, BLOCK_WISE>,
 ) -> LastReply
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let (_, bytes, n) = app.transport().last_send.expect("sent");
     let parsed = decode(&bytes[..n]).expect("decode reply");
@@ -1432,7 +1433,7 @@ fn last_wide<const BLOCK_WISE: bool>(
     app: &App<profiles::Default, WideLoopback, DEFAULT_ROUTES, BLOCK_WISE>,
 ) -> crate::message::ParsedMessage<'_>
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let n = app.transport().send_n;
     assert!(n > 0, "expected a send");
@@ -1565,7 +1566,7 @@ fn observe_registered<const BLOCK_WISE: bool>(
     peer: Endpoint,
 ) -> bool
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
     app.engine().lookup_observe(key).is_some()

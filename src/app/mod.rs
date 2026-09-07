@@ -101,13 +101,15 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
-pub use response::{INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response};
+pub use response::{
+    AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,
+};
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
 pub use site::{DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, Site, link_format_capacity};
 
-use response::AssembledBuf;
+use response::AssembledField;
 
 /// Scratch for one inbound or outbound datagram (crate Default profile).
 const DATAGRAM_SCRATCH: usize = 1472;
@@ -123,15 +125,16 @@ pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_W
 /// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
 /// raise it with [`AppBuilder::routes`]. `BLOCK_WISE` is
 /// [`AppBuilder::block_wise`]: `false` stores only [`Memory<P>`] (no body
-/// pool arrays). You do not need [`crate::storage::Access`] on this path —
-/// [`Self::engine_mut`] is the advanced escape hatch.
+/// pool arrays and no client Block2 assembled hold). You do not need
+/// [`crate::storage::Access`] on this path — [`Self::engine_mut`] is the
+/// advanced escape hatch.
 pub struct App<
     P: MemoryProfile = crate::profiles::Default,
     T = (),
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
 > where
-    P: MemoryLayout<BLOCK_WISE>,
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     engine: Engine<AppStore<P, BLOCK_WISE>>,
     io: T,
@@ -142,17 +145,18 @@ pub struct App<
     lives: client::ClientLives,
     echo_fresh_ms: Option<u64>,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
-    /// One hold, not a 4KiB field of [`Response`].
-    assembled: AssembledBuf,
+    /// Present when `BLOCK_WISE`; zero-sized otherwise.
+    assembled: AssembledField<P, BLOCK_WISE>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
 /// [`route`](Self::route) → [`bind`](Self::bind).
 ///
 /// [`Self::block_wise`] is required before bind (typestate).
-/// `.block_wise::<true>()` enables body pools for Block / Q-Block;
-/// `.block_wise::<false>()` keeps datagram slots only and does not reserve
-/// body-pool RAM on [`App`].
+/// `.block_wise::<true>()` enables body pools for Block / Q-Block and the
+/// client assembled-body hold; `.block_wise::<false>()` keeps datagram
+/// slots only and does not reserve body-pool or assembled-hold RAM on
+/// [`App`].
 pub struct AppBuilder<
     P: MemoryProfile,
     Block = Missing,
@@ -251,7 +255,8 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
     /// The flag is a const generic so [`App`] RAM matches Storage:
-    /// `.block_wise::<false>()` does not reserve RX/TX body arrays.
+    /// `.block_wise::<false>()` does not reserve RX/TX body arrays or the
+    /// client Block2 assembled hold.
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
         AppBuilder {
@@ -311,8 +316,12 @@ where
     }
 }
 
-impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
-    App<P, T, N, BLOCK_WISE>
+impl<
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+> App<P, T, N, BLOCK_WISE>
 {
     /// Bind `methods` on Uri-Path `path`.
     ///
@@ -387,7 +396,7 @@ impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
 
 impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: MemoryLayout<BLOCK_WISE>,
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
 {
     /// One loop step: recv, progress, route, handler, send, release.

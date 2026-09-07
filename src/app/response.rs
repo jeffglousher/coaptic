@@ -5,7 +5,7 @@
 use crate::message::{
     Code, ContentFormat, Echo, MessageId, MissingBlocks, ProblemDetails, Token, Type,
 };
-use crate::storage::Endpoint;
+use crate::storage::{Endpoint, MemoryProfile};
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
 pub const INLINE_PAYLOAD: usize = 128;
@@ -678,16 +678,36 @@ fn encode_problem_payload(
 ///
 /// One App-owned hold (not a field of [`Response`]). Handler returns and
 /// Observe sequence updates copy the small [`Response`] header only.
+/// Datagram App (`BLOCK_WISE = false`) uses [`AssembledNone`] (ZST).
 pub(crate) trait AssembledBytes {
     /// Copy `src` (truncated at [`RESPONSE_BODY`]).
     fn store(&mut self, src: &[u8]);
     /// Held bytes after [`Self::store`].
+    ///
+    /// [`AssembledBuf`]: `len == 0` (never stored, or stored empty) returns
+    /// `Some(&[])`. Empty and unset are not distinguished.
+    /// [`AssembledNone`]: always `None`.
     fn view(&self) -> Option<&[u8]>;
 }
 
+/// ZST stand-in: `.block_wise::<false>()` has no client Block2 hold.
+#[derive(Default)]
+#[doc(hidden)]
+pub struct AssembledNone;
+
+impl AssembledBytes for AssembledNone {
+    fn store(&mut self, _src: &[u8]) {}
+
+    fn view(&self) -> Option<&[u8]> {
+        None
+    }
+}
+
 /// Owned [`RESPONSE_BODY`] hold for a completed client Block2 / Q-Block2 body.
-#[derive(Clone, Copy)]
-pub(crate) struct AssembledBuf {
+///
+/// Not `Copy`: `[u8; RESPONSE_BODY]` would memcpy 4KiB on every assign.
+#[doc(hidden)]
+pub struct AssembledBuf {
     bytes: [u8; RESPONSE_BODY],
     len: u16,
 }
@@ -710,5 +730,82 @@ impl AssembledBytes for AssembledBuf {
 
     fn view(&self) -> Option<&[u8]> {
         Some(&self.bytes[..usize::from(self.len)])
+    }
+}
+
+/// Selects [`AssembledNone`] or [`AssembledBuf`] from `BLOCK_WISE`.
+///
+/// Bound on [`super::App`] so the hold is a ZST when `BLOCK_WISE` is false.
+/// Blanket-implemented for every [`MemoryProfile`].
+#[doc(hidden)]
+pub trait AppAssembled<const BLOCK_WISE: bool> {
+    /// [`AssembledNone`] or [`AssembledBuf`].
+    #[doc(hidden)]
+    type Buf: Default;
+
+    /// Copy `src` into the hold (no-op on the datagram stub).
+    #[doc(hidden)]
+    fn store(buf: &mut Self::Buf, src: &[u8]);
+
+    /// Held bytes: [`AssembledBuf`] returns `Some` even when `len == 0`;
+    /// [`AssembledNone`] returns `None`.
+    #[doc(hidden)]
+    fn view(buf: &Self::Buf) -> Option<&[u8]>;
+}
+
+impl<P: MemoryProfile> AppAssembled<false> for P {
+    type Buf = AssembledNone;
+
+    fn store(buf: &mut Self::Buf, src: &[u8]) {
+        buf.store(src);
+    }
+
+    fn view(buf: &Self::Buf) -> Option<&[u8]> {
+        buf.view()
+    }
+}
+
+impl<P: MemoryProfile> AppAssembled<true> for P {
+    type Buf = AssembledBuf;
+
+    fn store(buf: &mut Self::Buf, src: &[u8]) {
+        buf.store(src);
+    }
+
+    fn view(buf: &Self::Buf) -> Option<&[u8]> {
+        buf.view()
+    }
+}
+
+pub(crate) type AssembledField<P, const BLOCK_WISE: bool> = <P as AppAssembled<BLOCK_WISE>>::Buf;
+
+#[cfg(test)]
+mod assembled_hold_tests {
+    use super::{AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, RESPONSE_BODY};
+    use crate::profiles;
+    use core::mem::size_of;
+
+    #[test]
+    fn datagram_assembled_hold_is_zst() {
+        assert_eq!(
+            size_of::<<profiles::Default as AppAssembled<false>>::Buf>(),
+            0
+        );
+        assert_eq!(size_of::<AssembledNone>(), 0);
+        assert!(size_of::<<profiles::Default as AppAssembled<true>>::Buf>() >= RESPONSE_BODY);
+        assert!(size_of::<AssembledBuf>() >= RESPONSE_BODY);
+    }
+
+    #[test]
+    fn assembled_buf_view_empty_and_unset_are_some() {
+        let unset = AssembledBuf::default();
+        assert_eq!(unset.view(), Some(&[][..]));
+        let mut stored_empty = AssembledBuf::default();
+        stored_empty.store(&[]);
+        assert_eq!(stored_empty.view(), Some(&[][..]));
+        let mut none = AssembledNone;
+        assert_eq!(none.view(), None);
+        none.store(b"x");
+        assert_eq!(none.view(), None);
     }
 }

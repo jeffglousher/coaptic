@@ -25,7 +25,7 @@ use crate::storage::{
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
-use super::response::{AssembledBytes, INLINE_PAYLOAD, Response};
+use super::response::{AppAssembled, INLINE_PAYLOAD, Response};
 use super::{App, Error, Method, push_opt};
 
 /// Option slots for an outbound request (path + query + Table 4 extras).
@@ -303,7 +303,7 @@ enum OutgoingObserve {
 /// ```
 pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing, const BLOCK_WISE: bool = false>
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     app: &'a mut App<P, T, N, BLOCK_WISE>,
     code: Code,
@@ -327,7 +327,7 @@ where
 
 impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// CON GET builder. Next: [`Outgoing::to`].
     ///
@@ -406,16 +406,17 @@ where
 
 impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll)
     /// has completed it.
     ///
-    /// When Block2 / Q-Block2 assembled, copies the RX body into an App
-    /// hold and returns [`Response::body`] borrowed from that hold (released
-    /// from the Engine). A later [`Self::take_response`] or [`Self::poll`]
-    /// overwrites the hold. After [`Outgoing::observe`], the same `call`
-    /// yields the initial representation and later notifications.
+    /// When `BLOCK_WISE` and Block2 / Q-Block2 assembled, copies the RX
+    /// body into an App hold and returns [`Response::body`] borrowed from
+    /// that hold (released from the Engine). A later [`Self::take_response`]
+    /// or [`Self::poll`] overwrites the hold. Datagram App has no hold.
+    /// After [`Outgoing::observe`], the same `call` yields the initial
+    /// representation and later notifications.
     pub fn take_response(&mut self, call: Call) -> Option<Response<'_>> {
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
@@ -423,10 +424,10 @@ where
         }
         if let Some(id) = body {
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
-                self.assembled.store(bytes);
+                P::store(&mut self.assembled, bytes);
             }
             release_rx_body(&mut self.engine, id);
-            if let Some(bytes) = self.assembled.view() {
+            if let Some(bytes) = P::view(&self.assembled) {
                 return Some(response.with_assembled(bytes));
             }
         }
@@ -436,7 +437,7 @@ where
 
 impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool> Outgoing<'a, P, T, N, Dest, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
@@ -569,7 +570,7 @@ where
 
 impl<P, T, const N: usize, const BLOCK_WISE: bool> Outgoing<'_, P, T, N, Present, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
 {
     /// Encode the request, record the Exchange, and send.
@@ -630,8 +631,12 @@ where
     }
 }
 
-impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
-    App<P, T, N, BLOCK_WISE>
+impl<
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+> App<P, T, N, BLOCK_WISE>
 {
     fn next_token(&mut self) -> Token {
         self.tokens = self.tokens.wrapping_add(1);
@@ -1492,7 +1497,7 @@ fn reuse_observe_token<P, T, const N: usize, const BLOCK_WISE: bool>(
     dest: Endpoint,
 ) -> Token
 where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     if let Some(token) = app.lives.token_for(path, dest) {
         return token;
