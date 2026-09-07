@@ -167,7 +167,11 @@ impl DatagramIo for RecordIo {
 }
 
 fn encode_req(code: Code, path: &[&str], payload: &[u8]) -> ([u8; 256], usize) {
-    encode_req_echo(Type::Confirmable, code, path, payload, None, None)
+    encode_req_mid(code, path, payload, 0x1001)
+}
+
+fn encode_req_mid(code: Code, path: &[&str], payload: &[u8], mid: u16) -> ([u8; 256], usize) {
+    encode_req_echo(Type::Confirmable, code, path, payload, None, None, mid)
 }
 
 fn encode_req_with_echo(
@@ -183,6 +187,25 @@ fn encode_req_with_echo(
         payload,
         None,
         Some(echo.as_slice()),
+        0x1001,
+    )
+}
+
+fn encode_req_with_echo_mid(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+    echo: &EchoOpt,
+    mid: u16,
+) -> ([u8; 256], usize) {
+    encode_req_echo(
+        Type::Confirmable,
+        code,
+        path,
+        payload,
+        None,
+        Some(echo.as_slice()),
+        mid,
     )
 }
 
@@ -193,7 +216,7 @@ fn encode_req_ty(
     payload: &[u8],
     no_response: Option<u32>,
 ) -> ([u8; 256], usize) {
-    encode_req_echo(ty, code, path, payload, no_response, None)
+    encode_req_echo(ty, code, path, payload, no_response, None, 0x1001)
 }
 
 fn encode_req_echo(
@@ -203,6 +226,7 @@ fn encode_req_echo(
     payload: &[u8],
     no_response: Option<u32>,
     echo: Option<&[u8]>,
+    mid: u16,
 ) -> ([u8; 256], usize) {
     let token = Token::new(&[0xA1]).expect("token");
     let mut opts = OptionsBuilder::<8>::new();
@@ -216,7 +240,7 @@ fn encode_req_echo(
     if let Some(echo) = echo {
         opts.push(Opt::echo(echo)).expect("echo");
     }
-    let msg = Message::new(ty, code, MessageId::new(0x1001))
+    let msg = Message::new(ty, code, MessageId::new(mid))
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(payload);
@@ -661,7 +685,7 @@ fn put_led_is_changed() {
     app.poll(0).expect("poll");
     assert_eq!(last_reply(&app).code, Code::CHANGED);
 
-    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let (wire, n) = encode_req_mid(Code::GET, &["leds", "0"], &[], 0x1002);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(1).expect("poll");
@@ -698,7 +722,7 @@ fn echo_freshness_missing_is_401_problem() {
     app.poll(10).expect("poll");
     let challenge = assert_echo_401(&app, 10);
 
-    let (wire, n) = encode_req_with_echo(Code::PUT, &["leds", "0"], b"1", &challenge);
+    let (wire, n) = encode_req_with_echo_mid(Code::PUT, &["leds", "0"], b"1", &challenge, 0x1002);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(11).expect("retry");
