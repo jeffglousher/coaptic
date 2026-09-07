@@ -13,7 +13,7 @@ use crate::message::{
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, DatagramIo, Endpoint, ExchangeKey, MemoryLayout, ObserveKey, profiles,
+    BlockKey, DatagramIo, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile, ObserveKey, profiles,
 };
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
@@ -1443,7 +1443,7 @@ impl DatagramIo for WideLoopback {
 }
 
 fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; WIRE], usize) {
-    encode_nstart_wire(code, path, extra, mid, 0xA1)
+    encode_wide_token(code, path, extra, mid, Token::new(&[0xA1]).expect("token"))
 }
 
 /// Observe register wire with a one-byte Token (NSTART fan-out tests).
@@ -1454,7 +1454,16 @@ fn encode_nstart_wire(
     mid: u16,
     token: u8,
 ) -> ([u8; WIRE], usize) {
-    let token = Token::new(&[token]).expect("token");
+    encode_wide_token(code, path, extra, mid, Token::new(&[token]).expect("token"))
+}
+
+fn encode_wide_token(
+    code: Code,
+    path: &[&str],
+    extra: &[Opt<'_>],
+    mid: u16,
+    token: Token,
+) -> ([u8; WIRE], usize) {
     let mut opts = OptionsBuilder::<8>::new();
     for segment in path {
         opts.push(Opt::uri_path(segment)).expect("path");
@@ -1609,8 +1618,65 @@ fn observe_registered<const BLOCK_WISE: bool>(
 where
     profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
-    app.engine().lookup_observe(key).is_some()
+    observe_live(app, peer, Token::new(&[0xA1]).expect("token"))
+}
+
+fn observe_live<const BLOCK_WISE: bool>(
+    app: &App<profiles::Default, WideLoopback, DEFAULT_ROUTES, BLOCK_WISE>,
+    peer: Endpoint,
+    token: Token,
+) -> bool
+where
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+{
+    app.engine()
+        .lookup_observe(ObserveKey::new(token, peer))
+        .is_some()
+}
+
+#[test]
+fn observe_insert_miss_strips_observe_option() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback::default())
+        .expect("bind");
+
+    let n = profiles::Default::OBSERVE_ENTRIES;
+    for i in 0..n {
+        let token = Token::new(&[i as u8 + 1]).expect("token");
+        let (wire, len) = encode_wide_token(
+            Code::GET,
+            &["sensors", "temp"],
+            &extra,
+            0x1001 + i as u16,
+            token,
+        );
+        app.transport_mut().inbox = Some((peer, wire, len));
+        app.transport_mut().send_n = 0;
+        app.poll(0).expect("register");
+        let reply = last_wide(&app);
+        assert_eq!(reply.code(), Code::CONTENT);
+        assert_eq!(reply.observe().and_then(Result::ok), Some(0));
+        assert!(observe_live(&app, peer, token));
+    }
+
+    let overflow = Token::new(&[0xFF]).expect("token");
+    let (wire, len) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x10FF, overflow);
+    app.transport_mut().inbox = Some((peer, wire, len));
+    app.transport_mut().send_n = 0;
+    app.poll(0).expect("overflow register");
+    let reply = last_wide(&app);
+    assert_eq!(reply.code(), Code::CONTENT, "still a representation");
+    assert!(
+        reply.observe().is_none(),
+        "insert miss must not claim registration"
+    );
+    assert!(!observe_live(&app, peer, overflow));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
 }
 
 #[test]
