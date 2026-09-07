@@ -93,6 +93,8 @@ struct ReplyMeta {
     payload_len: u16,
     content_format: Option<ContentFormat>,
     observe: Option<u32>,
+    etag: [u8; 8],
+    etag_len: u8,
 }
 
 impl ReplyMeta {
@@ -101,6 +103,16 @@ impl ReplyMeta {
         let n = src.len().min(INLINE_PAYLOAD);
         let mut payload = [0u8; INLINE_PAYLOAD];
         payload[..n].copy_from_slice(&src[..n]);
+        let mut etag = [0u8; 8];
+        let etag_len = parsed
+            .etag()
+            .next()
+            .map(|tag| {
+                let n = tag.len().min(8);
+                etag[..n].copy_from_slice(&tag[..n]);
+                n as u8
+            })
+            .unwrap_or(0);
         Self {
             code: parsed.code(),
             ty: parsed.ty(),
@@ -111,11 +123,13 @@ impl ReplyMeta {
             payload_len: n as u16,
             content_format: parsed.content_format().and_then(Result::ok),
             observe: parsed.observe().and_then(Result::ok),
+            etag,
+            etag_len,
         }
     }
 
     fn into_response(self) -> Response {
-        let response = Response::from_client(
+        let mut response = Response::from_client(
             self.code,
             self.ty,
             self.token,
@@ -124,6 +138,9 @@ impl ReplyMeta {
             &self.payload[..usize::from(self.payload_len)],
             self.content_format,
         );
+        if self.etag_len > 0 {
+            response = response.etag(&self.etag[..usize::from(self.etag_len)]);
+        }
         match self.observe {
             Some(seq) => response.observe(seq),
             None => response,
@@ -253,11 +270,13 @@ enum OutgoingObserve {
 ///
 /// Distinct from the site routers [`get`](super::get) / [`put`](super::put).
 /// Chain [`.to`](Self::to), optional [`.payload`](Self::payload) /
-/// [`.non`](Self::non) / [`.observe`](Self::observe) /
-/// [`.deregister`](Self::deregister) / [`.q_block1`](Self::q_block1) /
-/// [`.q_block2`](Self::q_block2), then [`.send`](Self::send). Default type
-/// is CON. Path sugar is [`super::IntoPath`] (`"sensors/temp"` or
-/// `&["sensors", "temp"]`).
+/// [`.non`](Self::non) / [`.query`](Self::query) / [`.accept`](Self::accept) /
+/// [`.etag`](Self::etag) / [`.if_match`](Self::if_match) /
+/// [`.if_none_match`](Self::if_none_match) / [`.observe`](Self::observe) /
+/// [`.deregister`](Self::deregister) / [`.block2`](Self::block2) /
+/// [`.q_block1`](Self::q_block1) / [`.q_block2`](Self::q_block2), then
+/// [`.send`](Self::send). Default type is CON. Path sugar is
+/// [`super::IntoPath`] (`"sensors/temp"` or `&["sensors", "temp"]`).
 ///
 /// ```
 /// # use coaptic::storage::DatagramIo;
@@ -290,8 +309,15 @@ where
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    accept: Option<ContentFormat>,
+    etag: Option<&'a [u8]>,
+    if_match: Option<&'a [u8]>,
+    if_none_match: bool,
+    queries: [&'a str; MAX_PATH_SEGMENTS],
+    query_n: u8,
     q_block1: bool,
     q_block2: bool,
+    block2: Option<BlockValue>,
     observe: OutgoingObserve,
     _dest: core::marker::PhantomData<Dest>,
 }
@@ -356,8 +382,15 @@ where
             path: path_from_into(path),
             payload: &[],
             content_format: None,
+            accept: None,
+            etag: None,
+            if_match: None,
+            if_none_match: false,
+            queries: [""; MAX_PATH_SEGMENTS],
+            query_n: 0,
             q_block1: false,
             q_block2: false,
+            block2: None,
             observe: OutgoingObserve::Off,
             _dest: core::marker::PhantomData,
         }
@@ -408,8 +441,15 @@ where
             path: self.path,
             payload: self.payload,
             content_format: self.content_format,
+            accept: self.accept,
+            etag: self.etag,
+            if_match: self.if_match,
+            if_none_match: self.if_none_match,
+            queries: self.queries,
+            query_n: self.query_n,
             q_block1: self.q_block1,
             q_block2: self.q_block2,
+            block2: self.block2,
             observe: self.observe,
             _dest: core::marker::PhantomData,
         }
@@ -428,6 +468,56 @@ where
     #[must_use]
     pub const fn content_format(mut self, format: ContentFormat) -> Self {
         self.content_format = Some(format);
+        self
+    }
+
+    /// Accept option.
+    #[must_use]
+    pub const fn accept(mut self, format: ContentFormat) -> Self {
+        self.accept = Some(format);
+        self
+    }
+
+    /// ETag option (conditional GET / validation).
+    #[must_use]
+    pub const fn etag(mut self, tag: &'a [u8]) -> Self {
+        self.etag = Some(tag);
+        self
+    }
+
+    /// If-Match option.
+    #[must_use]
+    pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
+        self.if_match = Some(tag);
+        self
+    }
+
+    /// If-None-Match option.
+    #[must_use]
+    pub const fn if_none_match(mut self) -> Self {
+        self.if_none_match = true;
+        self
+    }
+
+    /// Append a Uri-Query value. Empty values and values past
+    /// [`super::MAX_PATH_SEGMENTS`] are ignored.
+    #[must_use]
+    pub fn query(mut self, value: &'a str) -> Self {
+        if value.is_empty() {
+            return self;
+        }
+        let n = usize::from(self.query_n);
+        if n < MAX_PATH_SEGMENTS {
+            self.queries[n] = value;
+            self.query_n += 1;
+        }
+        self
+    }
+
+    /// Ask for Block2 on the first GET (early size negotiation).
+    #[must_use]
+    pub const fn block2(mut self, block: BlockValue) -> Self {
+        self.block2 = Some(block);
         self
     }
 
@@ -495,41 +585,33 @@ where
         if observe == OutgoingObserve::Deregister {
             take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
         }
-        let q_block1 = self.q_block1;
-        let q_block2 = self.q_block2;
+        let queries = self.queries;
+        let query_n = usize::from(self.query_n);
+        let spec = ClientSend {
+            dest,
+            ty: self.ty,
+            code: self.code,
+            token,
+            path: path.segments(),
+            payload: self.payload,
+            content_format: self.content_format,
+            accept: self.accept,
+            etag: self.etag,
+            if_match: self.if_match,
+            if_none_match: self.if_none_match,
+            queries: &queries[..query_n],
+            q_block1: self.q_block1,
+            q_block2: self.q_block2,
+            block2: self.block2,
+            observe,
+        };
         let call = match &mut self.app.engine {
-            super::EngineSlot::Datagram(engine) => send_client(
-                engine,
-                &mut self.app.io,
-                &mut self.app.ids,
-                now_ms,
-                dest,
-                self.ty,
-                self.code,
-                token,
-                path.segments(),
-                self.payload,
-                self.content_format,
-                q_block1,
-                q_block2,
-                observe,
-            ),
-            super::EngineSlot::BlockWise(engine) => send_client(
-                engine,
-                &mut self.app.io,
-                &mut self.app.ids,
-                now_ms,
-                dest,
-                self.ty,
-                self.code,
-                token,
-                path.segments(),
-                self.payload,
-                self.content_format,
-                q_block1,
-                q_block2,
-                observe,
-            ),
+            super::EngineSlot::Datagram(engine) => {
+                send_client(engine, &mut self.app.io, &mut self.app.ids, now_ms, spec)
+            }
+            super::EngineSlot::BlockWise(engine) => {
+                send_client(engine, &mut self.app.io, &mut self.app.ids, now_ms, spec)
+            }
         }?;
         self.app.lives.insert(LiveCall {
             call,
@@ -553,41 +635,62 @@ impl<P: crate::storage::MemoryProfile, T, const N: usize> App<P, T, N> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+struct ClientSend<'a> {
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &'a [&'a str],
+    payload: &'a [u8],
+    content_format: Option<ContentFormat>,
+    accept: Option<ContentFormat>,
+    etag: Option<&'a [u8]>,
+    if_match: Option<&'a [u8]>,
+    if_none_match: bool,
+    queries: &'a [&'a str],
+    q_block1: bool,
+    q_block2: bool,
+    block2: Option<BlockValue>,
+    observe: OutgoingObserve,
+}
+
 fn send_client<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
     now_ms: u64,
-    dest: Endpoint,
-    ty: Type,
-    code: Code,
-    token: Token,
-    path: &[&str],
-    payload: &[u8],
-    content_format: Option<ContentFormat>,
-    q_block1: bool,
-    q_block2: bool,
-    observe: OutgoingObserve,
+    spec: ClientSend<'_>,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
-    if path.len() > MAX_PATH_SEGMENTS {
+    if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
     let mid = ids.next();
-    let cf = content_format.map(ContentFormat::encode);
-    let q2 = q_block2
+    let cf = spec.content_format.map(ContentFormat::encode);
+    let acc = spec.accept.map(ContentFormat::encode);
+    let q2 = spec
+        .q_block2
         .then(|| BlockValue::new(0, false, BlockValue::SZX_MAX))
         .and_then(Result::ok)
         .map(BlockValue::encode);
+    let b2 = spec.block2.map(BlockValue::encode);
     let mut opts = OptionsBuilder::<16>::new();
-    match observe {
+    if let Some(tag) = spec.if_match {
+        let _ = opts.push(Opt::if_match(tag));
+    }
+    if let Some(tag) = spec.etag {
+        let _ = opts.push(Opt::etag(tag));
+    }
+    if spec.if_none_match {
+        let _ = opts.push(Opt::if_none_match());
+    }
+    match spec.observe {
         OutgoingObserve::Register => {
             let _ = opts.push(Opt::observe_register());
         }
@@ -596,35 +699,44 @@ where
         }
         OutgoingObserve::Off => {}
     }
-    for segment in path {
+    for segment in spec.path {
         let _ = opts.push(Opt::uri_path(segment));
     }
     if let Some(ref encoded) = cf {
         let _ = opts.push(Opt::content_format(encoded));
     }
+    for query in spec.queries {
+        let _ = opts.push(Opt::uri_query(query));
+    }
+    if let Some(ref encoded) = acc {
+        let _ = opts.push(Opt::accept(encoded));
+    }
+    if let Some(ref encoded) = b2 {
+        let _ = opts.push(Opt::block2(encoded));
+    }
     if let Some(ref encoded) = q2 {
         let _ = opts.push(Opt::q_block2(encoded));
     }
-    let msg = Message::new(ty, code, mid)
-        .with_token(token)
+    let msg = Message::new(spec.ty, spec.code, mid)
+        .with_token(spec.token)
         .with_options(opts.as_slice())
-        .with_payload(payload);
+        .with_payload(spec.payload);
     match engine.encode_tx(tx, &msg) {
-        Ok(_) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
-            .map(|()| Call::new(token, dest)),
+        Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
+            .map(|()| Call::new(spec.token, spec.dest)),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => send_client_block1(
             engine,
             io,
             ids,
             now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            payload,
-            content_format,
-            q_block1,
+            spec.dest,
+            spec.ty,
+            spec.code,
+            spec.token,
+            spec.path,
+            spec.payload,
+            spec.content_format,
+            spec.q_block1,
             tx,
         ),
         Err(e) => {

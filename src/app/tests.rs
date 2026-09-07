@@ -1559,6 +1559,71 @@ fn client_non_get_matches() {
 }
 
 #[test]
+fn client_get_sends_query_accept_etag_if_match_and_block2() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .bind(RecordIo {
+            inbox: None,
+            sent: [None; 4],
+            sent_n: 0,
+        })
+        .expect("bind");
+    let block = BlockValue::from_size(0, false, 64).expect("szx");
+    let _call = app
+        .get("query")
+        .to(peer)
+        .query("first=1")
+        .query("second=2")
+        .accept(ContentFormat::TEXT_PLAIN)
+        .etag(b"etag1")
+        .if_match(b"etag1")
+        .if_none_match()
+        .block2(block)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_n, 1);
+    let (_, bytes, n) = app.transport().sent[0].expect("tx");
+    let parsed = decode(&bytes[..n]).expect("decode");
+    assert_eq!(parsed.code(), Code::GET);
+    let mut queries = parsed.uri_query();
+    assert_eq!(queries.next().and_then(Result::ok), Some("first=1"));
+    assert_eq!(queries.next().and_then(Result::ok), Some("second=2"));
+    assert!(queries.next().is_none());
+    assert_eq!(
+        parsed.accept().and_then(Result::ok),
+        Some(ContentFormat::TEXT_PLAIN)
+    );
+    assert_eq!(parsed.etag().next(), Some(&b"etag1"[..]));
+    assert_eq!(parsed.if_match().next(), Some(&b"etag1"[..]));
+    assert!(parsed.if_none_match());
+    let b2 = parsed.block2().and_then(Result::ok).expect("block2");
+    assert_eq!(b2.num(), 0);
+    assert!(!b2.more());
+    assert_eq!(b2.size(), 64);
+}
+
+fn get_tagged(_: Request<'_>) -> Response {
+    Response::valid().etag(b"etag1")
+}
+
+#[test]
+fn client_take_response_copies_etag() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["validate"], get(get_tagged))
+        .bind(Echo::default())
+        .expect("bind");
+    let call = app.get("validate").to(peer).send(0).expect("send");
+    app.poll(0).expect("server");
+    app.poll(0).expect("client");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::VALID);
+    assert_eq!(response.etag_bytes(), Some(&b"etag1"[..]));
+}
+
+#[test]
 fn client_get_unknown_path_is_problem_details() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = echo_app();
