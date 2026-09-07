@@ -320,8 +320,8 @@ impl<const ENTRIES: usize> SlotPool for ExchangeTable<ENTRIES> {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {

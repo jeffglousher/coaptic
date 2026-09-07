@@ -107,7 +107,12 @@ impl<S: Storage> Engine<S> {
 
     /// Advance the RX datagram rotating cursor.
     pub fn rotate_rx(&mut self) {
-        self.storage.rx_datagram().rotate();
+        self.advance_rx(1);
+    }
+
+    /// Jump the RX datagram rotating cursor by `steps` slots.
+    pub fn advance_rx(&mut self, steps: usize) {
+        self.storage.rx_datagram().advance(steps);
     }
 
     /// Acquire one TX datagram slot, or `None` if the pool is saturated.
@@ -140,8 +145,13 @@ impl<S: Storage> Engine<S> {
 
     /// Advance the RX body rotating cursor. No-op when body pools are absent.
     pub fn rotate_rx_body(&mut self) {
+        self.advance_rx_body(1);
+    }
+
+    /// Jump the RX body rotating cursor by `steps` slots. No-op when body pools are absent.
+    pub fn advance_rx_body(&mut self, steps: usize) {
         if let Some(pool) = self.storage.rx_body() {
-            pool.rotate();
+            pool.advance(steps);
         }
     }
 
@@ -165,9 +175,9 @@ impl<S: Storage> Engine<S> {
         }
     }
 
-    /// Advance the Observe table rotating cursor. Used by progress fairness.
-    pub(crate) fn rotate_observe(&mut self) {
-        self.storage.observe().rotate();
+    /// Jump the Observe table rotating cursor by `steps` slots.
+    pub(crate) fn advance_observe(&mut self, steps: usize) {
+        self.storage.observe().advance(steps);
     }
 
     /// Occupied RX datagram slots.
@@ -978,9 +988,7 @@ fn poll_observe_lifetime<S: Storage + ObserveSlots>(
                 .storage_mut()
                 .set_observe_interest(id, interest)
                 .ok()?;
-            for _ in 0..=offset {
-                engine.rotate_observe();
-            }
+            engine.advance_observe(offset + 1);
             Some(match life {
                 ObserveLifetime::MaxAge { .. } => ObserveExpiry::MaxAge(id),
                 ObserveLifetime::Unacked { .. } => ObserveExpiry::ClientOff(id),

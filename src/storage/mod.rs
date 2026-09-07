@@ -80,7 +80,12 @@ pub trait SlotPool {
     fn release(&mut self, id: SlotId) -> Result<(), SlotError>;
 
     /// Advance the rotating cursor by one slot, wrapping at the end.
-    fn rotate(&mut self);
+    fn rotate(&mut self) {
+        self.advance(1);
+    }
+
+    /// Jump the rotating cursor by `steps` slots, wrapping at the end.
+    fn advance(&mut self, steps: usize);
 
     /// Configured slot or entry count.
     fn slot_count(&self) -> usize;

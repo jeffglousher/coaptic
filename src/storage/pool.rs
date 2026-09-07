@@ -274,8 +274,8 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
@@ -871,8 +871,8 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for BodyPool<SLOTS, BYTES>
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
