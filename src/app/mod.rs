@@ -23,16 +23,16 @@
 //!     App, ContentFormat, Endpoint, Request, Response, get, profiles,
 //! };
 //!
-//! fn get_temp(_req: Request<'_>) -> Response {
+//! fn get_temp(_req: Request<'_>) -> Response<'static> {
 //!     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 //! }
 //!
-//! fn get_led(_: Request<'_>) -> Response {
+//! fn get_led(_: Request<'_>) -> Response<'static> {
 //!     // Demo payload. Real LED state is firmware-owned, not an App bag.
 //!     Response::content(b"off")
 //! }
 //!
-//! fn put_led(_req: Request<'_>) -> Response {
+//! fn put_led(_req: Request<'_>) -> Response<'static> {
 //!     Response::changed()
 //! }
 //!
@@ -101,11 +101,15 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
-pub use response::{INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response};
+pub use response::{
+    AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,
+};
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
 pub use site::{DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, Site, link_format_capacity};
+
+use response::AssembledField;
 
 /// Scratch for one inbound or outbound datagram (crate Default profile).
 const DATAGRAM_SCRATCH: usize = 1472;
@@ -121,15 +125,16 @@ pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_W
 /// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
 /// raise it with [`AppBuilder::routes`]. `BLOCK_WISE` is
 /// [`AppBuilder::block_wise`]: `false` stores only [`Memory<P>`] (no body
-/// pool arrays). You do not need [`crate::storage::Access`] on this path —
-/// [`Self::engine_mut`] is the advanced escape hatch.
+/// pool arrays and no client Block2 assembled hold). You do not need
+/// [`crate::storage::Access`] on this path — [`Self::engine_mut`] is the
+/// advanced escape hatch.
 pub struct App<
     P: MemoryProfile = crate::profiles::Default,
     T = (),
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
 > where
-    P: MemoryLayout<BLOCK_WISE>,
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     engine: Engine<AppStore<P, BLOCK_WISE>>,
     io: T,
@@ -139,15 +144,19 @@ pub struct App<
     inbox: client::ClientInbox,
     lives: client::ClientLives,
     echo_fresh_ms: Option<u64>,
+    /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
+    /// Present when `BLOCK_WISE`; zero-sized otherwise.
+    assembled: AssembledField<P, BLOCK_WISE>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
 /// [`route`](Self::route) → [`bind`](Self::bind).
 ///
 /// [`Self::block_wise`] is required before bind (typestate).
-/// `.block_wise::<true>()` enables body pools for Block / Q-Block;
-/// `.block_wise::<false>()` keeps datagram slots only and does not reserve
-/// body-pool RAM on [`App`].
+/// `.block_wise::<true>()` enables body pools for Block / Q-Block and the
+/// client assembled-body hold; `.block_wise::<false>()` keeps datagram
+/// slots only and does not reserve body-pool or assembled-hold RAM on
+/// [`App`].
 pub struct AppBuilder<
     P: MemoryProfile,
     Block = Missing,
@@ -246,7 +255,8 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
     /// The flag is a const generic so [`App`] RAM matches Storage:
-    /// `.block_wise::<false>()` does not reserve RX/TX body arrays.
+    /// `.block_wise::<false>()` does not reserve RX/TX body arrays or the
+    /// client Block2 assembled hold.
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
         AppBuilder {
@@ -277,6 +287,7 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            assembled: Default::default(),
         })
     }
 }
@@ -300,12 +311,17 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            assembled: Default::default(),
         })
     }
 }
 
-impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
-    App<P, T, N, BLOCK_WISE>
+impl<
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+> App<P, T, N, BLOCK_WISE>
 {
     /// Bind `methods` on Uri-Path `path`.
     ///
@@ -380,7 +396,7 @@ impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
 
 impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: MemoryLayout<BLOCK_WISE>,
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
 {
     /// One loop step: recv, progress, route, handler, send, release.
@@ -443,7 +459,7 @@ where
         &mut self,
         now_ms: u64,
         path: &[&str],
-        response: Response,
+        response: Response<'static>,
     ) -> Result<usize, Error<T::Error>> {
         let resource = ObserveResource::from_path(path);
         notify_engine(
@@ -735,6 +751,7 @@ where
         InboundBody::None | InboundBody::Complete(_) => {}
     }
 
+    let mut catalog = [0u8; RESPONSE_BODY];
     let (response, plan) = {
         let parsed = match engine.decode_rx(rx) {
             Ok(parsed) => parsed,
@@ -750,7 +767,7 @@ where
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
                 let plan = ObservePlan::from_request(site, &request);
-                (site.dispatch(request), plan)
+                (site.dispatch(request, &mut catalog), plan)
             }
             Err(request::PathError::BadUtf8 | request::PathError::EmptySegment) => (
                 Response::problem(Code::BAD_REQUEST).title("Bad Request"),
@@ -810,13 +827,13 @@ impl ObservePlan {
     }
 }
 
-fn apply_observe<S: Storage + ObserveSlots>(
+fn apply_observe<'a, S: Storage + ObserveSlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
     peer: Endpoint,
-    mut response: Response,
+    mut response: Response<'a>,
     plan: ObservePlan,
-) -> Response {
+) -> Response<'a> {
     let key = ObserveKey::new(plan.token, peer);
 
     if plan.deregister {
@@ -847,7 +864,7 @@ fn notify_engine<S, T>(
     ids: &mut Ids,
     now_ms: u64,
     resource: ObserveResource,
-    response: &Response,
+    response: &Response<'_>,
 ) -> Result<usize, Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
@@ -904,7 +921,7 @@ fn send_notification<S, T>(
     ids: &mut Ids,
     now_ms: u64,
     interest: ObserveInterest,
-    response: &Response,
+    response: &Response<'_>,
     seq: u32,
 ) -> Result<(), Error<T::Error>>
 where
@@ -917,7 +934,8 @@ where
         Type::NonConfirmable
     };
     let mid = ids.next();
-    let response = response.observe(seq);
+    let mut notify = *response;
+    notify.set_observe(seq);
     let dest = interest.endpoint();
     let token = interest.token();
     let key = BlockKey::new(token, dest);
@@ -946,15 +964,15 @@ where
         ty,
         mid,
         token,
-        &response,
-        response.payload(),
+        &notify,
+        notify.payload(),
         None,
         None,
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
             let _ = engine.release_tx(tx);
-            start_notify_block2(engine, io, meta, &response, ty, pending)
+            start_notify_block2(engine, io, meta, &notify, ty, pending)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -965,7 +983,7 @@ where
 
     let confirmable = ty == Type::Confirmable;
     let _ = engine.record_observe_notify(interest.key(), now_ms, mid, confirmable);
-    let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+    let max_age = notify.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
     let con_mid = confirmable.then_some(mid);
     let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, con_mid);
     Ok(())
@@ -975,7 +993,7 @@ fn start_notify_block2<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     ty: Type,
     pending: Option<(u64, MessageId)>,
 ) -> Result<(), Error<T::Error>>
@@ -1006,7 +1024,7 @@ fn send_separate<S, T>(
     ids: &mut Ids,
     now_ms: u64,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1077,7 +1095,7 @@ fn send_response<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1136,7 +1154,7 @@ fn start_outgoing<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     ty: Type,
     key: BlockKey,
 ) -> Result<(), Error<T::Error>>
@@ -1174,7 +1192,7 @@ fn continue_outgoing<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     ty: Type,
     id: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -1207,7 +1225,7 @@ fn issue_classic<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     ty: Type,
     mid: MessageId,
     id: SlotId,
@@ -1229,7 +1247,7 @@ fn issue_q_window<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -1263,7 +1281,7 @@ fn send_issued<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
-    response: &Response,
+    response: &Response<'_>,
     ty: Type,
     mid: MessageId,
     issued: OutgoingBlock,
@@ -1332,7 +1350,7 @@ fn encode_response<S: Storage + DatagramSlots>(
     ty: Type,
     mid: MessageId,
     token: crate::message::Token,
-    response: &Response,
+    response: &Response<'_>,
     payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockValue>,
@@ -1475,7 +1493,7 @@ where
     }
 }
 
-fn unauthorized_echo(now_ms: u64) -> Response {
+fn unauthorized_echo(now_ms: u64) -> Response<'static> {
     let challenge = Echo::mint(now_ms, &[]).expect("timestamp Echo");
     Response::problem(Code::UNAUTHORIZED)
         .title("Unauthorized")

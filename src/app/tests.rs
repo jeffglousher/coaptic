@@ -1,8 +1,9 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
 use super::{
-    DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, Request, Response, Site,
-    fetch, get, ipatch, link_format_capacity, patch, post, put,
+    AppAssembled, DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method,
+    RESPONSE_BODY, Request, Response, Site, fetch, get, ipatch, link_format_capacity, patch, post,
+    put,
 };
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
@@ -16,24 +17,24 @@ use crate::storage::{BlockKey, DatagramIo, Endpoint, MemoryLayout, ObserveKey, p
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
 
-fn get_temp(_req: Request<'_>) -> Response {
+fn get_temp(_req: Request<'_>) -> Response<'static> {
     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_led(_: Request<'_>) -> Response {
+fn get_led(_: Request<'_>) -> Response<'static> {
     // Demo payload. Real LED state is firmware-owned, not an App bag.
     Response::content(b"off")
 }
 
-fn put_led(_req: Request<'_>) -> Response {
+fn put_led(_req: Request<'_>) -> Response<'static> {
     Response::changed()
 }
 
-fn post_led(_: Request<'_>) -> Response {
+fn post_led(_: Request<'_>) -> Response<'static> {
     Response::changed()
 }
 
-fn post_create(_: Request<'_>) -> Response {
+fn post_create(_: Request<'_>) -> Response<'static> {
     Response::created()
         .location_path("location1")
         .location_path("location2")
@@ -41,7 +42,7 @@ fn post_create(_: Request<'_>) -> Response {
         .location_query("second=2")
 }
 
-fn post_max_opts(_: Request<'_>) -> Response {
+fn post_max_opts(_: Request<'_>) -> Response<'static> {
     let echo = EchoOpt::mint(0, &[]).expect("echo");
     Response::created()
         .location_path("l0")
@@ -67,7 +68,7 @@ fn post_max_opts(_: Request<'_>) -> Response {
         .echo(echo)
 }
 
-fn get_large_with_opts(_: Request<'_>) -> Response {
+fn get_large_with_opts(_: Request<'_>) -> Response<'static> {
     let echo = EchoOpt::mint(0, &[]).expect("echo");
     Response::content(&LARGE)
         .content_format(ContentFormat::OCTET_STREAM)
@@ -77,13 +78,13 @@ fn get_large_with_opts(_: Request<'_>) -> Response {
         .echo(echo)
 }
 
-fn get_separate(_: Request<'_>) -> Response {
+fn get_separate(_: Request<'_>) -> Response<'static> {
     Response::content(b"separate-payload")
         .content_format(ContentFormat::TEXT_PLAIN)
         .separate()
 }
 
-fn put_body(req: Request<'_>) -> Response {
+fn put_body(req: Request<'_>) -> Response<'static> {
     if req.has_body() {
         Response::changed().payload_copy(req.body().unwrap_or(&[]))
     } else {
@@ -91,23 +92,23 @@ fn put_body(req: Request<'_>) -> Response {
     }
 }
 
-fn fetch_query(req: Request<'_>) -> Response {
+fn fetch_query(req: Request<'_>) -> Response<'static> {
     assert_eq!(req.method(), Some(Method::Fetch));
     Response::content_copy(req.payload()).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn patch_doc(req: Request<'_>) -> Response {
+fn patch_doc(req: Request<'_>) -> Response<'static> {
     assert_eq!(req.method(), Some(Method::Patch));
     Response::changed().payload_copy(req.payload())
 }
 
-fn ipatch_doc(req: Request<'_>) -> Response {
+fn ipatch_doc(req: Request<'_>) -> Response<'static> {
     assert_eq!(req.method(), Some(Method::IPatch));
     // Distinct from PATCH so a shared handler cannot green both methods.
     Response::changed().payload_copy(b"idempotent")
 }
 
-fn put_large(req: Request<'_>) -> Response {
+fn put_large(req: Request<'_>) -> Response<'static> {
     if req.body() == Some(&LARGE[..]) {
         Response::changed()
     } else {
@@ -115,18 +116,18 @@ fn put_large(req: Request<'_>) -> Response {
     }
 }
 
-fn get_large(_: Request<'_>) -> Response {
+fn get_large(_: Request<'_>) -> Response<'static> {
     Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
 }
 
-fn get_obs(_req: Request<'_>) -> Response {
+fn get_obs(_req: Request<'_>) -> Response<'static> {
     Response::content(b"obs-0")
         .content_format(ContentFormat::TEXT_PLAIN)
         .max_age(5)
         .observe(0)
 }
 
-fn obs_snapshot() -> Response {
+fn obs_snapshot() -> Response<'static> {
     Response::content(b"obs-snap").content_format(ContentFormat::TEXT_PLAIN)
 }
 
@@ -306,7 +307,7 @@ fn last_reply<const BLOCK_WISE: bool>(
     app: &App<profiles::Default, Loopback, DEFAULT_ROUTES, BLOCK_WISE>,
 ) -> LastReply
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let (_, bytes, n) = app.transport().last_send.expect("sent");
     let parsed = decode(&bytes[..n]).expect("decode reply");
@@ -388,7 +389,7 @@ fn created_max_location_etag_observe_echo_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -789,11 +790,11 @@ fn well_known_request() -> ([u8; 256], usize) {
     encode_req(Code::GET, &[".well-known", "core"], &[])
 }
 
-fn dispatch_well_known<const N: usize>(site: &Site<N>) -> Response {
+fn dispatch_well_known<'a, const N: usize>(site: &Site<N>, scratch: &'a mut [u8]) -> Response<'a> {
     let (wire, n) = well_known_request();
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    site.dispatch(req)
+    site.dispatch(req, scratch)
 }
 
 fn assert_full_catalog(body: &str) {
@@ -824,7 +825,8 @@ fn well_known_core_lists_all_registered_routes_past_inline() {
     assert_eq!(site.len(), 16);
     assert_eq!(site.capacity(), 16);
 
-    let response = dispatch_well_known(&site);
+    let mut scratch = [0u8; RESPONSE_BODY];
+    let response = dispatch_well_known(&site, &mut scratch);
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
     let body = core::str::from_utf8(response.payload()).expect("utf8");
@@ -870,7 +872,8 @@ fn well_known_core_overflow_is_internal_error() {
 
     let mut site = Site::<1>::new();
     site.route(TOO_LONG, get(get_temp)).well_known_core();
-    let response = dispatch_well_known(&site);
+    let mut scratch = [0u8; RESPONSE_BODY];
+    let response = dispatch_well_known(&site, &mut scratch);
     assert_eq!(response.code(), Code::INTERNAL_SERVER_ERROR);
     assert!(response.payload().is_empty());
     assert_ne!(response.format(), Some(ContentFormat::LINK_FORMAT));
@@ -891,7 +894,7 @@ impl Experimental {
     }
 }
 
-fn put_std_and_custom(req: Request<'_>) -> Response {
+fn put_std_and_custom(req: Request<'_>) -> Response<'static> {
     let experimental = Experimental::new();
     match (req.content_format(), req.get_option(experimental.number())) {
         (Some(Ok(ContentFormat::JSON)), Some(opt)) => Response::changed().payload_copy(opt.value()),
@@ -946,13 +949,13 @@ fn site_dispatch_table() {
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).code(), Code::CONTENT);
 
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::CONTENT);
-    assert_eq!(site.dispatch(req).payload(), b"off");
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).payload(), b"off");
 }
 
 #[test]
@@ -962,7 +965,7 @@ fn route_path_splits_static_uri() {
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).code(), Code::CONTENT);
 }
 
 #[test]
@@ -972,7 +975,7 @@ fn route_slash_path_ignores_leading_slash() {
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::CONTENT);
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).code(), Code::CONTENT);
 }
 
 #[test]
@@ -991,12 +994,15 @@ fn replacing_route_changes_handler() {
     let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        site.dispatch(req, &mut [0u8; 1]).code(),
+        Code::METHOD_NOT_ALLOWED
+    );
 
     let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
     let parsed = decode(&wire[..n]).expect("decode");
     let req = Request::from_decoded(parsed, Endpoint::v4([192, 0, 2, 1], 5683), None).expect("req");
-    assert_eq!(site.dispatch(req).code(), Code::CHANGED);
+    assert_eq!(site.dispatch(req, &mut [0u8; 1]).code(), Code::CHANGED);
 }
 
 #[test]
@@ -1427,7 +1433,7 @@ fn last_wide<const BLOCK_WISE: bool>(
     app: &App<profiles::Default, WideLoopback, DEFAULT_ROUTES, BLOCK_WISE>,
 ) -> crate::message::ParsedMessage<'_>
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let n = app.transport().send_n;
     assert!(n > 0, "expected a send");
@@ -1480,7 +1486,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["loud"], &[], 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1560,7 +1566,7 @@ fn observe_registered<const BLOCK_WISE: bool>(
     peer: Endpoint,
 ) -> bool
 where
-    profiles::Default: MemoryLayout<BLOCK_WISE>,
+    profiles::Default: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
     app.engine().lookup_observe(key).is_some()
@@ -2016,7 +2022,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
 fn client_full_path_query_and_extras_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -2073,7 +2079,7 @@ fn client_full_path_query_and_extras_all_on_wire() {
     assert!(parsed.block2().and_then(Result::ok).is_some());
 }
 
-fn get_tagged(_: Request<'_>) -> Response {
+fn get_tagged(_: Request<'_>) -> Response<'static> {
     Response::valid().etag(b"etag1")
 }
 
@@ -2172,14 +2178,40 @@ fn pipe_app() -> App<profiles::Default, Pipe, DEFAULT_ROUTES, true> {
         .expect("bind")
 }
 
+struct Taken {
+    code: Code,
+    format: Option<ContentFormat>,
+    token: Option<Token>,
+    peer: Option<Endpoint>,
+    has_body: bool,
+    body: [u8; RESPONSE_BODY],
+    body_len: usize,
+}
+
 fn poll_until_response(
     app: &mut App<profiles::Default, Pipe, DEFAULT_ROUTES, true>,
     call: crate::Call,
-) -> crate::Response {
+) -> Taken {
     for t in 0u64..16 {
         app.poll(t).expect("poll");
         if let Some(response) = app.take_response(call) {
-            return response;
+            let mut body = [0u8; RESPONSE_BODY];
+            let (has_body, body_len) = match response.body() {
+                Some(src) => {
+                    body[..src.len()].copy_from_slice(src);
+                    (true, src.len())
+                }
+                None => (false, 0),
+            };
+            return Taken {
+                code: response.code(),
+                format: response.format(),
+                token: response.token(),
+                peer: response.peer(),
+                has_body,
+                body,
+                body_len,
+            };
         }
     }
     panic!("client block-wise exchange did not complete");
@@ -2191,12 +2223,12 @@ fn client_get_block2_assembles_body_without_slot_id() {
     let mut app = pipe_app();
     let call = app.get(&["large"]).to(peer).send(0).expect("send");
     let response = poll_until_response(&mut app, call);
-    assert_eq!(response.code(), Code::CONTENT);
-    assert_eq!(response.format(), Some(ContentFormat::OCTET_STREAM));
-    assert!(response.has_body());
-    assert_eq!(response.body().expect("assembled"), &LARGE[..]);
-    assert_eq!(response.token(), Some(call.token()));
-    assert_eq!(response.peer(), Some(peer));
+    assert_eq!(response.code, Code::CONTENT);
+    assert_eq!(response.format, Some(ContentFormat::OCTET_STREAM));
+    assert!(response.has_body);
+    assert_eq!(&response.body[..response.body_len], &LARGE[..]);
+    assert_eq!(response.token, Some(call.token()));
+    assert_eq!(response.peer, Some(peer));
     assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
@@ -2214,9 +2246,9 @@ fn client_put_block1_assembles_body_without_slot_id() {
         .send(0)
         .expect("send");
     let response = poll_until_response(&mut app, call);
-    assert_eq!(response.code(), Code::CHANGED);
-    assert_eq!(response.token(), Some(call.token()));
-    assert_eq!(response.peer(), Some(peer));
+    assert_eq!(response.code, Code::CHANGED);
+    assert_eq!(response.token, Some(call.token()));
+    assert_eq!(response.peer, Some(peer));
     assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
@@ -2234,7 +2266,7 @@ fn client_put_q_block1_assembles_body_without_slot_id() {
         .send(0)
         .expect("send");
     let response = poll_until_response(&mut app, call);
-    assert_eq!(response.code(), Code::CHANGED);
+    assert_eq!(response.code, Code::CHANGED);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -2250,9 +2282,9 @@ fn client_get_q_block2_assembles_body_without_slot_id() {
         .send(0)
         .expect("send");
     let response = poll_until_response(&mut app, call);
-    assert_eq!(response.code(), Code::CONTENT);
-    assert!(response.has_body());
-    assert_eq!(response.body().expect("assembled"), &LARGE[..]);
+    assert_eq!(response.code, Code::CONTENT);
+    assert!(response.has_body);
+    assert_eq!(&response.body[..response.body_len], &LARGE[..]);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -2560,14 +2592,7 @@ fn client_second_con_nstart_does_not_leak_tx() {
         let (_, bytes, n) = app.transport().sent[0].expect("first wire");
         decode(&bytes[..n]).expect("decode first").message_id()
     };
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
 
     let err = app
         .get(&["sensors", "temp"])
@@ -2581,13 +2606,6 @@ fn client_second_con_nstart_does_not_leak_tx() {
         "second CON must not go on the wire without RTO"
     );
     assert_eq!(app.engine_mut().tx_occupied(), 1, "no orphan TX");
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
     assert!(app.take_response(first).is_none());
 }

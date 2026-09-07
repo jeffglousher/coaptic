@@ -23,22 +23,22 @@ use coaptic::message::{
 use coaptic::storage::DatagramIo;
 use coaptic::{App, Code, ContentFormat, Endpoint, Request, Response, get, profiles};
 
-fn get_temp(_req: Request<'_>) -> Response {
+fn get_temp(_req: Request<'_>) -> Response<'static> {
     Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_led(_: Request<'_>) -> Response {
+fn get_led(_: Request<'_>) -> Response<'static> {
     // Demo payload. Real LED state is firmware-owned, not an App bag.
     Response::content(b"off")
 }
 
-fn put_led(_req: Request<'_>) -> Response {
+fn put_led(_req: Request<'_>) -> Response<'static> {
     Response::changed()
 }
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 
-fn get_large(_: Request<'_>) -> Response {
+fn get_large(_: Request<'_>) -> Response<'static> {
     Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
 }
 

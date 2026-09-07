@@ -14,13 +14,13 @@ use super::response::Response;
 /// Function pointer stored in a [`MethodRouter`].
 ///
 /// Default handlers are relatively stateless: `Request` → [`Response`].
-pub type HandlerFn = fn(Request<'_>) -> Response;
+pub type HandlerFn = fn(Request<'_>) -> Response<'static>;
 
 /// Snapshot for a due Observe notification (`App::poll` / [`App::signal`](super::App::signal)).
 ///
 /// Domain data stays outside `App`. This fn builds the current
 /// representation when Engine pacing surfaces a notify.
-pub type ObserveSource = fn() -> Response;
+pub type ObserveSource = fn() -> Response<'static>;
 
 /// Per-path method table (Ohkami-style bits; Axum-style `.get().put()` chain).
 ///
@@ -32,8 +32,8 @@ pub type ObserveSource = fn() -> Response;
 /// ```
 /// use coaptic::{Request, Response, get};
 ///
-/// fn read(_: Request<'_>) -> Response { Response::content(b"ok") }
-/// fn write(_: Request<'_>) -> Response { Response::changed() }
+/// fn read(_: Request<'_>) -> Response<'static> { Response::content(b"ok") }
+/// fn write(_: Request<'_>) -> Response<'static> { Response::changed() }
 ///
 /// let methods = get(read).put(write);
 /// # let _ = methods;
@@ -120,7 +120,7 @@ impl MethodRouter {
         self
     }
 
-    pub(crate) fn call(&self, method: Method, req: Request<'_>) -> Response {
+    pub(crate) fn call(&self, method: Method, req: Request<'_>) -> Response<'static> {
         match self.handlers[method.index()] {
             Some(handler) => handler(req),
             None => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),

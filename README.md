@@ -19,7 +19,7 @@ RX --copy--> Response
 ```rust
 use coaptic::{App, Request, Response, get, profiles};
 
-fn get_temp(_req: Request<'_>) -> Response {
+fn get_temp(_req: Request<'_>) -> Response<'static> {
     Response::content(b"21.5")
 }
 
