@@ -1961,6 +1961,56 @@ fn observe_source_sends_on_signal_poll() {
     assert_eq!(note.payload(), b"obs-snap");
 }
 
+#[test]
+fn observe_signal_survives_tx_saturated_poll() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("register");
+    assert!(observe_registered(&app, peer));
+
+    let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
+    let id = app.engine().lookup_observe(key).expect("row");
+    assert_eq!(app.engine().observe_interest(id).expect("row").seq(), 0);
+
+    let mut held = [None; profiles::Default::TX_DATAGRAM_SLOTS];
+    {
+        let engine = app.engine_mut();
+        for slot in &mut held {
+            *slot = engine.acquire_tx();
+        }
+        assert!(engine.acquire_tx().is_none(), "TX full");
+    }
+
+    assert_eq!(app.signal(&["sensors", "temp"]), 1);
+    app.transport_mut().send_n = 0;
+    let err = app.poll(10).expect_err("TX full");
+    assert_eq!(err, Error::Saturated);
+    let row = app.engine().observe_interest(id).expect("still registered");
+    assert!(row.is_pending(), "due must survive send miss");
+    assert_eq!(row.seq(), 0, "seq must not gap");
+    assert_eq!(app.transport().send_n, 0);
+
+    for tx in held.into_iter().flatten() {
+        app.engine_mut().release_tx(tx).expect("free TX");
+    }
+    app.poll(10).expect("retry notify");
+    let note = last_wide(&app);
+    assert_eq!(note.observe().and_then(Result::ok), Some(1));
+    assert_eq!(note.payload(), b"obs-snap");
+    let row = app.engine().observe_interest(id).expect("row");
+    assert!(!row.is_pending());
+    assert_eq!(row.seq(), 1);
+}
+
 /// Send writes into recv so one App is both client and server.
 #[derive(Default)]
 struct Echo {
