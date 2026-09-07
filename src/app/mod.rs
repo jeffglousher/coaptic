@@ -391,10 +391,12 @@ where
     ///
     /// **Retransmit.** Engine schedules CON RTO inside [`Engine::progress`]
     /// / [`Engine::poll_retransmit`] and does not send. This poll sends on
-    /// [`Retransmit::Due`] and releases on [`Retransmit::GiveUp`]. `now_ms`
-    /// is the caller clock (jitter is 0 from [`Outgoing::send`]). Advanced
-    /// slots / [`Access`](crate::storage::Access) / remaining RST policy /
-    /// BERT (future / backlog): [`Self::engine_mut`].
+    /// [`Retransmit::Due`] and releases on [`Retransmit::GiveUp`]. A matching
+    /// response (piggybacked ACK or separate CON/NON) clears that pending CON
+    /// using the request Message ID. `now_ms` is the caller clock (jitter is
+    /// 0 from [`Outgoing::send`]). Advanced slots /
+    /// [`Access`](crate::storage::Access) / remaining RST policy / BERT
+    /// (future / backlog): [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(

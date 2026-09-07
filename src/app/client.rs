@@ -843,11 +843,11 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
     T: DatagramIo,
 {
-    let via_exchange = matching_exchange(engine, parsed, peer).is_some();
+    let via_exchange = matching_exchange(engine, parsed, peer);
     let via_observe = engine
         .lookup_observe(ObserveKey::new(parsed.token(), peer))
         .is_some();
-    if !via_exchange && !via_observe {
+    if via_exchange.is_none() && !via_observe {
         let _ = engine.release_rx(rx);
         return Ok(());
     }
@@ -855,6 +855,13 @@ where
         if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {
             let _ = engine.release_rx(rx);
             return Err(e);
+        }
+    }
+    // Piggybacked ACK shares the request MID. A separate CON/NON response
+    // uses a new MID; stop RTO using the exchange's request MID.
+    if let Some(entry) = via_exchange {
+        if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
+            let _ = engine.release_tx(tx);
         }
     }
     if let Some(tx) = engine.take_pending_con(parsed.message_id(), peer) {
@@ -880,7 +887,7 @@ where
 
     match engine.apply_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
-            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
+            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
             finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
             return Ok(());
         }
@@ -902,7 +909,7 @@ where
     match engine.apply_q_block2_rx(rx) {
         Ok(progress) if progress.complete() => {
             let _ = engine.note_q_receive(progress.id(), now_ms);
-            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
+            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
             finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
             return Ok(());
         }
@@ -924,7 +931,7 @@ where
         }
     }
 
-    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange);
+    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
     take_exchange(engine, parsed, peer);
     let evicted = inbox.insert(
         Call::new(parsed.token(), peer),

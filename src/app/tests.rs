@@ -2078,6 +2078,65 @@ fn inject_piggyback_ack(
     app.transport_mut().inbox = Some((peer, buf, n));
 }
 
+fn inject_separate_con(
+    app: &mut App<profiles::Default, RecordIo>,
+    peer: Endpoint,
+    mid: MessageId,
+    token: Token,
+    payload: &[u8],
+) {
+    let cf = ContentFormat::TEXT_PLAIN.encode();
+    let mut opts = OptionsBuilder::<4>::new();
+    opts.push(Opt::content_format(&cf)).expect("cf");
+    let con = Message::new(Type::Confirmable, Code::CONTENT, mid)
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    let mut buf = [0u8; 256];
+    let n = encode(&con, &mut buf).expect("separate");
+    app.transport_mut().inbox = Some((peer, buf, n));
+}
+
+#[test]
+fn client_separate_response_stops_con_retransmit() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let (req_mid, token) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        let first = decode(&bytes[..n]).expect("decode first");
+        (first.message_id(), first.token())
+    };
+    assert_eq!(token, call.token());
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+
+    let sep_mid = MessageId::new(req_mid.get().wrapping_add(1));
+    assert_ne!(sep_mid, req_mid);
+    inject_separate_con(&mut app, peer, sep_mid, token, b"later");
+    app.poll(0).expect("match separate");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"later");
+    assert_eq!(
+        app.engine_mut().tx_occupied(),
+        0,
+        "request pending CON must be released"
+    );
+
+    let after_match = app.transport().sent_n;
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    app.poll(timeout).expect("past request RTO");
+    assert_eq!(
+        app.transport().sent_n,
+        after_match,
+        "separate CON must stop request retransmit"
+    );
+}
+
 #[test]
 fn client_con_retransmit_after_dropped_first_send() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
