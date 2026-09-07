@@ -67,13 +67,15 @@
 //! attach [`MethodRouter::observe`]; later representations are
 //! [`App::notify`]. Client subscribe is [`Outgoing::observe`] /
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo freshness
-//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`].
+//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`]. Pairwise OSCORE
+//! (feature `oscore`) is `App::set_oscore`.
 //!
 //! The happy path does not use [`Access`](crate::storage::Access) or
 //! [`SlotId`]. Engine remains the advanced escape hatch
 //! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
 //! and BERT edges (future / backlog).
 mod client;
+mod oscore;
 mod request;
 mod response;
 mod routing;
@@ -145,6 +147,8 @@ pub struct App<
     inbox: client::ClientInbox,
     lives: client::ClientLives,
     echo_fresh_ms: Option<u64>,
+    /// Caller-owned OSCORE context (`()` without the `oscore` feature).
+    oscore: oscore::Field,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
     assembled: AssembledField<P, BLOCK_WISE>,
@@ -288,6 +292,7 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            oscore: oscore::empty_field(),
             assembled: Default::default(),
         })
     }
@@ -312,6 +317,7 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            oscore: oscore::empty_field(),
             assembled: Default::default(),
         })
     }
@@ -375,6 +381,41 @@ impl<
     /// releases; App handlers do not need this.
     pub const fn engine_mut(&mut self) -> &mut Engine<AppStore<P, BLOCK_WISE>> {
         &mut self.engine
+    }
+
+    /// Attach a caller-owned pairwise OSCORE context.
+    ///
+    /// Requires the `oscore` crate feature. You derive
+    /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
+    /// IDs, replay window). Engine does not store keys. Protect happens
+    /// when a datagram is encoded into a TX slot, so CON retransmit
+    /// reuses the same ciphertext.
+    ///
+    /// This slice covers a single pairwise context on the happy-path
+    /// request/response. Observe notifications, outer Block-wise, group
+    /// OSCORE, and other ciphers are out.
+    ///
+    /// Fail-closed while a context is attached: a non-empty datagram
+    /// without an OSCORE option is rejected (4.01 on a request; a plain
+    /// 2.xx does not complete a [`Call`]). Empty ACK/RST stay unprotected
+    /// (RFC 7252 reliability). AEAD failure is a silent drop.
+    #[cfg(feature = "oscore")]
+    pub fn set_oscore(&mut self, ctx: crate::oscore::SecurityContext) -> &mut Self {
+        self.oscore = Some(ctx);
+        self
+    }
+
+    /// Borrow the attached OSCORE context, if any.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub const fn oscore(&self) -> Option<&crate::oscore::SecurityContext> {
+        self.oscore.as_ref()
+    }
+
+    /// Mutably borrow the attached OSCORE context.
+    #[cfg(feature = "oscore")]
+    pub const fn oscore_mut(&mut self) -> Option<&mut crate::oscore::SecurityContext> {
+        self.oscore.as_mut()
     }
 
     /// Copy of Engine reactor counters.
@@ -462,6 +503,8 @@ where
     /// DELETE / iPATCH replay when a cache exists; without one, re-run is
     /// allowed (RFC 7252 §4.5 MAY). After `EXCHANGE_LIFETIME` expiry,
     /// Dedup Miss is a new exchange (POST / PATCH / FETCH may re-run).
+    /// An OSCORE CON retransmit is keyed on the *outer* Message ID so the
+    /// cached protected ACK is replayed without a second unprotect.
     /// Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`]. Empty RST matching a notification Message ID
@@ -492,6 +535,7 @@ where
             &mut self.ids,
             &mut self.inbox,
             &mut self.lives,
+            &mut self.oscore,
             self.echo_fresh_ms,
             now_ms,
         )
@@ -539,6 +583,7 @@ fn poll_engine<Mem, T, const N: usize>(
     ids: &mut Ids,
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
+    oscore: &mut oscore::Field,
     echo_fresh_ms: Option<u64>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
@@ -577,6 +622,7 @@ where
             inbox,
             lives,
             ids,
+            oscore,
             echo_fresh_ms,
             now_ms,
             rx,
@@ -699,6 +745,7 @@ where
                 block2: None,
                 q_block2: None,
                 block1: None,
+                oscore: oscore::no_request(),
             };
             send_response(
                 engine,
@@ -706,6 +753,7 @@ where
                 meta,
                 &Response::missing_blocks(nums.into_iter().take(n)),
                 now_ms,
+                &oscore::empty_field(),
             )
         }
         _ => Ok(()),
@@ -720,6 +768,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
     ids: &mut Ids,
+    oscore: &mut oscore::Field,
     echo_fresh_ms: Option<u64>,
     now_ms: u64,
     rx: SlotId,
@@ -778,11 +827,10 @@ where
         return outcome;
     }
 
-    if !parsed.code().is_request() {
-        return client::complete_client(engine, io, inbox, lives, ids, now_ms, peer, &parsed, rx);
-    }
-
-    if parsed.ty() == Type::Confirmable {
+    // Dedup keys the *outer* Message ID + peer. OSCORE CON retransmit
+    // must replay the cached protected ACK before unprotect, or the
+    // replay window consumes the Partial IV and the client never ACKs.
+    if parsed.code().is_request() && parsed.ty() == Type::Confirmable {
         match replay_con_request(engine, io, peer, &parsed, now_ms) {
             Replay::Hit(outcome) => {
                 let _ = engine.release_rx(rx);
@@ -790,6 +838,33 @@ where
             }
             Replay::Miss => {}
         }
+    }
+
+    let mut inner_scratch = [0u8; DATAGRAM_SCRATCH];
+    let opened = match oscore::inbound(oscore, &parsed, &mut inner_scratch) {
+        Ok(opened) => opened,
+        Err(e) => {
+            let outcome = oscore_inbound_error(engine, io, &parsed, peer, now_ms, e);
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+    };
+    let (parsed, oscore_req) = match opened {
+        Some((inner, req)) => {
+            #[cfg(feature = "oscore")]
+            {
+                (inner, Some(req))
+            }
+            #[cfg(not(feature = "oscore"))]
+            {
+                (inner, req)
+            }
+        }
+        None => (parsed, oscore::no_request()),
+    };
+
+    if !parsed.code().is_request() {
+        return client::complete_client(engine, io, inbox, lives, ids, now_ms, peer, &parsed, rx);
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
@@ -806,6 +881,7 @@ where
             block2: None,
             q_block2: None,
             block1: None,
+            oscore: oscore_req,
         };
         let outcome = send_response(
             engine,
@@ -813,6 +889,7 @@ where
             meta,
             &Response::problem(Code::BAD_OPTION).title("Bad Option"),
             now_ms,
+            oscore,
         );
         let _ = engine.release_rx(rx);
         return outcome;
@@ -829,13 +906,15 @@ where
         block2,
         q_block2,
         block1,
+        oscore: oscore_req,
     };
 
     if let Some(fresh_ms) = echo_fresh_ms {
         match Engine::<Mem>::echo_freshness(&parsed, now_ms, fresh_ms) {
             EchoFreshness::Fresh => {}
             EchoFreshness::Missing | EchoFreshness::Invalid | EchoFreshness::Stale => {
-                let outcome = send_response(engine, io, meta, &unauthorized_echo(now_ms), now_ms);
+                let outcome =
+                    send_response(engine, io, meta, &unauthorized_echo(now_ms), now_ms, oscore);
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -845,7 +924,8 @@ where
     let assembled = assemble_inbound_body(engine, rx, now_ms);
     match assembled {
         InboundBody::Continue => {
-            let outcome = send_response(engine, io, meta, &Response::new(Code::CONTINUE), now_ms);
+            let outcome =
+                send_response(engine, io, meta, &Response::new(Code::CONTINUE), now_ms, oscore);
             let _ = engine.release_rx(rx);
             return outcome;
         }
@@ -860,6 +940,7 @@ where
                 &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
                     .title("Request Entity Incomplete"),
                 now_ms,
+                oscore,
             );
             let _ = engine.release_rx(rx);
             return outcome;
@@ -869,13 +950,6 @@ where
 
     let mut catalog = [0u8; RESPONSE_BODY];
     let (response, plan) = {
-        let parsed = match engine.decode_rx(rx) {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                let _ = engine.release_rx(rx);
-                return Err(Error::Message(e));
-            }
-        };
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
             InboundBody::None | InboundBody::Continue | InboundBody::IncompleteEntity => None,
@@ -898,9 +972,9 @@ where
     let response = apply_observe(engine, now_ms, peer, response, plan);
 
     let outcome = if response.is_separate() {
-        send_separate(engine, io, ids, now_ms, meta, &response)
+        send_separate(engine, io, ids, now_ms, meta, &response, oscore)
     } else {
-        send_response(engine, io, meta, &response, now_ms)
+        send_response(engine, io, meta, &response, now_ms, oscore)
     };
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
@@ -1142,6 +1216,7 @@ where
         block2: None,
         q_block2: None,
         block1: None,
+        oscore: oscore::no_request(),
     };
 
     let Some(tx) = engine.acquire_tx() else {
@@ -1158,6 +1233,8 @@ where
         notify.payload(),
         None,
         None,
+        &oscore::empty_field(),
+        oscore::no_request(),
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
@@ -1201,7 +1278,17 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    let outcome = issue_classic(engine, io, meta, response, ty, meta.mid, id, pending);
+    let outcome = issue_classic(
+        engine,
+        io,
+        meta,
+        response,
+        ty,
+        meta.mid,
+        id,
+        pending,
+        &oscore::empty_field(),
+    );
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
     }
@@ -1215,6 +1302,7 @@ fn send_separate<S, T>(
     now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -1233,7 +1321,7 @@ where
                 Type::NonConfirmable => Type::NonConfirmable,
                 Type::Acknowledgement | Type::Reset => return Ok(()),
             };
-            return continue_outgoing(engine, io, meta, response, ty, id);
+            return continue_outgoing(engine, io, meta, response, ty, id, oscore_ctx);
         }
     }
 
@@ -1268,12 +1356,14 @@ where
         response.payload(),
         None,
         meta.block1,
+        oscore_ctx,
+        meta.oscore,
     ) {
         Ok(()) => finish_send(engine, io, tx, meta.dest, pending),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
             let _ = engine.release_tx(tx);
             let meta = SendResponse { mid, ..meta };
-            start_outgoing(engine, io, meta, response, ty, key)
+            start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1288,6 +1378,7 @@ fn send_response<S, T>(
     meta: SendResponse,
     response: &Response<'_>,
     now_ms: u64,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -1318,7 +1409,7 @@ where
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             )
         }) {
-            return continue_outgoing(engine, io, meta, response, ty, id);
+            return continue_outgoing(engine, io, meta, response, ty, id, oscore_ctx);
         }
     }
 
@@ -1336,6 +1427,8 @@ where
         response.payload(),
         None,
         meta.block1,
+        oscore_ctx,
+        meta.oscore,
     ) {
         Ok(()) => match remember_tx_reply(engine, tx, meta.dest, meta.mid, meta.ty, now_ms) {
             KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
@@ -1343,7 +1436,7 @@ where
         },
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
             let _ = engine.release_tx(tx);
-            start_outgoing(engine, io, meta, response, ty, key)
+            start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1359,6 +1452,7 @@ fn start_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     key: BlockKey,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1380,9 +1474,11 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let outcome = if meta.q_block2.is_some() {
-        issue_q_window(engine, io, meta, response, ty, id)
+        issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
     } else {
-        issue_classic(engine, io, meta, response, ty, meta.mid, id, None)
+        issue_classic(
+            engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
+        )
     };
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -1397,6 +1493,7 @@ fn continue_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     id: SlotId,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1410,14 +1507,14 @@ where
         BlockRole::OutgoingQBlock2 => match meta.q_block2 {
             Some(q) if q.more() => {
                 engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
-                issue_q_window(engine, io, meta, response, ty, id)
+                issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
             }
             Some(_) => Ok(()),
-            None => issue_q_window(engine, io, meta, response, ty, id),
+            None => issue_q_window(engine, io, meta, response, ty, id, oscore_ctx),
         },
-        BlockRole::OutgoingBlock2 => {
-            issue_classic(engine, io, meta, response, ty, meta.mid, id, None)
-        }
+        BlockRole::OutgoingBlock2 => issue_classic(
+            engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
+        ),
         _ => Ok(()),
     }
 }
@@ -1432,13 +1529,16 @@ fn issue_classic<S, T>(
     mid: MessageId,
     id: SlotId,
     pending: Option<(u64, MessageId)>,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
     let issued = engine.next_block2(id).map_err(Error::Block)?;
-    send_issued(engine, io, meta, response, ty, mid, issued, false, pending)?;
+    send_issued(
+        engine, io, meta, response, ty, mid, issued, false, pending, oscore_ctx,
+    )?;
     if issued.complete() {
         let _ = engine.release_tx_body(id);
     }
@@ -1452,6 +1552,7 @@ fn issue_q_window<S, T>(
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1469,7 +1570,9 @@ where
         } else {
             (Type::NonConfirmable, meta.mid.wrapping_add(extra))
         };
-        send_issued(engine, io, meta, response, ty, mid, issued, true, None)?;
+        send_issued(
+            engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
+        )?;
         extra = extra.saturating_add(1);
         if issued.complete() {
             let _ = engine.release_tx_body(id);
@@ -1489,6 +1592,7 @@ fn send_issued<S, T>(
     issued: OutgoingBlock,
     q_block: bool,
     pending: Option<(u64, MessageId)>,
+    oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1519,6 +1623,8 @@ where
         &chunk[..n],
         block,
         meta.block1,
+        oscore_ctx,
+        meta.oscore,
     ) {
         let _ = engine.release_tx(tx);
         return Err(e.into());
@@ -1556,6 +1662,8 @@ fn encode_response<S: Storage + DatagramSlots>(
     payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockValue>,
+    oscore_ctx: &oscore::Field,
+    oscore_req: oscore::Request,
 ) -> Result<(), SlotMessageError> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
@@ -1612,7 +1720,7 @@ fn encode_response<S: Storage + DatagramSlots>(
                 .with_token(token)
                 .with_options(opts.as_slice())
                 .with_payload(payload);
-            engine.encode_tx(tx, &msg).map(|_| ())
+            oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
         }
         Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
         Err(e) => Err(SlotMessageError::Encode(e)),
@@ -1963,6 +2071,54 @@ where
     }
 }
 
+fn oscore_inbound_error<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    parsed: &crate::message::ParsedMessage<'_>,
+    peer: Endpoint,
+    now_ms: u64,
+    err: oscore::InboundError,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    #[cfg(feature = "oscore")]
+    {
+        // AEAD / replay / OSCORE-option processing: silent drop (no 4.00
+        // decrypt oracle). A response is never answered. Only a *plain*
+        // request (no OSCORE option) while a context is attached is 4.01.
+        if !parsed.code().is_request() || parsed.oscore().is_some() {
+            return Ok(());
+        }
+        let _ = err;
+        let meta = SendResponse {
+            dest: peer,
+            ty: parsed.ty(),
+            mid: parsed.message_id(),
+            token: parsed.token(),
+            no_response: NoResponse::DEFAULT,
+            block2: None,
+            q_block2: None,
+            block1: None,
+            oscore: oscore::no_request(),
+        };
+        send_response(
+            engine,
+            io,
+            meta,
+            &Response::problem(Code::UNAUTHORIZED).title("Unauthorized"),
+            now_ms,
+            &oscore::empty_field(),
+        )
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = (engine, io, parsed, peer, now_ms, err);
+        Ok(())
+    }
+}
+
 fn unauthorized_echo(now_ms: u64) -> Response<'static> {
     let challenge = Echo::mint(now_ms, &[]).expect("timestamp Echo");
     Response::problem(Code::UNAUTHORIZED)
@@ -1995,6 +2151,8 @@ struct SendResponse {
     q_block2: Option<BlockValue>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockValue>,
+    /// Request Partial IV when the inbound request was OSCORE-protected.
+    oscore: oscore::Request,
 }
 
 fn copy_rx<S: Storage + DatagramSlots, E>(
@@ -2081,6 +2239,9 @@ pub enum Error<E> {
     Block(BlockTransferError),
     /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
     Path,
+    /// OSCORE protect / unprotect failed (feature `oscore`).
+    #[cfg(feature = "oscore")]
+    Oscore(crate::oscore::Error),
 }
 
 impl<E> From<DatagramIoError<E>> for Error<E> {
@@ -2119,6 +2280,8 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            #[cfg(feature = "oscore")]
+            Self::Oscore(e) => write!(f, "{e}"),
         }
     }
 }
@@ -2136,6 +2299,8 @@ where
             Self::Saturated => None,
             Self::Block(e) => Some(e),
             Self::Path => None,
+            #[cfg(feature = "oscore")]
+            Self::Oscore(e) => Some(e),
         }
     }
 }

@@ -656,6 +656,7 @@ where
             &mut self.app.engine,
             &mut self.app.io,
             &mut self.app.ids,
+            &mut self.app.oscore,
             now_ms,
             spec,
         )?;
@@ -715,6 +716,7 @@ fn send_client<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     spec: ClientSend<'_>,
 ) -> Result<Call, Error<T::Error>>
@@ -784,24 +786,28 @@ where
         .with_token(spec.token)
         .with_options(opts.as_slice())
         .with_payload(spec.payload);
-    match engine.encode_tx(tx, &msg) {
+    match super::oscore::encode_request(oscore, engine, tx, &msg) {
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => send_client_block1(
-            engine,
-            io,
-            ids,
-            now_ms,
-            spec.dest,
-            spec.ty,
-            spec.code,
-            spec.token,
-            spec.path,
-            spec.payload,
-            spec.content_format,
-            spec.q_block1,
-            tx,
-        ),
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+            if !super::oscore::is_active(oscore) =>
+        {
+            send_client_block1(
+                engine,
+                io,
+                ids,
+                now_ms,
+                spec.dest,
+                spec.ty,
+                spec.code,
+                spec.token,
+                spec.path,
+                spec.payload,
+                spec.content_format,
+                spec.q_block1,
+                tx,
+            )
+        }
         Err(e) => {
             let _ = engine.release_tx(tx);
             Err(Error::Message(e))

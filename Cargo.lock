@@ -277,6 +277,12 @@ dependencies = [
 [[package]]
 name = "coaptic"
 version = "0.1.0"
+dependencies = [
+ "aes",
+ "ccm",
+ "hkdf",
+ "sha2",
+]
 
 [[package]]
 name = "coaptic-plugtest"

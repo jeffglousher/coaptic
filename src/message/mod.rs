@@ -39,6 +39,8 @@ mod tests;
 pub use builder::OptionsBuilder;
 pub use decode::{ParsedMessage, decode};
 pub use echo::{Echo, EchoFreshness};
+#[cfg(feature = "oscore")]
+pub(crate) use encode::write_option;
 pub use encode::{Message, encode};
 pub use hop::HopLimit;
 pub use id::{Ids, TokenSource};

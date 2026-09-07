@@ -47,11 +47,11 @@ let response = app.take_response(call);
 
 Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial representation and later notifications use the same `Call` / `take_response`. `deregister()` sends Observe=1. Structured 4.xx bodies use `Response::problem` (RFC 9290). Q-Block1 holes from `poll` use `Response::missing_blocks` (RFC 9177, Content-Format 272).
 
-Engine BERT, OSCORE, first-party DTLS, and alternative networks (6LoWPAN, LoRaWAN, …) are future / backlog — contributor opportunities ([#46](https://github.com/jeffglousher/coaptic/issues/46)). DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
+Pairwise [OSCORE](https://datatracker.ietf.org/doc/html/rfc8613) (RFC 8613) is the optional `oscore` feature: you own the `SecurityContext` (Master Secret, Sender/Recipient IDs, replay window) and attach it with `App::set_oscore`. Engine does not store keys. Group OSCORE, other ciphers, Observe/Block-over-OSCORE, first-party DTLS, and alternative networks (6LoWPAN, LoRaWAN, …) stay backlog ([#46](https://github.com/jeffglousher/coaptic/issues/46) / [#138](https://github.com/jeffglousher/coaptic/issues/138)). DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
 
 ## Features
 
-Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies `alloc`). Zero crate dependencies.
+Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies `alloc`). Optional `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without `oscore` the library crate has zero dependencies.
 
 ## Plugtest harness
 

@@ -199,7 +199,7 @@ pub(crate) fn encode_iter<'a>(
     Ok(i)
 }
 
-fn write_option(
+pub(crate) fn write_option(
     buf: &mut [u8],
     mut i: usize,
     delta: u32,
