@@ -1441,10 +1441,11 @@ impl DatagramIo for WideLoopback {
 }
 
 fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; WIRE], usize) {
-    encode_wide_token(code, path, extra, mid, 0xA1)
+    encode_nstart_wire(code, path, extra, mid, 0xA1)
 }
 
-fn encode_wide_token(
+/// Observe register wire with a one-byte Token (NSTART fan-out tests).
+fn encode_nstart_wire(
     code: Code,
     path: &[&str],
     extra: &[Opt<'_>],
@@ -1668,7 +1669,7 @@ fn observe_register_notify_deregister() {
 fn notify_nstart_one_per_endpoint() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
-    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
     let mut app = App::profile::<profiles::Default>()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
@@ -1678,7 +1679,7 @@ fn notify_nstart_one_per_endpoint() {
         })
         .expect("bind");
     app.poll(0).expect("first register");
-    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xA2);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xA2);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.poll(1).expect("second register");
 
@@ -1698,7 +1699,7 @@ fn notify_fans_out_to_distinct_endpoints() {
     let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
     let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
     let extra = [Opt::observe_register()];
-    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
     let mut app = App::profile::<profiles::Default>()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
@@ -1708,7 +1709,7 @@ fn notify_fans_out_to_distinct_endpoints() {
         })
         .expect("bind");
     app.poll(0).expect("register a");
-    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xB1);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xB1);
     app.transport_mut().inbox = Some((peer_b, wire, n));
     app.poll(1).expect("register b");
 
