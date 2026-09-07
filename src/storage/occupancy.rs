@@ -72,11 +72,12 @@ pub(crate) fn is_pinned(pinned: &[bool], id: SlotId) -> bool {
     pinned.get(id.index()).copied().unwrap_or(false)
 }
 
-pub(crate) fn rotate(cursor: &mut usize, n: usize) {
+#[cfg(feature = "alloc")]
+pub(crate) fn advance(cursor: &mut usize, n: usize, steps: usize) {
     if n == 0 {
         return;
     }
-    *cursor = (*cursor + 1) % n;
+    *cursor = (*cursor + (steps % n)) % n;
 }
 
 pub(crate) fn occupied_count(occupied: &[bool]) -> usize {
@@ -128,8 +129,23 @@ impl<const N: usize> Occupancy<N> {
         is_pinned(&self.pinned, id)
     }
 
+    #[cfg(test)]
     pub(crate) fn rotate(&mut self) {
-        rotate(&mut self.cursor, N);
+        self.advance(1);
+    }
+
+    pub(crate) fn advance(&mut self, steps: usize) {
+        if N == 0 {
+            return;
+        }
+        self.set_cursor(self.cursor + (steps % N));
+    }
+
+    pub(crate) fn set_cursor(&mut self, cursor: usize) {
+        if N == 0 {
+            return;
+        }
+        self.cursor = cursor % N;
     }
 
     pub(crate) const fn slot_count(&self) -> usize {
@@ -187,8 +203,8 @@ impl HeapOccupancy {
         is_pinned(&self.pinned, id)
     }
 
-    pub(crate) fn rotate(&mut self) {
-        rotate(&mut self.cursor, self.occupied.len());
+    pub(crate) fn advance(&mut self, steps: usize) {
+        advance(&mut self.cursor, self.occupied.len(), steps);
     }
 
     pub(crate) fn slot_count(&self) -> usize {
@@ -269,5 +285,18 @@ mod tests {
         assert!(occ.is_occupied(id));
         assert!(occ.is_pinned(id));
         assert_eq!(occ.release(id), Err(SlotError::Pinned));
+    }
+
+    #[test]
+    fn advance_jumps_cursor_in_one_modulo() {
+        let mut occ = Occupancy::<4>::new();
+        occ.advance(3);
+        assert_eq!(occ.cursor(), 3);
+        occ.advance(2);
+        assert_eq!(occ.cursor(), 1);
+        occ.set_cursor(5);
+        assert_eq!(occ.cursor(), 1);
+        occ.advance(0);
+        assert_eq!(occ.cursor(), 1);
     }
 }

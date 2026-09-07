@@ -315,8 +315,8 @@ impl SlotPool for AllocDatagramPool {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
@@ -1275,8 +1275,8 @@ impl SlotPool for AllocBodyPool {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
@@ -1423,8 +1423,8 @@ impl SlotPool for AllocExchangeTable {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
@@ -1457,8 +1457,8 @@ impl SlotPool for AllocDedupTable {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {
@@ -1565,8 +1565,8 @@ impl SlotPool for AllocObserveTable {
         Ok(())
     }
 
-    fn rotate(&mut self) {
-        self.occ.rotate();
+    fn advance(&mut self, steps: usize) {
+        self.occ.advance(steps);
     }
 
     fn slot_count(&self) -> usize {

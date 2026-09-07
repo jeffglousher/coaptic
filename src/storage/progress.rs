@@ -199,9 +199,7 @@ fn progress_observe<S: Storage + ObserveSlots>(
                 .storage_mut()
                 .set_observe_interest(id, interest)
                 .ok()?;
-            for _ in 0..=offset {
-                engine.rotate_observe();
-            }
+            engine.advance_observe(offset + 1);
             Some(id)
         }
         None => None,
@@ -271,16 +269,12 @@ fn progress_qblock<S: Storage + BodySlots>(
     }
     if let Some((id, offset)) = give_up {
         let _ = engine.release_rx_body(id);
-        for _ in 0..=offset {
-            engine.rotate_rx_body();
-        }
+        engine.advance_rx_body(offset + 1);
         return None;
     }
     match found {
         Some((offset, recover)) => {
-            for _ in 0..=offset {
-                engine.rotate_rx_body();
-            }
+            engine.advance_rx_body(offset + 1);
             Some(recover)
         }
         None => None,
@@ -308,9 +302,7 @@ fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
     }
     match found {
         Some((id, offset)) => {
-            for _ in 0..=offset {
-                engine.rotate_rx();
-            }
+            engine.advance_rx(offset + 1);
             Some(id)
         }
         None => {
