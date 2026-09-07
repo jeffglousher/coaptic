@@ -53,6 +53,13 @@ pub struct Engine<S: Storage> {
     storage: S,
 }
 
+/// Stack temp while splitting Engine borrows (decode RX then `&mut` body,
+/// or body range then `&mut` TX). Sized to the shipped Default datagram
+/// (IPv4 UDP max on Ethernet), not the 4096 complete-body slot. BERT
+/// [`Engine::encode_bert1_tx`] / [`Engine::encode_bert2_tx`] `max_payload`
+/// must fit this; shipped profiles are datagram-limited.
+const BLOCK_IO_SCRATCH: usize = 1472;
+
 impl<S: Storage> Engine<S> {
     pub(crate) fn from_storage(storage: S) -> Self {
         Self { storage }
@@ -1786,7 +1793,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let mut tmp = [0u8; 4096];
+        let mut tmp = [0u8; BLOCK_IO_SCRATCH];
         let (token, block, expected, identity, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
@@ -1856,7 +1863,7 @@ impl<S: Storage + BodySlots> Engine<S> {
             .storage
             .tx_body_transfer(body_id)
             .ok_or(BlockTransferError::NoTransfer)?;
-        let mut tmp = [0u8; 4096];
+        let mut tmp = [0u8; BLOCK_IO_SCRATCH];
         let payload = self
             .storage
             .tx_body_payload(body_id)
