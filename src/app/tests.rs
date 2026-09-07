@@ -235,6 +235,26 @@ fn get_sensors_temp_is_content() {
 }
 
 #[test]
+fn empty_con_is_rst() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mid = MessageId::new(0x5049);
+    let ping = Message::new(Type::Confirmable, Code::EMPTY, mid);
+    let mut wire = [0u8; 256];
+    let n = encode(&ping, &mut wire).expect("encode ping");
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let (_, bytes, n) = app.transport().last_send.expect("sent");
+    let parsed = decode(&bytes[..n]).expect("decode RST");
+    assert!(parsed.is_empty_rst());
+    assert_eq!(parsed.message_id(), mid);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn unknown_path_is_not_found() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["nope"], &[]);

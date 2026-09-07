@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use coaptic::message::{
     BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, Token, Type,
-    decode, empty_ack, empty_rst, encode, encode_observe,
+    decode, empty_ack, encode, encode_observe,
 };
 use coaptic::storage::{DatagramIo, Endpoint, Engine, EngineBuilder, Memory};
 use coaptic::{App, Response, profiles};
@@ -175,11 +175,6 @@ fn intercept_datagram<T: DatagramIo<Error = std::io::Error>>(
     let Ok(parsed) = decode(bytes) else {
         return Ok(false);
     };
-    if parsed.is_empty() && parsed.ty() == Type::Confirmable {
-        let rst = empty_rst(parsed.message_id());
-        send_msg(io, ep, &rst)?;
-        return Ok(true);
-    }
     let path: Vec<&str> = parsed.uri_path().filter_map(|s| s.ok()).collect();
     if parsed.code() == Code::GET && path == ["separate"] {
         if parsed.ty() == Type::Confirmable {

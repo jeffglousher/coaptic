@@ -367,7 +367,8 @@ where
     /// wait). No [`SlotId`] on this path.
     ///
     /// **Inbound.** Handlers see a borrowed [`Request`] and return an owned
-    /// [`Response`]. Incomplete Block1 / Q-Block1 is 2.31 (handler not
+    /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
+    /// (RFC 7252 ping). Incomplete Block1 / Q-Block1 is 2.31 (handler not
     /// run); a complete body is [`Request::body`]. A large response ships
     /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
     /// with [`Response::problem`]. Apply-error 4.08 uses problem details;
@@ -703,7 +704,7 @@ where
 
     if parsed.is_empty() {
         let outcome = if parsed.ty() == Type::Confirmable {
-            send_empty_ack(engine, io, peer, parsed.message_id())
+            send_empty_rst(engine, io, peer, parsed.message_id())
         } else {
             Ok(())
         };
@@ -1421,10 +1422,35 @@ where
     S: Storage + DatagramSlots,
     T: DatagramIo,
 {
+    send_empty(engine, io, dest, Message::empty_ack(mid))
+}
+
+fn send_empty_rst<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    dest: Endpoint,
+    mid: crate::message::MessageId,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots,
+    T: DatagramIo,
+{
+    send_empty(engine, io, dest, Message::empty_rst(mid))
+}
+
+fn send_empty<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    dest: Endpoint,
+    msg: Message<'static>,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots,
+    T: DatagramIo,
+{
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    let msg = Message::empty_ack(mid);
     if let Err(e) = engine.encode_tx(tx, &msg) {
         let _ = engine.release_tx(tx);
         return Err(Error::Message(e));
