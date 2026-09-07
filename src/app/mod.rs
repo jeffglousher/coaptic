@@ -733,6 +733,29 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
+    if matches!(parsed.block2(), Some(Err(_)))
+        || matches!(parsed.q_block2().next(), Some(Err(_)))
+        || matches!(parsed.block1(), Some(Err(_)))
+    {
+        let meta = SendResponse {
+            dest: peer,
+            ty: parsed.ty(),
+            mid: parsed.message_id(),
+            token: parsed.token(),
+            no_response,
+            block2: None,
+            q_block2: None,
+            block1: None,
+        };
+        let outcome = send_response(
+            engine,
+            io,
+            meta,
+            &Response::problem(Code::BAD_OPTION).title("Bad Option"),
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
     let block2 = parsed.block2().and_then(Result::ok);
     let q_block2 = parsed.q_block2().next().and_then(Result::ok);
     let block1 = parsed.block1().and_then(Result::ok);

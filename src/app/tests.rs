@@ -348,6 +348,25 @@ fn get_sensors_temp_is_content() {
 }
 
 #[test]
+fn malformed_block2_is_bad_option() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::BLOCK2, &[1, 0, 0, 0])];
+    let (wire, n) = encode_req_extra(Code::GET, &["sensors", "temp"], &extra, &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(parsed.code, Code::CONTENT, "must not ignore bad Block2");
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
