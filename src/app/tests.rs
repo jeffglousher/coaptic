@@ -1,8 +1,8 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
 use super::{
-    Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Request, Response, Site, get,
-    link_format_capacity, post, put,
+    Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, Request, Response, Site, fetch, get,
+    ipatch, link_format_capacity, patch, post, put,
 };
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
@@ -53,6 +53,22 @@ fn put_body(req: Request<'_>) -> Response {
     } else {
         Response::changed().payload_copy(req.payload())
     }
+}
+
+fn fetch_query(req: Request<'_>) -> Response {
+    assert_eq!(req.method(), Some(Method::Fetch));
+    Response::content_copy(req.payload()).content_format(ContentFormat::TEXT_PLAIN)
+}
+
+fn patch_doc(req: Request<'_>) -> Response {
+    assert_eq!(req.method(), Some(Method::Patch));
+    Response::changed().payload_copy(req.payload())
+}
+
+fn ipatch_doc(req: Request<'_>) -> Response {
+    assert_eq!(req.method(), Some(Method::IPatch));
+    // Distinct from PATCH so a shared handler cannot green both methods.
+    Response::changed().payload_copy(b"idempotent")
 }
 
 fn put_large(req: Request<'_>) -> Response {
@@ -400,6 +416,80 @@ fn unknown_path_is_not_found() {
 fn wrong_method_is_not_allowed() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["sensors", "temp"], &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::METHOD_NOT_ALLOWED);
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
+    assert_eq!(details.response_code(), Some(Code::METHOD_NOT_ALLOWED));
+    assert_eq!(details.title_text(), Some("Method Not Allowed"));
+}
+
+fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["query"], fetch(fetch_query))
+        .route(&["delta"], patch(patch_doc))
+        .route(&["idem"], ipatch(ipatch_doc))
+        .bind(io)
+        .expect("bind")
+}
+
+fn poll_rfc8132(
+    code: Code,
+    path: &[&str],
+    payload: &[u8],
+) -> (LastReply, App<profiles::Default, Loopback>) {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(code, path, payload);
+    let mut app = rfc8132_loopback(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let reply = last_reply(&app);
+    (reply, app)
+}
+
+#[test]
+fn fetch_query_is_content() {
+    let (parsed, mut app) = poll_rfc8132(Code::FETCH, &["query"], b"sel");
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"sel");
+    assert_eq!(parsed.content_format, Some(ContentFormat::TEXT_PLAIN));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn patch_delta_is_changed() {
+    let (parsed, mut app) = poll_rfc8132(Code::PATCH, &["delta"], b"delta");
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.code, Code::CHANGED);
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"delta");
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn ipatch_delta_is_changed() {
+    let (parsed, mut app) = poll_rfc8132(Code::IPATCH, &["idem"], b"delta");
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.code, Code::CHANGED);
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"idempotent");
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn fetch_on_get_route_is_not_allowed() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::FETCH, &["sensors", "temp"], b"sel");
     let mut app = app_with_site(Loopback {
         inbox: Some((peer, wire, n)),
         last_send: None,
@@ -1540,6 +1630,82 @@ fn client_put_round_trip_without_slot_id() {
     assert_eq!(response.payload(), b"on");
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["query"], fetch(fetch_query))
+        .route(&["delta"], patch(patch_doc))
+        .route(&["idem"], ipatch(ipatch_doc))
+        .bind(Echo::default())
+        .expect("bind")
+}
+
+fn client_rfc8132_round_trip(
+    send: impl FnOnce(&mut App<profiles::Default, Echo>, Endpoint) -> crate::Call,
+    expect_code: Code,
+    expect_payload: &[u8],
+) {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_rfc8132_app();
+    let call = send(&mut app, peer);
+    app.poll(0).expect("server handle");
+    app.poll(0).expect("client match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), expect_code);
+    assert_eq!(response.payload(), expect_payload);
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(response.peer(), Some(peer));
+    assert!(app.take_response(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_fetch_round_trip_without_slot_id() {
+    client_rfc8132_round_trip(
+        |app, peer| {
+            app.fetch(&["query"])
+                .to(peer)
+                .payload(b"sel")
+                .content_format(ContentFormat::TEXT_PLAIN)
+                .send(0)
+                .expect("send")
+        },
+        Code::CONTENT,
+        b"sel",
+    );
+}
+
+#[test]
+fn client_patch_round_trip_without_slot_id() {
+    client_rfc8132_round_trip(
+        |app, peer| {
+            app.patch(&["delta"])
+                .to(peer)
+                .payload(b"delta")
+                .send(0)
+                .expect("send")
+        },
+        Code::CHANGED,
+        b"delta",
+    );
+}
+
+#[test]
+fn client_ipatch_round_trip_without_slot_id() {
+    client_rfc8132_round_trip(
+        |app, peer| {
+            app.ipatch(&["idem"])
+                .to(peer)
+                .payload(b"delta")
+                .send(0)
+                .expect("send")
+        },
+        Code::CHANGED,
+        b"idempotent",
+    );
 }
 
 #[test]
