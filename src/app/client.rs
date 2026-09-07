@@ -82,7 +82,11 @@ impl Call {
     }
 }
 
-/// How many completed client [`Response`] values [`App`](super::App) holds.
+/// How many outstanding client [`Call`]s [`App`](super::App) holds.
+///
+/// Caps both the completed-reply inbox and the live-request table. A fifth
+/// [`Outgoing::send`] without [`App::take_response`](super::App::take_response)
+/// is [`Error::Saturated`] — no silent eviction.
 pub(crate) const RESPONSE_INBOX: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
@@ -178,27 +182,38 @@ struct InboxRow {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientInbox {
     rows: [Option<InboxRow>; RESPONSE_INBOX],
-    evict: u8,
 }
 
 impl ClientInbox {
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; RESPONSE_INBOX],
-            evict: 0,
         }
     }
 
-    fn insert(&mut self, call: Call, meta: ReplyMeta, body: Option<SlotId>) -> Option<SlotId> {
+    /// Store a completed reply. Same [`Call`] overwrites (Observe).
+    ///
+    /// Returns the previous body slot to release. `Err` if every row is a
+    /// different Call — caller must not evict an untaken reply.
+    fn insert(
+        &mut self,
+        call: Call,
+        meta: ReplyMeta,
+        body: Option<SlotId>,
+    ) -> Result<Option<SlotId>, ()> {
+        if let Some(slot) = self.rows.iter_mut().find(|row| {
+            row.as_ref()
+                .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
+        }) {
+            let prev = slot.take().and_then(|row| row.body);
+            *slot = Some(InboxRow { call, meta, body });
+            return Ok(prev);
+        }
         if let Some(slot) = self.rows.iter_mut().find(|row| row.is_none()) {
             *slot = Some(InboxRow { call, meta, body });
-            return None;
+            return Ok(None);
         }
-        let i = usize::from(self.evict);
-        let evicted = self.rows[i].take().and_then(|row| row.body);
-        self.rows[i] = Some(InboxRow { call, meta, body });
-        self.evict = u8::try_from((i + 1) % RESPONSE_INBOX).unwrap_or(0);
-        evicted
+        Err(())
     }
 
     fn take(&mut self, call: Call) -> Option<(Response<'_>, Option<SlotId>)> {
@@ -228,15 +243,20 @@ struct LiveCall {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientLives {
     rows: [Option<LiveCall>; RESPONSE_INBOX],
-    evict: u8,
 }
 
 impl ClientLives {
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; RESPONSE_INBOX],
-            evict: 0,
         }
+    }
+
+    fn can_admit(&self, token: Token, peer: Endpoint) -> bool {
+        self.rows.iter().any(|row| match row {
+            None => true,
+            Some(live) => live.call.token == token && live.call.peer == peer,
+        })
     }
 
     fn insert(&mut self, live: LiveCall) {
@@ -250,11 +270,7 @@ impl ClientLives {
         }
         if let Some(slot) = self.rows.iter_mut().find(|row| row.is_none()) {
             *slot = Some(live);
-            return;
         }
-        let i = usize::from(self.evict);
-        self.rows[i] = Some(live);
-        self.evict = u8::try_from((i + 1) % RESPONSE_INBOX).unwrap_or(0);
     }
 
     fn get(&self, call: Call) -> Option<LiveCall> {
@@ -599,6 +615,9 @@ where
     /// [`App::take_response`](App::take_response). Tokens and Message IDs are
     /// App counters — this crate does not call an OS RNG. A payload that does
     /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
+    ///
+    /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
+    /// lives cap) and this Token is not one of them.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
@@ -609,6 +628,9 @@ where
         };
         if observe == OutgoingObserve::Deregister {
             take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
+        }
+        if !self.app.lives.can_admit(token, dest) {
+            return Err(Error::Saturated);
         }
         let queries = self.queries;
         let query_n = usize::from(self.query_n);
@@ -972,14 +994,13 @@ where
 
     accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
     take_exchange(engine, parsed, peer);
-    let evicted = inbox.insert(
+    store_reply(
+        engine,
+        inbox,
         Call::new(parsed.token(), peer),
         ReplyMeta::from_parsed(parsed, peer),
         None,
     );
-    if let Some(id) = evicted {
-        let _ = engine.release_rx_body(id);
-    }
     let _ = engine.release_rx(rx);
     Ok(())
 }
@@ -995,15 +1016,35 @@ fn finish_assembled<Mem>(
     Mem: Storage + DatagramSlots + Exchanges + BodySlots,
 {
     take_exchange(engine, parsed, peer);
-    let evicted = inbox.insert(
+    store_reply(
+        engine,
+        inbox,
         Call::new(parsed.token(), peer),
         ReplyMeta::from_parsed(parsed, peer),
         Some(body),
     );
-    if let Some(id) = evicted {
-        let _ = engine.release_rx_body(id);
-    }
     let _ = engine.release_rx(rx);
+}
+
+fn store_reply<Mem: Storage + BodySlots>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    call: Call,
+    meta: ReplyMeta,
+    body: Option<SlotId>,
+) {
+    match inbox.insert(call, meta, body) {
+        Ok(prev) => {
+            if let Some(id) = prev {
+                let _ = engine.release_rx_body(id);
+            }
+        }
+        Err(()) => {
+            if let Some(id) = body {
+                let _ = engine.release_rx_body(id);
+            }
+        }
+    }
 }
 
 fn matching_exchange<Mem: Storage + Exchanges>(
@@ -1640,14 +1681,13 @@ fn fail_outstanding<Mem>(
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let call = Call::new(entry.token(), entry.endpoint());
-    let evicted = inbox.insert(
+    store_reply(
+        engine,
+        inbox,
         call,
         ReplyMeta::gateway_timeout(call, entry.message_id()),
         None,
     );
-    if let Some(id) = evicted {
-        let _ = engine.release_rx_body(id);
-    }
     forget_exchange_tx(engine, lives, entry.tx_slot());
     if !release_tx {
         return;
