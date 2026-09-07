@@ -61,5 +61,5 @@ pub mod site;
 #[cfg(feature = "dtls")]
 pub mod dtls;
 
-/// Vendored golden expectations (JSON). MID / Token / ports / time are wildcards.
+/// Vendored golden expectations (JSON). Ports / time are wildcards; CORE asserts type and echo MID/Token.
 pub const CATALOG_JSON: &str = include_str!("../expectations/catalog.json");

@@ -119,6 +119,11 @@ pub struct ExpectTd {
     #[serde(default)]
     pub dtls: Option<ExpectDtls>,
     /// Extra CoAP messages after the last expected one are allowed.
+    ///
+    /// CORE goldens omit this (default `false`) and assert type / token echo /
+    /// CON↔ACK MID. Chatty suites (OBS notifications, Block trains, LINK
+    /// follow-ups, DTLS) set it: client+server taps duplicate datagrams, and
+    /// leftover trains exceed the grader's slack.
     #[serde(default)]
     pub allow_extra: bool,
 }
@@ -188,7 +193,9 @@ pub fn grade_td(td: &str, expect: &ExpectTd, capture: &Capture) -> Result<(), St
                 describe_remaining(&coap, cursor)
             ));
         };
-        if echo_mid.is_none() && view.code.is_request() {
+        if echo_mid.is_none()
+            && (view.code.is_request() || (view.code.is_empty() && view.ty == Type::Confirmable))
+        {
             echo_mid = Some(view.mid);
             echo_tok = Some(view.token.clone());
         }
@@ -592,6 +599,29 @@ mod tests {
         }"#;
         let exp: ExpectTd = serde_json::from_str(json).unwrap();
         grade_td("TD_COAP_CORE_01", &exp, &cap).expect("grade");
+    }
+
+    #[test]
+    fn grades_core_31_empty_con_rst_mid_echo() {
+        let mid = coaptic::message::MessageId::new(0x5049);
+        let ping = Message::new(Type::Confirmable, Code::EMPTY, mid);
+        let mut buf = [0u8; 16];
+        let n = encode(&ping, &mut buf).unwrap();
+        let cap = Capture::new();
+        let a: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let b: std::net::SocketAddr = "127.0.0.1:2".parse().unwrap();
+        cap.push(a, b, &buf[..n], false);
+        let rst = Message::new(Type::Reset, Code::EMPTY, mid);
+        let n = encode(&rst, &mut buf).unwrap();
+        cap.push(b, a, &buf[..n], false);
+        let json = r#"{
+            "coap": [
+                {"type":"CON","code":"0.00","payload":"empty"},
+                {"type":"RST","code":"0.00","mid":"echo"}
+            ]
+        }"#;
+        let exp: ExpectTd = serde_json::from_str(json).unwrap();
+        grade_td("TD_COAP_CORE_31", &exp, &cap).expect("grade");
     }
 
     #[test]
