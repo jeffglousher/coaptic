@@ -460,7 +460,9 @@ where
     /// fit the compact sidecar. POST / PATCH / FETCH never re-run on a
     /// live row (empty ACK if there is nothing to replay). GET / PUT /
     /// DELETE / iPATCH replay when a cache exists; without one, re-run is
-    /// allowed (RFC 7252 §4.5 MAY). Observe register / deregister and
+    /// allowed (RFC 7252 §4.5 MAY). After `EXCHANGE_LIFETIME` expiry,
+    /// Dedup Miss is a new exchange (POST / PATCH / FETCH may re-run).
+    /// Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`]. Empty RST matching a notification Message ID
     /// drops that observer (RFC 7641 §4.5; RST has no Token).
