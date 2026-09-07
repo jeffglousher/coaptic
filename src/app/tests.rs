@@ -2918,7 +2918,7 @@ fn client_fifth_untaken_send_is_saturated() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = record_client();
     let mut calls = [None; 4];
-    for i in 0..4 {
+    for (i, slot) in calls.iter_mut().enumerate() {
         let call = app
             .get(&["sensors", "temp"])
             .to(peer)
@@ -2932,7 +2932,7 @@ fn client_fifth_untaken_send_is_saturated() {
         assert_eq!(token, call.token());
         inject_piggyback_ack(&mut app, peer, mid, token, b"21.5");
         app.poll(0).expect("complete");
-        calls[i] = Some(call);
+        *slot = Some(call);
     }
     let err = app
         .get(&["sensors", "temp"])
