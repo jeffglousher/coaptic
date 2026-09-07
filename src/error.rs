@@ -129,6 +129,12 @@ pub enum EncodeError {
     OptionsNotAscending,
     /// Option value cannot be encoded (length above the 14-extended maximum).
     OptionValueTooLong,
+    /// [`crate::message::OptionsBuilder`] has no free slot.
+    ///
+    /// Distinct from [`Self::OptionsNotAscending`]: the numbers were valid
+    /// but the fixed list was full. App maps this to 5.00 (server) or a
+    /// failed send (client) instead of dropping options.
+    OptionsFull,
 }
 
 impl core::fmt::Display for EncodeError {
@@ -138,6 +144,7 @@ impl core::fmt::Display for EncodeError {
             Self::EmptyMessageNotEmpty => f.write_str("empty message is not empty"),
             Self::OptionsNotAscending => f.write_str("option numbers are not ascending"),
             Self::OptionValueTooLong => f.write_str("option value is too long"),
+            Self::OptionsFull => f.write_str("options builder is full"),
         }
     }
 }

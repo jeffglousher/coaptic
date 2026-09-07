@@ -317,6 +317,11 @@ fn encode_buffer_too_small() {
 }
 
 #[test]
+fn encode_options_full_is_distinct_from_not_ascending() {
+    assert_ne!(EncodeError::OptionsFull, EncodeError::OptionsNotAscending);
+}
+
+#[test]
 fn unrecognized_critical_is_structured_not_policy() {
     // Block2 is critical and not in RFC 7252 Table 4.
     // Decode accepts it as opaque; check_rfc7252_options reports it.
