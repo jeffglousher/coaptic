@@ -387,7 +387,7 @@ impl Response {
         if segment.is_empty() {
             return self;
         }
-        let n = usize::from(self.location_path_len);
+        let n = self.location_path_len as usize;
         if n < LOCATION_MAX {
             self.location_path[n] = segment;
             self.location_path_len += 1;
@@ -412,7 +412,7 @@ impl Response {
         if query.is_empty() {
             return self;
         }
-        let n = usize::from(self.location_query_len);
+        let n = self.location_query_len as usize;
         if n < LOCATION_MAX {
             self.location_query[n] = query;
             self.location_query_len += 1;
