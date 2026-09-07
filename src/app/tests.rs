@@ -388,7 +388,7 @@ fn created_max_location_etag_observe_echo_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -745,6 +745,34 @@ fn no_response_suppresses_success() {
     });
     app.poll(0).expect("poll");
     assert!(app.transport().last_send.is_none());
+}
+
+#[test]
+fn no_response_con_sends_empty_ack() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let req_mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req_ty(
+        Type::Confirmable,
+        Code::GET,
+        &["sensors", "temp"],
+        &[],
+        Some(u32::from(crate::message::NoResponse::SUPPRESS_2)),
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_temp))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(app.transport().sent_n, 1, "empty ACK only");
+    let (_, bytes, n) = app.transport().sent[0].expect("ack");
+    let ack = decode(&bytes[..n]).expect("decode");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), req_mid);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
 
 #[test]
@@ -1480,7 +1508,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["loud"], &[], 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -2016,7 +2044,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
 fn client_full_path_query_and_extras_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -2560,14 +2588,7 @@ fn client_second_con_nstart_does_not_leak_tx() {
         let (_, bytes, n) = app.transport().sent[0].expect("first wire");
         decode(&bytes[..n]).expect("decode first").message_id()
     };
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
 
     let err = app
         .get(&["sensors", "temp"])
@@ -2581,13 +2602,6 @@ fn client_second_con_nstart_does_not_leak_tx() {
         "second CON must not go on the wire without RTO"
     );
     assert_eq!(app.engine_mut().tx_occupied(), 1, "no orphan TX");
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-        crate::app::EngineRef::BlockWise(engine) => {
-            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
-        }
-    }
+    assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
     assert!(app.take_response(first).is_none());
 }
