@@ -70,5 +70,8 @@ fn memory_layout_selects_store() {
 #[test]
 fn response_is_not_a_4kib_copy() {
     let n = size_of::<Response<'static>>();
-    assert!(n < 512, "Response must not own [u8;4096] (got {n})");
+    assert!(
+        n < 768,
+        "Response must not own [u8;4096] (got {n}; ~520 with inline 128 + location slices)"
+    );
 }
