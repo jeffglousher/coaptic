@@ -924,8 +924,14 @@ where
     let assembled = assemble_inbound_body(engine, rx, now_ms);
     match assembled {
         InboundBody::Continue => {
-            let outcome =
-                send_response(engine, io, meta, &Response::new(Code::CONTINUE), now_ms, oscore);
+            let outcome = send_response(
+                engine,
+                io,
+                meta,
+                &Response::new(Code::CONTINUE),
+                now_ms,
+                oscore,
+            );
             let _ = engine.release_rx(rx);
             return outcome;
         }

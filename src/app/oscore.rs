@@ -115,9 +115,7 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots>(
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
         let mut wire = [0u8; super::DATAGRAM_SCRATCH];
-        let n = ctx
-            .protect_request(msg, &mut wire)
-            .map_err(protect_err)?;
+        let n = ctx.protect_request(msg, &mut wire).map_err(protect_err)?;
         return fill_tx(engine, tx, &wire[..n]);
     }
     engine.encode_tx(tx, msg).map(|_| ())
