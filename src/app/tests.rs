@@ -9,7 +9,7 @@ use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
     MissingBlocks, Opt, OptionNumber, OptionsBuilder, ProblemDetails, QBlockTransmission, Token,
-    Type, decode, encode, encode_uint,
+    Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -109,10 +109,13 @@ impl DatagramIo for Loopback {
     }
 }
 
-/// Captures more than one TX datagram so a separate ACK + CON can be checked.
+/// Captures more than one TX datagram so a separate ACK + CON, or a CON
+/// retransmit, can be checked. Send is not delivered to `recv` (the caller
+/// injects inbox, or leaves it empty to model loss).
+#[derive(Default)]
 struct RecordIo {
     inbox: Option<(Endpoint, [u8; 256], usize)>,
-    sent: [Option<(Endpoint, [u8; 256], usize)>; 4],
+    sent: [Option<(Endpoint, [u8; 256], usize)>; 8],
     sent_n: usize,
 }
 
@@ -324,8 +327,7 @@ fn separate_response_is_empty_ack_then_con() {
         .route(&["separate"], get(get_separate))
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
-            sent: [None; 4],
-            sent_n: 0,
+            ..RecordIo::default()
         })
         .expect("bind");
     app.poll(0).expect("poll");
@@ -1563,11 +1565,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
         .block_wise(false)
-        .bind(RecordIo {
-            inbox: None,
-            sent: [None; 4],
-            sent_n: 0,
-        })
+        .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
     let _call = app
@@ -1886,4 +1884,135 @@ fn client_observe_register_notify_deregister() {
     app.poll(30).expect("no notify");
     assert!(app.take_response(call).is_none());
     assert!(!client_observe_live(&app, call));
+}
+
+fn record_client() -> App<profiles::Default, RecordIo> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .bind(RecordIo::default())
+        .expect("bind")
+}
+
+fn inject_piggyback_ack(
+    app: &mut App<profiles::Default, RecordIo>,
+    peer: Endpoint,
+    mid: MessageId,
+    token: Token,
+    payload: &[u8],
+) {
+    let cf = ContentFormat::TEXT_PLAIN.encode();
+    let mut opts = OptionsBuilder::<4>::new();
+    opts.push(Opt::content_format(&cf)).expect("cf");
+    let ack = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    let mut buf = [0u8; 256];
+    let n = encode(&ack, &mut buf).expect("ack");
+    app.transport_mut().inbox = Some((peer, buf, n));
+}
+
+#[test]
+fn client_con_retransmit_after_dropped_first_send() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_n, 1);
+    let mut first_wire = [0u8; 256];
+    let (first_ty, first_code, first_token, mid, first_n) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        first_wire[..n].copy_from_slice(&bytes[..n]);
+        let first = decode(&bytes[..n]).expect("decode first");
+        (
+            first.ty(),
+            first.code(),
+            first.token(),
+            first.message_id(),
+            n,
+        )
+    };
+    assert_eq!(first_ty, Type::Confirmable);
+    assert_eq!(first_code, Code::GET);
+    assert_eq!(first_token, call.token());
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert!(app.take_response(call).is_none());
+
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    app.poll(timeout - 1).expect("before RTO");
+    assert_eq!(app.transport().sent_n, 1);
+
+    app.poll(timeout).expect("retransmit");
+    assert_eq!(app.transport().sent_n, 2);
+    let mut retry_wire = [0u8; 256];
+    let (retry_ty, retry_code, retry_mid, retry_token, retry_n) = {
+        let (_, bytes, n) = app.transport().sent[1].expect("retry");
+        retry_wire[..n].copy_from_slice(&bytes[..n]);
+        let retry = decode(&bytes[..n]).expect("decode retry");
+        (
+            retry.ty(),
+            retry.code(),
+            retry.message_id(),
+            retry.token(),
+            n,
+        )
+    };
+    assert_eq!(
+        &first_wire[..first_n],
+        &retry_wire[..retry_n],
+        "Due resends the same CON bytes"
+    );
+    assert_eq!(retry_ty, Type::Confirmable);
+    assert_eq!(retry_code, Code::GET);
+    assert_eq!(retry_mid, mid);
+    assert_eq!(retry_token, call.token());
+    assert_eq!(retry_n, first_n);
+
+    inject_piggyback_ack(&mut app, peer, mid, call.token(), b"21.5");
+    app.poll(timeout).expect("client match");
+    let response = app.take_response(call).expect("matched after loss");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"21.5");
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_con_give_up_releases_after_max_retransmit() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_n, 1);
+
+    let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for _ in 0..Transmission::MAX_RETRANSMIT {
+        app.poll(now).expect("due");
+        timeout = timeout.saturating_mul(2);
+        now = now.saturating_add(u64::from(timeout));
+    }
+    assert_eq!(
+        app.transport().sent_n,
+        1 + usize::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert!(app.take_response(call).is_none());
+
+    app.poll(now).expect("give up");
+    assert_eq!(
+        app.transport().sent_n,
+        1 + usize::from(Transmission::MAX_RETRANSMIT),
+        "GiveUp does not send"
+    );
+    assert!(app.take_response(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }

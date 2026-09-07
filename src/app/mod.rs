@@ -389,9 +389,12 @@ where
     /// [`Outgoing`]. An Observe subscribe ([`Outgoing::observe`]) uses the
     /// same [`Call`].
     ///
-    /// Retransmit: send on [`Retransmit::Due`], release on
-    /// [`Retransmit::GiveUp`]. Advanced slots / [`Access`](crate::storage::Access)
-    /// / remaining RST policy / BERT (future / backlog): [`Self::engine_mut`].
+    /// **Retransmit.** Engine schedules CON RTO inside [`Engine::progress`]
+    /// / [`Engine::poll_retransmit`] and does not send. This poll sends on
+    /// [`Retransmit::Due`] and releases on [`Retransmit::GiveUp`]. `now_ms`
+    /// is the caller clock (jitter is 0 from [`Outgoing::send`]). Advanced
+    /// slots / [`Access`](crate::storage::Access) / remaining RST policy /
+    /// BERT (future / backlog): [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         match &mut self.engine {
             EngineSlot::Datagram(engine) => poll_engine(

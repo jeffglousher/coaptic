@@ -570,8 +570,10 @@ where
 {
     /// Encode the request, record the Exchange, and send.
     ///
-    /// `now_ms` starts CON RTO (caller clock; jitter is 0). Returns a [`Call`]
-    /// for [`App::take_response`](App::take_response). Tokens and Message IDs are
+    /// `now_ms` starts CON RTO on Engine (caller clock; jitter is 0). Later
+    /// [`App::poll`](App::poll) sends Due retransmits when that clock
+    /// advances. Returns a [`Call`] for
+    /// [`App::take_response`](App::take_response). Tokens and Message IDs are
     /// App counters — this crate does not call an OS RNG. A payload that does
     /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
