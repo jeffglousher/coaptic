@@ -41,6 +41,12 @@ fn post_create(_: Request<'_>) -> Response {
         .location_query("second=2")
 }
 
+fn get_separate(_: Request<'_>) -> Response {
+    Response::content(b"separate-payload")
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .separate()
+}
+
 fn put_body(req: Request<'_>) -> Response {
     if req.has_body() {
         Response::changed().payload_copy(req.body().unwrap_or(&[]))
@@ -99,6 +105,42 @@ impl DatagramIo for Loopback {
         let mut slot = [0u8; 256];
         slot[..bytes.len()].copy_from_slice(bytes);
         self.last_send = Some((dest, slot, bytes.len()));
+        Ok(bytes.len())
+    }
+}
+
+/// Captures more than one TX datagram so a separate ACK + CON can be checked.
+struct RecordIo {
+    inbox: Option<(Endpoint, [u8; 256], usize)>,
+    sent: [Option<(Endpoint, [u8; 256], usize)>; 4],
+    sent_n: usize,
+}
+
+impl DatagramIo for RecordIo {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((ep, bytes, n)) = self.inbox.take() else {
+            return Ok(None);
+        };
+        if n > buf.len() {
+            return Err("short buf");
+        }
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > 256 {
+            return Err("too long");
+        }
+        if self.sent_n >= self.sent.len() {
+            return Err("full");
+        }
+        let mut slot = [0u8; 256];
+        slot[..bytes.len()].copy_from_slice(bytes);
+        self.sent[self.sent_n] = Some((dest, slot, bytes.len()));
+        self.sent_n += 1;
         Ok(bytes.len())
     }
 }
@@ -268,6 +310,50 @@ fn created_response_carries_location_path_and_query() {
     assert_eq!(qs.next().map(|s| s.expect("utf8")), Some("second=2"));
     assert!(qs.next().is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn separate_response_is_empty_ack_then_con() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).expect("token");
+    let req_mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["separate"], get(get_separate))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            sent: [None; 4],
+            sent_n: 0,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(app.transport().sent_n, 2, "empty ACK then CON");
+
+    let (_, ack_bytes, ack_n) = app.transport().sent[0].expect("empty ACK");
+    let ack = decode(&ack_bytes[..ack_n]).expect("decode ACK");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), req_mid);
+
+    let (_, con_bytes, con_n) = app.transport().sent[1].expect("CON");
+    let con = decode(&con_bytes[..con_n]).expect("decode CON");
+    assert_eq!(con.ty(), Type::Confirmable);
+    assert_eq!(con.code(), Code::CONTENT);
+    assert_eq!(con.token(), token);
+    assert_eq!(con.payload(), b"separate-payload");
+    assert_eq!(
+        con.content_format().and_then(Result::ok),
+        Some(ContentFormat::TEXT_PLAIN)
+    );
+    assert_ne!(con.message_id(), req_mid);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "pending CON");
+
+    let mut ack_wire = [0u8; 256];
+    let ack_n = encode(&Message::empty_ack(con.message_id()), &mut ack_wire).expect("encode ACK");
+    app.transport_mut().inbox = Some((peer, ack_wire, ack_n));
+    app.poll(0).expect("ack poll");
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
 
@@ -757,6 +843,8 @@ fn response_builders() {
     assert_eq!(created.code(), Code::CREATED);
     assert_eq!(created.location_paths(), &["location1", "location2"]);
     assert_eq!(created.location_queries(), &["first=1", "second=2"]);
+    assert!(Response::content(b"later").separate().is_separate());
+    assert!(!Response::content(b"now").is_separate());
     let echo = EchoOpt::mint(9, &[]).expect("mint");
     assert_eq!(
         Response::unauthorized().echo(echo).echo_option(),

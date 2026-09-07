@@ -17,8 +17,6 @@ use crate::pcap::{Capture, CapturingIo, bind_loopback};
 use crate::peer::{ClientRequest, ClientResponse, Peer, PeerError};
 use crate::site;
 
-type ServerApp = App<profiles::Default, InterceptIo<UdpSocket>, 24>;
-
 /// Coaptic backend (library App/Engine; no extra runtime deps).
 pub struct CoapticPeer {
     capture: Capture,
@@ -132,73 +130,6 @@ impl Drop for CoapticPeer {
     }
 }
 
-struct SeparateJob {
-    dest: Endpoint,
-    token: Token,
-    con: bool,
-}
-
-struct InterceptIo<T> {
-    inner: CapturingIo<T>,
-    separate: Arc<Mutex<Vec<SeparateJob>>>,
-}
-
-impl<T: DatagramIo<Error = std::io::Error>> DatagramIo for InterceptIo<T> {
-    type Error = std::io::Error;
-
-    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
-        match self.inner.recv(buf)? {
-            Some((n, ep)) => {
-                if intercept_datagram(&mut self.inner, &self.separate, &buf[..n], ep)? {
-                    return Ok(None);
-                }
-                Ok(Some((n, ep)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        self.inner.send(dest, bytes)
-    }
-}
-
-/// `true` if the datagram was consumed (App should see idle).
-fn intercept_datagram<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut CapturingIo<T>,
-    separate: &Arc<Mutex<Vec<SeparateJob>>>,
-    bytes: &[u8],
-    ep: Endpoint,
-) -> Result<bool, std::io::Error> {
-    let Ok(parsed) = decode(bytes) else {
-        return Ok(false);
-    };
-    let path: Vec<&str> = parsed.uri_path().filter_map(|s| s.ok()).collect();
-    if parsed.code() == Code::GET && path == ["separate"] {
-        if parsed.ty() == Type::Confirmable {
-            send_msg(io, ep, &empty_ack(parsed.message_id()))?;
-        }
-        separate.lock().expect("sep").push(SeparateJob {
-            dest: ep,
-            token: parsed.token(),
-            con: parsed.ty() == Type::Confirmable,
-        });
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-fn send_msg<T: DatagramIo<Error = std::io::Error>>(
-    io: &mut CapturingIo<T>,
-    dest: Endpoint,
-    msg: &Message<'_>,
-) -> Result<(), std::io::Error> {
-    let mut buf = [0u8; 1472];
-    let n = encode(msg, &mut buf).map_err(|e| std::io::Error::other(format!("{e:?}")))?;
-    io.send(dest, &buf[..n])?;
-    Ok(())
-}
-
 fn server_loop(
     sock: UdpSocket,
     addr: SocketAddr,
@@ -206,18 +137,12 @@ fn server_loop(
     stop: Arc<AtomicBool>,
     notify: crate::peer::NotifyMailbox,
 ) {
-    let separate = Arc::new(Mutex::new(Vec::new()));
-    let ids = Arc::new(Mutex::new(Ids::new(0x9000)));
-    let io = InterceptIo {
-        inner: CapturingIo::new(sock, addr, capture),
-        separate: Arc::clone(&separate),
-    };
+    let io = CapturingIo::new(sock, addr, capture);
     let mut app = bind_site(io);
     let origin = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         let now = u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX);
         let _ = app.poll(now);
-        flush_separate(&mut app, &separate, &ids);
         if let Some((path, payload)) = notify.lock().expect("n").take() {
             let segs: Vec<&str> = path.iter().map(String::as_str).collect();
             let body: &'static [u8] = if payload == site::OBS_BODY_2 {
@@ -252,39 +177,6 @@ where
         b = b.route(path, router);
     }
     b.bind(io).expect("bind plugtest App")
-}
-
-fn flush_separate(
-    app: &mut ServerApp,
-    separate: &Arc<Mutex<Vec<SeparateJob>>>,
-    ids: &Arc<Mutex<Ids>>,
-) {
-    let jobs = std::mem::take(&mut *separate.lock().expect("sep"));
-    for job in jobs {
-        let ty = if job.con {
-            Type::Confirmable
-        } else {
-            Type::NonConfirmable
-        };
-        let mid = ids.lock().expect("ids").next();
-        let cf = ContentFormat::TEXT_PLAIN.encode();
-        let extra = [Opt::content_format(&cf)];
-        let mut opts = OptionsBuilder::<4>::new();
-        for o in extra {
-            let _ = opts.push(o);
-        }
-        let msg = Message::new(ty, Code::CONTENT, mid)
-            .with_token(job.token)
-            .with_options(opts.as_slice())
-            .with_payload(site::SEP_BODY);
-        let _ = send_msg(app.transport_mut().inner_access(), job.dest, &msg);
-    }
-}
-
-impl InterceptIo<UdpSocket> {
-    fn inner_access(&mut self) -> &mut CapturingIo<UdpSocket> {
-        &mut self.inner
-    }
 }
 
 fn client_exchange<T: DatagramIo<Error = std::io::Error>>(
