@@ -479,6 +479,16 @@ impl<'a> Response<'a> {
         self.observe = Some(sequence);
     }
 
+    /// Drop Observe so a registration miss cannot claim success on the wire.
+    ///
+    /// RFC 7641 §4.1: if the interest cannot be stored, the response is sent
+    /// as if Observe had not been requested.
+    #[must_use]
+    pub const fn without_observe(mut self) -> Self {
+        self.observe = None;
+        self
+    }
+
     /// Replace the payload with a `'static` slice.
     #[must_use]
     pub const fn with_static(mut self, payload: &'static [u8]) -> Self {

@@ -855,6 +855,8 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
                 let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
                 let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
                 response = response.observe(0);
+            } else {
+                response = response.without_observe();
             }
         }
     }
