@@ -141,8 +141,12 @@ impl<const N: usize> Site<N> {
 
     /// Match `request`: handler, else 4.05 if the path exists, else 4.04.
     /// Unbound method and unknown path use RFC 9290 problem details (CBOR).
+    ///
+    /// `catalog` is scratch for `/.well-known/core` when the list exceeds
+    /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Slice it to
+    /// [`link_format_capacity`] (capped at [`RESPONSE_BODY`]).
     #[must_use]
-    pub fn dispatch(&self, request: Request<'_>) -> Response {
+    pub fn dispatch<'a>(&self, request: Request<'_>, catalog: &'a mut [u8]) -> Response<'a> {
         for entry in self.entries.iter().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
@@ -154,7 +158,7 @@ impl<const N: usize> Site<N> {
         }
         if self.well_known && path_is_well_known(request.path()) {
             return match request.method() {
-                Some(Method::Get) => link_format(self),
+                Some(Method::Get) => link_format(self, catalog),
                 _ => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
             };
         }
@@ -207,11 +211,12 @@ fn path_is_well_known(path: &[&str]) -> bool {
     path == WELL_KNOWN
 }
 
-fn link_format<const N: usize>(site: &Site<N>) -> Response {
-    // Array size cannot be `link_format_capacity::<N>()` on stable; slice
-    // the Response ceiling to that compile-time N budget.
-    let mut storage = [0u8; RESPONSE_BODY];
-    let buf = &mut storage[..link_format_capacity::<N>()];
+fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Response<'a> {
+    let cap = link_format_capacity::<N>().min(storage.len());
+    if cap == 0 {
+        return Response::internal_error();
+    }
+    let buf = &mut storage[..cap];
     let mut n = 0usize;
     let mut first = true;
     for entry in site.entries.iter().flatten() {

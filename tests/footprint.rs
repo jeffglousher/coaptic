@@ -6,6 +6,7 @@
 
 use core::mem::size_of;
 
+use coaptic::Response;
 use coaptic::app::{App, DEFAULT_ROUTES};
 use coaptic::profiles;
 use coaptic::storage::{Memory, MemoryLayout, WithBodies};
@@ -64,4 +65,10 @@ fn memory_layout_selects_store() {
         size_of::<<profiles::Default as MemoryLayout<true>>::Store>(),
         size_of::<Memory<profiles::Default, WithBodies<profiles::Default>>>()
     );
+}
+
+#[test]
+fn response_is_not_a_4kib_copy() {
+    let n = size_of::<Response<'static>>();
+    assert!(n < 512, "Response must not own [u8;4096] (got {n})");
 }

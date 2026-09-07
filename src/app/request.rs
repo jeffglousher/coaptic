@@ -115,7 +115,7 @@ pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathE
 /// ```
 /// use coaptic::{Request, Response};
 ///
-/// fn echo(req: Request<'_>) -> Response {
+/// fn echo(req: Request<'_>) -> Response<'static> {
 ///     let body = req.body().unwrap_or(req.payload());
 ///     Response::content_copy(body)
 /// }

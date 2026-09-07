@@ -25,7 +25,7 @@ use crate::storage::{
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
-use super::response::{INLINE_PAYLOAD, Response};
+use super::response::{AssembledBytes, INLINE_PAYLOAD, Response};
 use super::{App, Error, Method, push_opt};
 
 /// Option slots for an outbound request (path + query + Table 4 extras).
@@ -131,7 +131,7 @@ impl ReplyMeta {
         }
     }
 
-    fn into_response(self) -> Response {
+    fn into_response(self) -> Response<'static> {
         let mut response = Response::from_client(
             self.code,
             self.ty,
@@ -185,7 +185,7 @@ impl ClientInbox {
         evicted
     }
 
-    fn take(&mut self, call: Call) -> Option<(Response, Option<SlotId>)> {
+    fn take(&mut self, call: Call) -> Option<(Response<'_>, Option<SlotId>)> {
         let i = self.rows.iter().position(|row| {
             row.as_ref()
                 .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
@@ -411,20 +411,24 @@ where
     /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll)
     /// has completed it.
     ///
-    /// When Block2 / Q-Block2 assembled, copies the RX body into
-    /// [`Response::body`] and releases that body slot. After
-    /// [`Outgoing::observe`], the same `call` yields the initial
-    /// representation and later notifications.
-    pub fn take_response(&mut self, call: Call) -> Option<Response> {
-        let (mut response, body) = self.inbox.take(call)?;
+    /// When Block2 / Q-Block2 assembled, copies the RX body into an App
+    /// hold and returns [`Response::body`] borrowed from that hold (released
+    /// from the Engine). A later [`Self::take_response`] or [`Self::poll`]
+    /// overwrites the hold. After [`Outgoing::observe`], the same `call`
+    /// yields the initial representation and later notifications.
+    pub fn take_response(&mut self, call: Call) -> Option<Response<'_>> {
+        let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
         }
         if let Some(id) = body {
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
-                response.copy_body(bytes);
+                self.assembled.store(bytes);
             }
             release_rx_body(&mut self.engine, id);
+            if let Some(bytes) = self.assembled.view() {
+                return Some(response.with_assembled(bytes));
+            }
         }
         Some(response)
     }

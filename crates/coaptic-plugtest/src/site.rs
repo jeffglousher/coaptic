@@ -60,20 +60,20 @@ pub fn reset() {
     OBS_SEQ.store(0, Ordering::SeqCst);
 }
 
-fn get_test(_req: Request<'_>) -> Response {
+fn get_test(_req: Request<'_>) -> Response<'static> {
     if !TEST_EXISTS.load(Ordering::SeqCst) {
         return Response::not_found();
     }
     Response::content(TEST_BODY).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn put_test(req: Request<'_>) -> Response {
+fn put_test(req: Request<'_>) -> Response<'static> {
     TEST_EXISTS.store(true, Ordering::SeqCst);
     let _ = req.payload();
     Response::changed()
 }
 
-fn post_test(_req: Request<'_>) -> Response {
+fn post_test(_req: Request<'_>) -> Response<'static> {
     TEST_EXISTS.store(true, Ordering::SeqCst);
     Response::created()
         .location_path("location1")
@@ -82,26 +82,26 @@ fn post_test(_req: Request<'_>) -> Response {
         .location_query("second=2")
 }
 
-fn delete_test(_req: Request<'_>) -> Response {
+fn delete_test(_req: Request<'_>) -> Response<'static> {
     TEST_EXISTS.store(false, Ordering::SeqCst);
     Response::deleted()
 }
 
-fn get_separate(_req: Request<'_>) -> Response {
+fn get_separate(_req: Request<'_>) -> Response<'static> {
     Response::content(SEP_BODY)
         .content_format(ContentFormat::TEXT_PLAIN)
         .separate()
 }
 
-fn get_query(_req: Request<'_>) -> Response {
+fn get_query(_req: Request<'_>) -> Response<'static> {
     Response::content(TEST_BODY).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_seg(_req: Request<'_>) -> Response {
+fn get_seg(_req: Request<'_>) -> Response<'static> {
     Response::content(TEST_BODY).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_validate(req: Request<'_>) -> Response {
+fn get_validate(req: Request<'_>) -> Response<'static> {
     let etag = validate_etag().lock().expect("etag").clone();
     let body = validate_body().lock().expect("body").clone();
     let tags: Vec<Vec<u8>> = req.etag().map(|t| t.to_vec()).collect();
@@ -117,7 +117,7 @@ fn get_validate(req: Request<'_>) -> Response {
     r
 }
 
-fn put_validate(req: Request<'_>) -> Response {
+fn put_validate(req: Request<'_>) -> Response<'static> {
     let etag = validate_etag().lock().expect("etag").clone();
     let exists = true;
     match req.precondition(exists, Some(etag.as_slice())) {
@@ -131,7 +131,7 @@ fn put_validate(req: Request<'_>) -> Response {
     }
 }
 
-fn get_large(_req: Request<'_>) -> Response {
+fn get_large(_req: Request<'_>) -> Response<'static> {
     // 'static leak once — Default TX body is 4096; 2000 must Block2.
     static LARGE: OnceLock<Vec<u8>> = OnceLock::new();
     let body = LARGE.get_or_init(large_body);
@@ -142,17 +142,17 @@ fn get_large(_req: Request<'_>) -> Response {
     Response::content(slice).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn put_large(req: Request<'_>) -> Response {
+fn put_large(req: Request<'_>) -> Response<'static> {
     let _ = req.body().or(Some(req.payload()));
     Response::changed()
 }
 
-fn post_large_create(req: Request<'_>) -> Response {
+fn post_large_create(req: Request<'_>) -> Response<'static> {
     let _ = req.body().or(Some(req.payload()));
     Response::created()
 }
 
-fn post_large_post(req: Request<'_>) -> Response {
+fn post_large_post(req: Request<'_>) -> Response<'static> {
     let _ = req.body().or(Some(req.payload()));
     static LEAK: OnceLock<&'static [u8]> = OnceLock::new();
     let slice = *LEAK.get_or_init(|| large_body().leak());
@@ -161,40 +161,40 @@ fn post_large_post(req: Request<'_>) -> Response {
         .content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn get_obs(_req: Request<'_>) -> Response {
+fn get_obs(_req: Request<'_>) -> Response<'static> {
     Response::content(OBS_BODY)
         .content_format(ContentFormat::TEXT_PLAIN)
         .observe(0)
         .max_age(5)
 }
 
-fn obs_snapshot() -> Response {
+fn obs_snapshot() -> Response<'static> {
     Response::content(OBS_BODY_2)
         .content_format(ContentFormat::TEXT_PLAIN)
         .observe(OBS_SEQ.fetch_add(1, Ordering::SeqCst).saturating_add(1))
 }
 
-fn delete_obs(_req: Request<'_>) -> Response {
+fn delete_obs(_req: Request<'_>) -> Response<'static> {
     Response::deleted()
 }
 
-fn get_link1(_req: Request<'_>) -> Response {
+fn get_link1(_req: Request<'_>) -> Response<'static> {
     Response::content(b"link1")
 }
 
-fn get_path(_req: Request<'_>) -> Response {
+fn get_path(_req: Request<'_>) -> Response<'static> {
     Response::content(PATH_LINKS.as_bytes()).content_format(ContentFormat::LINK_FORMAT)
 }
 
-fn get_path_sub1(_req: Request<'_>) -> Response {
+fn get_path_sub1(_req: Request<'_>) -> Response<'static> {
     Response::content(PATH_SUB1)
 }
 
-fn get_secure(_req: Request<'_>) -> Response {
+fn get_secure(_req: Request<'_>) -> Response<'static> {
     Response::content(SECURE_BODY).content_format(ContentFormat::TEXT_PLAIN)
 }
 
-fn well_known(req: Request<'_>) -> Response {
+fn well_known(req: Request<'_>) -> Response<'static> {
     let queries: Vec<String> = req
         .uri_query()
         .filter_map(|s| s.ok().map(str::to_owned))

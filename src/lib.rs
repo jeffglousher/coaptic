@@ -35,7 +35,7 @@
 //! #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
 //! # }
 //!
-//! fn get_temp(_req: Request<'_>) -> Response {
+//! fn get_temp(_req: Request<'_>) -> Response<'static> {
 //!     Response::content(b"21.5")
 //! }
 //!
