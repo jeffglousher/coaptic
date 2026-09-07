@@ -27,3 +27,8 @@ rustls = { version = "0.21", optional = true }
 [[test]]
 name = "interop"
 path = "tests/interop.rs"
+
+[[bin]]
+name = "dogfood"
+path = "src/bin/dogfood.rs"
+doc = false

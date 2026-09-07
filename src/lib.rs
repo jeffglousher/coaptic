@@ -89,6 +89,8 @@
 //! Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture planning:
 //! [GitHub project][plan]. This rustdoc does not restate wire format.
 //! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
+//! Timed mixed-stack dogfood:
+//! `cargo run -p coaptic-plugtest --bin dogfood`.
 //!
 //! # Future / backlog
 //!

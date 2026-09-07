@@ -55,6 +55,7 @@ jobs:
       - run: cargo test --no-default-features
       - run: cargo test --all-features
       - run: cargo test -p coaptic-plugtest --features dtls
+      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
 
   doc:
     name: doc
