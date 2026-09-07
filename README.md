@@ -1,8 +1,17 @@
 # coaptic
 
+[![crates.io](https://img.shields.io/crates/v/coaptic.svg)](https://crates.io/crates/coaptic)
+[![docs.rs](https://docs.rs/coaptic/badge.svg)](https://docs.rs/coaptic)
+[![CI](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml)
+
 A bounded `no_std` CoAP engine with an approachable `App` face. Slots and tables sit under the hood; there is no global App State.
 
-Start at rustdoc (`cargo doc --open`). Crate-root types are the happy path (`App`, `Request`, `Response`, `Call`, `Outgoing`, method routers, `Endpoint`, `profiles`, `Code`, `ContentFormat`, `Method`, `ProblemDetails`, bind/poll/send errors). Engine slots, tables, and `DatagramIo` live in `storage`; codecs and tokens live in `message`.
+```toml
+[dependencies]
+coaptic = "0.1"
+```
+
+Start at rustdoc ([docs.rs](https://docs.rs/coaptic), or `cargo doc --open`). Crate-root types are the happy path (`App`, `Request`, `Response`, `Call`, `Outgoing`, method routers, `Endpoint`, `profiles`, `Code`, `ContentFormat`, `Method`, `ProblemDetails`, bind/poll/send errors). Engine slots, tables, and `DatagramIo` live in `storage`; codecs and tokens live in `message`.
 
 ## Sketch
 
@@ -54,7 +63,7 @@ cargo test -p coaptic-plugtest --features dtls
 cargo run -p coaptic-plugtest --bin dogfood
 ```
 
-The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise). It prints timing plus `Engine::metrics`. CI smokes `--iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#125](https://github.com/jeffglousher/coaptic/issues/125) (dogfood + metrics).
+The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise) plus a coaptic↔coaptic Observe notify collect so `observe_notify` is not left cold. Default is 50 iterations. It prints timing plus `app.metrics()`; optional `--json PATH` writes the same snapshot (host/load specific). CI smokes `--iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#131](https://github.com/jeffglousher/coaptic/issues/131) (ruthless dogfood).
 
 ## Example
 
@@ -64,8 +73,8 @@ cargo run --example coap_server --features std
 
 ## Docs and planning
 
-API: rustdoc (`cargo doc --open`; version tags publish to GitHub Pages). Protocol copies: [`knowledge/rfcs/`](knowledge/rfcs/). Architecture planning lives on [GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
+API: [docs.rs/coaptic](https://docs.rs/coaptic) (`cargo doc --open`; version tags also publish rustdoc to GitHub Pages). Protocol copies: [`knowledge/rfcs/`](knowledge/rfcs/). Architecture planning lives on [GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
 
-The crate is public. Pull requests to `main` must pass `fmt`, `clippy`, `test`, and `doc`. Merges are squash-only. See [CONTRIBUTING.md](CONTRIBUTING.md).
+The crate is public. Pull requests to `main` must pass `fmt`, `clippy`, `test`, `doc`, and `package`. Merges are squash-only. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Licensed MIT OR Apache-2.0.

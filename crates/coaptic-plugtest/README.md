@@ -8,7 +8,7 @@ cargo test -p coaptic-plugtest --features dtls
 cargo run -p coaptic-plugtest --bin dogfood
 ```
 
-Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register, Block2/Block1. Prints wall min/mean/p50/p99/max, Engine occupancy, and `Engine::metrics` counters. Short CI smoke: `--iterations 2`.
+Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register, Block2/Block1. A third leg is coaptic↔coaptic Observe **notify collect** (`App::notify` → client `take_response`) so `observe_notify` is not left cold — coap-rs is a register/deregister stub. Default is 50 iterations; short CI smoke: `--iterations 2`. Prints wall min/mean/p50/p99/max, Engine occupancy, and `app.metrics()`. Optional `--json PATH` writes the same numbers (host/load specific; not a CI golden). Tracking: [#131](https://github.com/jeffglousher/coaptic/issues/131).
 
 This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness is Engine↔Engine only (no sockets).
 

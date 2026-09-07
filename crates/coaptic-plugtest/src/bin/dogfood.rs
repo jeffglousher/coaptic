@@ -1,8 +1,9 @@
-//! Timed coaptic ↔ coap-rs dogfood.
+//! Timed coaptic ↔ coap-rs dogfood + coaptic↔coaptic Observe notify collect.
 //!
 //! ```text
 //! cargo run -p coaptic-plugtest --bin dogfood
 //! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
+//! cargo run -p coaptic-plugtest --bin dogfood -- --json dogfood.json
 //! ```
 
 use std::env;
