@@ -7,9 +7,10 @@
 //!
 //! Jeff’s bar is back-and-forth with an independent stack, plus wall-clock
 //! (and Engine `now_ms` deltas on the coaptic client). This is not a
-//! plugtest TD grader. After a run it prints occupancy and
-//! [`coaptic::storage::Metrics`] from [`Engine::metrics`] (same counters as
-//! PR #127; no second system).
+//! plugtest TD grader. [`App::reset_metrics`] / [`Engine::reset_metrics`]
+//! run at the start of each timed window (`progress` counts idle poll
+//! ticks). After the peer loop it prints occupancy and
+//! [`coaptic::Metrics`] from [`App::metrics`] / [`Engine::metrics`].
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -21,7 +22,7 @@ use std::time::{Duration, Instant};
 use coaptic::app::DEFAULT_ROUTES;
 use coaptic::message::{Code, ContentFormat};
 use coaptic::storage::{DatagramIo, Engine, Storage};
-use coaptic::{App, Call, Endpoint, profiles};
+use coaptic::{App, Call, Endpoint, Metrics, profiles};
 
 use crate::coap_rs::CoapRsPeer;
 use crate::coaptic::bind_site;
@@ -60,7 +61,8 @@ Timed coaptic ↔ coap-rs dogfood over loopback UDP.
 Both directions: coap-rs client → coaptic server, and coaptic client → coap-rs
 server. Each iteration is GET/PUT/POST /test, Observe GET /obs, Block2 GET
 /large, Block1 PUT /large-update. Prints wall min/mean/p50/p99/max (and Engine
-clock deltas on the coaptic client).
+clock deltas on the coaptic client). Resets `app.metrics()` around each timed
+window, then prints the snapshot.
 
 Options:
   --iterations N          loops per direction (default 20)
@@ -156,16 +158,18 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
     let server = spawn_coaptic_server()?;
     let dest = server.addr;
     writeln!(out, "\n== coap-rs → coaptic  server={dest}").map_err(io_err)?;
+    server.reset_metrics()?;
     let a = run_coap_rs_client(&cfg, dest)?;
     a.write("  ", &mut out).map_err(io_err)?;
-    let server_snap = server.finish();
+    let server_snap = server.snapshot();
+    drop(server);
     writeln!(
         out,
         "  engine    {}  now_ms={}  (coaptic server)",
         server_snap.occupancy, server_snap.now_ms
     )
     .map_err(io_err)?;
-    writeln!(out, "  counters  {}", server_snap.counters).map_err(io_err)?;
+    writeln!(out, "  app.metrics()  {}", server_snap.counters).map_err(io_err)?;
 
     site::reset();
     let mut rs_server = CoapRsPeer::new();
@@ -178,7 +182,7 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
         "  engine    {client_occ}  now_ms={client_now}  (coaptic client)"
     )
     .map_err(io_err)?;
-    writeln!(out, "  counters  {client_counters}").map_err(io_err)?;
+    writeln!(out, "  app.metrics()  {client_counters}").map_err(io_err)?;
     writeln!(out, "  capacities  {caps}").map_err(io_err)?;
     rs_server.stop_server();
 
@@ -193,7 +197,7 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
     .map_err(io_err)?;
     writeln!(
         out,
-        "  metrics   Engine::metrics / App::metrics (storage::Metrics)"
+        "  metrics   app.metrics() after timed window (reset_metrics around it)"
     )
     .map_err(io_err)?;
     writeln!(out, "dogfood  ok").map_err(io_err)?;
@@ -210,8 +214,8 @@ fn occupancy_line<S: Storage>(engine: &mut Engine<S>) -> String {
     format!("occupancy rx={rx} tx={tx}")
 }
 
-fn counters_line<S: Storage>(engine: &Engine<S>) -> String {
-    engine.metrics().to_string()
+fn metrics_line(snap: Metrics) -> String {
+    snap.to_string()
 }
 
 fn format_capacities<S: Storage>(engine: &Engine<S>) -> String {
@@ -236,6 +240,8 @@ type ClientApp<T> = App<profiles::Default, T, DEFAULT_ROUTES, true>;
 struct CoapticServer {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
+    reset: Arc<AtomicBool>,
+    reset_done: Arc<AtomicBool>,
     snapshot: Arc<Mutex<ServerSnap>>,
     join: Option<JoinHandle<()>>,
 }
@@ -248,11 +254,20 @@ struct ServerSnap {
 }
 
 impl CoapticServer {
-    fn finish(mut self) -> ServerSnap {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+    fn reset_metrics(&self) -> Result<(), PeerError> {
+        self.reset_done.store(false, Ordering::SeqCst);
+        self.reset.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < deadline {
+            if self.reset_done.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            thread::yield_now();
         }
+        Err(PeerError("coaptic server did not ack reset_metrics".into()))
+    }
+
+    fn snapshot(&self) -> ServerSnap {
         self.snapshot.lock().expect("snap").clone()
     }
 }
@@ -269,12 +284,16 @@ impl Drop for CoapticServer {
 fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
     let (sock, addr) = bind_loopback().map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
+    let reset = Arc::new(AtomicBool::new(false));
+    let reset_done = Arc::new(AtomicBool::new(false));
     let snapshot = Arc::new(Mutex::new(ServerSnap {
         occupancy: String::from("occupancy rx=? tx=?"),
         counters: String::new(),
         now_ms: 0,
     }));
     let stop_t = Arc::clone(&stop);
+    let reset_t = Arc::clone(&reset);
+    let reset_done_t = Arc::clone(&reset_done);
     let snap_t = Arc::clone(&snapshot);
     let join = thread::Builder::new()
         .name("coaptic-dogfood-server".into())
@@ -282,10 +301,14 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
             let mut app = bind_site(sock);
             let origin = Instant::now();
             while !stop_t.load(Ordering::SeqCst) {
+                if reset_t.swap(false, Ordering::SeqCst) {
+                    app.reset_metrics();
+                    reset_done_t.store(true, Ordering::SeqCst);
+                }
                 let now = elapsed_ms(origin);
                 let _ = app.poll(now);
                 let occupancy = occupancy_line(app.engine_mut());
-                let counters = counters_line(app.engine());
+                let counters = metrics_line(app.metrics());
                 *snap_t.lock().expect("snap") = ServerSnap {
                     occupancy,
                     counters,
@@ -293,20 +316,14 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
                 };
                 thread::yield_now();
             }
-            let now = elapsed_ms(origin);
-            let occupancy = occupancy_line(app.engine_mut());
-            let counters = counters_line(app.engine());
-            *snap_t.lock().expect("snap") = ServerSnap {
-                occupancy,
-                counters,
-                now_ms: now,
-            };
         })
         .map_err(|e| e.to_string())?;
     thread::sleep(Duration::from_millis(5));
     Ok(CoapticServer {
         addr,
         stop,
+        reset,
+        reset_done,
         snapshot,
         join: Some(join),
     })
@@ -631,6 +648,7 @@ fn run_coaptic_client(
         .block_wise::<true>()
         .bind(sock)
         .map_err(|e| format!("bind: {e}"))?;
+    app.reset_metrics();
     let origin = Instant::now();
     let peer = Endpoint::from(dest);
     let caps = format_capacities(app.engine());
@@ -777,7 +795,7 @@ fn run_coaptic_client(
 
     let now = elapsed_ms(origin);
     let occupancy = occupancy_line(app.engine_mut());
-    let counters = counters_line(app.engine());
+    let counters = metrics_line(app.metrics());
     Ok((report, occupancy, counters, now, caps))
 }
 
@@ -869,6 +887,7 @@ mod tests {
         assert!(s.contains("coap-rs → coaptic"), "{s}");
         assert!(s.contains("coaptic → coap-rs"), "{s}");
         assert!(s.contains("LOOP (all verbs)"), "{s}");
+        assert!(s.contains("app.metrics()"), "{s}");
         assert!(s.contains("rx_accepted="), "{s}");
         assert!(s.contains("dogfood  ok"), "{s}");
         eprintln!("{s}");
