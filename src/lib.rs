@@ -80,7 +80,7 @@
 //! - [`storage`] — [`Engine`](storage::Engine) over
 //!   [`Storage`](storage::Storage); pools, tables,
 //!   [`DatagramIo`](storage::DatagramIo), wrapping
-//!   [`Metrics`](storage::Metrics) (`Engine::metrics` /
+//!   [`Metrics`] (`Engine::metrics` /
 //!   [`App::metrics`](App::metrics)). Advanced:
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and

@@ -3496,7 +3496,8 @@ fn engine_metrics_observe_register_cancel() {
     let ep = Endpoint::v4([192, 0, 2, 82], 5683);
     let tok = sample_token(&[0x01]);
     let rx = engine.acquire_rx().expect("rx");
-    let register = observe_get(tok, 9, &[Opt::observe_register()]);
+    let register_opts = [Opt::observe_register()];
+    let register = observe_get(tok, 9, &register_opts);
     let (buf, n) = encode_into(&register);
     engine.write_rx(rx, &buf[..n], ep).expect("write");
     engine
@@ -3511,7 +3512,8 @@ fn engine_metrics_observe_register_cancel() {
     assert_eq!(engine.metrics().observe_notify, 1);
 
     let rx2 = engine.acquire_rx().expect("rx2");
-    let deregister = observe_get(tok, 11, &[Opt::observe_deregister()]);
+    let deregister_opts = [Opt::observe_deregister()];
+    let deregister = observe_get(tok, 11, &deregister_opts);
     let (buf, n) = encode_into(&deregister);
     engine.write_rx(rx2, &buf[..n], ep).expect("write");
     engine
@@ -3541,10 +3543,11 @@ fn engine_metrics_block_assemble() {
     engine.apply_block1_rx(rx).expect("apply");
     assert_eq!(engine.metrics().block1_assemble, 1);
 
+    let token2 = sample_token(&[0xcd]);
     let size2 = encode_uint(payload.len() as u32);
     let opts = [Opt::block2(&blk), Opt::size2(&size2)];
     let msg = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(8))
-        .with_token(token)
+        .with_token(token2)
         .with_options(&opts)
         .with_payload(payload);
     let n = encode(&msg, &mut buf).expect("encode");

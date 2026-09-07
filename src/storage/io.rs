@@ -138,15 +138,11 @@ impl<S: Storage + DatagramSlots> Engine<S> {
                 return Err(DatagramIoError::Slot(SlotError::NotOccupied));
             }
         };
-        let outcome = {
-            let access = match self.access_tx(id) {
-                Ok(access) => access,
-                Err(e) => {
-                    Metrics::inc(&mut self.metrics_mut().tx_fail);
-                    return Err(DatagramIoError::Slot(e));
-                }
-            };
-            io.send(dest, access.as_bytes())
+        let outcome = match self.access_tx(id) {
+            Ok(access) => io
+                .send(dest, access.as_bytes())
+                .map_err(DatagramIoError::Io),
+            Err(e) => Err(DatagramIoError::Slot(e)),
         };
         match outcome {
             Ok(n) => {
@@ -155,7 +151,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
             }
             Err(e) => {
                 Metrics::inc(&mut self.metrics_mut().tx_fail);
-                Err(DatagramIoError::Io(e))
+                Err(e)
             }
         }
     }
