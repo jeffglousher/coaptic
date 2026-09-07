@@ -2371,3 +2371,50 @@ fn client_con_give_up_releases_after_max_retransmit() {
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
+
+#[test]
+fn client_second_con_nstart_does_not_leak_tx() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let first = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("first CON");
+    assert_eq!(app.transport().sent_n, 1);
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    let first_mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first wire");
+        decode(&bytes[..n]).expect("decode first").message_id()
+    };
+    match app.engine() {
+        crate::app::EngineRef::Datagram(engine) => {
+            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
+        }
+        crate::app::EngineRef::BlockWise(engine) => {
+            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
+        }
+    }
+
+    let err = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect_err("NSTART");
+    assert_eq!(err, Error::Saturated);
+    assert_eq!(
+        app.transport().sent_n,
+        1,
+        "second CON must not go on the wire without RTO"
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 1, "no orphan TX");
+    match app.engine() {
+        crate::app::EngineRef::Datagram(engine) => {
+            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
+        }
+        crate::app::EngineRef::BlockWise(engine) => {
+            assert!(engine.lookup_pending_con(first_mid, peer).is_some());
+        }
+    }
+    assert!(app.take_response(first).is_none());
+}

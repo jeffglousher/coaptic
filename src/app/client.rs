@@ -1400,7 +1400,28 @@ where
         }
     }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
-    super::finish_send(engine, io, tx, dest, pending)
+    match super::finish_send(engine, io, tx, dest, pending) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            drop_exchange_for_tx(engine, tx);
+            Err(e)
+        }
+    }
+}
+
+fn drop_exchange_for_tx<Mem: Storage + Exchanges>(engine: &mut Engine<Mem>, tx: SlotId) {
+    let n = engine.capacities().tx_datagram_slots;
+    for i in 0..n {
+        let id = SlotId::from_index(i);
+        let Some(entry) = engine.exchange_entry(id) else {
+            continue;
+        };
+        if entry.tx_slot() != tx {
+            continue;
+        }
+        let _ = engine.take_exchange(entry.key());
+        return;
+    }
 }
 
 fn copy_tx_range<Mem: Storage + BodySlots>(

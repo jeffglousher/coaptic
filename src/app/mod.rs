@@ -1390,6 +1390,14 @@ fn encode_response<S: Storage + DatagramSlots>(
     engine.encode_tx(tx, &msg).map(|_| ())
 }
 
+/// Send occupied TX `tx` to `dest`.
+///
+/// When `pending` is `Some`, admit the CON into the pending table **before**
+/// `send_tx` so a second CON to the same peer cannot occupy TX without RTO
+/// ([`Transmission::NSTART`](crate::message::Transmission::NSTART)). `None`
+/// from [`Engine::record_pending_con`](Engine::record_pending_con) releases
+/// the slot and returns [`Error::Saturated`]. An IO failure after admit
+/// takes the pending mark and releases TX.
 pub(crate) fn finish_send<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -1405,15 +1413,28 @@ where
         let _ = engine.release_tx(tx);
         return Err(Error::Slot(e));
     }
-    let send = engine.send_tx(io, tx);
     if let Some((now_ms, mid)) = pending {
-        let _ = engine.record_pending_con(tx, dest, mid, now_ms, 0);
+        if engine
+            .record_pending_con(tx, dest, mid, now_ms, 0)
+            .is_none()
+        {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Saturated);
+        }
+        match engine.send_tx(io, tx) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let _ = engine.take_pending_con(mid, dest);
+                let _ = engine.release_tx(tx);
+                Err(e.into())
+            }
+        }
+    } else {
+        let send = engine.send_tx(io, tx);
+        let _ = engine.release_tx(tx);
         send?;
-        return Ok(());
+        Ok(())
     }
-    let _ = engine.release_tx(tx);
-    send?;
-    Ok(())
 }
 
 fn unauthorized_echo(now_ms: u64) -> Response {
