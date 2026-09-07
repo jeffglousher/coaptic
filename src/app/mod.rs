@@ -500,7 +500,13 @@ where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
     T: DatagramIo,
 {
-    let received = engine.recv_from(io)?;
+    // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
+    // Saturated after those timers still run (RFC 7252 §4.2).
+    let (received, recv_saturated) = match engine.recv_from(io) {
+        Ok(id) => (id, false),
+        Err(DatagramIoError::Saturated) => (None, true),
+        Err(e) => return Err(e.into()),
+    };
     client::expire_client_exchanges(engine, inbox, lives, now_ms);
     let progress = engine.progress(now_ms);
 
@@ -547,6 +553,9 @@ where
 
     if let Some(recover) = progress.qblock_recover() {
         send_qblock_recover(engine, io, ids, recover)?;
+    }
+    if recv_saturated {
+        return Err(Error::Saturated);
     }
     Ok(())
 }

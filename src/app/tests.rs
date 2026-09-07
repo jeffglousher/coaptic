@@ -2741,6 +2741,47 @@ fn client_con_give_up_releases_after_max_retransmit() {
 }
 
 #[test]
+fn poll_progresses_when_rx_saturated() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .bind(RecordIo::default())
+        .expect("bind");
+    {
+        let engine = app.engine_mut();
+        for _ in 0..profiles::Constrained::RX_DATAGRAM_SLOTS {
+            let id = engine.acquire_rx().expect("rx");
+            engine
+                .storage_mut()
+                .rx_datagram_mut()
+                .pin(id)
+                .expect("pin stuck RX");
+        }
+        assert_eq!(
+            engine.rx_occupied(),
+            profiles::Constrained::RX_DATAGRAM_SLOTS
+        );
+    }
+
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_n, 1);
+
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let err = app.poll(timeout).expect_err("RX pool full");
+    assert_eq!(err, Error::Saturated);
+    assert_eq!(
+        app.transport().sent_n,
+        2,
+        "RTO Due must still send when recv_from is Saturated"
+    );
+    assert!(app.take_response(call).is_none());
+}
+
+#[test]
 fn client_second_con_nstart_does_not_leak_tx() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = record_client();
