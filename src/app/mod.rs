@@ -544,9 +544,20 @@ where
 
     if let Some(id) = progress.observe_notify() {
         if let Some(interest) = engine.observe_interest(id) {
-            if let Some(source) = site.observe_source(interest.resource()) {
-                let response = source();
-                send_notification(engine, io, ids, now_ms, interest, &response, interest.seq())?;
+            let seq = interest.seq();
+            match site.observe_source(interest.resource()) {
+                Some(source) => {
+                    let response = source();
+                    if let Err(e) =
+                        send_notification(engine, io, ids, now_ms, interest, &response, seq)
+                    {
+                        let _ = engine.restore_observe_due(id, seq);
+                        return Err(e);
+                    }
+                }
+                None => {
+                    let _ = engine.restore_observe_due(id, seq);
+                }
             }
         }
     }
@@ -913,7 +924,10 @@ where
             continue;
         };
         let dest = interest.endpoint();
-        send_notification(engine, io, ids, now_ms, interest, response, seq)?;
+        if let Err(e) = send_notification(engine, io, ids, now_ms, interest, response, seq) {
+            let _ = engine.restore_observe_due(id, seq);
+            return Err(e);
+        }
         held.add(dest);
         sent += 1;
     }

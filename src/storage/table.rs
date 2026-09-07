@@ -543,6 +543,18 @@ impl ObserveInterest {
         self.seq = self.seq.wrapping_add(1) & OBSERVE_SEQUENCE_MASK;
         Some(self.seq)
     }
+
+    /// Undo [`Self::take_due`] when the notification was not sent.
+    ///
+    /// No-op unless this row still holds `assigned_seq` and is not pending
+    /// (already restored, or a later `take_due`, leaves the row alone).
+    pub fn restore_due(&mut self, assigned_seq: u32) {
+        if self.pending || self.seq != assigned_seq {
+            return;
+        }
+        self.pending = true;
+        self.seq = assigned_seq.wrapping_sub(1) & OBSERVE_SEQUENCE_MASK;
+    }
 }
 
 impl From<ObserveKey> for ObserveInterest {

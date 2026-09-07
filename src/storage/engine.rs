@@ -839,6 +839,19 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         Some(seq)
     }
 
+    /// Undo [`Self::next_observe_seq`] / progress `take_due` after a send miss.
+    ///
+    /// Re-pends the row and rewinds the 24-bit sequence so a later poll can
+    /// send the same seq. No-op if the slot is free or no longer holds
+    /// `assigned_seq`.
+    pub fn restore_observe_due(&mut self, id: SlotId, assigned_seq: u32) -> bool {
+        let Some(mut interest) = self.storage.observe_interest(id) else {
+            return false;
+        };
+        interest.restore_due(assigned_seq);
+        self.storage.set_observe_interest(id, interest).is_ok()
+    }
+
     /// Mark every interest whose [`ObserveResource`] equals `resource` as due.
     ///
     /// Coalesces like [`Self::signal_observe`]. Returns how many rows were
