@@ -1821,6 +1821,8 @@ fn notify_nstart_one_per_endpoint() {
         "NSTART=1: one notify per endpoint even with two rows"
     );
     assert_eq!(app.transport().send_n, 1);
+    assert_eq!(app.metrics().observe_notify, 1);
+    assert_eq!(app.metrics().nstart_reject, 1);
 }
 
 #[test]
@@ -3067,4 +3069,203 @@ fn client_fifth_untaken_send_is_saturated() {
         .to(peer)
         .send(0)
         .expect("send after take");
+}
+
+#[test]
+fn metrics_server_get_moves_rx_tx_progress() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    assert_eq!(app.metrics(), crate::Metrics::ZERO);
+    app.poll(0).expect("poll");
+    let snap = app.metrics();
+    assert_eq!(snap.rx_accepted, 1);
+    assert_eq!(snap.rx_error, 0);
+    assert_eq!(snap.tx_ok, 1);
+    assert_eq!(snap.tx_fail, 0);
+    assert_eq!(snap.progress, 1);
+    last_reply(&app);
+}
+
+#[test]
+fn metrics_malformed_datagram_is_rx_error() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut wire = [0u8; 256];
+    wire[0] = 0x40;
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, 1)),
+        last_send: None,
+    });
+    app.poll(0).expect("drop");
+    let snap = app.metrics();
+    assert_eq!(snap.rx_accepted, 1);
+    assert_eq!(snap.rx_error, 1);
+    assert_eq!(snap.tx_ok, 0);
+}
+
+#[test]
+fn metrics_observe_register_notify_deregister() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("register");
+    assert_eq!(app.metrics().observe_register, 1);
+    assert_eq!(app.metrics().rx_accepted, 1);
+    assert_eq!(app.metrics().tx_ok, 1);
+
+    app.reset_metrics();
+    let sent = app
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("notify");
+    assert_eq!(sent, 1);
+    assert_eq!(app.metrics().observe_notify, 1);
+    assert_eq!(app.metrics().tx_ok, 1);
+
+    let extra = [Opt::observe_deregister()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1002);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(20).expect("deregister");
+    assert_eq!(app.metrics().observe_cancel, 1);
+}
+
+#[test]
+fn metrics_client_retransmit_and_give_up() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.metrics().tx_ok, 1);
+
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    app.poll(timeout - 1).expect("before RTO");
+    assert_eq!(app.metrics().con_retransmit, 0);
+
+    app.poll(timeout).expect("retransmit");
+    assert_eq!(app.metrics().con_retransmit, 1);
+    assert_eq!(app.metrics().tx_ok, 2);
+    assert_eq!(app.metrics().give_up, 0);
+
+    let mut now = timeout;
+    let mut wait = Transmission::ACK_TIMEOUT_MS.saturating_mul(2);
+    for _ in 1..Transmission::MAX_RETRANSMIT {
+        now = now.saturating_add(u64::from(wait));
+        app.poll(now).expect("due");
+        wait = wait.saturating_mul(2);
+    }
+    assert_eq!(
+        app.metrics().con_retransmit,
+        u32::from(Transmission::MAX_RETRANSMIT)
+    );
+    now = now.saturating_add(u64::from(wait));
+    app.poll(now).expect("give up");
+    assert_eq!(app.metrics().give_up, 1);
+    assert!(app.take_response(call).is_none());
+}
+
+#[test]
+fn metrics_nstart_reject() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let _first = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("first CON");
+    let err = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect_err("NSTART");
+    assert_eq!(err, Error::Saturated);
+    assert_eq!(app.metrics().nstart_reject, 1);
+    assert_eq!(app.metrics().tx_ok, 1);
+}
+
+#[test]
+fn metrics_empty_rst_path() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("wire");
+        decode(&bytes[..n]).expect("decode").message_id()
+    };
+    inject_empty(&mut app, peer, Message::empty_rst(mid));
+    app.poll(0).expect("rst");
+    assert_eq!(app.metrics().empty_rst, 1);
+    assert_eq!(app.metrics().rx_accepted, 1);
+    assert!(app.take_response(call).is_some());
+}
+
+#[test]
+fn metrics_block1_assemble() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let payload = [0xABu8; 16];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(app.metrics().block1_assemble, 1);
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+}
+
+#[test]
+fn metrics_rx_saturated_and_reset() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .bind(RecordIo::default())
+        .expect("bind");
+    {
+        let engine = app.engine_mut();
+        for _ in 0..profiles::Constrained::RX_DATAGRAM_SLOTS {
+            let id = engine.acquire_rx().expect("rx");
+            engine
+                .storage_mut()
+                .rx_datagram_mut()
+                .pin(id)
+                .expect("pin stuck RX");
+        }
+    }
+    app.reset_metrics();
+    let _call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let err = app.poll(timeout).expect_err("RX pool full");
+    assert_eq!(err, Error::Saturated);
+    assert_eq!(app.metrics().saturated, 1);
+    assert_eq!(app.metrics().con_retransmit, 1);
+    app.reset_metrics();
+    assert_eq!(app.metrics(), crate::Metrics::ZERO);
 }

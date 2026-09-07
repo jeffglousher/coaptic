@@ -6,6 +6,7 @@
 use super::DatagramSlots;
 use super::Endpoint;
 use super::Engine;
+use super::Metrics;
 use super::SlotError;
 use super::SlotId;
 use super::Storage;
@@ -90,6 +91,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
             Some(buf) => io.recv(buf),
             None => {
                 let _ = self.release_rx(id);
+                Metrics::inc(&mut self.metrics_mut().rx_error);
                 return Err(DatagramIoError::Slot(SlotError::NotOccupied));
             }
         };
@@ -97,12 +99,15 @@ impl<S: Storage + DatagramSlots> Engine<S> {
             Ok(Some((n, endpoint))) => {
                 if let Err(e) = self.storage_mut().set_rx_len(id, n) {
                     let _ = self.release_rx(id);
+                    Metrics::inc(&mut self.metrics_mut().rx_error);
                     return Err(DatagramIoError::Slot(e));
                 }
                 if let Err(e) = self.storage_mut().set_rx_endpoint(id, endpoint) {
                     let _ = self.release_rx(id);
+                    Metrics::inc(&mut self.metrics_mut().rx_error);
                     return Err(DatagramIoError::Slot(e));
                 }
+                Metrics::inc(&mut self.metrics_mut().rx_accepted);
                 Ok(Some(id))
             }
             Ok(None) => {
@@ -111,6 +116,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
             }
             Err(e) => {
                 let _ = self.release_rx(id);
+                Metrics::inc(&mut self.metrics_mut().rx_error);
                 Err(DatagramIoError::Io(e))
             }
         }
@@ -125,15 +131,29 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         io: &mut T,
         id: SlotId,
     ) -> Result<usize, DatagramIoError<T::Error>> {
-        let dest = self
-            .tx_endpoint(id)
-            .ok_or(DatagramIoError::Slot(SlotError::NotOccupied))?;
-        let n = {
-            let access = self.access_tx(id).map_err(DatagramIoError::Slot)?;
-            io.send(dest, access.as_bytes())
-                .map_err(DatagramIoError::Io)?
+        let dest = match self.tx_endpoint(id) {
+            Some(dest) => dest,
+            None => {
+                Metrics::inc(&mut self.metrics_mut().tx_fail);
+                return Err(DatagramIoError::Slot(SlotError::NotOccupied));
+            }
         };
-        Ok(n)
+        let outcome = match self.access_tx(id) {
+            Ok(access) => io
+                .send(dest, access.as_bytes())
+                .map_err(DatagramIoError::Io),
+            Err(e) => Err(DatagramIoError::Slot(e)),
+        };
+        match outcome {
+            Ok(n) => {
+                Metrics::inc(&mut self.metrics_mut().tx_ok);
+                Ok(n)
+            }
+            Err(e) => {
+                Metrics::inc(&mut self.metrics_mut().tx_fail);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -224,6 +244,8 @@ mod tests {
             last_send: None,
         };
         let rx = engine.recv_from(&mut io).expect("recv").expect("stored");
+        assert_eq!(engine.metrics().rx_accepted, 1);
+        assert_eq!(engine.metrics().rx_error, 0);
         assert_eq!(engine.rx_endpoint(rx), Some(peer));
         let parsed = engine.decode_rx(rx).expect("decode");
         assert_eq!(parsed.code(), Code::EMPTY);
@@ -232,6 +254,7 @@ mod tests {
 
         assert_eq!(engine.recv_from(&mut io).expect("idle"), None);
         assert_eq!(engine.rx_occupied(), 0);
+        assert_eq!(engine.metrics().rx_accepted, 1);
     }
 
     #[test]
@@ -248,6 +271,8 @@ mod tests {
         let mut io = Loopback::default();
         let sent = engine.send_tx(&mut io, tx).expect("send_tx");
         assert_eq!(sent, n);
+        assert_eq!(engine.metrics().tx_ok, 1);
+        assert_eq!(engine.metrics().tx_fail, 0);
         let (got_ep, got, got_n) = io.last_send.expect("sent");
         assert_eq!(got_ep, dest);
         assert_eq!(&got[..got_n], &wire[..n]);
@@ -262,6 +287,7 @@ mod tests {
             .build(Memory::<profiles::Default>::new())
             .expect("build");
         while engine.acquire_rx().is_some() {}
+        engine.reset_metrics();
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let (wire, n) = encode_empty_ack();
         let mut io = Loopback {
@@ -269,6 +295,34 @@ mod tests {
             last_send: None,
         };
         assert_eq!(engine.recv_from(&mut io), Err(DatagramIoError::Saturated));
+        assert_eq!(engine.metrics().saturated, 1);
         assert!(io.inbox.is_some());
+    }
+
+    #[test]
+    fn send_tx_fail_increments_tx_fail() {
+        let mut engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .expect("build");
+        let dest = Endpoint::v4([192, 0, 2, 9], 5683);
+        let (wire, n) = encode_empty_ack();
+        let tx = engine.acquire_tx().expect("tx");
+        engine.write_tx(tx, &wire[..n], dest).expect("write_tx");
+        struct FailSend;
+        impl DatagramIo for FailSend {
+            type Error = &'static str;
+            fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+                Ok(None)
+            }
+            fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> {
+                Err("nope")
+            }
+        }
+        assert!(engine.send_tx(&mut FailSend, tx).is_err());
+        assert_eq!(engine.metrics().tx_ok, 0);
+        assert_eq!(engine.metrics().tx_fail, 1);
+        engine.release_tx(tx).expect("release");
     }
 }

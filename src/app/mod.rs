@@ -91,9 +91,9 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
-    EngineBuilder, Exchanges, Memory, MemoryLayout, MemoryProfile, Missing, ObserveInterest,
-    ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover,
-    Retransmit, SlotError, SlotId, Storage, WithBodies,
+    EngineBuilder, Exchanges, Memory, MemoryLayout, MemoryProfile, Metrics, Missing,
+    ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock, PendingCons,
+    Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage, WithBodies,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -374,6 +374,42 @@ impl<
     /// releases; App handlers do not need this.
     pub const fn engine_mut(&mut self) -> &mut Engine<AppStore<P, BLOCK_WISE>> {
         &mut self.engine
+    }
+
+    /// Copy of Engine reactor counters.
+    ///
+    /// Always-on wrapping `u32` fields at recv/send/`progress` sites. A
+    /// `std` dogfood bin can print after a run:
+    ///
+    /// ```
+    /// # use coaptic::storage::DatagramIo;
+    /// # use coaptic::{App, Endpoint, profiles};
+    /// # struct NullIo;
+    /// # impl DatagramIo for NullIo {
+    /// #     type Error = &'static str;
+    /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+    /// #         Ok(None)
+    /// #     }
+    /// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+    /// # }
+    /// let mut app = App::profile::<profiles::Default>()
+    ///     .block_wise::<false>()
+    ///     .bind(NullIo)
+    ///     .unwrap();
+    /// app.poll(0).unwrap();
+    /// let snap = app.metrics();
+    /// assert_eq!(snap.progress, 1);
+    /// ```
+    ///
+    /// See [`crate::storage::Metrics`] and [`Engine::metrics`].
+    #[must_use]
+    pub const fn metrics(&self) -> Metrics {
+        self.engine.metrics()
+    }
+
+    /// Zero Engine reactor counters.
+    pub fn reset_metrics(&mut self) {
+        self.engine.reset_metrics();
     }
 
     /// Transport.
@@ -696,6 +732,7 @@ where
     let parsed = match decode(&scratch[..n]) {
         Ok(parsed) => parsed,
         Err(_) => {
+            Metrics::inc(&mut engine.metrics_mut().rx_error);
             let _ = engine.release_rx(rx);
             return Ok(());
         }
@@ -943,6 +980,7 @@ where
         if held.count(engine, interest.endpoint(), now_ms)
             >= usize::from(crate::message::Transmission::NSTART)
         {
+            Metrics::inc(&mut engine.metrics_mut().nstart_reject);
             continue;
         }
         let Some(seq) = engine.next_observe_seq(id) else {

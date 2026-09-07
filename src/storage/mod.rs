@@ -19,7 +19,8 @@
 //! [`Engine::progress`] is one bounded pass: CON retransmit, one unpinned
 //! RX step, one Observe notify, at most one Observe expiry, at most one
 //! due Q-Block recover. This module does not invent 4.02 / 4.08 / 2.31 /
-//! RST policy.
+//! RST policy. [`Metrics`] are wrapping `u32` counters on [`Engine`];
+//! copy with [`Engine::metrics`] / [`crate::App::metrics`].
 
 mod access;
 mod block;
@@ -30,6 +31,7 @@ mod engine;
 mod exchange;
 mod io;
 mod memory;
+mod metrics;
 mod occupancy;
 mod pending;
 mod pool;
@@ -58,6 +60,7 @@ pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
+pub use metrics::Metrics;
 pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};
 pub use progress::Progress;

@@ -6,6 +6,7 @@
 use super::BodySlots;
 use super::DatagramSlots;
 use super::Engine;
+use super::Metrics;
 use super::ObserveExpiry;
 use super::ObserveSlots;
 use super::PendingCons;
@@ -143,6 +144,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// pinned slots (except a Q-Block body exhausted after
     /// `NON_MAX_RETRANSMIT`). Does not invent 4.02 / RST / 2.31 / 4.08 policy.
     pub fn progress(&mut self, now_ms: u64) -> Progress {
+        Metrics::inc(&mut self.metrics_mut().progress);
         let retransmit = self.poll_retransmit(now_ms);
         if let Some(Retransmit::GiveUp(pending)) = retransmit {
             let _ = self.mark_observe_unacked_due(pending.message_id(), pending.endpoint(), now_ms);
