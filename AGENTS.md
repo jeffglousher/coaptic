@@ -4,7 +4,7 @@ Agents and humans are the same kind of contributor. Either may author. Either ma
 
 Public docs are rustdoc. Architecture planning is GitHub Issues / [project](https://github.com/users/jeffglousher/projects/2). Do not restate RFC wire format; open `knowledge/rfcs/`.
 
-Merges are squash-only. The repository stays private until a first public go.
+The repository is public. Merges to `main` are squash-only. Pull requests must pass CI (`fmt`, `clippy`, `test`, `doc`).
 
 ```bash
 cargo fmt

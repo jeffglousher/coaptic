@@ -38,7 +38,7 @@ let response = app.take_response(call);
 
 Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial representation and later notifications use the same `Call` / `take_response`. `deregister()` sends Observe=1. Structured 4.xx bodies use `Response::problem` (RFC 9290). Q-Block1 holes from `poll` use `Response::missing_blocks` (RFC 9177, Content-Format 272).
 
-Engine BERT, OSCORE, first-party DTLS, and alternative networks (6LoWPAN, LoRaWAN, …) are future / backlog — contributor opportunities. DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
+Engine BERT, OSCORE, first-party DTLS, and alternative networks (6LoWPAN, LoRaWAN, …) are future / backlog — contributor opportunities ([#46](https://github.com/jeffglousher/coaptic/issues/46)). DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
 
 ## Features
 
@@ -64,6 +64,8 @@ cargo run --example coap_server --features std
 
 ## Docs and planning
 
-API: rustdoc on [docs.rs/coaptic](https://docs.rs/coaptic) (or `cargo doc --open`). Protocol copies: [`knowledge/rfcs/`](knowledge/rfcs/). Architecture planning lives on [GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
+API: rustdoc (`cargo doc --open`; version tags publish to GitHub Pages). Protocol copies: [`knowledge/rfcs/`](knowledge/rfcs/). Architecture planning lives on [GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
+
+The crate is public. Pull requests to `main` must pass `fmt`, `clippy`, `test`, and `doc`. Merges are squash-only. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Licensed MIT OR Apache-2.0.
