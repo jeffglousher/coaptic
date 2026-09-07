@@ -40,7 +40,7 @@
 //! }
 //!
 //! let mut app = App::profile::<profiles::Default>()
-//!     .block_wise(true)
+//!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .bind(NullIo)
 //!     .unwrap();

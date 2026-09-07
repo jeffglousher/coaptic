@@ -1,8 +1,8 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
 use super::{
-    Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, Request, Response, Site, fetch, get,
-    ipatch, link_format_capacity, patch, post, put,
+    DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method, Request, Response, Site,
+    fetch, get, ipatch, link_format_capacity, patch, post, put,
 };
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
@@ -11,7 +11,7 @@ use crate::message::{
     MissingBlocks, ObserveTransmission, Opt, OptionNumber, OptionsBuilder, ProblemDetails,
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
-use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
+use crate::storage::{BlockKey, DatagramIo, Endpoint, MemoryLayout, ObserveKey, profiles};
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
@@ -248,7 +248,7 @@ fn encode_req_extra(
 
 fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
         .bind(io)
@@ -266,7 +266,12 @@ struct LastReply {
     echo: Option<EchoOpt>,
 }
 
-fn last_reply(app: &App<profiles::Default, Loopback>) -> LastReply {
+fn last_reply<const BLOCK_WISE: bool>(
+    app: &App<profiles::Default, Loopback, DEFAULT_ROUTES, BLOCK_WISE>,
+) -> LastReply
+where
+    profiles::Default: MemoryLayout<BLOCK_WISE>,
+{
     let (_, bytes, n) = app.transport().last_send.expect("sent");
     let parsed = decode(&bytes[..n]).expect("decode reply");
     let mut payload = [0u8; 64];
@@ -308,7 +313,7 @@ fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["items"], post(post_create))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -339,7 +344,7 @@ fn separate_response_is_empty_ack_then_con() {
     let req_mid = MessageId::new(0x1001);
     let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["separate"], get(get_separate))
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
@@ -431,7 +436,7 @@ fn wrong_method_is_not_allowed() {
 
 fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
@@ -594,7 +599,7 @@ fn echo_freshness_builder_missing_is_401_problem() {
     let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
     let mut app = App::profile::<profiles::Default>()
         .echo_freshness(ECHO_FRESH_MS)
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["leds", "0"], get(get_led).put(put_led))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -663,7 +668,7 @@ fn well_known_core_lists_registered_paths() {
     let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
     // Catalog must be generated from these `.route` registrations (not a stored string).
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["a"], get(get_temp))
         .route(&["b"], get(get_led))
         .well_known_core()
@@ -746,7 +751,7 @@ fn well_known_core_poll_lists_every_upfront_route() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = well_known_request();
     let mut builder = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .routes::<16>();
     for path in TEN_PLUS_ROUTES {
         builder = builder.route(path, get(get_temp));
@@ -834,7 +839,7 @@ fn request_carries_standard_and_custom_option() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["probe"], put(put_std_and_custom))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1051,7 +1056,7 @@ fn block1_incomplete_is_continue() {
     let payload = [0xABu8; 16];
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1073,7 +1078,7 @@ fn block1_complete_exposes_body() {
     let second = *b"REST";
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &first, 0, true, 16, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1101,7 +1106,7 @@ fn qblock1_incomplete_is_continue() {
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1119,7 +1124,7 @@ fn qblock1_complete_exposes_body() {
     let second = *b"REST";
     let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 20));
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1148,7 +1153,7 @@ fn qblock1_holes_are_request_entity_incomplete() {
     let last = [0x33u8; 8];
     let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 40));
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1187,7 +1192,7 @@ fn qblock1_apply_error_is_request_entity_incomplete() {
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
@@ -1219,30 +1224,26 @@ fn qblock2_recover_sent_from_poll() {
     let key = BlockKey::new(token, peer);
     let body: [u8; 40] = core::array::from_fn(|i| (i + 7) as u8);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .bind(Loopback::default())
         .expect("bind");
-    match app.engine_mut() {
-        crate::app::EngineMut::BlockWise(engine) => {
-            engine
-                .apply_q_block2(
-                    key,
-                    BlockValue::from_size(0, true, 16).expect("0"),
-                    &body[..16],
-                    Some(40),
-                )
-                .expect("0");
-            engine
-                .apply_q_block2(
-                    key,
-                    BlockValue::from_size(2, false, 16).expect("2"),
-                    &body[32..],
-                    Some(40),
-                )
-                .expect("2");
-        }
-        crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
-    }
+    let engine = app.engine_mut();
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(0, true, 16).expect("0"),
+            &body[..16],
+            Some(40),
+        )
+        .expect("0");
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(2, false, 16).expect("2"),
+            &body[32..],
+            Some(40),
+        )
+        .expect("2");
     app.poll(0).expect("arm");
     assert!(app.transport().last_send.is_none());
     app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
@@ -1266,14 +1267,11 @@ fn qblock2_recover_sent_from_poll() {
 
 #[test]
 fn block_wise_bind_uses_body_pools() {
-    let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+    let app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
         .bind(Loopback::default())
         .expect("bind");
-    match app.engine_mut() {
-        crate::app::EngineMut::BlockWise(_) => {}
-        crate::app::EngineMut::Datagram(_) => panic!("expected body pools"),
-    }
+    assert!(app.engine().has_body_pools());
 }
 
 struct WideLoopback {
@@ -1340,7 +1338,12 @@ fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; 
     (buf, n)
 }
 
-fn last_wide(app: &App<profiles::Default, WideLoopback>) -> crate::message::ParsedMessage<'_> {
+fn last_wide<const BLOCK_WISE: bool>(
+    app: &App<profiles::Default, WideLoopback, DEFAULT_ROUTES, BLOCK_WISE>,
+) -> crate::message::ParsedMessage<'_>
+where
+    profiles::Default: MemoryLayout<BLOCK_WISE>,
+{
     let n = app.transport().send_n;
     assert!(n > 0, "expected a send");
     decode(&app.transport().sends[n - 1][..app.transport().send_lens[n - 1]]).expect("decode")
@@ -1351,7 +1354,7 @@ fn large_get_ships_block2_without_slot_id() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1392,7 +1395,7 @@ fn large_get_without_body_pools_fails_clearly() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1414,7 +1417,7 @@ fn large_get_q_block2_issues_a_window() {
     let extra = [Opt::q_block2(&q)];
     let (wire, n) = encode_wide(Code::GET, &["large"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1440,12 +1443,15 @@ fn large_get_q_block2_issues_a_window() {
     assert_eq!(second.payload(), &LARGE[1024..]);
 }
 
-fn observe_registered(app: &App<profiles::Default, WideLoopback>, peer: Endpoint) -> bool {
+fn observe_registered<const BLOCK_WISE: bool>(
+    app: &App<profiles::Default, WideLoopback, DEFAULT_ROUTES, BLOCK_WISE>,
+    peer: Endpoint,
+) -> bool
+where
+    profiles::Default: MemoryLayout<BLOCK_WISE>,
+{
     let key = ObserveKey::new(Token::new(&[0xA1]).expect("token"), peer);
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => engine.lookup_observe(key).is_some(),
-        crate::app::EngineRef::BlockWise(engine) => engine.lookup_observe(key).is_some(),
-    }
+    app.engine().lookup_observe(key).is_some()
 }
 
 #[test]
@@ -1454,7 +1460,7 @@ fn observe_register_notify_deregister() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1518,7 +1524,7 @@ fn observe_non_notify_rst_drops_interest() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1562,7 +1568,7 @@ fn observe_con_notify_rst_drops_interest() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1611,7 +1617,7 @@ fn empty_con_ping_rst_does_not_drop_observe() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1635,7 +1641,7 @@ fn observe_max_age_expiry_drops_interest() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1655,7 +1661,7 @@ fn observe_source_sends_on_signal_poll() {
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
@@ -1707,7 +1713,7 @@ impl DatagramIo for Echo {
 
 fn echo_app() -> App<profiles::Default, Echo> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_body))
         .bind(Echo::default())
@@ -1761,7 +1767,7 @@ fn client_put_round_trip_without_slot_id() {
 
 fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
@@ -1857,7 +1863,7 @@ fn client_non_get_matches() {
 fn client_get_sends_query_accept_etag_if_match_and_block2() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -1902,7 +1908,7 @@ fn get_tagged(_: Request<'_>) -> Response {
 fn client_take_response_copies_etag() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["validate"], get(get_tagged))
         .bind(Echo::default())
         .expect("bind");
@@ -1984,9 +1990,9 @@ impl DatagramIo for Pipe {
     }
 }
 
-fn pipe_app() -> App<profiles::Default, Pipe> {
+fn pipe_app() -> App<profiles::Default, Pipe, DEFAULT_ROUTES, true> {
     App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route(&["large"], get(get_large))
         .route(&["upload"], put(put_large))
         .bind(Pipe::default())
@@ -1994,7 +2000,7 @@ fn pipe_app() -> App<profiles::Default, Pipe> {
 }
 
 fn poll_until_response(
-    app: &mut App<profiles::Default, Pipe>,
+    app: &mut App<profiles::Default, Pipe, DEFAULT_ROUTES, true>,
     call: crate::Call,
 ) -> crate::Response {
     for t in 0u64..16 {
@@ -2110,7 +2116,7 @@ fn client_empty_path_segment_is_error() {
 
 fn echo_obs_app() -> App<profiles::Default, Echo> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(Echo::default())
         .expect("bind")
@@ -2118,10 +2124,7 @@ fn echo_obs_app() -> App<profiles::Default, Echo> {
 
 fn client_observe_live(app: &App<profiles::Default, Echo>, call: crate::Call) -> bool {
     let key = ObserveKey::new(call.token(), call.peer());
-    match app.engine() {
-        crate::app::EngineRef::Datagram(engine) => engine.lookup_observe(key).is_some(),
-        crate::app::EngineRef::BlockWise(engine) => engine.lookup_observe(key).is_some(),
-    }
+    app.engine().lookup_observe(key).is_some()
 }
 
 #[test]
@@ -2181,7 +2184,7 @@ fn client_observe_register_notify_deregister() {
 
 fn record_client() -> App<profiles::Default, RecordIo> {
     App::profile::<profiles::Default>()
-        .block_wise(false)
+        .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind")
 }

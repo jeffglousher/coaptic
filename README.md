@@ -24,7 +24,7 @@ fn get_temp(_req: Request<'_>) -> Response {
 }
 
 let mut app = App::profile::<profiles::Default>()
-    .block_wise(true)
+    .block_wise::<true>()
     .route("sensors/temp", get(get_temp))
     .bind(io)?;
 app.poll(now_ms)?;

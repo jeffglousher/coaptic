@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.set_read_timeout(Some(timeout))?;
 
     let mut app = App::profile::<profiles::Default>()
-        .block_wise(true)
+        .block_wise::<true>()
         .route("sensors/temp", get(get_temp))
         .route("leds/0", get(get_led).put(put_led))
         .route("large", get(get_large))
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn fetch_large<T: DatagramIo>(
     client: &mut T,
-    app: &mut App<profiles::Default, UdpSocket>,
+    app: &mut App<profiles::Default, UdpSocket, { coaptic::app::DEFAULT_ROUTES }, true>,
     server: Endpoint,
     origin: Instant,
 ) -> Result<(), Box<dyn std::error::Error>>
