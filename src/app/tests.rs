@@ -1441,7 +1441,17 @@ impl DatagramIo for WideLoopback {
 }
 
 fn encode_wide(code: Code, path: &[&str], extra: &[Opt<'_>], mid: u16) -> ([u8; WIRE], usize) {
-    let token = Token::new(&[0xA1]).expect("token");
+    encode_wide_token(code, path, extra, mid, 0xA1)
+}
+
+fn encode_wide_token(
+    code: Code,
+    path: &[&str],
+    extra: &[Opt<'_>],
+    mid: u16,
+    token: u8,
+) -> ([u8; WIRE], usize) {
+    let token = Token::new(&[token]).expect("token");
     let mut opts = OptionsBuilder::<8>::new();
     for segment in path {
         opts.push(Opt::uri_path(segment)).expect("path");
@@ -1652,6 +1662,62 @@ fn observe_register_notify_deregister() {
         .notify(30, &["sensors", "temp"], Response::content(b"obs-2"))
         .expect("notify after deregister");
     assert_eq!(sent, 0);
+}
+
+#[test]
+fn notify_nstart_one_per_endpoint() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first register");
+    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xA2);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("second register");
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(10, &["sensors", "temp"], Response::content(b"obs-n"))
+        .expect("notify");
+    assert_eq!(
+        sent, 1,
+        "NSTART=1: one notify per endpoint even with two rows"
+    );
+    assert_eq!(app.transport().send_n, 1);
+}
+
+#[test]
+fn notify_fans_out_to_distinct_endpoints() {
+    let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
+    let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer_a, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("register a");
+    let (wire, n) = encode_wide_token(Code::GET, &["sensors", "temp"], &extra, 0x1002, 0xB1);
+    app.transport_mut().inbox = Some((peer_b, wire, n));
+    app.poll(1).expect("register b");
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(10, &["sensors", "temp"], Response::content(b"obs-n"))
+        .expect("notify");
+    assert_eq!(sent, 2);
+    assert_eq!(app.transport().send_n, 2);
 }
 
 fn inject_empty_rst(

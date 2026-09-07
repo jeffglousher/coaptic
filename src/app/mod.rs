@@ -874,6 +874,7 @@ where
         return Ok(0);
     }
     let n = engine.capacities().observe_entries;
+    let mut held = NotifyHeldCache::from_engine(engine, now_ms);
     let mut sent = 0usize;
     for i in 0..n {
         let id = SlotId::from_index(i);
@@ -883,7 +884,7 @@ where
         if interest.resource() != resource {
             continue;
         }
-        if observe_endpoint_held(engine, interest.endpoint(), now_ms)
+        if held.count(engine, interest.endpoint(), now_ms)
             >= usize::from(crate::message::Transmission::NSTART)
         {
             continue;
@@ -894,10 +895,77 @@ where
         let Some(interest) = engine.observe_interest(id) else {
             continue;
         };
+        let dest = interest.endpoint();
         send_notification(engine, io, ids, now_ms, interest, response, seq)?;
+        held.add(dest);
         sent += 1;
     }
     Ok(sent)
+}
+
+/// Per-endpoint notification NSTART counts for one [`notify_engine`] pass.
+///
+/// One O(n) occupancy scan instead of `observe_endpoint_held` per observer.
+/// Shipped profiles have ≤4 observe entries; the table covers 8 unique
+/// endpoints and falls back to a full scan if that overflows (alloc backend).
+const NOTIFY_HELD_CACHE: usize = 8;
+
+struct NotifyHeldCache {
+    endpoints: [Option<Endpoint>; NOTIFY_HELD_CACHE],
+    held: [u8; NOTIFY_HELD_CACHE],
+    overflow: bool,
+}
+
+impl NotifyHeldCache {
+    fn from_engine<S: Storage + ObserveSlots>(engine: &Engine<S>, now_ms: u64) -> Self {
+        let mut cache = Self {
+            endpoints: [None; NOTIFY_HELD_CACHE],
+            held: [0; NOTIFY_HELD_CACHE],
+            overflow: false,
+        };
+        let n = engine.capacities().observe_entries;
+        for i in 0..n {
+            let Some(row) = engine.observe_interest(SlotId::from_index(i)) else {
+                continue;
+            };
+            if row.is_notify_held(now_ms) {
+                cache.add(row.endpoint());
+            }
+        }
+        cache
+    }
+
+    fn add(&mut self, endpoint: Endpoint) {
+        if let Some(i) = self.index(endpoint) {
+            self.held[i] = self.held[i].saturating_add(1);
+            return;
+        }
+        if let Some(i) = self.endpoints.iter().position(Option::is_none) {
+            self.endpoints[i] = Some(endpoint);
+            self.held[i] = 1;
+            return;
+        }
+        self.overflow = true;
+    }
+
+    fn index(&self, endpoint: Endpoint) -> Option<usize> {
+        self.endpoints.iter().position(|row| *row == Some(endpoint))
+    }
+
+    fn count<S: Storage + ObserveSlots>(
+        &self,
+        engine: &Engine<S>,
+        endpoint: Endpoint,
+        now_ms: u64,
+    ) -> usize {
+        if let Some(i) = self.index(endpoint) {
+            return usize::from(self.held[i]);
+        }
+        if self.overflow {
+            return observe_endpoint_held(engine, endpoint, now_ms);
+        }
+        0
+    }
 }
 
 fn observe_endpoint_held<S: Storage + ObserveSlots>(
