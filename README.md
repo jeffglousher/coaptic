@@ -46,7 +46,7 @@ Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies
 
 ## Plugtest harness
 
-Classic in-crate loopback: `cargo test --test plugtest`. Multi-implementation UDP + pcap grading (coap-rs peer, golden JSON, optional DTLS) lives in a workspace crate so the library stays zero-dep:
+In-crate `cargo test --test plugtest` is an Engine↔Engine byte exchange (no sockets; not an App SUT). App as SUT — UDP server and client, coap-rs peer, golden JSON, optional DTLS — lives in `coaptic-plugtest` so the library stays zero-dep:
 
 ```bash
 cargo test -p coaptic-plugtest

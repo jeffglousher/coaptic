@@ -1,6 +1,8 @@
 //! In-scope ETSI CoAP#4 plugtest harness (in-memory Engine pair).
 //!
-//! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no DTLS).
+//! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no
+//! DTLS). This is **not** an App SUT: App proof is `crates/coaptic-plugtest`
+//! (`cargo test -p coaptic-plugtest`, plus `--features dtls`).
 //! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
 //! does not invent ids. In-memory `dtls` is skipped (no sockets; see
 //! `crates/coaptic-plugtest --features dtls`). The future/backlog

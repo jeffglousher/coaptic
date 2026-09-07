@@ -24,6 +24,18 @@ fn golden_catalog_parses_and_covers_tds() {
 }
 
 #[test]
+fn core_goldens_do_not_blanket_allow_extra() {
+    let cat = Catalog::load().expect("expectations/catalog.json");
+    for id in catalog::CORE {
+        let td = cat.tds.get(*id).expect(id);
+        assert!(
+            !td.allow_extra,
+            "{id}: CORE must not set allow_extra without a per-TD reason"
+        );
+    }
+}
+
+#[test]
 fn backlog_6lowpan_skipped() {
     for id in catalog::lowpan_ids() {
         let reason = catalog::skip_reason(id).expect("6LoWPAN must skip");
