@@ -1387,44 +1387,82 @@ fn encode_response<S: Storage + DatagramSlots>(
     let block1_enc = block1.map(|b| b.encode());
     let echo = response.echo_option();
     let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
-    if let Some(etag) = response.etag_bytes() {
-        let _ = opts.push(Opt::etag(etag));
-    }
-    if let Some(ref encoded) = observe {
-        let _ = opts.push(Opt::observe(encoded));
-    }
-    for segment in response.location_paths() {
-        let _ = opts.push(Opt::location_path(segment));
-    }
-    if let Some(ref encoded) = cf {
-        let _ = opts.push(Opt::content_format(encoded));
-    }
-    if let Some(ref encoded) = max_age {
-        let _ = opts.push(Opt::max_age(encoded));
-    }
-    for query in response.location_queries() {
-        let _ = opts.push(Opt::location_query(query));
-    }
-    if let Some(ref encoded) = block_enc {
-        if block.is_some_and(|b| b.q_block) {
-            if let Some(ref size2) = size2_enc {
-                let _ = opts.push(Opt::size2(size2));
-            }
-            let _ = opts.push(Opt::q_block2(encoded));
-        } else {
-            let _ = opts.push(Opt::block2(encoded));
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(etag) = response.etag_bytes() {
+            push_opt(&mut opts, Opt::etag(etag))?;
         }
+        if let Some(ref encoded) = observe {
+            push_opt(&mut opts, Opt::observe(encoded))?;
+        }
+        for segment in response.location_paths() {
+            push_opt(&mut opts, Opt::location_path(segment))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(ref encoded) = max_age {
+            push_opt(&mut opts, Opt::max_age(encoded))?;
+        }
+        for query in response.location_queries() {
+            push_opt(&mut opts, Opt::location_query(query))?;
+        }
+        if let Some(ref encoded) = block_enc {
+            if block.is_some_and(|b| b.q_block) {
+                if let Some(ref size2) = size2_enc {
+                    push_opt(&mut opts, Opt::size2(size2))?;
+                }
+                push_opt(&mut opts, Opt::q_block2(encoded))?;
+            } else {
+                push_opt(&mut opts, Opt::block2(encoded))?;
+            }
+        }
+        if let Some(ref encoded) = block1_enc {
+            push_opt(&mut opts, Opt::block1(encoded))?;
+        }
+        if let Some(ref echo) = echo {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
+        Ok(())
+    })();
+    match filled {
+        Ok(()) => {
+            let msg = Message::new(ty, response.code(), mid)
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+            engine.encode_tx(tx, &msg).map(|_| ())
+        }
+        Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
+        Err(e) => Err(SlotMessageError::Encode(e)),
     }
-    if let Some(ref encoded) = block1_enc {
-        let _ = opts.push(Opt::block1(encoded));
-    }
-    if let Some(ref echo) = echo {
-        let _ = opts.push(Opt::echo(echo.as_slice()));
+}
+
+pub(crate) fn push_opt<'a, const N: usize>(
+    opts: &mut OptionsBuilder<'a, N>,
+    opt: Opt<'a>,
+) -> Result<(), EncodeError> {
+    opts.push(opt)
+        .map(|_| ())
+        .map_err(|_| EncodeError::OptionsFull)
+}
+
+fn encode_options_full_500<S: Storage + DatagramSlots>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: crate::message::Token,
+) -> Result<(), SlotMessageError> {
+    let response = Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let mut opts = OptionsBuilder::<4>::new();
+    if let Some(ref encoded) = cf {
+        push_opt(&mut opts, Opt::content_format(encoded)).map_err(SlotMessageError::Encode)?;
     }
     let msg = Message::new(ty, response.code(), mid)
         .with_token(token)
         .with_options(opts.as_slice())
-        .with_payload(payload);
+        .with_payload(response.payload());
     engine.encode_tx(tx, &msg).map(|_| ())
 }
 

@@ -41,6 +41,42 @@ fn post_create(_: Request<'_>) -> Response {
         .location_query("second=2")
 }
 
+fn post_max_opts(_: Request<'_>) -> Response {
+    let echo = EchoOpt::mint(0, &[]).expect("echo");
+    Response::created()
+        .location_path("l0")
+        .location_path("l1")
+        .location_path("l2")
+        .location_path("l3")
+        .location_path("l4")
+        .location_path("l5")
+        .location_path("l6")
+        .location_path("l7")
+        .location_query("q0=0")
+        .location_query("q1=1")
+        .location_query("q2=2")
+        .location_query("q3=3")
+        .location_query("q4=4")
+        .location_query("q5=5")
+        .location_query("q6=6")
+        .location_query("q7=7")
+        .etag(b"etag1")
+        .observe(0)
+        .max_age(5)
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .echo(echo)
+}
+
+fn get_large_with_opts(_: Request<'_>) -> Response {
+    let echo = EchoOpt::mint(0, &[]).expect("echo");
+    Response::content(&LARGE)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .location_path("l0")
+        .location_path("l1")
+        .etag(b"etag1")
+        .echo(echo)
+}
+
 fn get_separate(_: Request<'_>) -> Response {
     Response::content(b"separate-payload")
         .content_format(ContentFormat::TEXT_PLAIN)
@@ -330,6 +366,55 @@ fn created_response_carries_location_path_and_query() {
     assert!(qs.next().is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn push_opt_fails_loud_when_builder_is_full() {
+    let mut opts = OptionsBuilder::<1>::new();
+    super::push_opt(&mut opts, Opt::uri_path("a")).expect("first");
+    assert_eq!(
+        super::push_opt(&mut opts, Opt::uri_path("b")),
+        Err(EncodeError::OptionsFull)
+    );
+}
+
+#[test]
+fn created_max_location_etag_observe_echo_all_on_wire() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::POST, &["items"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["items"], post(post_max_opts))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let (_, bytes, n) = app.transport().last_send.expect("sent");
+    let parsed = decode(&bytes[..n]).expect("decode created");
+    assert_eq!(parsed.code(), Code::CREATED);
+    assert_ne!(parsed.code(), Code::INTERNAL_SERVER_ERROR);
+    let mut segs = parsed.location_path();
+    for want in ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l7"] {
+        assert_eq!(segs.next().map(|s| s.expect("utf8")), Some(want));
+    }
+    assert!(segs.next().is_none());
+    let mut qs = parsed.location_query();
+    for want in [
+        "q0=0", "q1=1", "q2=2", "q3=3", "q4=4", "q5=5", "q6=6", "q7=7",
+    ] {
+        assert_eq!(qs.next().map(|s| s.expect("utf8")), Some(want));
+    }
+    assert!(qs.next().is_none());
+    assert_eq!(parsed.etag().next(), Some(&b"etag1"[..]));
+    assert_eq!(parsed.observe().and_then(Result::ok), Some(0));
+    assert_eq!(
+        parsed.content_format().and_then(Result::ok),
+        Some(ContentFormat::TEXT_PLAIN)
+    );
+    assert!(parsed.echo().is_some());
+    assert_eq!(parsed.max_age().and_then(Result::ok), Some(5));
 }
 
 #[test]
@@ -1388,6 +1473,33 @@ fn large_get_ships_block2_without_slot_id() {
 }
 
 #[test]
+fn large_get_location_etag_echo_and_block2_all_on_wire() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["loud"], &[], 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(true)
+        .route(&["loud"], get(get_large_with_opts))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let first = last_wide(&app);
+    assert_eq!(first.code(), Code::CONTENT);
+    assert_ne!(first.code(), Code::INTERNAL_SERVER_ERROR);
+    let block = first.block2().expect("Block2").expect("val");
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    let mut segs = first.location_path();
+    assert_eq!(segs.next().map(|s| s.expect("utf8")), Some("l0"));
+    assert_eq!(segs.next().map(|s| s.expect("utf8")), Some("l1"));
+    assert!(segs.next().is_none());
+    assert_eq!(first.etag().next(), Some(&b"etag1"[..]));
+    assert!(first.echo().is_some());
+}
+
+#[test]
 fn large_get_without_body_pools_fails_clearly() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
@@ -1765,6 +1877,67 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
     assert_eq!(b2.num(), 0);
     assert!(!b2.more());
     assert_eq!(b2.size(), 64);
+}
+
+#[test]
+fn client_full_path_query_and_extras_all_on_wire() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .bind(RecordIo::default())
+        .expect("bind");
+    let block = BlockValue::from_size(0, false, 64).expect("szx");
+    let path = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+    let _call = app
+        .get(&path)
+        .to(peer)
+        .query("a=0")
+        .query("a=1")
+        .query("a=2")
+        .query("a=3")
+        .query("a=4")
+        .query("a=5")
+        .query("a=6")
+        .query("a=7")
+        .accept(ContentFormat::TEXT_PLAIN)
+        .etag(b"etag1")
+        .if_match(b"etag1")
+        .if_none_match()
+        .block2(block)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_n, 1);
+    let (_, bytes, n) = app.transport().sent[0].expect("tx");
+    let parsed = decode(&bytes[..n]).expect("decode");
+    assert_eq!(parsed.code(), Code::GET);
+    let mut segs = parsed.uri_path();
+    for want in path {
+        assert_eq!(segs.next().and_then(Result::ok), Some(want));
+    }
+    assert!(segs.next().is_none());
+    let mut queries = parsed.uri_query();
+    for i in 0..8 {
+        let want = match i {
+            0 => "a=0",
+            1 => "a=1",
+            2 => "a=2",
+            3 => "a=3",
+            4 => "a=4",
+            5 => "a=5",
+            6 => "a=6",
+            _ => "a=7",
+        };
+        assert_eq!(queries.next().and_then(Result::ok), Some(want));
+    }
+    assert!(queries.next().is_none());
+    assert_eq!(
+        parsed.accept().and_then(Result::ok),
+        Some(ContentFormat::TEXT_PLAIN)
+    );
+    assert_eq!(parsed.etag().next(), Some(&b"etag1"[..]));
+    assert_eq!(parsed.if_match().next(), Some(&b"etag1"[..]));
+    assert!(parsed.if_none_match());
+    assert!(parsed.block2().and_then(Result::ok).is_some());
 }
 
 fn get_tagged(_: Request<'_>) -> Response {

@@ -26,7 +26,10 @@ use crate::storage::{
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
 use super::response::{INLINE_PAYLOAD, Response};
-use super::{App, Error, Method};
+use super::{App, Error, Method, push_opt};
+
+/// Option slots for an outbound request (path + query + Table 4 extras).
+const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 
 /// Outstanding client exchange (Token + destination).
 ///
@@ -670,9 +673,6 @@ where
     if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
-    let Some(tx) = engine.acquire_tx() else {
-        return Err(Error::Saturated);
-    };
     let mid = ids.next();
     let cf = spec.content_format.map(ContentFormat::encode);
     let acc = spec.accept.map(ContentFormat::encode);
@@ -682,43 +682,52 @@ where
         .and_then(Result::ok)
         .map(BlockValue::encode);
     let b2 = spec.block2.map(BlockValue::encode);
-    let mut opts = OptionsBuilder::<16>::new();
-    if let Some(tag) = spec.if_match {
-        let _ = opts.push(Opt::if_match(tag));
-    }
-    if let Some(tag) = spec.etag {
-        let _ = opts.push(Opt::etag(tag));
-    }
-    if spec.if_none_match {
-        let _ = opts.push(Opt::if_none_match());
-    }
-    match spec.observe {
-        OutgoingObserve::Register => {
-            let _ = opts.push(Opt::observe_register());
+    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(tag) = spec.if_match {
+            push_opt(&mut opts, Opt::if_match(tag))?;
         }
-        OutgoingObserve::Deregister => {
-            let _ = opts.push(Opt::observe_deregister());
+        if let Some(tag) = spec.etag {
+            push_opt(&mut opts, Opt::etag(tag))?;
         }
-        OutgoingObserve::Off => {}
+        if spec.if_none_match {
+            push_opt(&mut opts, Opt::if_none_match())?;
+        }
+        match spec.observe {
+            OutgoingObserve::Register => {
+                push_opt(&mut opts, Opt::observe_register())?;
+            }
+            OutgoingObserve::Deregister => {
+                push_opt(&mut opts, Opt::observe_deregister())?;
+            }
+            OutgoingObserve::Off => {}
+        }
+        for segment in spec.path {
+            push_opt(&mut opts, Opt::uri_path(segment))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        for query in spec.queries {
+            push_opt(&mut opts, Opt::uri_query(query))?;
+        }
+        if let Some(ref encoded) = acc {
+            push_opt(&mut opts, Opt::accept(encoded))?;
+        }
+        if let Some(ref encoded) = b2 {
+            push_opt(&mut opts, Opt::block2(encoded))?;
+        }
+        if let Some(ref encoded) = q2 {
+            push_opt(&mut opts, Opt::q_block2(encoded))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = filled {
+        return Err(Error::Message(SlotMessageError::Encode(e)));
     }
-    for segment in spec.path {
-        let _ = opts.push(Opt::uri_path(segment));
-    }
-    if let Some(ref encoded) = cf {
-        let _ = opts.push(Opt::content_format(encoded));
-    }
-    for query in spec.queries {
-        let _ = opts.push(Opt::uri_query(query));
-    }
-    if let Some(ref encoded) = acc {
-        let _ = opts.push(Opt::accept(encoded));
-    }
-    if let Some(ref encoded) = b2 {
-        let _ = opts.push(Opt::block2(encoded));
-    }
-    if let Some(ref encoded) = q2 {
-        let _ = opts.push(Opt::q_block2(encoded));
-    }
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
     let msg = Message::new(spec.ty, spec.code, mid)
         .with_token(spec.token)
         .with_options(opts.as_slice())
@@ -1098,22 +1107,28 @@ where
     let live = lives.get(Call::new(token, peer));
     let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
-    let mut opts = OptionsBuilder::<16>::new();
-    if let Some(live) = live {
-        if live.observe == OutgoingObserve::Register {
-            let _ = opts.push(Opt::observe_register());
-        }
-        for segment in live.path.segments() {
-            let _ = opts.push(Opt::uri_path(segment));
-        }
-    }
+    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let b2 = block2.map(BlockValue::encode);
-    if let Some(ref encoded) = b2 {
-        let _ = opts.push(Opt::block2(encoded));
-    }
     let q2 = q_block2.map(BlockValue::encode);
-    if let Some(ref encoded) = q2 {
-        let _ = opts.push(Opt::q_block2(encoded));
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(live) = live {
+            if live.observe == OutgoingObserve::Register {
+                push_opt(&mut opts, Opt::observe_register())?;
+            }
+            for segment in live.path.segments() {
+                push_opt(&mut opts, Opt::uri_path(segment))?;
+            }
+        }
+        if let Some(ref encoded) = b2 {
+            push_opt(&mut opts, Opt::block2(encoded))?;
+        }
+        if let Some(ref encoded) = q2 {
+            push_opt(&mut opts, Opt::q_block2(encoded))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = filled {
+        return Err(Error::Message(SlotMessageError::Encode(e)));
     }
     let mid = ids.next();
     let msg = Message::new(ty, code, mid)
@@ -1344,20 +1359,27 @@ where
     let cf = content_format.map(ContentFormat::encode);
     let blk = issued.block().encode();
     let size = size1.map(encode_uint);
-    let mut opts = OptionsBuilder::<16>::new();
-    for segment in path {
-        let _ = opts.push(Opt::uri_path(segment));
-    }
-    if let Some(ref encoded) = cf {
-        let _ = opts.push(Opt::content_format(encoded));
-    }
-    if q_block1 {
-        let _ = opts.push(Opt::q_block1(&blk));
-    } else {
-        let _ = opts.push(Opt::block1(&blk));
-    }
-    if let Some(ref encoded) = size {
-        let _ = opts.push(Opt::size1(encoded));
+    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        for segment in path {
+            push_opt(&mut opts, Opt::uri_path(segment))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if q_block1 {
+            push_opt(&mut opts, Opt::q_block1(&blk))?;
+        } else {
+            push_opt(&mut opts, Opt::block1(&blk))?;
+        }
+        if let Some(ref encoded) = size {
+            push_opt(&mut opts, Opt::size1(encoded))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = filled {
+        let _ = engine.release_tx(tx);
+        return Err(Error::Message(SlotMessageError::Encode(e)));
     }
     let msg = Message::new(ty, code, mid)
         .with_token(token)
