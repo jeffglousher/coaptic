@@ -724,7 +724,7 @@ where
         .with_options(opts.as_slice())
         .with_payload(spec.payload);
     match engine.encode_tx(tx, &msg) {
-        Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
+        Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.token, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
         Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => send_client_block1(
             engine,
@@ -1367,7 +1367,7 @@ where
         let _ = engine.release_tx(tx);
         return Err(Error::Message(e));
     }
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
+    finish_client_send(engine, io, tx, dest, token, ty, now_ms, mid)
 }
 
 fn finish_client_send<Mem, T>(
@@ -1375,6 +1375,7 @@ fn finish_client_send<Mem, T>(
     io: &mut T,
     tx: SlotId,
     dest: Endpoint,
+    token: Token,
     ty: Type,
     now_ms: u64,
     mid: MessageId,
@@ -1395,7 +1396,13 @@ where
         }
     }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
-    super::finish_send(engine, io, tx, dest, pending)
+    match super::finish_send(engine, io, tx, dest, pending) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = engine.take_exchange(ExchangeKey::new(token, dest));
+            Err(e)
+        }
+    }
 }
 
 fn copy_tx_range<Mem: Storage + BodySlots>(
