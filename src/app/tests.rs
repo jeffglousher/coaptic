@@ -9,7 +9,7 @@ use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
     MissingBlocks, Opt, OptionNumber, OptionsBuilder, ProblemDetails, QBlockTransmission, Token,
-    Type, decode, encode, encode_uint,
+    Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -1886,4 +1886,166 @@ fn client_observe_register_notify_deregister() {
     app.poll(30).expect("no notify");
     assert!(app.take_response(call).is_none());
     assert!(!client_observe_live(&app, call));
+}
+
+/// Records every send. `drop_cons` swallows that many CON datagrams (logged,
+/// not delivered to `recv`) so `App::poll` can prove RTO retransmit.
+struct RecordIo {
+    inbox: Option<(Endpoint, [u8; 256], usize)>,
+    log: [Option<(Endpoint, [u8; 256], usize)>; 8],
+    log_len: usize,
+    drop_cons: u8,
+}
+
+impl RecordIo {
+    const fn dropping_cons(drop_cons: u8) -> Self {
+        Self {
+            inbox: None,
+            log: [None; 8],
+            log_len: 0,
+            drop_cons,
+        }
+    }
+
+    fn sent_count(&self) -> usize {
+        self.log_len
+    }
+
+    fn sent_bytes(&self, i: usize) -> &[u8] {
+        let (_, bytes, n) = self.log[i].as_ref().expect("logged");
+        &bytes[..*n]
+    }
+}
+
+impl DatagramIo for RecordIo {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((ep, bytes, n)) = self.inbox.take() else {
+            return Ok(None);
+        };
+        if n > buf.len() {
+            return Err("short buf");
+        }
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > 256 {
+            return Err("too long");
+        }
+        if self.log_len >= self.log.len() {
+            return Err("log full");
+        }
+        let mut slot = [0u8; 256];
+        slot[..bytes.len()].copy_from_slice(bytes);
+        self.log[self.log_len] = Some((dest, slot, bytes.len()));
+        self.log_len += 1;
+        let swallow =
+            self.drop_cons > 0 && decode(bytes).is_ok_and(|m| m.ty() == Type::Confirmable);
+        if swallow {
+            self.drop_cons -= 1;
+            return Ok(bytes.len());
+        }
+        self.inbox = Some((dest, slot, bytes.len()));
+        Ok(bytes.len())
+    }
+}
+
+fn record_app(io: RecordIo) -> App<profiles::Default, RecordIo> {
+    App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_temp))
+        .bind(io)
+        .expect("bind")
+}
+
+#[test]
+fn client_con_retransmit_after_dropped_first_send() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_app(RecordIo::dropping_cons(1));
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_count(), 1);
+    let mut first_wire = [0u8; 256];
+    let first_n = app.transport().sent_bytes(0).len();
+    first_wire[..first_n].copy_from_slice(app.transport().sent_bytes(0));
+    let (first_ty, first_code, first_token, mid) = {
+        let first = decode(&first_wire[..first_n]).expect("first");
+        (first.ty(), first.code(), first.token(), first.message_id())
+    };
+    assert_eq!(first_ty, Type::Confirmable);
+    assert_eq!(first_code, Code::GET);
+    assert_eq!(first_token, call.token());
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert!(app.take_response(call).is_none());
+
+    let timeout = u64::from(Transmission::ACK_TIMEOUT_MS);
+    app.poll(timeout - 1).expect("before RTO");
+    assert_eq!(app.transport().sent_count(), 1);
+
+    app.poll(timeout).expect("retransmit");
+    assert_eq!(app.transport().sent_count(), 2);
+    assert_eq!(
+        &first_wire[..first_n],
+        app.transport().sent_bytes(1),
+        "Due resends the same CON bytes"
+    );
+    let (retry_ty, retry_code, retry_mid, retry_token) = {
+        let retry = decode(app.transport().sent_bytes(1)).expect("retry");
+        (retry.ty(), retry.code(), retry.message_id(), retry.token())
+    };
+    assert_eq!(retry_ty, Type::Confirmable);
+    assert_eq!(retry_code, Code::GET);
+    assert_eq!(retry_mid, mid);
+    assert_eq!(retry_token, call.token());
+
+    app.poll(timeout).expect("server handle retry");
+    app.poll(timeout).expect("client match");
+    let response = app.take_response(call).expect("matched after loss");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"21.5");
+    assert_eq!(response.token(), Some(call.token()));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_con_give_up_releases_after_max_retransmit() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_app(RecordIo::dropping_cons(8));
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert_eq!(app.transport().sent_count(), 1);
+
+    let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for _ in 0..Transmission::MAX_RETRANSMIT {
+        app.poll(now).expect("due");
+        timeout = timeout.saturating_mul(2);
+        now = now.saturating_add(u64::from(timeout));
+    }
+    assert_eq!(
+        app.transport().sent_count(),
+        1 + usize::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert!(app.take_response(call).is_none());
+
+    app.poll(now).expect("give up");
+    assert_eq!(
+        app.transport().sent_count(),
+        1 + usize::from(Transmission::MAX_RETRANSMIT),
+        "GiveUp does not send"
+    );
+    assert!(app.take_response(call).is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }

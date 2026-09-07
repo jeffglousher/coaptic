@@ -55,8 +55,10 @@ impl Progress {
 
     /// Due CON retransmit or give-up from [`Engine::poll_retransmit`].
     ///
-    /// The core does not send. [`Retransmit::GiveUp`] already cleared pending;
-    /// the TX slot stays occupied so the caller can release it.
+    /// The core does not send. [`crate::App::poll`] sends
+    /// [`Retransmit::Due`] and releases [`Retransmit::GiveUp`]. GiveUp
+    /// already cleared pending; the TX slot stays occupied so the caller
+    /// can release it.
     #[must_use]
     pub const fn retransmit(self) -> Option<Retransmit> {
         self.retransmit
@@ -136,7 +138,8 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     ///    ([`Progress::qblock_recover`]). Unarmed holes are armed from
     ///    `now_ms` and do not fire on this pass.
     ///
-    /// Does not allocate, grow storage, or send on the wire. Does not release
+    /// Does not allocate, grow storage, or send on the wire
+    /// ([`crate::App::poll`] sends a due CON). Does not release
     /// pinned slots (except a Q-Block body exhausted after
     /// `NON_MAX_RETRANSMIT`). Does not invent 4.02 / RST / 2.31 / 4.08 policy.
     pub fn progress(&mut self, now_ms: u64) -> Progress {

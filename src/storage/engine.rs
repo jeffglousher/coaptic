@@ -434,7 +434,8 @@ impl<S: Storage + PendingCons> Engine<S> {
     ///
     /// Scans pending TX slots in index order (O(n)). On
     /// [`Retransmit::Due`], doubles the timeout and increments attempts.
-    /// On [`Retransmit::GiveUp`], clears pending. Does not send. See
+    /// On [`Retransmit::GiveUp`], clears pending. Does not send —
+    /// [`crate::App::poll`] sends Due and releases GiveUp. See
     /// `knowledge/rfcs/rfc7252.txt` §4.2.
     pub fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
         self.storage.poll_retransmit(now_ms)
