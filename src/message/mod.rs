@@ -496,6 +496,12 @@ impl Transmission {
     pub const MAX_RETRANSMIT: u8 = 4;
     /// `NSTART`.
     pub const NSTART: u8 = 1;
+    /// `MAX_TRANSMIT_SPAN` (milliseconds). RFC 7252 §4.8.2 default.
+    pub const MAX_TRANSMIT_SPAN_MS: u32 = 45_000;
+    /// `EXCHANGE_LIFETIME` (milliseconds). RFC 7252 §4.8.2 default.
+    pub const EXCHANGE_LIFETIME_MS: u32 = 247_000;
+    /// `NON_LIFETIME` (milliseconds). RFC 7252 §4.8.2 default.
+    pub const NON_LIFETIME_MS: u32 = 145_000;
 
     /// Initial timeout: `ACK_TIMEOUT` plus `min(jitter_ms, ACK_RANDOM_SPAN_MS)`.
     ///

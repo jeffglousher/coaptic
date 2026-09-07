@@ -432,10 +432,12 @@ where
     /// / [`Engine::poll_retransmit`] and does not send. This poll sends on
     /// [`Retransmit::Due`] and releases on [`Retransmit::GiveUp`]. A matching
     /// response (piggybacked ACK or separate CON/NON) clears that pending CON
-    /// using the request Message ID. `now_ms` is the caller clock (jitter is
-    /// 0 from [`Outgoing::send`]). Advanced slots /
-    /// [`Access`](crate::storage::Access) / remaining RST policy / BERT
-    /// (future / backlog): [`Self::engine_mut`].
+    /// using the request Message ID. Empty RST matching a client outstanding
+    /// request forgets the exchange. Empty ACK then silence, and lost NON,
+    /// expire after RFC 7252 §4.8.2 `EXCHANGE_LIFETIME` / `NON_LIFETIME`.
+    /// `now_ms` is the caller clock (jitter is 0 from [`Outgoing::send`]).
+    /// Advanced slots / [`Access`](crate::storage::Access) / remaining RST
+    /// policy / BERT (future / backlog): [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         poll_engine(
             &mut self.engine,
@@ -499,6 +501,7 @@ where
     T: DatagramIo,
 {
     let received = engine.recv_from(io)?;
+    client::expire_client_exchanges(engine, inbox, lives, now_ms);
     let progress = engine.progress(now_ms);
 
     if let Some(retransmit) = progress.retransmit() {
@@ -675,6 +678,9 @@ where
     };
 
     if parsed.is_empty_ack_or_rst() {
+        if parsed.is_empty_rst() {
+            client::complete_client_rst(engine, inbox, lives, parsed.message_id(), peer);
+        }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
         }

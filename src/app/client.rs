@@ -16,12 +16,12 @@
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage,
-    Token, Type, encode_uint,
+    Token, Transmission, Type, encode_uint,
 };
 use crate::storage::{
-    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeKey,
-    Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots,
-    OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeEntry,
+    ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey, ObserveResource,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
@@ -149,6 +149,22 @@ impl ReplyMeta {
             None => response,
         }
     }
+
+    fn gateway_timeout(call: Call, mid: MessageId) -> Self {
+        Self {
+            code: Code::GATEWAY_TIMEOUT,
+            ty: Type::Reset,
+            token: call.token(),
+            mid,
+            peer: call.peer(),
+            payload: [0u8; INLINE_PAYLOAD],
+            payload_len: 0,
+            content_format: None,
+            observe: None,
+            etag: [0; 8],
+            etag_len: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -204,6 +220,8 @@ struct LiveCall {
     ty: Type,
     content_format: Option<ContentFormat>,
     observe: OutgoingObserve,
+    /// When the outstanding request may be forgotten (`0` = never).
+    due_ms: u64,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
@@ -626,6 +644,11 @@ where
             ty: self.ty,
             content_format: self.content_format,
             observe,
+            due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
+                Transmission::NON_LIFETIME_MS
+            } else {
+                Transmission::EXCHANGE_LIFETIME_MS
+            })),
         });
         Ok(call)
     }
@@ -1581,5 +1604,106 @@ where
         }
         lives.remove(Call::new(key.token(), key.endpoint()));
         return;
+    }
+}
+
+fn exchange_for_tx<Mem: Storage + Exchanges>(
+    engine: &Engine<Mem>,
+    tx: SlotId,
+) -> Option<ExchangeEntry> {
+    let n = engine.capacities().tx_datagram_slots;
+    (0..n).find_map(|i| {
+        let entry = engine.exchange_entry(SlotId::from_index(i))?;
+        (entry.tx_slot() == tx).then_some(entry)
+    })
+}
+
+fn exchange_for_mid<Mem: Storage + Exchanges>(
+    engine: &Engine<Mem>,
+    message_id: MessageId,
+    peer: Endpoint,
+) -> Option<ExchangeEntry> {
+    let n = engine.capacities().tx_datagram_slots;
+    (0..n).find_map(|i| {
+        let entry = engine.exchange_entry(SlotId::from_index(i))?;
+        (entry.message_id() == message_id && entry.endpoint() == peer).then_some(entry)
+    })
+}
+
+fn fail_outstanding<Mem>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    entry: ExchangeEntry,
+    release_tx: bool,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
+    let call = Call::new(entry.token(), entry.endpoint());
+    let evicted = inbox.insert(
+        call,
+        ReplyMeta::gateway_timeout(call, entry.message_id()),
+        None,
+    );
+    if let Some(id) = evicted {
+        let _ = engine.release_rx_body(id);
+    }
+    forget_exchange_tx(engine, lives, entry.tx_slot());
+    if !release_tx {
+        return;
+    }
+    // Only free TX still owned by this request (pending CON). After empty ACK
+    // or NON, the slot is already released — do not release a reused TX.
+    if let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint()) {
+        let _ = engine.release_tx(tx);
+    }
+}
+
+/// Empty RST matching a client outstanding request: forget exchange / lives.
+pub(crate) fn complete_client_rst<Mem>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    message_id: MessageId,
+    peer: Endpoint,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
+    if let Some(tx) = engine.lookup_pending_con(message_id, peer) {
+        if let Some(entry) = exchange_for_tx(engine, tx) {
+            fail_outstanding(engine, inbox, lives, entry, false);
+            return;
+        }
+    }
+    if let Some(entry) = exchange_for_mid(engine, message_id, peer) {
+        fail_outstanding(engine, inbox, lives, entry, false);
+    }
+}
+
+/// Drop client exchanges whose lifetime has elapsed (empty ACK then silence, lost NON).
+pub(crate) fn expire_client_exchanges<Mem>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    now_ms: u64,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
+    let mut due = [None; RESPONSE_INBOX];
+    for (i, row) in lives.rows.iter().enumerate() {
+        let Some(live) = *row else {
+            continue;
+        };
+        if live.due_ms == 0 || now_ms < live.due_ms {
+            continue;
+        }
+        let key = ExchangeKey::new(live.call.token(), live.call.peer());
+        let Some(id) = engine.lookup_exchange(key) else {
+            continue;
+        };
+        due[i] = engine.exchange_entry(id);
+    }
+    for entry in due.into_iter().flatten() {
+        fail_outstanding(engine, inbox, lives, entry, true);
     }
 }

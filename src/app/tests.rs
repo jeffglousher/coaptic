@@ -12,7 +12,9 @@ use crate::message::{
     MissingBlocks, ObserveTransmission, Opt, OptionNumber, OptionsBuilder, ProblemDetails,
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
-use crate::storage::{BlockKey, DatagramIo, Endpoint, MemoryLayout, ObserveKey, profiles};
+use crate::storage::{
+    BlockKey, DatagramIo, Endpoint, ExchangeKey, MemoryLayout, ObserveKey, profiles,
+};
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
 const WIRE: usize = 1472;
@@ -2636,4 +2638,103 @@ fn client_second_con_nstart_does_not_leak_tx() {
     assert_eq!(app.engine_mut().tx_occupied(), 1, "no orphan TX");
     assert!(app.engine().lookup_pending_con(first_mid, peer).is_some());
     assert!(app.take_response(first).is_none());
+}
+
+fn client_exchange_live(app: &App<profiles::Default, RecordIo>, call: crate::Call) -> bool {
+    let key = ExchangeKey::new(call.token(), call.peer());
+    app.engine().lookup_exchange(key).is_some()
+}
+
+fn inject_empty(app: &mut App<profiles::Default, RecordIo>, peer: Endpoint, msg: Message<'_>) {
+    let mut buf = [0u8; 256];
+    let n = encode(&msg, &mut buf).expect("empty");
+    app.transport_mut().inbox = Some((peer, buf, n));
+}
+
+#[test]
+fn client_empty_rst_forgets_outstanding_call() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert!(client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    let mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("wire");
+        decode(&bytes[..n]).expect("decode").message_id()
+    };
+
+    inject_empty(&mut app, peer, Message::empty_rst(mid));
+    app.poll(0).expect("rst");
+    let response = app.take_response(call).expect("rst completes Call");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
+#[test]
+fn client_empty_ack_then_silence_expires_exchange() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let mid = {
+        let (_, bytes, n) = app.transport().sent[0].expect("wire");
+        decode(&bytes[..n]).expect("decode").message_id()
+    };
+
+    inject_empty(&mut app, peer, Message::empty_ack(mid));
+    app.poll(0).expect("ack");
+    assert!(
+        app.take_response(call).is_none(),
+        "empty ACK is not a response"
+    );
+    assert!(
+        client_exchange_live(&app, call),
+        "exchange waits for the separate body"
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+
+    let life = u64::from(Transmission::EXCHANGE_LIFETIME_MS);
+    app.poll(life - 1).expect("before lifetime");
+    assert!(client_exchange_live(&app, call));
+    assert!(app.take_response(call).is_none());
+
+    app.poll(life).expect("expire");
+    let response = app.take_response(call).expect("lifetime snapshot");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_non_loss_expires_exchange() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .non()
+        .to(peer)
+        .send(0)
+        .expect("send");
+    assert!(client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0, "NON releases TX");
+
+    let life = u64::from(Transmission::NON_LIFETIME_MS);
+    app.poll(life - 1).expect("before NON lifetime");
+    assert!(client_exchange_live(&app, call));
+    assert!(app.take_response(call).is_none());
+
+    app.poll(life).expect("expire NON");
+    let response = app.take_response(call).expect("NON lifetime snapshot");
+    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert!(!client_exchange_live(&app, call));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
