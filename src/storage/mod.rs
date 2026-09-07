@@ -212,7 +212,10 @@ pub trait DatagramSlots {
 /// Insert, lookup, and remove scan the configured entry count (O(n) in
 /// capacity). Capacity is fixed at construction. [`Memory`] and
 /// [`AllocMemory`] implement this so [`Engine`] can store [`DedupEntry`]
-/// values in the existing table slots.
+/// values in the existing table slots. [`crate::App::poll`] uses
+/// [`DedupEntry::due_ms`], [`DedupEntry::replay`], and
+/// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
+/// without a second handler call.
 pub trait DedupSlots {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///

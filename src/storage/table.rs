@@ -41,20 +41,73 @@ impl DedupKey {
 
 /// Occupied Dedup Table payload.
 ///
-/// Stored in the table slot itself. Timing and retransmission state are not
-/// modeled here.
+/// Stored in the table slot itself. [`Self::due_ms`] `0` means the row does
+/// not expire (Engine-pair / manual insert). App caches the encoded ACK so a
+/// CON retransmit can be answered without a second handler call: compact
+/// [`Self::replay`] when the datagram fits, otherwise a TX pin for
+/// `EXCHANGE_LIFETIME`. See `knowledge/rfcs/rfc7252.txt` §4.5.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupEntry {
     key: DedupKey,
+    due_ms: u64,
+    replay_len: u16,
+    replay: [u8; Self::REPLAY_MAX],
+    tx_pin: Option<SlotId>,
 }
 
 impl DedupEntry {
+    /// Bytes of encoded ACK cached inline on this row.
+    ///
+    /// Larger piggybacked ACKs use [`Self::tx_pin`] (Default TX slot) so
+    /// replay is still the same bytes. This is not a seventh memory area.
+    pub const REPLAY_MAX: usize = 256;
+
     /// History row for `message_id` from `endpoint`.
+    ///
+    /// No expiry (`due_ms == 0`), no replay, no TX pin.
     #[must_use]
     pub const fn new(message_id: MessageId, endpoint: Endpoint) -> Self {
         Self {
             key: DedupKey::new(message_id, endpoint),
+            due_ms: 0,
+            replay_len: 0,
+            replay: [0; Self::REPLAY_MAX],
+            tx_pin: None,
         }
+    }
+
+    /// Absolute expiry on the caller clock. `0` is never.
+    #[must_use]
+    pub const fn with_due_ms(mut self, due_ms: u64) -> Self {
+        self.due_ms = due_ms;
+        self
+    }
+
+    /// Cache encoded reply bytes when they fit [`Self::REPLAY_MAX`].
+    ///
+    /// Larger datagrams are not truncated: replay stays empty so a later
+    /// duplicate cannot send a lie. The caller may [`Self::with_tx_pin`]
+    /// instead.
+    #[must_use]
+    pub fn with_replay(mut self, bytes: &[u8]) -> Self {
+        if bytes.len() > Self::REPLAY_MAX {
+            return self;
+        }
+        self.replay[..bytes.len()].copy_from_slice(bytes);
+        self.replay_len = bytes.len() as u16;
+        self.tx_pin = None;
+        self
+    }
+
+    /// Hold occupied TX `id` so App can resend the same ACK bytes.
+    ///
+    /// Clears inline replay. The caller must not release that TX slot
+    /// until this row expires or is replaced.
+    #[must_use]
+    pub const fn with_tx_pin(mut self, id: SlotId) -> Self {
+        self.tx_pin = Some(id);
+        self.replay_len = 0;
+        self
     }
 
     /// Lookup identity.
@@ -74,11 +127,42 @@ impl DedupEntry {
     pub const fn endpoint(self) -> Endpoint {
         self.key.endpoint()
     }
+
+    /// Absolute expiry (`0` = never).
+    #[must_use]
+    pub const fn due_ms(self) -> u64 {
+        self.due_ms
+    }
+
+    /// Cached piggybacked / empty-ACK bytes, if stored inline.
+    #[must_use]
+    pub fn replay(&self) -> Option<&[u8]> {
+        if self.replay_len == 0 {
+            None
+        } else {
+            Some(&self.replay[..usize::from(self.replay_len)])
+        }
+    }
+
+    /// Occupied TX slot holding the encoded ACK, if pinned.
+    #[must_use]
+    pub const fn tx_pin(self) -> Option<SlotId> {
+        self.tx_pin
+    }
+
+    /// Whether this row can answer a CON retransmit (`replay` or `tx_pin`).
+    ///
+    /// App never stores a timed row without one of these. Engine-pair
+    /// inserts may still be metadata-only (`due_ms == 0`).
+    #[must_use]
+    pub fn has_usable_replay(&self) -> bool {
+        self.replay().is_some() || self.tx_pin().is_some()
+    }
 }
 
 impl From<DedupKey> for DedupEntry {
     fn from(key: DedupKey) -> Self {
-        Self { key }
+        Self::new(key.message_id(), key.endpoint())
     }
 }
 
