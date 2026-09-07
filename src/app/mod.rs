@@ -1707,7 +1707,7 @@ pub enum Error<E> {
     Slot(SlotError),
     /// Decode / encode in a slot.
     Message(SlotMessageError),
-    /// TX pool is full. The RX datagram was released.
+    /// TX pool, client inbox, or outstanding Call table is full.
     Saturated,
     /// Block / Q-Block body start, issue, or recover encode failed.
     Block(BlockTransferError),
@@ -1748,7 +1748,7 @@ where
             Self::Io(e) => write!(f, "{e}"),
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
-            Self::Saturated => f.write_str("outgoing datagram pool is saturated"),
+            Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
         }

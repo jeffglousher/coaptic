@@ -2962,3 +2962,48 @@ fn client_non_loss_expires_exchange() {
     assert!(!client_exchange_live(&app, call));
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
+
+#[test]
+fn client_fifth_untaken_send_is_saturated() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let mut calls = [None; 4];
+    for (i, slot) in calls.iter_mut().enumerate() {
+        let call = app
+            .get(&["sensors", "temp"])
+            .to(peer)
+            .send(0)
+            .expect("send");
+        let (mid, token) = {
+            let (_, bytes, n) = app.transport().sent[i].expect("wire");
+            let parsed = decode(&bytes[..n]).expect("decode");
+            (parsed.message_id(), parsed.token())
+        };
+        assert_eq!(token, call.token());
+        inject_piggyback_ack(&mut app, peer, mid, token, b"21.5");
+        app.poll(0).expect("complete");
+        *slot = Some(call);
+    }
+    let err = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect_err("inbox full");
+    assert_eq!(err, Error::Saturated);
+    assert_eq!(
+        app.transport().sent_n,
+        4,
+        "fifth send must not go on the wire"
+    );
+    for call in calls {
+        let response = app
+            .take_response(call.expect("call"))
+            .expect("untaken reply kept");
+        assert_eq!(response.code(), Code::CONTENT);
+        assert_eq!(response.payload(), b"21.5");
+    }
+    app.get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send after take");
+}
