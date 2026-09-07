@@ -1202,13 +1202,16 @@ fn dedup_entry_replay_fits_or_stays_empty() {
     let small = DedupEntry::new(MessageId::new(1), ep).with_replay(&[1, 2, 3]);
     assert_eq!(small.replay(), Some(&[1, 2, 3][..]));
     assert!(small.tx_pin().is_none());
+    assert!(small.has_usable_replay());
     let too_big = [0u8; DedupEntry::REPLAY_MAX + 1];
     let skipped = DedupEntry::new(MessageId::new(1), ep).with_replay(&too_big);
     assert!(skipped.replay().is_none());
+    assert!(!skipped.has_usable_replay());
     assert_eq!(skipped.due_ms(), 0);
     let pinned = DedupEntry::new(MessageId::new(1), ep).with_tx_pin(SlotId::from_index(2));
     assert_eq!(pinned.tx_pin().map(|id| id.index()), Some(2));
     assert!(pinned.replay().is_none());
+    assert!(pinned.has_usable_replay());
 }
 
 #[test]

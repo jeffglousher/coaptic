@@ -15,7 +15,7 @@ use crate::message::{
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, DatagramIo, DedupEntry, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile,
+    BlockKey, DatagramIo, DedupEntry, DedupKey, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile,
     ObserveKey, profiles,
 };
 
@@ -625,6 +625,72 @@ fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
     app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
         .expect("expired");
     assert_eq!(HITS.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn duplicate_con_post_empty_dedup_row_acks_without_rerun() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_post(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["leds", "0"], post(counting_post))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+
+    // access_tx-fail / pin-evict leftover: live row, nothing to send.
+    let key = DedupKey::new(mid, peer);
+    assert!(app.engine_mut().remove_dedup(key));
+    let empty =
+        DedupEntry::new(mid, peer).with_due_ms(u64::from(Transmission::EXCHANGE_LIFETIME_MS));
+    assert!(!empty.has_usable_replay());
+    app.engine_mut().insert_dedup(empty).expect("empty row");
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit on empty row");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1, "POST must not re-run");
+    assert_eq!(app.transport().sent_n, 2, "must ACK, not silence");
+    let (_, ack_bytes, ack_n) = app.transport().sent[1].expect("empty ACK");
+    let ack = decode(&ack_bytes[..ack_n]).expect("decode");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), mid);
+
+    let id = app.engine().lookup_dedup(key).expect("row stays live");
+    let stored = app.engine().dedup_entry(id).expect("entry");
+    assert!(
+        stored.has_usable_replay(),
+        "empty Hit must persist a usable ACK, not stay metadata-only"
+    );
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).expect("second retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 3);
+    let (_, again, again_n) = app.transport().sent[2].expect("replay");
+    let again_ack = decode(&again[..again_n]).expect("decode");
+    assert!(again_ack.is_empty_ack());
+
+    let live = u64::from(Transmission::EXCHANGE_LIFETIME_MS) - 1;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(live).expect("still live");
+    assert_eq!(
+        HITS.load(Ordering::SeqCst),
+        1,
+        "must not silence-then-rerun before EXCHANGE_LIFETIME"
+    );
 }
 
 #[test]

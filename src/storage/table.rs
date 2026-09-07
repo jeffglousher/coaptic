@@ -149,6 +149,15 @@ impl DedupEntry {
     pub const fn tx_pin(self) -> Option<SlotId> {
         self.tx_pin
     }
+
+    /// Whether this row can answer a CON retransmit (`replay` or `tx_pin`).
+    ///
+    /// App never stores a timed row without one of these. Engine-pair
+    /// inserts may still be metadata-only (`due_ms == 0`).
+    #[must_use]
+    pub fn has_usable_replay(&self) -> bool {
+        self.replay().is_some() || self.tx_pin().is_some()
+    }
 }
 
 impl From<DedupKey> for DedupEntry {

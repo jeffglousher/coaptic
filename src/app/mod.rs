@@ -458,8 +458,8 @@ where
     /// second handler call while the row is live (`EXCHANGE_LIFETIME`):
     /// the cached ACK bytes, or a pinned TX slot when the ACK does not
     /// fit the compact sidecar. POST / PATCH / FETCH never re-run on a
-    /// live row (drop if there is nothing to replay). GET / PUT / DELETE
-    /// / iPATCH replay when a cache exists; without one, re-run is
+    /// live row (empty ACK if there is nothing to replay). GET / PUT /
+    /// DELETE / iPATCH replay when a cache exists; without one, re-run is
     /// allowed (RFC 7252 §4.5 MAY). Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`]. Empty RST matching a notification Message ID
@@ -1692,7 +1692,10 @@ where
     if request_may_rerun_on_duplicate(parsed.code()) {
         Replay::Miss
     } else {
-        Replay::Hit(Ok(()))
+        // Never silent: ACK the CON so the client stops RTO. Persist the
+        // empty ACK so a later Miss-after-lifetime is the only re-run path.
+        remember_empty_ack(engine, peer, parsed.message_id(), now_ms);
+        Replay::Hit(send_empty_ack(engine, io, peer, parsed.message_id()))
     }
 }
 
@@ -1752,7 +1755,7 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     let mut entry = DedupEntry::new(mid, dest).with_due_ms(due);
     let copied = {
         let Ok(access) = engine.access_tx(tx) else {
-            let _ = store_request_dedup(engine, entry);
+            remember_empty_ack(engine, dest, mid, now_ms);
             return KeepTx::No;
         };
         let slice = access.as_bytes();
@@ -1801,6 +1804,9 @@ fn remember_empty_ack<S: Storage + DedupSlots>(
 }
 
 fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) -> bool {
+    if !entry.has_usable_replay() {
+        return false;
+    }
     release_existing_dedup(engine, entry.key());
     if engine.insert_dedup(entry).is_some() {
         return true;
@@ -1875,13 +1881,13 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
     if let Some(pin) = entry.tx_pin() {
         let _ = engine.release_tx(pin);
     }
-    if let Some(id) = engine.lookup_dedup(entry.key()) {
-        if let Some(mut row) = engine.dedup_entry(id) {
-            row = DedupEntry::new(row.message_id(), row.endpoint()).with_due_ms(row.due_ms());
-            // insert on existing key keeps the old payload — remove + insert.
-            let _ = engine.remove_dedup(entry.key());
-            let _ = engine.insert_dedup(row);
-        }
+    let _ = engine.remove_dedup(entry.key());
+    let mut buf = [0u8; 16];
+    if let Ok(n) = encode(&Message::empty_ack(entry.message_id()), &mut buf) {
+        let row = DedupEntry::new(entry.message_id(), entry.endpoint())
+            .with_due_ms(entry.due_ms())
+            .with_replay(&buf[..n]);
+        let _ = engine.insert_dedup(row);
     }
     true
 }
