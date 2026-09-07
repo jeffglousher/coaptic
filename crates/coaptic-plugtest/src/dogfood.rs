@@ -421,13 +421,12 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
                     } else {
                         site::OBS_BODY_2
                     };
-                    match app.notify(
+                    if let Ok(0) = app.notify(
                         now,
                         &segs,
                         Response::content(body).content_format(ContentFormat::TEXT_PLAIN),
                     ) {
-                        Ok(0) => pending = Some((path, payload)),
-                        _ => {}
+                        pending = Some((path, payload));
                     }
                 }
                 let occupancy = occupancy_line(app.engine_mut());
