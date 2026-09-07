@@ -959,6 +959,10 @@ where
             let _ = engine.release_rx(rx);
             return outcome;
         }
+        Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
+            let _ = engine.release_rx(rx);
+            return Ok(());
+        }
         Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
         Err(e) => {
             drop_client(engine, lives, parsed, peer, rx);

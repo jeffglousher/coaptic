@@ -586,6 +586,10 @@ where
     match engine.apply_block1_rx(rx) {
         Ok(progress) if progress.complete() => return InboundBody::Complete(progress.id()),
         Ok(_) => return InboundBody::Continue,
+        // Retransmit of an already-acked NUM (RFC 7959): replay 2.31, not 4.08.
+        Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
+            return InboundBody::Continue;
+        }
         Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
         Err(_) => return InboundBody::IncompleteEntity,
     }
@@ -762,7 +766,8 @@ where
             return outcome;
         }
         InboundBody::IncompleteEntity => {
-            // Apply errors (duplicate NUM, SZX mismatch, overflow, …).
+            // Apply errors (gap, SZX mismatch, overflow, Q-Block duplicate, …).
+            // Classic Overlap / AlreadyComplete replay 2.31 above.
             // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
             let outcome = send_response(
                 engine,

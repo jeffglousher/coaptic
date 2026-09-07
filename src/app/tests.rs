@@ -1193,6 +1193,48 @@ fn block1_incomplete_is_continue() {
 }
 
 #[test]
+fn block1_acked_num_retransmit_is_continue() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let payload = [0xABu8; 16];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(&["leds", "0"], put(put_body))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("first NUM0");
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    // Lossy retransmit of the already-acked NUM (same CON MID + payload).
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).expect("retransmit NUM0");
+    let reply = last_reply(&app);
+    assert_eq!(
+        reply.code,
+        Code::CONTINUE,
+        "retransmit of acked NUM must replay 2.31, not 4.08"
+    );
+    let block1 = reply.block1.expect("RFC 7959 echoes Block1 on 2.31");
+    assert_eq!(block1.num(), 0);
+    assert!(block1.more());
+
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 2, true, 16, 0x1003);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(2).expect("gap NUM2");
+    assert_eq!(
+        last_reply(&app).code,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        "true Gap stays 4.08"
+    );
+}
+
+#[test]
 fn block1_complete_exposes_body() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let first = [b'A'; 16];
