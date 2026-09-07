@@ -121,7 +121,6 @@
 //! [plan]: https://github.com/users/jeffglousher/projects/2
 
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
