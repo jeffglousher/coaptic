@@ -8,8 +8,8 @@ use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
-    MissingBlocks, Opt, OptionNumber, OptionsBuilder, ProblemDetails, QBlockTransmission, Token,
-    Transmission, Type, decode, encode, encode_uint,
+    MissingBlocks, ObserveTransmission, Opt, OptionNumber, OptionsBuilder, ProblemDetails,
+    QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{BlockKey, DatagramIo, Endpoint, ObserveKey, profiles};
 
@@ -1500,6 +1500,133 @@ fn observe_register_notify_deregister() {
         .notify(30, &["sensors", "temp"], Response::content(b"obs-2"))
         .expect("notify after deregister");
     assert_eq!(sent, 0);
+}
+
+fn inject_empty_rst(
+    app: &mut App<profiles::Default, WideLoopback>,
+    peer: Endpoint,
+    mid: MessageId,
+) {
+    let mut wire = [0u8; WIRE];
+    let n = encode(&Message::empty_rst(mid), &mut wire).expect("rst");
+    app.transport_mut().inbox = Some((peer, wire, n));
+}
+
+#[test]
+fn observe_non_notify_rst_drops_interest() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert!(observe_registered(&app, peer));
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("notify");
+    assert_eq!(sent, 1);
+    let note = last_wide(&app);
+    assert_eq!(note.ty(), Type::NonConfirmable);
+    let mid = note.message_id();
+    assert!(!note.token().is_empty(), "notify Token is not empty");
+
+    inject_empty_rst(&mut app, peer, mid);
+    app.poll(11).expect("rst");
+    assert!(
+        !observe_registered(&app, peer),
+        "RFC 7641 RST of NON notify must drop the observer"
+    );
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(12, &["sensors", "temp"], Response::content(b"obs-2"))
+        .expect("notify after rst");
+    assert_eq!(sent, 0);
+}
+
+#[test]
+fn observe_con_notify_rst_drops_interest() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert!(observe_registered(&app, peer));
+
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-non").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("first non");
+    assert_eq!(sent, 1);
+    assert_eq!(last_wide(&app).ty(), Type::NonConfirmable);
+
+    let now = 10 + ObserveTransmission::CONFIRM_INTERVAL_MS;
+    app.transport_mut().send_n = 0;
+    let sent = app
+        .notify(
+            now,
+            &["sensors", "temp"],
+            Response::content(b"obs-con").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .expect("con notify");
+    assert_eq!(sent, 1);
+    let note = last_wide(&app);
+    assert_eq!(note.ty(), Type::Confirmable);
+    let mid = note.message_id();
+
+    inject_empty_rst(&mut app, peer, mid);
+    app.poll(now).expect("rst");
+    assert!(
+        !observe_registered(&app, peer),
+        "RFC 7641 RST of CON notify must drop the observer"
+    );
+}
+
+#[test]
+fn empty_con_ping_rst_does_not_drop_observe() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert!(observe_registered(&app, peer));
+
+    inject_empty_rst(&mut app, peer, MessageId::new(0x5049));
+    app.poll(1).expect("unrelated rst");
+    assert!(
+        observe_registered(&app, peer),
+        "empty RST with a foreign MID must not cancel Observe"
+    );
 }
 
 #[test]

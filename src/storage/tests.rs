@@ -795,20 +795,20 @@ fn observe_24h_non_confirm_and_con_reset() {
     let mut interest =
         ObserveInterest::new(sample_token(&[0xa1]), Endpoint::v4([203, 0, 113, 60], 5683));
     assert!(!interest.must_confirm(0));
-    interest.record_notify(0, None);
+    interest.record_notify(0, MessageId::new(1), false);
     assert_eq!(
         interest.confirm_due_ms(),
         Some(ObserveTransmission::CONFIRM_INTERVAL_MS)
     );
     assert!(!interest.must_confirm(ObserveTransmission::CONFIRM_INTERVAL_MS - 1));
     assert!(interest.must_confirm(ObserveTransmission::CONFIRM_INTERVAL_MS));
-    interest.record_notify(1_000, None);
+    interest.record_notify(1_000, MessageId::new(2), false);
     assert_eq!(
         interest.confirm_due_ms(),
         Some(ObserveTransmission::CONFIRM_INTERVAL_MS),
         "later NON must not reset the 24-hour clock"
     );
-    interest.record_notify(2_000, Some(MessageId::new(1)));
+    interest.record_notify(2_000, MessageId::new(1), true);
     assert_eq!(
         interest.confirm_due_ms(),
         Some(2_000 + ObserveTransmission::CONFIRM_INTERVAL_MS)
@@ -831,7 +831,10 @@ fn observe_nstart_blocks_same_endpoint_until_hold_elapses() {
         .expect("b");
     assert_eq!(engine.signal_observe(a_key), Some(a));
     assert_eq!(engine.progress(0).observe_notify(), Some(a));
-    assert_eq!(engine.record_observe_notify(a_key, 0, None), Some(a));
+    assert_eq!(
+        engine.record_observe_notify(a_key, 0, MessageId::new(1), false),
+        Some(a)
+    );
     assert!(engine.observe_interest(a).expect("held").is_notify_held(0));
     assert_eq!(engine.signal_observe(b_key), Some(b));
     assert_eq!(
@@ -846,13 +849,16 @@ fn observe_nstart_blocks_same_endpoint_until_hold_elapses() {
             .is_pending()
     );
     assert_eq!(
-        engine.record_observe_notify(b_key, 0, None),
+        engine.record_observe_notify(b_key, 0, MessageId::new(2), false),
         None,
         "record also rejects while held"
     );
     let later = u64::from(ObserveTransmission::NON_TIMEOUT_MS);
     assert_eq!(engine.progress(later).observe_notify(), Some(b));
-    assert_eq!(engine.record_observe_notify(b_key, later, None), Some(b));
+    assert_eq!(
+        engine.record_observe_notify(b_key, later, MessageId::new(3), false),
+        Some(b)
+    );
 }
 
 #[test]
@@ -871,9 +877,9 @@ fn observe_nstart_con_ack_and_other_endpoint() {
     let mid = MessageId::new(0x0c01);
     assert_eq!(engine.signal_observe(a_key), Some(a));
     assert_eq!(engine.progress(0).observe_notify(), Some(a));
-    assert_eq!(engine.record_observe_notify(a_key, 0, Some(mid)), Some(a));
+    assert_eq!(engine.record_observe_notify(a_key, 0, mid, true), Some(a));
     assert_eq!(
-        engine.record_observe_notify(a_key, 0, Some(mid)),
+        engine.record_observe_notify(a_key, 0, mid, true),
         Some(a),
         "idempotent same CON MID"
     );
@@ -885,6 +891,56 @@ fn observe_nstart_con_ack_and_other_endpoint() {
     );
     assert_eq!(engine.ack_observe_con(mid, ep_a), Some(a));
     assert!(!engine.observe_interest(a).expect("acked").is_notify_held(0));
+}
+
+#[test]
+fn reject_observe_notify_matches_non_and_con_mid() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([203, 0, 113, 71], 5683);
+    let key = ObserveKey::new(sample_token(&[0xd1]), ep);
+    let id = engine
+        .insert_observe(ObserveInterest::from(key))
+        .expect("insert");
+    let non_mid = MessageId::new(0x0d01);
+    assert_eq!(
+        engine.record_observe_notify(key, 0, non_mid, false),
+        Some(id)
+    );
+    assert!(
+        engine
+            .reject_observe_notify(MessageId::new(0x0001), ep)
+            .is_none()
+    );
+    assert!(
+        engine
+            .reject_observe_notify(non_mid, Endpoint::v4([203, 0, 113, 9], 5683))
+            .is_none()
+    );
+    assert_eq!(
+        engine
+            .reject_observe_notify(non_mid, ep)
+            .expect("dropped")
+            .key(),
+        key
+    );
+    assert!(engine.lookup_observe(key).is_none());
+
+    let id = engine
+        .insert_observe(ObserveInterest::from(key))
+        .expect("reinsert");
+    let con_mid = MessageId::new(0x0d02);
+    assert_eq!(
+        engine.record_observe_notify(key, 0, con_mid, true),
+        Some(id)
+    );
+    assert_eq!(
+        engine
+            .reject_observe_notify(con_mid, ep)
+            .expect("con rst")
+            .key(),
+        key
+    );
+    assert!(engine.lookup_observe(key).is_none());
 }
 
 #[test]

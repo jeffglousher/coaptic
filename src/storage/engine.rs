@@ -672,25 +672,28 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
     /// Record a sent notification on the row matching `key` (RFC 7641 §4.5).
     ///
-    /// `con_mid` `Some` is CON (resets the 24-hour confirm clock; NSTART hold
-    /// until [`Self::ack_observe_con`]). `None` is NON (starts the 24-hour
+    /// `confirmable` is CON (resets the 24-hour confirm clock; NSTART hold
+    /// until [`Self::ack_observe_con`]). Otherwise NON (starts the 24-hour
     /// clock if unset; NSTART hold for
-    /// [`crate::message::ObserveTransmission::NON_TIMEOUT_MS`]). `None` return when
-    /// no row matches, or when the endpoint already has NSTART outstanding
-    /// notifications and this row is not the holder. Idempotent when this
-    /// row already holds the same CON Message ID. Does not encode, send, or
-    /// invent 4.02 / RST policy.
+    /// [`crate::message::ObserveTransmission::NON_TIMEOUT_MS`]).
+    /// `message_id` is stored on either hold so [`Self::reject_observe_notify`]
+    /// can drop the row on empty RST. `None` return when no row matches, or
+    /// when the endpoint already has NSTART outstanding notifications and
+    /// this row is not the holder. Idempotent when this row already holds
+    /// the same CON Message ID. Does not encode, send, or invent 4.02 / RST
+    /// policy.
     pub fn record_observe_notify(
         &mut self,
         key: ObserveKey,
         now_ms: u64,
-        con_mid: Option<MessageId>,
+        message_id: MessageId,
+        confirmable: bool,
     ) -> Option<SlotId> {
         let id = self.storage.lookup_observe(key)?;
         let mut interest = self.storage.observe_interest(id)?;
         if let Some(existing) = interest.notify_hold() {
             if existing.is_held(now_ms) {
-                if con_mid.is_some() && existing.con_mid() == con_mid {
+                if confirmable && existing.con_mid() == Some(message_id) {
                     return Some(id);
                 }
                 return None;
@@ -702,9 +705,25 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         {
             return None;
         }
-        interest.record_notify(now_ms, con_mid);
+        interest.record_notify(now_ms, message_id, confirmable);
         self.storage.set_observe_interest(id, interest).ok()?;
         Some(id)
+    }
+
+    /// Drop the interest whose outstanding notification used `message_id`.
+    ///
+    /// Empty RST has no Token (RFC 7252). Match is Message ID plus
+    /// endpoint, covering CON wait and CON/NON notify hold. Used by
+    /// [`crate::App::poll`] after RST. Does not send. `None` when no row
+    /// matches. See `knowledge/rfcs/rfc7641.txt` §4.5.
+    pub fn reject_observe_notify(
+        &mut self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let interest = self.storage.observe_interest(id)?;
+        self.storage.take_observe(interest.key())
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.
@@ -922,7 +941,9 @@ fn lookup_observe_unacked<S: Storage + ObserveSlots>(
             continue;
         }
         if interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)
-            || interest.notify_hold().and_then(|h| h.con_mid()) == Some(message_id)
+            || interest
+                .notify_hold()
+                .is_some_and(|h| h.message_id() == message_id)
         {
             return Some(id);
         }

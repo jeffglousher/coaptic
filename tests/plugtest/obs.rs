@@ -69,9 +69,8 @@ fn notify(pair: &mut Pair, token: Token, notify_ty: Type, body: &[u8]) -> (u32, 
     let extra = [Opt::observe(&seq), Opt::content_format(&cf)];
     let mid = pair.server_ids.next();
     let stx = pair.server_reply(notify_ty, Code::CONTENT, mid, token, &extra, body);
-    let con_mid = (notify_ty == Type::Confirmable).then_some(mid);
     pair.server
-        .record_observe_notify(key, pair.now_ms, con_mid)
+        .record_observe_notify(key, pair.now_ms, mid, notify_ty == Type::Confirmable)
         .expect("record notify");
     let crx = pair.exchange_server(stx);
     let got = pair.client.decode_rx(crx).expect("notify decode");
@@ -466,7 +465,7 @@ fn obs_13_block2(variable: bool) {
         .encode_block2_observe_tx(body_id, stx, Type::Confirmable, Code::CONTENT, mid, seq)
         .expect("encode first with Observe");
     pair.server
-        .record_observe_notify(obs_key, pair.now_ms, Some(mid))
+        .record_observe_notify(obs_key, pair.now_ms, mid, true)
         .expect("record CON notify");
     let crx = pair.exchange_server(stx);
     let first_msg = pair.client.decode_rx(crx).expect("first decode");

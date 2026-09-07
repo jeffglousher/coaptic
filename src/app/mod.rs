@@ -380,7 +380,8 @@ where
     /// to a CON request, then the representation in a later CON (new
     /// Message ID; NON request → NON). Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
-    /// [`Self::notify`].
+    /// [`Self::notify`]. Empty RST matching a notification Message ID
+    /// drops that observer (RFC 7641 §4.5; RST has no Token).
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
     /// is the [`Response`] ([`Response::body`] when Block2 / Q-Block2
@@ -705,7 +706,8 @@ where
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
         } else {
-            let _ = engine.take_observe(ObserveKey::new(parsed.token(), peer));
+            // RST is Empty (no Token). Match the notify Message ID.
+            let _ = engine.reject_observe_notify(parsed.message_id(), peer);
         }
         let _ = engine.release_rx(rx);
         return Ok(());
@@ -1002,9 +1004,10 @@ where
     };
     outcome?;
 
-    let con_mid = (ty == Type::Confirmable).then_some(mid);
-    let _ = engine.record_observe_notify(interest.key(), now_ms, con_mid);
+    let confirmable = ty == Type::Confirmable;
+    let _ = engine.record_observe_notify(interest.key(), now_ms, mid, confirmable);
     let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+    let con_mid = confirmable.then_some(mid);
     let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, con_mid);
     Ok(())
 }
