@@ -88,7 +88,9 @@ fn delete_test(_req: Request<'_>) -> Response {
 }
 
 fn get_separate(_req: Request<'_>) -> Response {
-    Response::content(SEP_BODY).content_format(ContentFormat::TEXT_PLAIN)
+    Response::content(SEP_BODY)
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .separate()
 }
 
 fn get_query(_req: Request<'_>) -> Response {

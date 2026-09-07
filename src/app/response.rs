@@ -62,7 +62,8 @@ impl IntoResponse for Response {
 /// [`Self::missing_block_nums`]. Snapshot [`Self::ty`] / [`Self::token`] /
 /// [`Self::peer`] are `Some` after a completed client exchange. A 2.01
 /// Created can carry [`Self::location_path`] / [`Self::location_query`]
-/// (bounded, `'static`, no heap).
+/// (bounded, `'static`, no heap). [`Self::separate`] is an empty ACK to a
+/// CON request, then the representation in a later CON (new Message ID).
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};
@@ -92,6 +93,7 @@ pub struct Response {
     location_path_len: u8,
     location_query: [&'static str; LOCATION_MAX],
     location_query_len: u8,
+    separate: bool,
 }
 
 impl Response {
@@ -118,6 +120,7 @@ impl Response {
             location_path_len: 0,
             location_query: [""; LOCATION_MAX],
             location_query_len: 0,
+            separate: false,
         }
     }
 
@@ -430,6 +433,32 @@ impl Response {
     #[must_use]
     pub fn location_queries(&self) -> &[&str] {
         &self.location_query[..usize::from(self.location_query_len)]
+    }
+
+    /// Send as a separate response (RFC 7252 §5.2.2).
+    ///
+    /// A CON request is acknowledged with an empty ACK; the representation
+    /// follows in a new CON with a fresh Message ID and the request Token.
+    /// A NON request is answered with a NON that also uses a fresh Message
+    /// ID. [`App::poll`](super::App::poll) performs both sends. Default is
+    /// piggybacked ACK (CON) or a NON that reuses the request Message ID.
+    ///
+    /// ```
+    /// use coaptic::Response;
+    ///
+    /// let response = Response::content(b"later").separate();
+    /// assert!(response.is_separate());
+    /// ```
+    #[must_use]
+    pub const fn separate(mut self) -> Self {
+        self.separate = true;
+        self
+    }
+
+    /// Whether [`Self::separate`] was set.
+    #[must_use]
+    pub const fn is_separate(&self) -> bool {
+        self.separate
     }
 
     /// Set Observe sequence.

@@ -376,7 +376,9 @@ where
     /// [`Response::missing_blocks`]. When [`Self::echo_freshness`] is set,
     /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with a
     /// minted Echo. Location-Path / Location-Query on the [`Response`]
-    /// are written on the wire. Observe register / deregister and
+    /// are written on the wire. [`Response::separate`] is an empty ACK
+    /// to a CON request, then the representation in a later CON (new
+    /// Message ID; NON request → NON). Observe register / deregister and
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`].
     ///
@@ -796,7 +798,11 @@ where
     };
     let response = apply_observe(engine, now_ms, peer, response, plan);
 
-    let outcome = send_response(engine, io, meta, &response);
+    let outcome = if response.is_separate() {
+        send_separate(engine, io, ids, now_ms, meta, &response)
+    } else {
+        send_response(engine, io, meta, &response)
+    };
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
     }
@@ -1025,6 +1031,79 @@ where
         let _ = engine.release_tx_body(id);
     }
     outcome
+}
+
+fn send_separate<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut Ids,
+    now_ms: u64,
+    meta: SendResponse,
+    response: &Response,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    T: DatagramIo,
+{
+    let key = BlockKey::new(meta.token, meta.dest);
+    if let Some(id) = engine.lookup_tx_body(key) {
+        if engine.tx_body_transfer(id).is_some_and(|t| {
+            matches!(
+                t.role(),
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            )
+        }) {
+            let ty = match meta.ty {
+                Type::Confirmable => Type::Acknowledgement,
+                Type::NonConfirmable => Type::NonConfirmable,
+                Type::Acknowledgement | Type::Reset => return Ok(()),
+            };
+            return continue_outgoing(engine, io, meta, response, ty, id);
+        }
+    }
+
+    let ty = match meta.ty {
+        Type::Confirmable => {
+            send_empty_ack(engine, io, meta.dest, meta.mid)?;
+            Type::Confirmable
+        }
+        Type::NonConfirmable => Type::NonConfirmable,
+        Type::Acknowledgement | Type::Reset => return Ok(()),
+    };
+
+    if meta.no_response.suppresses(response.code()) {
+        return Ok(());
+    }
+
+    let mid = ids.next();
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+
+    let Some(tx) = engine.acquire_tx() else {
+        return Err(Error::Saturated);
+    };
+
+    match encode_response(
+        engine,
+        tx,
+        ty,
+        mid,
+        meta.token,
+        response,
+        response.payload(),
+        None,
+        meta.block1,
+    ) {
+        Ok(()) => finish_send(engine, io, tx, meta.dest, pending),
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+            let _ = engine.release_tx(tx);
+            let meta = SendResponse { mid, ..meta };
+            start_outgoing(engine, io, meta, response, ty, key)
+        }
+        Err(e) => {
+            let _ = engine.release_tx(tx);
+            Err(e.into())
+        }
+    }
 }
 
 fn send_response<S, T>(
