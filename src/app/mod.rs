@@ -1102,7 +1102,10 @@ where
     T: DatagramIo,
 {
     if meta.no_response.suppresses(response.code()) {
-        return Ok(());
+        return match meta.ty {
+            Type::Confirmable => send_empty_ack(engine, io, meta.dest, meta.mid),
+            Type::NonConfirmable | Type::Acknowledgement | Type::Reset => Ok(()),
+        };
     }
 
     let ty = match meta.ty {

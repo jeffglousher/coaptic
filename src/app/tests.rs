@@ -749,6 +749,34 @@ fn no_response_suppresses_success() {
 }
 
 #[test]
+fn no_response_con_sends_empty_ack() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let req_mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req_ty(
+        Type::Confirmable,
+        Code::GET,
+        &["sensors", "temp"],
+        &[],
+        Some(u32::from(crate::message::NoResponse::SUPPRESS_2)),
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_temp))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    assert_eq!(app.transport().sent_n, 1, "empty ACK only");
+    let (_, bytes, n) = app.transport().sent[0].expect("ack");
+    let ack = decode(&bytes[..n]).expect("decode");
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), req_mid);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn well_known_core_lists_registered_paths() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
