@@ -270,13 +270,17 @@ impl ObserveExpiry {
 ///
 /// NSTART counts these per remote [`Endpoint`]. CON is outstanding until
 /// empty ACK or give-up; NON until [`ObserveTransmission::NON_TIMEOUT_MS`].
-/// See `knowledge/rfcs/rfc7641.txt` §4.5.1.
+/// Both variants store the notification Message ID so an empty RST can
+/// drop the interest (RFC 7641 §4.5; RST has no Token). See
+/// `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObserveNotifyHold {
     /// NON notification; outstanding until `until_ms` (`now_ms` domain).
     Non {
         /// Absolute millisecond time when this NON hold ends.
         until_ms: u64,
+        /// Message ID of the NON notification (RST match).
+        message_id: MessageId,
     },
     /// CON notification; outstanding until ACK or give-up.
     Con {
@@ -288,9 +292,10 @@ pub enum ObserveNotifyHold {
 impl ObserveNotifyHold {
     /// [`Self::Non`] until `now_ms + ObserveTransmission::NON_TIMEOUT_MS`.
     #[must_use]
-    pub const fn non(now_ms: u64) -> Self {
+    pub const fn non(now_ms: u64, message_id: MessageId) -> Self {
         Self::Non {
             until_ms: now_ms.saturating_add(ObserveTransmission::NON_TIMEOUT_MS as u64),
+            message_id,
         }
     }
 
@@ -304,7 +309,7 @@ impl ObserveNotifyHold {
     #[must_use]
     pub const fn is_held(self, now_ms: u64) -> bool {
         match self {
-            Self::Non { until_ms } => now_ms < until_ms,
+            Self::Non { until_ms, .. } => now_ms < until_ms,
             Self::Con { .. } => true,
         }
     }
@@ -315,6 +320,16 @@ impl ObserveNotifyHold {
         match self {
             Self::Non { .. } => None,
             Self::Con { message_id } => Some(message_id),
+        }
+    }
+
+    /// Notification Message ID on either hold (CON or NON).
+    ///
+    /// Empty RST is matched by this ID plus endpoint, not by Token.
+    #[must_use]
+    pub const fn message_id(self) -> MessageId {
+        match self {
+            Self::Non { message_id, .. } | Self::Con { message_id } => message_id,
         }
     }
 }
@@ -470,24 +485,22 @@ impl ObserveInterest {
 
     /// Record a sent notification: 24-hour confirm clock and NSTART hold.
     ///
-    /// `con_mid` `Some` is a CON notify (resets the 24-hour clock; hold until
-    /// ACK). `None` is NON (starts the 24-hour clock if unset; hold for
-    /// [`ObserveTransmission::NON_TIMEOUT_MS`]). Does not encode or send.
-    /// See `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
-    pub fn record_notify(&mut self, now_ms: u64, con_mid: Option<MessageId>) {
-        match con_mid {
-            Some(message_id) => {
+    /// `confirmable` is a CON notify (resets the 24-hour clock; hold until
+    /// ACK). Otherwise NON (starts the 24-hour clock if unset; hold for
+    /// [`ObserveTransmission::NON_TIMEOUT_MS`]). `message_id` is stored on
+    /// either hold so an empty RST can drop this row. Does not encode or
+    /// send. See `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
+    pub fn record_notify(&mut self, now_ms: u64, message_id: MessageId, confirmable: bool) {
+        if confirmable {
+            self.confirm_due_ms =
+                Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
+            self.notify_hold = Some(ObserveNotifyHold::con(message_id));
+        } else {
+            if self.confirm_due_ms.is_none() {
                 self.confirm_due_ms =
                     Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
-                self.notify_hold = Some(ObserveNotifyHold::con(message_id));
             }
-            None => {
-                if self.confirm_due_ms.is_none() {
-                    self.confirm_due_ms =
-                        Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
-                }
-                self.notify_hold = Some(ObserveNotifyHold::non(now_ms));
-            }
+            self.notify_hold = Some(ObserveNotifyHold::non(now_ms, message_id));
         }
     }
 
