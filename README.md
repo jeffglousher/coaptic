@@ -54,7 +54,7 @@ cargo test -p coaptic-plugtest --features dtls
 cargo run -p coaptic-plugtest --bin dogfood
 ```
 
-The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise). CI smokes `--iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#125](https://github.com/jeffglousher/coaptic/issues/125) (dogfood + metrics).
+The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise). It prints timing plus `Engine::metrics`. CI smokes `--iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#125](https://github.com/jeffglousher/coaptic/issues/125) (dogfood + metrics).
 
 ## Example
 

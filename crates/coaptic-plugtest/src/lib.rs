@@ -17,8 +17,8 @@
 //!   [`coap_rs::CoapRsPeer`] (`coap` / coap-rs). Add a new backend by
 //!   implementing [`peer::Peer`].
 //! - [`dogfood`] — timed coaptic ↔ coap-rs loops (GET/PUT/POST, Observe
-//!   register, block-wise). Wall min/mean/p50/p99/max plus Engine occupancy
-//!   (counters when the #125 snapshot API is on the crate graph).
+//!   register, block-wise). Wall min/mean/p50/p99/max, Engine occupancy, and
+//!   [`coaptic::storage::Metrics`] via [`coaptic::storage::Engine::metrics`].
 //! - [`runner`] — each vendored TD × useful role pairs (coaptic server /
 //!   coap-rs client, and the swap). Same-impl coaptic↔coaptic is also run
 //!   for base GETs.

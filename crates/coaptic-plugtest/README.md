@@ -8,7 +8,7 @@ cargo test -p coaptic-plugtest --features dtls
 cargo run -p coaptic-plugtest --bin dogfood
 ```
 
-Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register, Block2/Block1. Prints wall min/mean/p50/p99/max and Engine occupancy. Short CI smoke: `--iterations 2`.
+Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register, Block2/Block1. Prints wall min/mean/p50/p99/max, Engine occupancy, and `Engine::metrics` counters. Short CI smoke: `--iterations 2`.
 
 This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness is Engine↔Engine only (no sockets).
 
