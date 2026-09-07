@@ -13,6 +13,12 @@ pub const INLINE_PAYLOAD: usize = 128;
 /// Complete assembled client body copied into a [`Response`] (shipped profile RX body).
 pub const RESPONSE_BODY: usize = 4096;
 
+/// Maximum Location-Path or Location-Query values a [`Response`] can carry.
+///
+/// Same bound as [`super::MAX_PATH_SEGMENTS`]. Extra values passed to
+/// [`Response::location_path`] / [`Response::location_query`] are ignored.
+pub const LOCATION_MAX: usize = 8;
+
 #[derive(Clone, Copy, Debug)]
 enum Payload {
     Empty,
@@ -54,7 +60,9 @@ impl IntoResponse for Response {
 /// [`Self::body`] (assembled Block2 / Q-Block2, truncated at
 /// [`RESPONSE_BODY`]) / [`Self::problem_details`] /
 /// [`Self::missing_block_nums`]. Snapshot [`Self::ty`] / [`Self::token`] /
-/// [`Self::peer`] are `Some` after a completed client exchange.
+/// [`Self::peer`] are `Some` after a completed client exchange. A 2.01
+/// Created can carry [`Self::location_path`] / [`Self::location_query`]
+/// (bounded, `'static`, no heap).
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};
@@ -80,6 +88,10 @@ pub struct Response {
     body_len: u16,
     has_body: bool,
     echo: Option<Echo>,
+    location_path: [&'static str; LOCATION_MAX],
+    location_path_len: u8,
+    location_query: [&'static str; LOCATION_MAX],
+    location_query_len: u8,
 }
 
 impl Response {
@@ -102,6 +114,10 @@ impl Response {
             body_len: 0,
             has_body: false,
             echo: None,
+            location_path: [""; LOCATION_MAX],
+            location_path_len: 0,
+            location_query: [""; LOCATION_MAX],
+            location_query_len: 0,
         }
     }
 
@@ -119,6 +135,9 @@ impl Response {
     }
 
     /// 2.01 Created.
+    ///
+    /// Attach the new resource with [`Self::location_path`] /
+    /// [`Self::location_query`].
     #[must_use]
     pub const fn created() -> Self {
         Self::new(Code::CREATED)
@@ -348,6 +367,69 @@ impl Response {
     pub const fn max_age(mut self, seconds: u32) -> Self {
         self.max_age = Some(seconds);
         self
+    }
+
+    /// Append a Location-Path segment.
+    ///
+    /// Empty segments and values past [`LOCATION_MAX`] are ignored.
+    /// [`App::poll`](super::App::poll) writes these on the wire.
+    ///
+    /// ```
+    /// use coaptic::Response;
+    ///
+    /// let response = Response::created()
+    ///     .location_path("location1")
+    ///     .location_path("location2");
+    /// assert_eq!(response.location_paths(), &["location1", "location2"]);
+    /// ```
+    #[must_use]
+    pub const fn location_path(mut self, segment: &'static str) -> Self {
+        if segment.is_empty() {
+            return self;
+        }
+        let n = self.location_path_len as usize;
+        if n < LOCATION_MAX {
+            self.location_path[n] = segment;
+            self.location_path_len += 1;
+        }
+        self
+    }
+
+    /// Append a Location-Query value.
+    ///
+    /// Empty values and values past [`LOCATION_MAX`] are ignored.
+    ///
+    /// ```
+    /// use coaptic::Response;
+    ///
+    /// let response = Response::created()
+    ///     .location_query("first=1")
+    ///     .location_query("second=2");
+    /// assert_eq!(response.location_queries(), &["first=1", "second=2"]);
+    /// ```
+    #[must_use]
+    pub const fn location_query(mut self, query: &'static str) -> Self {
+        if query.is_empty() {
+            return self;
+        }
+        let n = self.location_query_len as usize;
+        if n < LOCATION_MAX {
+            self.location_query[n] = query;
+            self.location_query_len += 1;
+        }
+        self
+    }
+
+    /// Location-Path segments in insertion order.
+    #[must_use]
+    pub fn location_paths(&self) -> &[&str] {
+        &self.location_path[..usize::from(self.location_path_len)]
+    }
+
+    /// Location-Query values in insertion order.
+    #[must_use]
+    pub fn location_queries(&self) -> &[&str] {
+        &self.location_query[..usize::from(self.location_query_len)]
     }
 
     /// Set Observe sequence.

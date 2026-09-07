@@ -33,6 +33,14 @@ fn post_led(_: Request<'_>) -> Response {
     Response::changed()
 }
 
+fn post_create(_: Request<'_>) -> Response {
+    Response::created()
+        .location_path("location1")
+        .location_path("location2")
+        .location_query("first=1")
+        .location_query("second=2")
+}
+
 fn put_body(req: Request<'_>) -> Response {
     if req.has_body() {
         Response::changed().payload_copy(req.body().unwrap_or(&[]))
@@ -230,6 +238,35 @@ fn get_sensors_temp_is_content() {
     assert_eq!(&parsed.payload[..parsed.payload_len], b"21.5");
     assert_eq!(parsed.content_format, Some(ContentFormat::TEXT_PLAIN));
     assert!(parsed.block2.is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn created_response_carries_location_path_and_query() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::POST, &["items"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise(false)
+        .route(&["items"], post(post_create))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let (_, bytes, n) = app.transport().last_send.expect("sent");
+    let parsed = decode(&bytes[..n]).expect("decode created");
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::CREATED);
+    let mut segs = parsed.location_path();
+    assert_eq!(segs.next().map(|s| s.expect("utf8")), Some("location1"));
+    assert_eq!(segs.next().map(|s| s.expect("utf8")), Some("location2"));
+    assert!(segs.next().is_none());
+    let mut qs = parsed.location_query();
+    assert_eq!(qs.next().map(|s| s.expect("utf8")), Some("first=1"));
+    assert_eq!(qs.next().map(|s| s.expect("utf8")), Some("second=2"));
+    assert!(qs.next().is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -712,6 +749,14 @@ fn response_builders() {
     assert_eq!(cf.max_age_secs(), Some(60));
     assert_eq!(cf.observe_seq(), Some(3));
     assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
+    let created = Response::created()
+        .location_path("location1")
+        .location_path("location2")
+        .location_query("first=1")
+        .location_query("second=2");
+    assert_eq!(created.code(), Code::CREATED);
+    assert_eq!(created.location_paths(), &["location1", "location2"]);
+    assert_eq!(created.location_queries(), &["first=1", "second=2"]);
     let echo = EchoOpt::mint(9, &[]).expect("mint");
     assert_eq!(
         Response::unauthorized().echo(echo).echo_option(),

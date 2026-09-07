@@ -76,6 +76,10 @@ fn put_test(req: Request<'_>) -> Response {
 fn post_test(_req: Request<'_>) -> Response {
     TEST_EXISTS.store(true, Ordering::SeqCst);
     Response::created()
+        .location_path("location1")
+        .location_path("location2")
+        .location_query("first=1")
+        .location_query("second=2")
 }
 
 fn delete_test(_req: Request<'_>) -> Response {

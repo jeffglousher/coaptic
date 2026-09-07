@@ -141,7 +141,6 @@ struct SeparateJob {
 struct InterceptIo<T> {
     inner: CapturingIo<T>,
     separate: Arc<Mutex<Vec<SeparateJob>>>,
-    ids: Arc<Mutex<Ids>>,
 }
 
 impl<T: DatagramIo<Error = std::io::Error>> DatagramIo for InterceptIo<T> {
@@ -150,7 +149,7 @@ impl<T: DatagramIo<Error = std::io::Error>> DatagramIo for InterceptIo<T> {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         match self.inner.recv(buf)? {
             Some((n, ep)) => {
-                if intercept_datagram(&mut self.inner, &self.separate, &self.ids, &buf[..n], ep)? {
+                if intercept_datagram(&mut self.inner, &self.separate, &buf[..n], ep)? {
                     return Ok(None);
                 }
                 Ok(Some((n, ep)))
@@ -168,7 +167,6 @@ impl<T: DatagramIo<Error = std::io::Error>> DatagramIo for InterceptIo<T> {
 fn intercept_datagram<T: DatagramIo<Error = std::io::Error>>(
     io: &mut CapturingIo<T>,
     separate: &Arc<Mutex<Vec<SeparateJob>>>,
-    ids: &Arc<Mutex<Ids>>,
     bytes: &[u8],
     ep: Endpoint,
 ) -> Result<bool, std::io::Error> {
@@ -185,33 +183,6 @@ fn intercept_datagram<T: DatagramIo<Error = std::io::Error>>(
             token: parsed.token(),
             con: parsed.ty() == Type::Confirmable,
         });
-        return Ok(true);
-    }
-    if parsed.code() == Code::POST && path == ["test"] {
-        let loc = [
-            Opt::location_path("location1"),
-            Opt::location_path("location2"),
-            Opt::location_query("first=1"),
-            Opt::location_query("second=2"),
-        ];
-        let mut opts = OptionsBuilder::<8>::new();
-        for o in loc {
-            let _ = opts.push(o);
-        }
-        let ty = if parsed.ty() == Type::Confirmable {
-            Type::Acknowledgement
-        } else {
-            Type::NonConfirmable
-        };
-        let mid = if parsed.ty() == Type::Confirmable {
-            parsed.message_id()
-        } else {
-            ids.lock().expect("ids").next()
-        };
-        let msg = Message::new(ty, Code::CREATED, mid)
-            .with_token(parsed.token())
-            .with_options(opts.as_slice());
-        send_msg(io, ep, &msg)?;
         return Ok(true);
     }
     Ok(false)
@@ -240,7 +211,6 @@ fn server_loop(
     let io = InterceptIo {
         inner: CapturingIo::new(sock, addr, capture),
         separate: Arc::clone(&separate),
-        ids: Arc::clone(&ids),
     };
     let mut app = bind_site(io);
     let origin = Instant::now();

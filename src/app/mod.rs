@@ -101,7 +101,7 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
-pub use response::{INLINE_PAYLOAD, IntoResponse, RESPONSE_BODY, Response};
+pub use response::{INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response};
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
@@ -375,8 +375,10 @@ where
     /// Q-Block1 holes after `NON_RECEIVE_TIMEOUT` use
     /// [`Response::missing_blocks`]. When [`Self::echo_freshness`] is set,
     /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with a
-    /// minted Echo. Observe register / deregister and [`ObserveSource`]
-    /// notify run here; caller-built notifications use [`Self::notify`].
+    /// minted Echo. Location-Path / Location-Query on the [`Response`]
+    /// are written on the wire. Observe register / deregister and
+    /// [`ObserveSource`] notify run here; caller-built notifications use
+    /// [`Self::notify`].
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
     /// is the [`Response`] ([`Response::body`] when Block2 / Q-Block2
@@ -1300,18 +1302,24 @@ fn encode_response<S: Storage + DatagramSlots>(
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
     let block1_enc = block1.map(|b| b.encode());
     let echo = response.echo_option();
-    let mut opts = OptionsBuilder::<8>::new();
+    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
     if let Some(etag) = response.etag_bytes() {
         let _ = opts.push(Opt::etag(etag));
     }
     if let Some(ref encoded) = observe {
         let _ = opts.push(Opt::observe(encoded));
     }
+    for segment in response.location_paths() {
+        let _ = opts.push(Opt::location_path(segment));
+    }
     if let Some(ref encoded) = cf {
         let _ = opts.push(Opt::content_format(encoded));
     }
     if let Some(ref encoded) = max_age {
         let _ = opts.push(Opt::max_age(encoded));
+    }
+    for query in response.location_queries() {
+        let _ = opts.push(Opt::location_query(query));
     }
     if let Some(ref encoded) = block_enc {
         if block.is_some_and(|b| b.q_block) {
