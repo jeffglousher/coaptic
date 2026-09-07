@@ -69,3 +69,24 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo doc --no-deps --all-features
+
+  # Tarball check only — do not use `cargo publish --dry-run` here.
+  # After 0.1.0 is live, dry-run of the same version fails CI.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Published crate stays lean
+        run: |
+          set -euo pipefail
+          cargo package -p coaptic --list --locked
+          if cargo package -p coaptic --list --locked | grep -E '^(knowledge/|crates/|\.github/|\.agents/)'; then
+            echo "::error::published crate must not include knowledge/, crates/, .github/, or .agents/"
+            exit 1
+          fi
+      - run: cargo package -p coaptic --locked
