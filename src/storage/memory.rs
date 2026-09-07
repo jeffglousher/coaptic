@@ -80,6 +80,38 @@ pub trait MemoryProfile {
     type Exchange: SlotPool + Default;
 }
 
+/// Selects [`Memory`] vs [`Memory<P, WithBodies<P>>`] from a const `block_wise` flag.
+///
+/// [`crate::App`] uses this so `.block_wise::<false>()` stores only
+/// [`Memory<P>`] — not an enum padded to the WithBodies layout.
+pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
+    /// Engine storage for this `block_wise` flag.
+    type Store: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + Exchanges
+        + Default;
+}
+
+impl<P> MemoryLayout<false> for P
+where
+    P: MemoryProfile,
+    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+{
+    type Store = Memory<P>;
+}
+
+impl<P> MemoryLayout<true> for P
+where
+    P: MemoryProfile,
+    Memory<P, WithBodies<P>>:
+        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
+{
+    type Store = Memory<P, WithBodies<P>>;
+}
+
 /// Marker: [`Memory`] has no body pools.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NoBodies;

@@ -20,8 +20,8 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeKey,
-    Exchanges, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
-    PendingCons, Present, SlotId, Storage,
+    Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots,
+    OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
@@ -46,7 +46,7 @@ use super::{App, Error, Method};
 /// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
-///     .block_wise(false)
+///     .block_wise::<false>()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -290,7 +290,7 @@ enum OutgoingObserve {
 /// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
-///     .block_wise(false)
+///     .block_wise::<false>()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -298,11 +298,11 @@ enum OutgoingObserve {
 /// app.poll(0).unwrap();
 /// let _ = app.take_response(call);
 /// ```
-pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing>
+pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing, const BLOCK_WISE: bool = false>
 where
-    P: crate::storage::MemoryProfile,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N>,
+    app: &'a mut App<P, T, N, BLOCK_WISE>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -322,58 +322,62 @@ where
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize> App<P, T, N>
+impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
 {
     /// CON GET builder. Next: [`Outgoing::to`].
     ///
     /// Distinct from the site router [`get`](super::get).
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
-    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Delete, path)
     }
 
     /// CON FETCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::IPatch, path)
     }
 
     /// CON request builder for `method`. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn request(&mut self, method: Method, path: impl IntoPath) -> Outgoing<'_, P, T, N> {
+    pub fn request(
+        &mut self,
+        method: Method,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -397,12 +401,9 @@ where
     }
 }
 
-impl<P, T, const N: usize> App<P, T, N>
+impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: crate::storage::BodySlots + ObserveSlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>:
-        crate::storage::BodySlots + ObserveSlots,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
 {
     /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll)
     /// has completed it.
@@ -426,13 +427,13 @@ where
     }
 }
 
-impl<'a, P, T, const N: usize, Dest> Outgoing<'a, P, T, N, Dest>
+impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool> Outgoing<'a, P, T, N, Dest, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present> {
+    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -559,14 +560,10 @@ where
     }
 }
 
-impl<P, T, const N: usize> Outgoing<'_, P, T, N, Present>
+impl<P, T, const N: usize, const BLOCK_WISE: bool> Outgoing<'_, P, T, N, Present, BLOCK_WISE>
 where
-    P: crate::storage::MemoryProfile,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
     T: DatagramIo,
-    crate::storage::Memory<P>:
-        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     /// Encode the request, record the Exchange, and send.
     ///
@@ -607,14 +604,13 @@ where
             block2: self.block2,
             observe,
         };
-        let call = match &mut self.app.engine {
-            super::EngineSlot::Datagram(engine) => {
-                send_client(engine, &mut self.app.io, &mut self.app.ids, now_ms, spec)
-            }
-            super::EngineSlot::BlockWise(engine) => {
-                send_client(engine, &mut self.app.io, &mut self.app.ids, now_ms, spec)
-            }
-        }?;
+        let call = send_client(
+            &mut self.app.engine,
+            &mut self.app.io,
+            &mut self.app.ids,
+            now_ms,
+            spec,
+        )?;
         self.app.lives.insert(LiveCall {
             call,
             path,
@@ -627,7 +623,9 @@ where
     }
 }
 
-impl<P: crate::storage::MemoryProfile, T, const N: usize> App<P, T, N> {
+impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
+    App<P, T, N, BLOCK_WISE>
+{
     fn next_token(&mut self) -> Token {
         self.tokens = self.tokens.wrapping_add(1);
         if self.tokens == 0 {
@@ -1424,82 +1422,36 @@ fn copy_tx_range<Mem: Storage + BodySlots>(
     Ok(issued.len())
 }
 
-fn rx_body_payload<P>(engine: &super::EngineSlot<P>, id: SlotId) -> Option<&[u8]>
-where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: BodySlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: BodySlots,
-{
-    match engine {
-        super::EngineSlot::Datagram(engine) => engine.rx_body_payload(id),
-        super::EngineSlot::BlockWise(engine) => engine.rx_body_payload(id),
-    }
+fn rx_body_payload<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) -> Option<&[u8]> {
+    engine.rx_body_payload(id)
 }
 
-fn release_rx_body<P>(engine: &mut super::EngineSlot<P>, id: SlotId)
-where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: BodySlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: BodySlots,
-{
-    match engine {
-        super::EngineSlot::Datagram(engine) => {
-            let _ = engine.release_rx_body(id);
-        }
-        super::EngineSlot::BlockWise(engine) => {
-            let _ = engine.release_rx_body(id);
-        }
-    }
+fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotId) {
+    let _ = engine.release_rx_body(id);
 }
 
-fn client_observe_live<P>(engine: &super::EngineSlot<P>, call: Call) -> bool
-where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: ObserveSlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
-{
+fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
     let key = ObserveKey::new(call.token(), call.peer());
-    match engine {
-        super::EngineSlot::Datagram(engine) => engine.lookup_observe(key).is_some(),
-        super::EngineSlot::BlockWise(engine) => engine.lookup_observe(key).is_some(),
-    }
+    engine.lookup_observe(key).is_some()
 }
 
-fn take_client_observe<P>(engine: &mut super::EngineSlot<P>, key: ObserveKey)
-where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: ObserveSlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
-{
-    match engine {
-        super::EngineSlot::Datagram(engine) => {
-            let _ = engine.take_observe(key);
-        }
-        super::EngineSlot::BlockWise(engine) => {
-            let _ = engine.take_observe(key);
-        }
-    }
+fn take_client_observe<Mem: Storage + ObserveSlots>(engine: &mut Engine<Mem>, key: ObserveKey) {
+    let _ = engine.take_observe(key);
 }
 
-fn reuse_observe_token<P, T, const N: usize>(
-    app: &mut App<P, T, N>,
+fn reuse_observe_token<P, T, const N: usize, const BLOCK_WISE: bool>(
+    app: &mut App<P, T, N, BLOCK_WISE>,
     path: Path<'static>,
     dest: Endpoint,
 ) -> Token
 where
-    P: crate::storage::MemoryProfile,
-    crate::storage::Memory<P>: ObserveSlots,
-    crate::storage::Memory<P, crate::storage::WithBodies<P>>: ObserveSlots,
+    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE>,
 {
     if let Some(token) = app.lives.token_for(path, dest) {
         return token;
     }
     let resource = ObserveResource::from_path(path.segments());
-    let found = match &app.engine {
-        super::EngineSlot::Datagram(engine) => observe_token_on(engine, resource, dest),
-        super::EngineSlot::BlockWise(engine) => observe_token_on(engine, resource, dest),
-    };
-    found.unwrap_or_else(|| app.next_token())
+    observe_token_on(&app.engine, resource, dest).unwrap_or_else(|| app.next_token())
 }
 
 fn observe_token_on<Mem>(

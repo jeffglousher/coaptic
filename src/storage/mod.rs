@@ -57,7 +57,7 @@ pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 pub use io::{DatagramIo, DatagramIoError};
-pub use memory::{Memory, MemoryProfile, NoBodies, WithBodies};
+pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool};
 pub use progress::Progress;

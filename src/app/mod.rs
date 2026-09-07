@@ -45,7 +45,7 @@
 //! #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
 //! # }
 //! let mut app = App::profile::<profiles::Default>()
-//!     .block_wise(true)
+//!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .route("leds/0", get(get_led).put(put_led))
 //!     .well_known_core()
@@ -91,9 +91,9 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, Endpoint, Engine,
-    EngineBuilder, Exchanges, Memory, MemoryProfile, Missing, ObserveInterest, ObserveKey,
-    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit,
-    SlotError, SlotId, Storage, WithBodies,
+    EngineBuilder, Exchanges, Memory, MemoryLayout, MemoryProfile, Missing, ObserveInterest,
+    ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover,
+    Retransmit, SlotError, SlotId, Storage, WithBodies,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -110,10 +110,8 @@ pub use site::{DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, Site, link_format_capacity
 /// Scratch for one inbound or outbound datagram (crate Default profile).
 const DATAGRAM_SCRATCH: usize = 1472;
 
-enum EngineSlot<P: MemoryProfile> {
-    Datagram(Engine<Memory<P>>),
-    BlockWise(Engine<Memory<P, WithBodies<P>>>),
-}
+/// Engine storage selected by [`AppBuilder::block_wise`].
+pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_WISE>>::Store;
 
 /// CoAP app: profile memory + transport + a bounded [`Site`].
 ///
@@ -121,12 +119,19 @@ enum EngineSlot<P: MemoryProfile> {
 /// Outbound work is [`Self::get`] / [`Self::put`] → [`Outgoing::send`] →
 /// [`Self::take_response`]. The reactor owns per-slot state machines
 /// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
-/// raise it with [`AppBuilder::routes`]. `App` does not own a global
-/// mutable shared bag. You do not need [`crate::storage::Access`] on this
-/// path — [`Self::engine_mut`] is the advanced escape hatch.
-pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usize = DEFAULT_ROUTES>
+/// raise it with [`AppBuilder::routes`]. `BLOCK_WISE` is
+/// [`AppBuilder::block_wise`]: `false` stores only [`Memory<P>`] (no body
+/// pool arrays). You do not need [`crate::storage::Access`] on this path —
+/// [`Self::engine_mut`] is the advanced escape hatch.
+pub struct App<
+    P: MemoryProfile = crate::profiles::Default,
+    T = (),
+    const N: usize = DEFAULT_ROUTES,
+    const BLOCK_WISE: bool = false,
+> where
+    P: MemoryLayout<BLOCK_WISE>,
 {
-    engine: EngineSlot<P>,
+    engine: Engine<AppStore<P, BLOCK_WISE>>,
     io: T,
     site: Site<N>,
     ids: Ids,
@@ -139,10 +144,16 @@ pub struct App<P: MemoryProfile = crate::profiles::Default, T = (), const N: usi
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
 /// [`route`](Self::route) → [`bind`](Self::bind).
 ///
-/// [`Self::block_wise`] is required before bind (typestate). `true` enables
-/// body pools for Block / Q-Block; `false` keeps datagram slots only.
-pub struct AppBuilder<P: MemoryProfile, Block = Missing, const N: usize = DEFAULT_ROUTES> {
-    block_wise: Option<bool>,
+/// [`Self::block_wise`] is required before bind (typestate).
+/// `.block_wise::<true>()` enables body pools for Block / Q-Block;
+/// `.block_wise::<false>()` keeps datagram slots only and does not reserve
+/// body-pool RAM on [`App`].
+pub struct AppBuilder<
+    P: MemoryProfile,
+    Block = Missing,
+    const N: usize = DEFAULT_ROUTES,
+    const BLOCK_WISE: bool = false,
+> {
     site: Site<N>,
     echo_fresh_ms: Option<u64>,
     _p: PhantomData<P>,
@@ -154,7 +165,6 @@ impl App {
     #[must_use]
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
         AppBuilder {
-            block_wise: None,
             site: Site::new(),
             echo_fresh_ms: None,
             _p: PhantomData,
@@ -163,7 +173,9 @@ impl App {
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
+impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
+    AppBuilder<P, Block, N, BLOCK_WISE>
+{
     /// Site table size (default [`DEFAULT_ROUTES`]). Call before
     /// [`Self::route`].
     ///
@@ -171,7 +183,7 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
     ///
     /// If a route is already registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M> {
+    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -182,7 +194,6 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
             site.well_known_core();
         }
         AppBuilder {
-            block_wise: self.block_wise,
             site,
             echo_fresh_ms: self.echo_fresh_ms,
             _p: PhantomData,
@@ -231,12 +242,14 @@ impl<P: MemoryProfile, Block, const N: usize> AppBuilder<P, Block, N> {
     }
 }
 
-impl<P: MemoryProfile, const N: usize> AppBuilder<P, Missing, N> {
+impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, N, PREV> {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
+    ///
+    /// The flag is a const generic so [`App`] RAM matches Storage:
+    /// `.block_wise::<false>()` does not reserve RX/TX body arrays.
     #[must_use]
-    pub fn block_wise(self, enabled: bool) -> AppBuilder<P, Present, N> {
+    pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
         AppBuilder {
-            block_wise: Some(enabled),
             site: self.site,
             echo_fresh_ms: self.echo_fresh_ms,
             _p: PhantomData,
@@ -245,23 +258,16 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Missing, N> {
     }
 }
 
-impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
-    /// Construct profile [`Memory`] and bind `io`.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, N>, BuildError> {
-        let enabled = self.block_wise.expect("typestate: block_wise was set");
-        let engine = if enabled {
-            let built = EngineBuilder::new()
-                .profile::<P>()
-                .block_wise(true)
-                .build(Memory::<P>::with_block_wise())?;
-            EngineSlot::BlockWise(built)
-        } else {
-            let built = EngineBuilder::new()
-                .profile::<P>()
-                .block_wise(false)
-                .build(Memory::<P>::new())?;
-            EngineSlot::Datagram(built)
-        };
+impl<P, const N: usize> AppBuilder<P, Present, N, false>
+where
+    P: MemoryProfile + MemoryLayout<false, Store = Memory<P>>,
+{
+    /// Construct profile [`Memory`] (datagram pools only) and bind `io`.
+    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, false>, BuildError> {
+        let engine = EngineBuilder::new()
+            .profile::<P>()
+            .block_wise(false)
+            .build(Memory::<P>::new())?;
         Ok(App {
             engine,
             io,
@@ -275,7 +281,32 @@ impl<P: MemoryProfile, const N: usize> AppBuilder<P, Present, N> {
     }
 }
 
-impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
+impl<P, const N: usize> AppBuilder<P, Present, N, true>
+where
+    P: MemoryProfile + MemoryLayout<true, Store = Memory<P, WithBodies<P>>>,
+{
+    /// Construct profile [`Memory`] with body pools and bind `io`.
+    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, true>, BuildError> {
+        let engine = EngineBuilder::new()
+            .profile::<P>()
+            .block_wise(true)
+            .build(Memory::<P>::with_block_wise())?;
+        Ok(App {
+            engine,
+            io,
+            site: self.site,
+            ids: Ids::new(1),
+            tokens: 0,
+            inbox: client::ClientInbox::new(),
+            lives: client::ClientLives::new(),
+            echo_fresh_ms: self.echo_fresh_ms,
+        })
+    }
+}
+
+impl<P: MemoryLayout<BLOCK_WISE>, T, const N: usize, const BLOCK_WISE: bool>
+    App<P, T, N, BLOCK_WISE>
+{
     /// Bind `methods` on Uri-Path `path`.
     ///
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
@@ -315,11 +346,8 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     /// The happy path is [`Self::poll`]. Use this when you need explicit
     /// slots or [`crate::storage::Access`].
     #[must_use]
-    pub fn engine(&self) -> EngineRef<'_, P> {
-        match &self.engine {
-            EngineSlot::Datagram(engine) => EngineRef::Datagram(engine),
-            EngineSlot::BlockWise(engine) => EngineRef::BlockWise(engine),
-        }
+    pub const fn engine(&self) -> &Engine<AppStore<P, BLOCK_WISE>> {
+        &self.engine
     }
 
     /// Mutably borrow the Engine (advanced path).
@@ -328,11 +356,8 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     /// [`crate::storage::AccessMut`], custom RST / remaining 4.xx, and
     /// BERT edges (future / backlog). [`Self::poll`] already pins and
     /// releases; App handlers do not need this.
-    pub fn engine_mut(&mut self) -> EngineMut<'_, P> {
-        match &mut self.engine {
-            EngineSlot::Datagram(engine) => EngineMut::Datagram(engine),
-            EngineSlot::BlockWise(engine) => EngineMut::BlockWise(engine),
-        }
+    pub const fn engine_mut(&mut self) -> &mut Engine<AppStore<P, BLOCK_WISE>> {
+        &mut self.engine
     }
 
     /// Transport.
@@ -353,13 +378,10 @@ impl<P: MemoryProfile, T, const N: usize> App<P, T, N> {
     }
 }
 
-impl<P, T, const N: usize> App<P, T, N>
+impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
 where
-    P: MemoryProfile,
+    P: MemoryLayout<BLOCK_WISE>,
     T: DatagramIo,
-    Memory<P>: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
-    Memory<P, WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges,
 {
     /// One loop step: recv, progress, route, handler, send, release.
     ///
@@ -399,28 +421,16 @@ where
     /// [`Access`](crate::storage::Access) / remaining RST policy / BERT
     /// (future / backlog): [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
-        match &mut self.engine {
-            EngineSlot::Datagram(engine) => poll_engine(
-                engine,
-                &mut self.io,
-                &self.site,
-                &mut self.ids,
-                &mut self.inbox,
-                &mut self.lives,
-                self.echo_fresh_ms,
-                now_ms,
-            ),
-            EngineSlot::BlockWise(engine) => poll_engine(
-                engine,
-                &mut self.io,
-                &self.site,
-                &mut self.ids,
-                &mut self.inbox,
-                &mut self.lives,
-                self.echo_fresh_ms,
-                now_ms,
-            ),
-        }
+        poll_engine(
+            &mut self.engine,
+            &mut self.io,
+            &self.site,
+            &mut self.ids,
+            &mut self.inbox,
+            &mut self.lives,
+            self.echo_fresh_ms,
+            now_ms,
+        )
     }
 
     /// Send the current representation to every observer of `path`.
@@ -436,24 +446,14 @@ where
         response: Response,
     ) -> Result<usize, Error<T::Error>> {
         let resource = ObserveResource::from_path(path);
-        match &mut self.engine {
-            EngineSlot::Datagram(engine) => notify_engine(
-                engine,
-                &mut self.io,
-                &mut self.ids,
-                now_ms,
-                resource,
-                &response,
-            ),
-            EngineSlot::BlockWise(engine) => notify_engine(
-                engine,
-                &mut self.io,
-                &mut self.ids,
-                now_ms,
-                resource,
-                &response,
-            ),
-        }
+        notify_engine(
+            &mut self.engine,
+            &mut self.io,
+            &mut self.ids,
+            now_ms,
+            resource,
+            &response,
+        )
     }
 
     /// Mark observers of `path` due. [`Self::poll`] encodes via
@@ -463,50 +463,7 @@ where
     /// already have the [`Response`].
     pub fn signal(&mut self, path: &[&str]) -> usize {
         let resource = ObserveResource::from_path(path);
-        match &mut self.engine {
-            EngineSlot::Datagram(engine) => engine.signal_observe_resource(resource),
-            EngineSlot::BlockWise(engine) => engine.signal_observe_resource(resource),
-        }
-    }
-}
-
-/// Borrowed Engine after `.block_wise(false)` or `.block_wise(true)`.
-///
-/// Advanced path. Prefer [`App::poll`]; see [`App::engine`].
-pub enum EngineRef<'a, P: MemoryProfile> {
-    /// Datagram pools only.
-    Datagram(&'a Engine<Memory<P>>),
-    /// Body pools included.
-    BlockWise(&'a Engine<Memory<P, WithBodies<P>>>),
-}
-
-/// Mutable Engine after `.block_wise(false)` or `.block_wise(true)`.
-///
-/// Advanced path. Prefer [`App::poll`]; see [`App::engine_mut`].
-pub enum EngineMut<'a, P: MemoryProfile> {
-    /// Datagram pools only.
-    Datagram(&'a mut Engine<Memory<P>>),
-    /// Body pools included.
-    BlockWise(&'a mut Engine<Memory<P, WithBodies<P>>>),
-}
-
-impl<P: MemoryProfile> EngineMut<'_, P> {
-    /// Occupied RX slots.
-    #[must_use]
-    pub fn rx_occupied(&mut self) -> usize {
-        match self {
-            Self::Datagram(engine) => engine.rx_occupied(),
-            Self::BlockWise(engine) => engine.rx_occupied(),
-        }
-    }
-
-    /// Occupied TX slots.
-    #[must_use]
-    pub fn tx_occupied(&mut self) -> usize {
-        match self {
-            Self::Datagram(engine) => engine.tx_occupied(),
-            Self::BlockWise(engine) => engine.tx_occupied(),
-        }
+        self.engine.signal_observe_resource(resource)
     }
 }
 
