@@ -57,6 +57,19 @@ pub(crate) fn is_active(ctx: &Field) -> bool {
     ctx.is_some()
 }
 
+/// Request binding stored on an Observe interest (notifications).
+pub(crate) fn request_from_interest(interest: crate::storage::ObserveInterest) -> Request {
+    #[cfg(feature = "oscore")]
+    {
+        interest.oscore()
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = interest;
+        no_request()
+    }
+}
+
 #[cfg(not(feature = "oscore"))]
 pub(crate) fn is_active(_ctx: &Field) -> bool {
     false
@@ -84,7 +97,18 @@ pub(crate) fn inbound<'a>(
         } else {
             let request = ctx.lookup(parsed.token()).ok_or(OscoreError::Context)?;
             let inner = ctx.unprotect_response(parsed, request, scratch)?;
-            let _ = ctx.take(parsed.token());
+            let header =
+                crate::oscore::OscoreHeader::parse(parsed.oscore().ok_or(OscoreError::Header)?)?;
+            let observe = inner.observe().is_some();
+            if observe && !ctx.is_observe(parsed.token()) {
+                // Response to a non-Observe request must not carry Inner Observe.
+                return Err(OscoreError::Replay);
+            }
+            if observe {
+                ctx.accept_notification(parsed.token(), header.piv)?;
+            } else {
+                let _ = ctx.take(parsed.token());
+            }
             (inner, request)
         };
         return Ok(Some((inner, request)));
@@ -135,6 +159,32 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots>(
         let mut wire = [0u8; super::DATAGRAM_SCRATCH];
         let n = ctx
             .protect_response(msg, request, &mut wire)
+            .map_err(protect_err)?;
+        return fill_tx(engine, tx, &wire[..n]);
+    }
+    engine.encode_tx(tx, msg).map(|_| ())
+}
+
+/// Protect a notification with a new Partial IV (RFC 8613 §4.1.3.5.2).
+///
+/// Fail-closed: an attached context without a stored [`RequestRef`] does
+/// not fall back to plaintext.
+pub(crate) fn encode_notification<S: Storage + DatagramSlots>(
+    ctx: &mut Field,
+    request: Request,
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    msg: &Message<'_>,
+) -> Result<(), SlotMessageError> {
+    let _ = (ctx, request);
+    #[cfg(feature = "oscore")]
+    if let Some(oscore) = ctx.as_mut() {
+        let Some(request) = request else {
+            return Err(protect_err(OscoreError::Context));
+        };
+        let mut wire = [0u8; super::DATAGRAM_SCRATCH];
+        let n = oscore
+            .protect_response_with_piv(msg, request, &mut wire)
             .map_err(protect_err)?;
         return fill_tx(engine, tx, &wire[..n]);
     }

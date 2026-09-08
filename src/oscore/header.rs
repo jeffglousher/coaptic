@@ -204,17 +204,31 @@ pub(crate) fn encode_option(
 }
 
 /// Class E (inner) vs Class U (outer). Unknown options are Class E.
+///
+/// Observe is Dual (Figure 5 E+U). Other dual-class options (Max-Age,
+/// Block, Size, No-Response) stay Inner in this slice — do not silently
+/// treat them as Outer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OptionClass {
     Inner,
     Outer,
+    Dual,
+}
+
+impl OptionClass {
+    pub(crate) const fn in_plaintext(self) -> bool {
+        matches!(self, Self::Inner | Self::Dual)
+    }
+
+    pub(crate) const fn in_outer(self) -> bool {
+        matches!(self, Self::Outer | Self::Dual)
+    }
 }
 
 pub(crate) fn classify(number: u16) -> OptionClass {
     match number {
         3 | 7 | 9 | 16 | 35 | 39 => OptionClass::Outer,
-        // Figure 5 dual-class options: this slice uses the Inner field.
-        // Observe / Block / Max-Age / Size / No-Response stay in the plaintext.
+        6 => OptionClass::Dual,
         _ => OptionClass::Inner,
     }
 }

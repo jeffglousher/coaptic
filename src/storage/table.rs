@@ -434,6 +434,8 @@ pub struct ObserveInterest {
     lifetime: Option<ObserveLifetime>,
     confirm_due_ms: Option<u64>,
     notify_hold: Option<ObserveNotifyHold>,
+    #[cfg(feature = "oscore")]
+    oscore: Option<crate::oscore::RequestRef>,
 }
 
 impl ObserveInterest {
@@ -450,6 +452,8 @@ impl ObserveInterest {
             lifetime: None,
             confirm_due_ms: None,
             notify_hold: None,
+            #[cfg(feature = "oscore")]
+            oscore: None,
         }
     }
 
@@ -481,6 +485,23 @@ impl ObserveInterest {
     #[must_use]
     pub const fn with_resource(self, resource: ObserveResource) -> Self {
         Self { resource, ..self }
+    }
+
+    /// OSCORE request binding for protected notifications, if any.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub const fn oscore(self) -> Option<crate::oscore::RequestRef> {
+        self.oscore
+    }
+
+    /// Bind the registration Partial IV so later notifies can protect.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub const fn with_oscore(self, request: Option<crate::oscore::RequestRef>) -> Self {
+        Self {
+            oscore: request,
+            ..self
+        }
     }
 
     /// Last library-assigned notification sequence (24-bit).

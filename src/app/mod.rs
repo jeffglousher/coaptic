@@ -391,9 +391,9 @@ impl<
     /// when a datagram is encoded into a TX slot, so CON retransmit
     /// reuses the same ciphertext.
     ///
-    /// This slice covers a single pairwise context on the happy-path
-    /// request/response. Observe notifications, outer Block-wise, group
-    /// OSCORE, and other ciphers are out.
+    /// This slice covers a pairwise context on the happy-path
+    /// request/response and Observe register/notify. Outer Block-wise,
+    /// group OSCORE, and other ciphers are out.
     ///
     /// Fail-closed while a context is attached: a non-empty datagram
     /// without an OSCORE option is rejected (4.01 on a request; a plain
@@ -558,6 +558,7 @@ where
             &mut self.engine,
             &mut self.io,
             &mut self.ids,
+            &mut self.oscore,
             now_ms,
             resource,
             &response,
@@ -631,6 +632,10 @@ where
 
     if let Some(expiry) = progress.observe_expired() {
         if let Some(interest) = engine.observe_interest(expiry.slot()) {
+            #[cfg(feature = "oscore")]
+            if let Some(ctx) = oscore.as_mut() {
+                let _ = ctx.take(interest.token());
+            }
             let _ = engine.take_observe(interest.key());
         }
     }
@@ -642,7 +647,7 @@ where
                 Some(source) => {
                     let response = source();
                     if let Err(e) =
-                        send_notification(engine, io, ids, now_ms, interest, &response, seq)
+                        send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
                     {
                         let _ = engine.restore_observe_due(id, seq);
                         return Err(e);
@@ -809,9 +814,12 @@ where
         }
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
-        } else {
+        } else if let Some(interest) = engine.reject_observe_notify(parsed.message_id(), peer) {
             // RST is Empty (no Token). Match the notify Message ID.
-            let _ = engine.reject_observe_notify(parsed.message_id(), peer);
+            #[cfg(feature = "oscore")]
+            if let Some(ctx) = oscore.as_mut() {
+                let _ = ctx.take(interest.token());
+            }
         }
         let _ = engine.release_rx(rx);
         return Ok(());
@@ -975,7 +983,7 @@ where
             ),
         }
     };
-    let response = apply_observe(engine, now_ms, peer, response, plan);
+    let response = apply_observe(engine, now_ms, peer, response, plan, oscore_req);
 
     let outcome = if response.is_separate() {
         send_separate(engine, io, ids, now_ms, meta, &response, oscore)
@@ -1029,6 +1037,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
     peer: Endpoint,
     mut response: Response<'a>,
     plan: ObservePlan,
+    oscore_req: oscore::Request,
 ) -> Response<'a> {
     let key = ObserveKey::new(plan.token, peer);
 
@@ -1038,10 +1047,16 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
         let opted = response.observe_seq().is_some() || plan.has_source;
         if opted {
             let _ = engine.take_observe(key);
-            if engine
-                .insert_observe(ObserveInterest::new(plan.token, peer).with_resource(plan.resource))
-                .is_some()
+            let mut interest = ObserveInterest::new(plan.token, peer).with_resource(plan.resource);
+            #[cfg(feature = "oscore")]
             {
+                interest = interest.with_oscore(oscore_req);
+            }
+            #[cfg(not(feature = "oscore"))]
+            {
+                let _ = oscore_req;
+            }
+            if engine.insert_observe(interest).is_some() {
                 let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
                 let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
                 response = response.observe(0);
@@ -1060,6 +1075,7 @@ fn notify_engine<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut oscore::Field,
     now_ms: u64,
     resource: ObserveResource,
     response: &Response<'_>,
@@ -1095,7 +1111,8 @@ where
             continue;
         };
         let dest = interest.endpoint();
-        if let Err(e) = send_notification(engine, io, ids, now_ms, interest, response, seq) {
+        if let Err(e) = send_notification(engine, io, ids, oscore, now_ms, interest, response, seq)
+        {
             let _ = engine.restore_observe_due(id, seq);
             return Err(e);
         }
@@ -1189,6 +1206,7 @@ fn send_notification<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut oscore::Field,
     now_ms: u64,
     interest: ObserveInterest,
     response: &Response<'_>,
@@ -1213,6 +1231,7 @@ where
         let _ = engine.release_tx_body(body);
     }
 
+    let oscore_req = oscore::request_from_interest(interest);
     let meta = SendResponse {
         dest,
         ty,
@@ -1222,14 +1241,14 @@ where
         block2: None,
         q_block2: None,
         block1: None,
-        oscore: oscore::no_request(),
+        oscore: oscore_req,
     };
 
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
-    let outcome = match encode_response(
+    let outcome = match encode_notification(
         engine,
         tx,
         ty,
@@ -1237,13 +1256,13 @@ where
         token,
         &notify,
         notify.payload(),
-        None,
-        None,
-        &oscore::empty_field(),
-        oscore::no_request(),
+        oscore,
+        oscore_req,
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+            if !oscore::is_active(oscore) =>
+        {
             let _ = engine.release_tx(tx);
             start_notify_block2(engine, io, meta, &notify, ty, pending)
         }
@@ -1727,6 +1746,52 @@ fn encode_response<S: Storage + DatagramSlots>(
                 .with_options(opts.as_slice())
                 .with_payload(payload);
             oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
+        }
+        Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
+        Err(e) => Err(SlotMessageError::Encode(e)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_notification<S: Storage + DatagramSlots>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: crate::message::Token,
+    response: &Response<'_>,
+    payload: &[u8],
+    oscore_ctx: &mut oscore::Field,
+    oscore_req: oscore::Request,
+) -> Result<(), SlotMessageError> {
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let max_age = response.max_age_secs().map(EncodedUint::new);
+    let observe = response
+        .observe_seq()
+        .map(|seq| encode_uint(seq & 0x00ff_ffff));
+    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(etag) = response.etag_bytes() {
+            push_opt(&mut opts, Opt::etag(etag))?;
+        }
+        if let Some(ref encoded) = observe {
+            push_opt(&mut opts, Opt::observe(encoded))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(ref encoded) = max_age {
+            push_opt(&mut opts, Opt::max_age(encoded))?;
+        }
+        Ok(())
+    })();
+    match filled {
+        Ok(()) => {
+            let msg = Message::new(ty, response.code(), mid)
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+            oscore::encode_notification(oscore_ctx, oscore_req, engine, tx, &msg)
         }
         Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
         Err(e) => Err(SlotMessageError::Encode(e)),
