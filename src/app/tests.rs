@@ -2570,6 +2570,9 @@ fn client_get_round_trip_without_slot_id() {
     let response = app.take_response(call).expect("matched");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 4);
+    assert!(response.body().is_none());
     assert_eq!(response.format(), Some(ContentFormat::TEXT_PLAIN));
     assert_eq!(response.token(), Some(call.token()));
     assert_eq!(response.peer(), Some(peer));
@@ -2577,6 +2580,58 @@ fn client_get_round_trip_without_slot_id() {
     assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_take_response_truncates_non_block_payload_at_inline() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let (mid, token) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        let first = decode(&bytes[..n]).expect("decode first");
+        (first.message_id(), first.token())
+    };
+    let payload = [b'x'; 200];
+    inject_piggyback_ack(&mut app, peer, mid, token, &payload);
+    app.poll(0).expect("match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload().len(), INLINE_PAYLOAD);
+    assert_eq!(response.payload(), &payload[..INLINE_PAYLOAD]);
+    assert!(response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 200);
+    assert!(
+        response.body().is_none(),
+        "datagram App has no Block2 assembled hold"
+    );
+}
+
+#[test]
+fn client_take_response_inline_payload_exact_is_not_truncated() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let (mid, token) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        let first = decode(&bytes[..n]).expect("decode first");
+        (first.message_id(), first.token())
+    };
+    let payload = [b'y'; INLINE_PAYLOAD];
+    inject_piggyback_ack(&mut app, peer, mid, token, &payload);
+    app.poll(0).expect("match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.payload(), &payload);
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), INLINE_PAYLOAD);
 }
 
 #[test]
