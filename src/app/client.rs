@@ -156,8 +156,8 @@ impl ReplyMeta {
             self.peer,
             &self.payload[..usize::from(self.payload_len)],
             self.content_format,
-            self.payload_src_len,
-        );
+        )
+        .with_payload_src_len(self.payload_src_len);
         if self.etag_len > 0 {
             response = response.etag(&self.etag[..usize::from(self.etag_len)]);
         }

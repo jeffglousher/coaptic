@@ -718,16 +718,19 @@ impl<'a> Response<'a> {
         peer: Endpoint,
         payload: &[u8],
         content_format: Option<ContentFormat>,
-        payload_src_len: u16,
     ) -> Self {
         let mut response = Self::new(code).payload_copy(payload);
-        response.payload_src_len = payload_src_len;
         response.content_format = content_format;
         response.ty = Some(ty);
         response.token = Some(token);
         response.mid = Some(mid);
         response.peer = Some(peer);
         response
+    }
+
+    pub(crate) const fn with_payload_src_len(mut self, payload_src_len: u16) -> Self {
+        self.payload_src_len = payload_src_len;
+        self
     }
 
     pub(crate) fn with_assembled(mut self, src: &'a [u8]) -> Self {
