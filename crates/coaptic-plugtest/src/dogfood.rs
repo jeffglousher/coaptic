@@ -1457,7 +1457,10 @@ fn wait_call<T: DatagramIo<Error = std::io::Error>>(
         }
         thread::yield_now();
     }
-    Err(PeerError("timeout waiting for App take_response".into()))
+    Err(PeerError(format!(
+        "timeout waiting for App take_response (metrics {})",
+        app.metrics()
+    )))
 }
 
 fn expect_codes(label: &str, iter: usize, got: Code, want: &[Code]) -> Result<(), PeerError> {
@@ -1906,6 +1909,16 @@ mod tests {
             "{report}"
         );
         eprintln!("{s}");
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn oscore_plain_get_is_unauthorized() {
+        let _guard = crate::runner::harness_lock();
+        let server = super::spawn_oscore_server().expect("oscore server");
+        let code = super::oscore_plain_get(server.addr, std::time::Duration::from_millis(1500))
+            .expect("plain GET");
+        assert_eq!(code, super::Code::UNAUTHORIZED, "fail-closed 4.01");
     }
 
     #[cfg(feature = "oscore")]
