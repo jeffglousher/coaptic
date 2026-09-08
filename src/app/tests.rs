@@ -3631,3 +3631,114 @@ fn metrics_rx_saturated_and_reset() {
     app.reset_metrics();
     assert_eq!(app.metrics(), crate::Metrics::ZERO);
 }
+
+#[cfg(feature = "oscore")]
+#[test]
+fn options_full_500_under_oscore_is_protected() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    use crate::storage::{EngineBuilder, Memory};
+
+    const MASTER_SECRET: [u8; 16] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10,
+    ];
+    const MASTER_SALT: [u8; 8] = [0x9e, 0x7c, 0xa9, 0x22, 0x23, 0x78, 0x63, 0x40];
+    let mut client = SecurityContext::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[],
+        recipient_id: &[0x01],
+        id_context: &[],
+    })
+    .unwrap();
+    let mut server = SecurityContext::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[0x01],
+        recipient_id: &[],
+        id_context: &[],
+    })
+    .unwrap();
+
+    let token = Token::from_checked(&[1]);
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1)).with_token(token);
+    let mut wire = [0u8; 256];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 256];
+    let (_plain, request) = server.unprotect_request(&protected, &mut inner).unwrap();
+
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("engine");
+    let tx = engine.acquire_tx().expect("tx");
+    let ctx = Some(server);
+    super::encode_options_full_500::<_, &'static str>(
+        &mut engine,
+        tx,
+        Type::Acknowledgement,
+        MessageId::new(1),
+        token,
+        &ctx,
+        Some(request),
+    )
+    .expect("protect 5.00");
+
+    let access = engine.access_tx(tx).expect("access");
+    let parsed = decode(access.as_bytes()).expect("decode");
+    assert!(
+        parsed.oscore().is_some(),
+        "OptionsFull 5.00 under OSCORE must be protected"
+    );
+    assert_ne!(
+        parsed.code(),
+        Code::INTERNAL_SERVER_ERROR,
+        "outer code must not leak unprotected 5.00"
+    );
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn options_full_500_oscore_without_request_is_not_plaintext() {
+    use crate::oscore::{DeriveParams, Error as OscoreError, SecurityContext};
+    use crate::storage::{EngineBuilder, Memory};
+
+    const MASTER_SECRET: [u8; 16] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10,
+    ];
+    let server = SecurityContext::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &[],
+        sender_id: &[0x01],
+        recipient_id: &[],
+        id_context: &[],
+    })
+    .unwrap();
+
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("engine");
+    let tx = engine.acquire_tx().expect("tx");
+    let ctx = Some(server);
+    let err = super::encode_options_full_500::<_, &'static str>(
+        &mut engine,
+        tx,
+        Type::Acknowledgement,
+        MessageId::new(1),
+        Token::from_checked(&[1]),
+        &ctx,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err, Error::Oscore(OscoreError::Context));
+    let access = engine.access_tx(tx).expect("empty tx");
+    assert!(
+        access.as_bytes().is_empty(),
+        "must not emit unprotected 5.00 when RequestRef is missing"
+    );
+}

@@ -105,7 +105,14 @@ pub(crate) fn inbound<'a>(
                 return Err(OscoreError::Replay);
             }
             if observe {
-                ctx.accept_notification(parsed.token(), header.piv)?;
+                // Piggybacked register ACK (`protect_response`, no Partial
+                // IV) is bound to the request. Do not spend the RFC 8613
+                // §7.4.1 no-PIV notification budget on it.
+                let register_ack =
+                    parsed.ty() == crate::message::Type::Acknowledgement && header.piv.is_none();
+                if !register_ack {
+                    ctx.accept_notification(parsed.token(), header.piv)?;
+                }
             } else {
                 let _ = ctx.take(parsed.token());
             }
@@ -143,9 +150,7 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
         let mut wire = [0u8; super::DATAGRAM_SCRATCH];
-        let n = ctx
-            .protect_request(msg, &mut wire)
-            .map_err(protect_request_err)?;
+        let n = ctx.protect_request(msg, &mut wire).map_err(protect_err)?;
         return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
     }
     engine
@@ -155,36 +160,46 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
 }
 
 /// Encode `msg`, or OSCORE-protect a response bound to `request`.
-pub(crate) fn encode_message<S: Storage + DatagramSlots>(
+///
+/// Fail-closed: an attached context without a stored [`RequestRef`] does
+/// not fall back to plaintext. Size misses stay
+/// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
+pub(crate) fn encode_message<S: Storage + DatagramSlots, E>(
     ctx: &Field,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
-) -> Result<(), SlotMessageError> {
+) -> Result<(), super::Error<E>> {
     let _ = (ctx, request);
     #[cfg(feature = "oscore")]
-    if let (Some(ctx), Some(request)) = (ctx.as_ref(), request) {
+    if let Some(ctx) = ctx.as_ref() {
+        let Some(request) = request else {
+            return Err(protect_err(OscoreError::Context));
+        };
         let mut wire = [0u8; super::DATAGRAM_SCRATCH];
         let n = ctx
             .protect_response(msg, request, &mut wire)
             .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]);
+        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
     }
-    engine.encode_tx(tx, msg).map(|_| ())
+    engine
+        .encode_tx(tx, msg)
+        .map(|_| ())
+        .map_err(super::Error::from)
 }
 
 /// Protect a notification with a new Partial IV (RFC 8613 §4.1.3.5.2).
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to plaintext.
-pub(crate) fn encode_notification<S: Storage + DatagramSlots>(
+pub(crate) fn encode_notification<S: Storage + DatagramSlots, E>(
     ctx: &mut Field,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
-) -> Result<(), SlotMessageError> {
+) -> Result<(), super::Error<E>> {
     #[cfg(not(feature = "oscore"))]
     let _ = (ctx, request);
     #[cfg(feature = "oscore")]
@@ -196,9 +211,12 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots>(
         let n = oscore
             .protect_response_with_piv(msg, request, &mut wire)
             .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]);
+        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
     }
-    engine.encode_tx(tx, msg).map(|_| ())
+    engine
+        .encode_tx(tx, msg)
+        .map(|_| ())
+        .map_err(super::Error::from)
 }
 
 #[cfg_attr(not(feature = "oscore"), allow(dead_code))]
@@ -218,28 +236,14 @@ pub(crate) fn fill_tx<S: Storage + DatagramSlots>(
     Ok(())
 }
 
-/// Map a protect failure onto encode. Never falls back to plaintext.
-#[cfg(feature = "oscore")]
-fn protect_err(err: OscoreError) -> SlotMessageError {
-    match err {
-        OscoreError::BufferTooSmall | OscoreError::MessageLength => {
-            SlotMessageError::Encode(EncodeError::BufferTooSmall)
-        }
-        OscoreError::Encode(e) => SlotMessageError::Encode(e),
-        OscoreError::Options | OscoreError::Saturated => {
-            SlotMessageError::Encode(EncodeError::OptionsFull)
-        }
-        _ => SlotMessageError::Encode(EncodeError::BufferTooSmall),
-    }
-}
-
-/// Protect-request mapping used on the client send / Block1 start path.
+/// Map a protect failure onto App encode (request, response, notification).
 ///
-/// Only size misses become [`EncodeError::BufferTooSmall`] (Block1 may
-/// start). Protocol failures (`SequenceExhausted`, `Encrypt`, …) stay
-/// [`super::Error::Oscore`] so they are not mistaken for a too-large body.
+/// Only size misses become [`EncodeError::BufferTooSmall`] (Inner Block1 /
+/// Block2 may start). Protocol failures (`SequenceExhausted`, `Encrypt`,
+/// `Context`, …) stay [`super::Error::Oscore`] so they are not mistaken
+/// for a too-large body.
 #[cfg(feature = "oscore")]
-fn protect_request_err<E>(err: OscoreError) -> super::Error<E> {
+fn protect_err<E>(err: OscoreError) -> super::Error<E> {
     match err {
         OscoreError::BufferTooSmall | OscoreError::MessageLength => {
             super::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))

@@ -732,6 +732,91 @@ fn app_oscore_observe_register_notify() {
 }
 
 #[test]
+fn first_notify_without_piv_after_register_is_accepted() {
+    use crate::oscore::OscoreHeader;
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"obs-0").observe(0)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("obs", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
+    let (_, req_bytes, req_n) = client.transport().last_send.expect("protected register");
+
+    server.transport_mut().inbox = Some((client_ep, req_bytes, req_n));
+    server.poll(0).unwrap();
+    let (_, ack_bytes, ack_n) = server
+        .transport()
+        .last_send
+        .expect("protected register ACK");
+    let ack = decode(&ack_bytes[..ack_n]).unwrap();
+    let ack_hdr = OscoreHeader::parse(ack.oscore().unwrap()).unwrap();
+    assert!(
+        ack_hdr.piv.is_none(),
+        "register ACK uses request Partial IV (no OSCORE PIV)"
+    );
+
+    client.transport_mut().inbox = Some((server_ep, ack_bytes, ack_n));
+    client.poll(0).unwrap();
+    let _ = client.take_response(call).expect("register");
+
+    // Third-party first notify may omit Partial IV (RFC 8613 §4.1.3.5.2).
+    // Register ACK must not have spent the §7.4.1 no-PIV budget.
+    let mut helper = server_c1();
+    let outer_req = decode(&req_bytes[..req_n]).unwrap();
+    let mut inner = [0u8; 256];
+    let (_plain, request) = helper
+        .unprotect_request(&outer_req, &mut inner)
+        .expect("unprotect register");
+    let seq = encode_uint(1);
+    let opts = [Opt::observe(&seq)];
+    let notify = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(99))
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(b"obs-1");
+    let mut wire = [0u8; 256];
+    let n = helper
+        .protect_response(&notify, request, &mut wire)
+        .expect("no-PIV notify");
+    let note = decode(&wire[..n]).unwrap();
+    let note_hdr = OscoreHeader::parse(note.oscore().unwrap()).unwrap();
+    assert!(note_hdr.piv.is_none(), "crafted first notify has no PIV");
+
+    client.transport_mut().inbox = Some((server_ep, wire, n));
+    client.poll(10).unwrap();
+    let got = client
+        .take_response(call)
+        .expect("first no-PIV notify after register");
+    assert_eq!(got.payload(), b"obs-1");
+
+    let n2 = helper
+        .protect_response(&notify, request, &mut wire)
+        .expect("second no-PIV");
+    client.transport_mut().inbox = Some((server_ep, wire, n2));
+    client.poll(11).unwrap();
+    assert!(
+        client.take_response(call).is_none(),
+        "second notify without Partial IV is Replay (§7.4.1)"
+    );
+}
+
+#[test]
 fn app_plain_notify_does_not_complete_oscore_observe() {
     use crate::{App, Request, Response, get, profiles};
 
@@ -1528,5 +1613,51 @@ fn exhausted_sender_seq_is_oscore_error_not_block1() {
     assert!(
         client.transport().last_send.is_none(),
         "exhausted PIV must not emit a datagram"
+    );
+}
+
+#[test]
+fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"obs-0").observe(0)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("obs", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let _ = client.get("obs").observe().to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("register");
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    assert!(server.transport().last_send.is_some(), "register ACK");
+
+    server.oscore_mut().expect("oscore").set_sender_seq(1 << 40);
+    server.transport_mut().last_send = None;
+    let err = server
+        .notify(10, &["obs"], Response::content(b"obs-1"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        crate::Error::Oscore(Error::SequenceExhausted),
+        "protect SequenceExhausted must not collapse to BufferTooSmall / Block2 start"
+    );
+    assert!(
+        server.transport().last_send.is_none(),
+        "exhausted notify PIV must not emit a datagram"
     );
 }
