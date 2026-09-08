@@ -24,8 +24,9 @@
 //!   the OSCORE path, protected notify, or protected Block is cold or a
 //!   plain completion sneaks through. Wall min/mean/p50/p99/max;
 //!   [`coaptic::App::reset_metrics`] around each timed window; snapshot
-//!   via [`coaptic::App::metrics`]. Optional `--json` report (host/load
-//!   specific).
+//!   via [`coaptic::App::metrics`]. Optional `--json` writes schema
+//!   `coaptic-dogfood/1`. `--compare PATH` fails if path-proving Metrics
+//!   drop vs a checked-in baseline; wall timings print as delta only.
 //! - [`runner`] — each vendored TD × useful role pairs (coaptic server /
 //!   coap-rs client, and the swap). Same-impl coaptic↔coaptic is also run
 //!   for base GETs.

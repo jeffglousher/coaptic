@@ -94,7 +94,9 @@
 //! [GitHub project][plan]. This rustdoc does not restate wire format.
 //! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
 //! Timed mixed-stack dogfood + Observe notify collect:
-//! `cargo run -p coaptic-plugtest --bin dogfood`.
+//! `cargo run -p coaptic-plugtest --bin dogfood`. CI compares `--iterations 2`
+//! against `crates/coaptic-plugtest/baselines/` (`--compare`; Metrics floors
+//! fail, wall timings print as delta).
 //!
 //! # Future / backlog
 //!

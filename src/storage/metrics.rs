@@ -23,7 +23,8 @@ use crate::error::BlockTransferError;
 
 /// Reactor counters copied from [`crate::storage::Engine`].
 ///
-/// Fields are public so a dogfood bin can print or diff a snapshot. Values
+/// Fields are public so a dogfood bin can print or diff a snapshot
+/// (`--compare` against `crates/coaptic-plugtest/baselines/`). Values
 /// wrap on overflow (`wrapping_add`). Idle polls still increment
 /// [`Self::progress`] when [`crate::storage::Engine::progress`] runs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -4,8 +4,9 @@
 //! cargo run -p coaptic-plugtest --bin dogfood
 //! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
 //! cargo run -p coaptic-plugtest --bin dogfood -- --json dogfood.json
+//! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
 //! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore
-//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2
+//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 //! ```
 //!
 //! Mixed-stack loops stay GET/PUT/POST, Observe **register**, and Block1/Block2
@@ -26,7 +27,9 @@
 //! each timed window (`progress` counts idle poll ticks). After each
 //! window it prints occupancy and [`coaptic::Metrics`] from
 //! [`App::metrics`] / [`Engine::metrics`]. Optional `--json PATH` writes
-//! the same numbers (host/load specific; not a CI golden).
+//! the same numbers. Optional `--compare PATH` diffs against a checked-in
+//! baseline: **fail** if path-proving counters drop or error counters
+//! rise; **print** wall-timing deltas (host/load specific, not a fail).
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -40,7 +43,7 @@ use coaptic::app::DEFAULT_ROUTES;
 use coaptic::message::{Code, ContentFormat};
 use coaptic::storage::{DatagramIo, Engine, Storage};
 use coaptic::{App, Call, Endpoint, Metrics, Response, profiles};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "oscore")]
 use coaptic::message::{Message, Opt, Token, Type, decode, encode, encode_uint};
@@ -68,6 +71,8 @@ pub struct Config {
     pub block_timeout: Duration,
     /// Write a JSON report here after a successful run (`None` = stdout only).
     pub json_path: Option<PathBuf>,
+    /// Compare this run against a checked-in baseline JSON (`None` = skip).
+    pub compare_path: Option<PathBuf>,
     /// OSCORE-protected coaptic↔coaptic GET/PUT/POST + Observe notify.
     pub oscore: bool,
 }
@@ -79,6 +84,7 @@ impl Default for Config {
             timeout: Duration::from_millis(1500),
             block_timeout: Duration::from_millis(4000),
             json_path: None,
+            compare_path: None,
             oscore: false,
         }
     }
@@ -107,7 +113,20 @@ non-empty captured datagram is plaintext, or a token-matching plain
 
 Prints wall min/mean/p50/p99/max (and Engine clock deltas on the coaptic
 client). Resets `app.metrics()` around each timed window, then prints the
-snapshot. Timings are host/load specific — not a CI golden.
+snapshot.
+
+--json PATH writes schema coaptic-dogfood/1 (Metrics + series timings).
+--compare PATH diffs this run against that file: fail if observe_notify /
+block1_assemble / block2_assemble (or other path-proving floors) drop, or
+if error counters rise. Wall timings print as delta only — host/load
+specific, not a fail. CI smokes --iterations 2 against the checked-in
+baselines. Refresh (same flags as CI):
+
+  cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 \\
+    --json crates/coaptic-plugtest/baselines/dogfood.json
+  cargo run -p coaptic-plugtest --features oscore --bin dogfood -- \\
+    --oscore --iterations 2 \\
+    --json crates/coaptic-plugtest/baselines/dogfood-oscore.json
 
 Default is 50 iterations (mixed + notify; OSCORE too when --oscore).
 CI smoke: --iterations 2, and --oscore --iterations 2.
@@ -116,7 +135,8 @@ Options:
   --iterations N          loops per direction + notify collects (default 50)
   --timeout-ms N          small-exchange deadline (default 1500)
   --block-timeout-ms N    Block1/Block2 deadline (default 4000)
-  --json PATH             write the same numbers as JSON
+  --json PATH             write Metrics + timings as JSON
+  --compare PATH          fail on metric regression vs baseline JSON
   --oscore                OSCORE-protected coaptic↔coaptic GET/PUT/POST
                           + Observe notify + Block1/Block2
                           (requires: --features oscore)
@@ -146,6 +166,9 @@ Options:
                 }
                 "--json" => {
                     cfg.json_path = Some(PathBuf::from(parse_string(flag, inline, &mut it)?));
+                }
+                "--compare" => {
+                    cfg.compare_path = Some(PathBuf::from(parse_string(flag, inline, &mut it)?));
                 }
                 "--oscore" => {
                     if inline.is_some() {
@@ -346,28 +369,31 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
     .map_err(io_err)?;
     writeln!(
         out,
-        "  caveat   timings are host/load specific; not a CI golden"
+        "  caveat   wall timings print as delta; Metrics floors fail on regression"
     )
     .map_err(io_err)?;
     writeln!(out, "dogfood  ok").map_err(io_err)?;
 
+    let report = build_json_report(
+        &cfg,
+        wall,
+        &a,
+        &rs_to_coaptic,
+        &b,
+        &client_occ,
+        &client_metrics,
+        client_now,
+        &caps,
+        &notify,
+        &notify_server,
+        oscore.as_ref(),
+    );
     if let Some(path) = cfg.json_path.as_ref() {
-        write_json_report(
-            path,
-            &cfg,
-            wall,
-            &a,
-            &rs_to_coaptic,
-            &b,
-            &client_occ,
-            &client_metrics,
-            client_now,
-            &caps,
-            &notify,
-            &notify_server,
-            oscore.as_ref(),
-        )?;
+        write_json_report(path, &report)?;
         writeln!(out, "dogfood  json  {}", path.display()).map_err(io_err)?;
+    }
+    if let Some(path) = cfg.compare_path.as_ref() {
+        compare_against_baseline(path, &report, &mut out)?;
     }
     Ok(())
 }
@@ -642,7 +668,7 @@ impl Series {
             Some(summarize(&self.engine_ms))
         };
         SeriesStats {
-            label: self.label,
+            label: self.label.to_owned(),
             n: self.wall_us.len(),
             wall_ms: WallStats::from_us(&wall),
             engine_delta_ms: engine.as_ref().map(EngineStats::from_ms),
@@ -769,16 +795,16 @@ fn us_ms(us: u64) -> f64 {
     us as f64 / 1000.0
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct SeriesStats {
-    label: &'static str,
+    label: String,
     n: usize,
     wall_ms: WallStats,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     engine_delta_ms: Option<EngineStats>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct WallStats {
     min: f64,
     mean: f64,
@@ -799,7 +825,7 @@ impl WallStats {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct EngineStats {
     min: u64,
     mean: f64,
@@ -816,7 +842,7 @@ impl EngineStats {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct MetricsDto {
     rx_accepted: u32,
     rx_error: u32,
@@ -859,22 +885,22 @@ impl From<Metrics> for MetricsDto {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct JsonPair {
-    name: &'static str,
+    name: String,
     series: Vec<SeriesStats>,
     occupancy: String,
     now_ms: u64,
     metrics: MetricsDto,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     capacities: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     collected: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     oscore: Option<OscoreDto>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct OscoreDto {
     client_sender_seq: u64,
     server_sender_seq: u64,
@@ -882,12 +908,14 @@ struct OscoreDto {
     observe_collected: usize,
     fail_closed_plain_get: String,
     inject_dropped: bool,
+    #[serde(default)]
+    server_metrics: MetricsDto,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct JsonReport {
-    schema: &'static str,
-    caveat: &'static str,
+    schema: String,
+    caveat: String,
     host: Option<String>,
     iterations: usize,
     timeout_ms: u64,
@@ -913,6 +941,7 @@ struct OscoreReport {
     client_now_ms: u64,
     client_sender_seq: u64,
     server_sender_seq: u64,
+    server_metrics: Metrics,
     protected_on_wire: usize,
     observe_collected: usize,
     plain_get_code: Code,
@@ -949,8 +978,7 @@ impl OscoreReport {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_json_report(
-    path: &std::path::Path,
+fn build_json_report(
     cfg: &Config,
     wall: Duration,
     rs_to_coaptic: &PairReport,
@@ -963,13 +991,13 @@ fn write_json_report(
     notify: &NotifyReport,
     notify_server: &ServerSnap,
     oscore: Option<&OscoreReport>,
-) -> Result<(), PeerError> {
+) -> JsonReport {
     let host = std::env::var("HOST")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok();
     let mut pairs = vec![
         JsonPair {
-            name: "coap-rs → coaptic",
+            name: "coap-rs → coaptic".into(),
             series: rs_to_coaptic.series(),
             occupancy: rs_to_coaptic_snap.occupancy.clone(),
             now_ms: rs_to_coaptic_snap.now_ms,
@@ -979,7 +1007,7 @@ fn write_json_report(
             oscore: None,
         },
         JsonPair {
-            name: "coaptic → coap-rs",
+            name: "coaptic → coap-rs".into(),
             series: coaptic_to_rs.series(),
             occupancy: client_occ.to_owned(),
             now_ms: client_now,
@@ -989,7 +1017,7 @@ fn write_json_report(
             oscore: None,
         },
         JsonPair {
-            name: "coaptic ↔ coaptic observe notify",
+            name: "coaptic ↔ coaptic observe notify".into(),
             series: notify.series(),
             occupancy: notify_server.occupancy.clone(),
             now_ms: notify_server.now_ms,
@@ -1001,7 +1029,7 @@ fn write_json_report(
     ];
     if let Some(oscore) = oscore {
         pairs.push(JsonPair {
-            name: "coaptic ↔ coaptic OSCORE",
+            name: "coaptic ↔ coaptic OSCORE".into(),
             series: oscore.series(),
             occupancy: oscore.client_occupancy.clone(),
             now_ms: oscore.client_now_ms,
@@ -1015,12 +1043,13 @@ fn write_json_report(
                 observe_collected: oscore.observe_collected,
                 fail_closed_plain_get: oscore.plain_get_code.to_string(),
                 inject_dropped: oscore.injected_plain,
+                server_metrics: MetricsDto::from(oscore.server_metrics),
             }),
         });
     }
-    let report = JsonReport {
-        schema: "coaptic-dogfood/1",
-        caveat: "Timings and counters are host/load specific (example host). Not a CI golden.",
+    JsonReport {
+        schema: "coaptic-dogfood/1".into(),
+        caveat: "Wall timings are host/load specific (printed as delta, not a fail). Path-proving Metrics floors fail the run on regression.".into(),
         host,
         iterations: cfg.iterations,
         timeout_ms: u64::try_from(cfg.timeout.as_millis()).unwrap_or(u64::MAX),
@@ -1030,10 +1059,267 @@ fn write_json_report(
         observe_notify: notify_server.metrics.observe_notify,
         oscore: cfg.oscore,
         pairs,
-    };
+    }
+}
+
+fn write_json_report(path: &std::path::Path, report: &JsonReport) -> Result<(), PeerError> {
     let file = std::fs::File::create(path).map_err(|e| format!("json create {path:?}: {e}"))?;
-    serde_json::to_writer_pretty(file, &report).map_err(|e| format!("json write: {e}"))?;
+    serde_json::to_writer_pretty(file, report).map_err(|e| format!("json write: {e}"))?;
     Ok(())
+}
+
+fn load_json_report(path: &std::path::Path) -> Result<JsonReport, PeerError> {
+    let bytes = std::fs::read(path).map_err(|e| format!("compare read {path:?}: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("compare parse {path:?}: {e}").into())
+}
+
+/// Path-proving counters: a drop below the baseline is a regression.
+///
+/// `rx_accepted` / `tx_ok` are informational — a CON retransmit can raise
+/// them on a loaded runner without meaning the path got colder.
+const METRIC_FLOORS: &[(&str, fn(&MetricsDto) -> u32)] = &[
+    ("observe_notify", |m| m.observe_notify),
+    ("observe_register", |m| m.observe_register),
+    ("observe_cancel", |m| m.observe_cancel),
+    ("block1_assemble", |m| m.block1_assemble),
+    ("block2_assemble", |m| m.block2_assemble),
+];
+
+/// Error / saturation counters: a rise above the baseline is a regression.
+const METRIC_CEILS: &[(&str, fn(&MetricsDto) -> u32)] = &[
+    ("rx_error", |m| m.rx_error),
+    ("tx_fail", |m| m.tx_fail),
+    ("give_up", |m| m.give_up),
+    ("saturated", |m| m.saturated),
+    ("nstart_reject", |m| m.nstart_reject),
+];
+
+/// Informational only (`progress` is idle poll ticks; retransmit/ACK vary with load).
+const METRIC_INFO: &[(&str, fn(&MetricsDto) -> u32)] = &[
+    ("rx_accepted", |m| m.rx_accepted),
+    ("tx_ok", |m| m.tx_ok),
+    ("progress", |m| m.progress),
+    ("con_retransmit", |m| m.con_retransmit),
+    ("empty_ack", |m| m.empty_ack),
+    ("empty_rst", |m| m.empty_rst),
+];
+
+#[derive(Debug)]
+struct CompareOutcome {
+    lines: Vec<String>,
+    regressions: Vec<String>,
+}
+
+impl CompareOutcome {
+    fn line(&mut self, s: impl Into<String>) {
+        self.lines.push(s.into());
+    }
+
+    fn floor_u32(&mut self, label: &str, got: u32, want: u32) {
+        self.line(format!("  {label:<28} {want} → {got}"));
+        if got < want {
+            self.regressions
+                .push(format!("{label} dropped {want} → {got}"));
+        }
+    }
+
+    fn floor_usize(&mut self, label: &str, got: usize, want: usize) {
+        self.line(format!("  {label:<28} {want} → {got}"));
+        if got < want {
+            self.regressions
+                .push(format!("{label} dropped {want} → {got}"));
+        }
+    }
+
+    fn ceil_u32(&mut self, label: &str, got: u32, want: u32) {
+        self.line(format!("  {label:<28} {want} → {got}"));
+        if got > want {
+            self.regressions
+                .push(format!("{label} rose {want} → {got}"));
+        }
+    }
+
+    fn info_u32(&mut self, label: &str, got: u32, want: u32) {
+        self.line(format!("  {label:<28} {want} → {got}  (informational)"));
+    }
+}
+
+fn compare_reports(run: &JsonReport, baseline: &JsonReport) -> CompareOutcome {
+    let mut out = CompareOutcome {
+        lines: Vec::new(),
+        regressions: Vec::new(),
+    };
+    if run.schema != baseline.schema {
+        out.regressions.push(format!(
+            "schema {} != baseline {}",
+            run.schema, baseline.schema
+        ));
+    }
+    if run.iterations != baseline.iterations {
+        out.regressions.push(format!(
+            "iterations {} != baseline {} (refresh the baseline or pass the same --iterations)",
+            run.iterations, baseline.iterations
+        ));
+        return out;
+    }
+    if run.oscore != baseline.oscore {
+        out.regressions.push(format!(
+            "oscore {} != baseline {} (use --oscore only against the OSCORE baseline)",
+            run.oscore, baseline.oscore
+        ));
+        return out;
+    }
+
+    out.line(format!(
+        "  {:<28} {:.3}s → {:.3}s  (informational)",
+        "wall_s", baseline.wall_s, run.wall_s
+    ));
+    out.floor_usize(
+        "observe_collected",
+        run.observe_collected,
+        baseline.observe_collected,
+    );
+    out.floor_u32(
+        "observe_notify",
+        run.observe_notify,
+        baseline.observe_notify,
+    );
+
+    for base_pair in &baseline.pairs {
+        let Some(run_pair) = run.pairs.iter().find(|p| p.name == base_pair.name) else {
+            out.regressions
+                .push(format!("missing pair {:?}", base_pair.name));
+            continue;
+        };
+        out.line(format!("  pair {}", base_pair.name));
+        compare_metrics(&mut out, "    ", &run_pair.metrics, &base_pair.metrics);
+        if let (Some(got), Some(want)) = (run_pair.collected, base_pair.collected) {
+            out.floor_usize("    collected", got, want);
+        }
+        compare_series(&mut out, &run_pair.series, &base_pair.series);
+        match (run_pair.oscore.as_ref(), base_pair.oscore.as_ref()) {
+            (Some(got), Some(want)) => compare_oscore(&mut out, got, want),
+            (None, Some(_)) => out.regressions.push(format!(
+                "pair {:?}: OSCORE block missing from this run",
+                base_pair.name
+            )),
+            _ => {}
+        }
+    }
+    for run_pair in &run.pairs {
+        if !baseline.pairs.iter().any(|p| p.name == run_pair.name) {
+            out.line(format!(
+                "  pair {}  (new vs baseline; not compared)",
+                run_pair.name
+            ));
+        }
+    }
+    out
+}
+
+fn compare_metrics(out: &mut CompareOutcome, indent: &str, got: &MetricsDto, want: &MetricsDto) {
+    for (name, get) in METRIC_FLOORS {
+        out.floor_u32(&format!("{indent}{name}"), get(got), get(want));
+    }
+    for (name, get) in METRIC_CEILS {
+        out.ceil_u32(&format!("{indent}{name}"), get(got), get(want));
+    }
+    for (name, get) in METRIC_INFO {
+        out.info_u32(&format!("{indent}{name}"), get(got), get(want));
+    }
+}
+
+fn compare_series(out: &mut CompareOutcome, got: &[SeriesStats], want: &[SeriesStats]) {
+    for base in want {
+        let Some(run) = got.iter().find(|s| s.label == base.label) else {
+            out.regressions
+                .push(format!("missing series {:?}", base.label));
+            continue;
+        };
+        out.floor_usize(&format!("    series {} n", base.label), run.n, base.n);
+        out.line(format!(
+            "    series {:<22} p50 {:.3} → {:.3} ms  mean {:.3} → {:.3}  (informational)",
+            base.label, base.wall_ms.p50, run.wall_ms.p50, base.wall_ms.mean, run.wall_ms.mean
+        ));
+    }
+}
+
+fn compare_oscore(out: &mut CompareOutcome, got: &OscoreDto, want: &OscoreDto) {
+    out.floor_usize(
+        "    oscore.observe_collected",
+        got.observe_collected,
+        want.observe_collected,
+    );
+    out.floor_usize(
+        "    oscore.protected_on_wire",
+        got.protected_on_wire,
+        want.protected_on_wire,
+    );
+    if got.client_sender_seq < want.client_sender_seq {
+        out.regressions.push(format!(
+            "oscore.client_sender_seq dropped {} → {}",
+            want.client_sender_seq, got.client_sender_seq
+        ));
+    }
+    out.line(format!(
+        "  {:<28} {} → {}",
+        "oscore.client_sender_seq", want.client_sender_seq, got.client_sender_seq
+    ));
+    if got.server_sender_seq < want.server_sender_seq {
+        out.regressions.push(format!(
+            "oscore.server_sender_seq dropped {} → {}",
+            want.server_sender_seq, got.server_sender_seq
+        ));
+    }
+    out.line(format!(
+        "  {:<28} {} → {}",
+        "oscore.server_sender_seq", want.server_sender_seq, got.server_sender_seq
+    ));
+    if want.inject_dropped && !got.inject_dropped {
+        out.regressions
+            .push("oscore.inject_dropped became false".into());
+    }
+    out.line(format!(
+        "  {:<28} {} → {}",
+        "oscore.inject_dropped", want.inject_dropped, got.inject_dropped
+    ));
+    out.line("    oscore.server_metrics");
+    compare_metrics(out, "      ", &got.server_metrics, &want.server_metrics);
+}
+
+fn compare_against_baseline(
+    path: &std::path::Path,
+    run: &JsonReport,
+    out: &mut impl Write,
+) -> Result<(), PeerError> {
+    let baseline = load_json_report(path)?;
+    let outcome = compare_reports(run, &baseline);
+    writeln!(out, "\n== compare  {}", path.display()).map_err(io_err)?;
+    for line in &outcome.lines {
+        writeln!(out, "{line}").map_err(io_err)?;
+    }
+    if outcome.regressions.is_empty() {
+        writeln!(
+            out,
+            "  compare  ok  (Metrics floors held; wall timings informational)"
+        )
+        .map_err(io_err)?;
+        Ok(())
+    } else {
+        for r in &outcome.regressions {
+            writeln!(out, "  REGRESSION  {r}").map_err(io_err)?;
+        }
+        Err(PeerError(format!(
+            "baseline regression vs {} ({} issue{})",
+            path.display(),
+            outcome.regressions.len(),
+            if outcome.regressions.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )))
+    }
 }
 
 fn run_coap_rs_client(cfg: &Config, dest: SocketAddr) -> Result<PairReport, PeerError> {
@@ -1716,6 +2002,7 @@ fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport
     Ok(OscoreReport {
         plain_get_code,
         server_sender_seq: snap.oscore_sender_seq.unwrap_or(0),
+        server_metrics: snap.metrics,
         ..report
     })
 }
@@ -2003,6 +2290,7 @@ fn run_oscore_client(
         client_now_ms: now,
         client_sender_seq,
         server_sender_seq: 0,
+        server_metrics: Metrics::ZERO,
         protected_on_wire,
         observe_collected,
         plain_get_code: Code::EMPTY,
@@ -2057,7 +2345,78 @@ fn count_protected_on_wire(capture: &Capture) -> Result<usize, PeerError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, percentile, run};
+    use super::{
+        CompareOutcome, Config, JsonPair, JsonReport, MetricsDto, OscoreDto, SeriesStats,
+        WallStats, compare_reports, percentile, run,
+    };
+
+    fn empty_wall() -> WallStats {
+        WallStats {
+            min: 1.0,
+            mean: 2.0,
+            p50: 1.5,
+            p99: 3.0,
+            max: 4.0,
+        }
+    }
+
+    fn series(label: &str, n: usize) -> SeriesStats {
+        SeriesStats {
+            label: label.into(),
+            n,
+            wall_ms: empty_wall(),
+            engine_delta_ms: None,
+        }
+    }
+
+    fn pair(name: &str, metrics: MetricsDto) -> JsonPair {
+        JsonPair {
+            name: name.into(),
+            series: vec![
+                series("GET /test", 2),
+                series("BLOCK1 PUT /large-update", 2),
+            ],
+            occupancy: "occupancy rx=0 tx=0".into(),
+            now_ms: 10,
+            metrics,
+            capacities: None,
+            collected: None,
+            oscore: None,
+        }
+    }
+
+    fn report(metrics: MetricsDto) -> JsonReport {
+        JsonReport {
+            schema: "coaptic-dogfood/1".into(),
+            caveat: "test".into(),
+            host: None,
+            iterations: 2,
+            timeout_ms: 1500,
+            block_timeout_ms: 4000,
+            wall_s: 0.4,
+            observe_collected: 2,
+            observe_notify: metrics.observe_notify,
+            oscore: false,
+            pairs: vec![
+                pair("coap-rs → coaptic", metrics.clone()),
+                pair(
+                    "coaptic ↔ coaptic observe notify",
+                    MetricsDto {
+                        observe_notify: metrics.observe_notify,
+                        ..MetricsDto::default()
+                    },
+                ),
+            ],
+        }
+    }
+
+    fn assert_ok(out: CompareOutcome) {
+        assert!(
+            out.regressions.is_empty(),
+            "unexpected regressions: {:?}",
+            out.regressions
+        );
+    }
 
     #[test]
     fn percentile_ranks() {
@@ -2076,6 +2435,8 @@ mod tests {
             "--timeout-ms=200",
             "--json",
             "/tmp/dogfood.json",
+            "--compare",
+            "/tmp/baseline.json",
         ])
         .unwrap();
         assert_eq!(cfg.iterations, 3);
@@ -2083,6 +2444,10 @@ mod tests {
         assert_eq!(
             cfg.json_path.as_deref(),
             Some(std::path::Path::new("/tmp/dogfood.json"))
+        );
+        assert_eq!(
+            cfg.compare_path.as_deref(),
+            Some(std::path::Path::new("/tmp/baseline.json"))
         );
     }
 
@@ -2092,7 +2457,155 @@ mod tests {
         assert!(cfg.iterations > 2, "default must be above CI smoke");
         assert_eq!(cfg.iterations, 50);
         assert!(cfg.json_path.is_none());
+        assert!(cfg.compare_path.is_none());
         assert!(!cfg.oscore);
+    }
+
+    #[test]
+    fn compare_identity_is_ok() {
+        let base = report(MetricsDto {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_notify: 2,
+            observe_register: 2,
+            block1_assemble: 4,
+            block2_assemble: 4,
+            ..MetricsDto::default()
+        });
+        let mut run = base.clone();
+        run.wall_s = 0.9;
+        run.pairs[0].metrics.progress = 999;
+        run.pairs[0].series[0].wall_ms.p50 = 9.9;
+        assert_ok(compare_reports(&run, &base));
+    }
+
+    #[test]
+    fn compare_observe_notify_drop_fails() {
+        let base = report(MetricsDto {
+            observe_notify: 2,
+            ..MetricsDto::default()
+        });
+        let mut run = base.clone();
+        run.observe_notify = 0;
+        run.pairs[1].metrics.observe_notify = 0;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions.iter().any(|r| r.contains("observe_notify")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn compare_block_assemble_drop_fails() {
+        let base = report(MetricsDto {
+            block1_assemble: 4,
+            block2_assemble: 4,
+            ..MetricsDto::default()
+        });
+        let mut run = base.clone();
+        run.pairs[0].metrics.block1_assemble = 1;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("block1_assemble")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn compare_error_counter_rise_fails() {
+        let base = report(MetricsDto::default());
+        let mut run = base.clone();
+        run.pairs[0].metrics.rx_error = 3;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions.iter().any(|r| r.contains("rx_error")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn compare_iterations_mismatch_fails() {
+        let base = report(MetricsDto::default());
+        let mut run = base.clone();
+        run.iterations = 50;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions.iter().any(|r| r.contains("iterations")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn compare_oscore_server_observe_and_block() {
+        let mut base = report(MetricsDto {
+            observe_notify: 2,
+            block2_assemble: 4,
+            ..MetricsDto::default()
+        });
+        base.oscore = true;
+        base.pairs.push(JsonPair {
+            name: "coaptic ↔ coaptic OSCORE".into(),
+            series: vec![
+                series("OSCORE OBS notify /obs", 2),
+                series("OSCORE BLOCK1 PUT /large-update", 2),
+            ],
+            occupancy: "occupancy rx=0 tx=0".into(),
+            now_ms: 10,
+            metrics: MetricsDto {
+                block2_assemble: 4,
+                ..MetricsDto::default()
+            },
+            capacities: None,
+            collected: None,
+            oscore: Some(OscoreDto {
+                client_sender_seq: 10,
+                server_sender_seq: 2,
+                protected_on_wire: 22,
+                observe_collected: 2,
+                fail_closed_plain_get: "4.01 Unauthorized".into(),
+                inject_dropped: true,
+                server_metrics: MetricsDto {
+                    observe_notify: 2,
+                    block1_assemble: 8,
+                    ..MetricsDto::default()
+                },
+            }),
+        });
+        let mut run = base.clone();
+        run.wall_s = 1.2;
+        assert_ok(compare_reports(&run, &base));
+
+        run.pairs[2]
+            .oscore
+            .as_mut()
+            .unwrap()
+            .server_metrics
+            .observe_notify = 0;
+        run.pairs[2]
+            .oscore
+            .as_mut()
+            .unwrap()
+            .server_metrics
+            .block1_assemble = 0;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions.iter().any(|r| r.contains("observe_notify")),
+            "{:?}",
+            out.regressions
+        );
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("block1_assemble")),
+            "{:?}",
+            out.regressions
+        );
     }
 
     #[test]
