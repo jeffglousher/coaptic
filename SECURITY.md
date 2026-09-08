@@ -12,4 +12,6 @@ When a context is attached, App is fail-closed: a non-empty message without an O
 
 Block1 / Block2 / Size1 / Size2 are RFC 8613 Figure 5 Dual (E+U). App uses the Inner field (fragment the CoAP message, then protect each datagram). They are not copied to Outer. Incoming Outer Block is not assembled as an application body.
 
+Max-Age and No-Response are Figure 5 Dual. The application Max-Age and No-Response values stay Inner (RFC 8613 §4.1.3.1 / §4.1.3.6). Observe responses add Outer Max-Age 0 so OSCORE-unaware proxies do not cache 2.05 Content. ETag is Figure 5 Class E only. An injected Outer ETag, Outer Max-Age, or Outer No-Response is discarded on unprotect and does not become an application field.
+
 Timed proof under load: `cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore` (CI smokes `--iterations 2`). The harness fails if protect/unprotect, protected Observe notify, or protected Block1/Block2 stays cold, or a plain completion sneaks through.

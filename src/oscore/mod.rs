@@ -40,8 +40,12 @@
 //! **Inner** field: fragment the CoAP message, then OSCORE-protect each
 //! datagram (`knowledge/rfcs/rfc8613.txt` §4.1.3.4.1). They are not
 //! copied to Outer (that would look like hop-by-hop fragmentation of
-//! the OSCORE message). Max-Age and No-Response stay Inner. Incoming
-//! Outer Block is not treated as an application body (fail-closed).
+//! the OSCORE message). Max-Age is Dual: the application value stays
+//! Inner (§4.1.3.1); Observe responses add Outer Max-Age 0 so proxies
+//! do not cache 2.05. No-Response is Dual but MUST be Inner
+//! (§4.1.3.6); Outer is not emitted. ETag is Class E only (Figure 5)
+//! and stays Inner. Incoming Outer Block / Outer ETag / Outer Max-Age /
+//! Outer No-Response are not treated as application fields (fail-closed).
 //!
 //! # What this slice does not do
 //!

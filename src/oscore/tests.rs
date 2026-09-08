@@ -5,8 +5,8 @@ use super::{
     header::{self, OptionClass, PartialIv},
 };
 use crate::message::{
-    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode,
-    encode,
+    BlockValue, Code, ContentFormat, Message, MessageId, NoResponse, Opt, OptionsBuilder, Token,
+    Type, decode, encode, encode_uint,
 };
 use crate::storage::{DatagramIo, Endpoint};
 
@@ -614,6 +614,11 @@ fn observe_notification_inner_empty_outer_seq_and_piv() {
     let outer = decode(&wire[..n]).unwrap();
     assert_eq!(outer.code(), Code::CONTENT);
     assert_eq!(outer.observe().and_then(Result::ok), Some(3));
+    assert_eq!(
+        outer.max_age().and_then(Result::ok),
+        Some(0),
+        "Observe notification: Outer Max-Age 0 (RFC 8613 §4.1.3.1)"
+    );
     let header = super::OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
     assert!(header.piv.is_some(), "notification MUST carry a Partial IV");
 
@@ -665,6 +670,11 @@ fn app_oscore_observe_register_notify() {
     let resp = decode(&bytes[..n]).unwrap();
     assert_eq!(resp.code(), Code::CONTENT);
     assert!(resp.oscore().is_some());
+    assert_eq!(
+        resp.max_age().and_then(Result::ok),
+        Some(0),
+        "Observe register ACK: Outer Max-Age 0"
+    );
 
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(0).unwrap();
@@ -755,20 +765,249 @@ fn derive_rejects_identical_ids() {
     );
 }
 
+/// RFC 8613 Figure 5 + encode_as_outer decisions.
 #[test]
-fn block_and_size_are_dual_inner_encode() {
-    assert_eq!(header::classify(6), OptionClass::Dual);
-    assert_eq!(header::classify(23), OptionClass::Dual);
-    assert_eq!(header::classify(27), OptionClass::Dual);
-    assert_eq!(header::classify(28), OptionClass::Dual);
-    assert_eq!(header::classify(60), OptionClass::Dual);
-    assert!(header::classify(23).in_plaintext());
+fn figure5_option_class_matrix() {
+    // Class U only.
+    for n in [3, 7, 9, 35, 39] {
+        assert_eq!(header::classify(n), OptionClass::Outer, "U-only {n}");
+        assert!(!header::classify(n).in_plaintext());
+        assert!(header::encode_as_outer(n));
+    }
+    // Hop-Limit (RFC 8768): not in Figure 5; proxy processing → Outer.
+    assert_eq!(header::classify(16), OptionClass::Outer);
+    assert!(header::encode_as_outer(16));
+
+    // Dual (E+U).
+    for n in [6, 14, 23, 27, 28, 60, 258] {
+        assert_eq!(header::classify(n), OptionClass::Dual, "Dual {n}");
+        assert!(header::classify(n).in_plaintext());
+    }
     assert!(header::encode_as_outer(6), "Observe is both fields");
+    assert!(
+        !header::encode_as_outer(14),
+        "application Max-Age stays Inner (§4.1.3.1)"
+    );
     assert!(
         !header::encode_as_outer(23) && !header::encode_as_outer(27),
         "Block stays Inner-only on encode"
     );
     assert!(!header::encode_as_outer(28) && !header::encode_as_outer(60));
+    assert!(
+        !header::encode_as_outer(258),
+        "No-Response MUST be Inner; Outer SHOULD NOT (§4.1.3.6)"
+    );
+
+    // Class E only (Figure 5), including ETag — not Dual.
+    for n in [1, 4, 5, 8, 11, 12, 15, 17, 20] {
+        assert_eq!(header::classify(n), OptionClass::Inner, "E-only {n}");
+        assert!(header::classify(n).in_plaintext());
+        assert!(!header::encode_as_outer(n));
+    }
+    // Unknown / later options: Class E (§4.1).
+    for n in [19, 31, 99, 252, 292] {
+        assert_eq!(header::classify(n), OptionClass::Inner, "unknown {n}");
+        assert!(!header::encode_as_outer(n));
+    }
+}
+
+fn inject_outer_opts(
+    protected: &crate::message::ParsedMessage<'_>,
+    extra: &[Opt<'_>],
+    out: &mut [u8],
+) -> usize {
+    let mut opts = OptionsBuilder::<8>::new();
+    for opt in protected.options() {
+        opts.push(opt).unwrap();
+    }
+    for opt in extra {
+        opts.push(*opt).unwrap();
+    }
+    let msg = Message::new(protected.ty(), protected.code(), protected.message_id())
+        .with_token(protected.token())
+        .with_options(opts.as_slice())
+        .with_payload(protected.payload());
+    msg.encode(out).unwrap()
+}
+
+#[test]
+fn protect_keeps_max_age_etag_inner_not_outer() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut path = OptionsBuilder::<1>::new();
+    path.push(Opt::uri_path("tv1")).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected_req = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 128];
+    let (_plain, request) = server
+        .unprotect_request(&protected_req, &mut inner)
+        .unwrap();
+
+    let age = encode_uint(120);
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::etag(b"v1")).unwrap();
+    opts.push(Opt::max_age(&age)).unwrap();
+    let resp = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice())
+        .with_payload(b"ok");
+    let n = server.protect_response(&resp, request, &mut wire).unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::CHANGED);
+    assert!(outer.oscore().is_some());
+    assert!(
+        outer.etag().next().is_none(),
+        "ETag is Class E — must not appear Outer"
+    );
+    assert!(
+        outer.max_age().is_none(),
+        "successful non-Observe response must not copy application Max-Age to Outer"
+    );
+
+    let opened = client
+        .unprotect_response(&outer, request, &mut inner)
+        .unwrap();
+    assert_eq!(opened.code(), Code::CONTENT);
+    assert_eq!(opened.etag().next(), Some(&b"v1"[..]));
+    assert_eq!(opened.max_age().and_then(Result::ok), Some(120));
+}
+
+#[test]
+fn protect_keeps_no_response_inner_not_outer() {
+    let mut client = client_c1();
+    let nr = encode_uint(u32::from(NoResponse::SUPPRESS_ALL));
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::uri_path("tv1")).unwrap();
+    opts.push(Opt::no_response(&nr)).unwrap();
+    let req = Message::new(Type::NonConfirmable, Code::POST, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice());
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::POST);
+    assert!(
+        outer.no_response().is_none(),
+        "No-Response MUST be Inner; Outer SHOULD NOT (§4.1.3.6)"
+    );
+
+    let mut server = server_c1();
+    let mut inner = [0u8; 128];
+    let (plain, _) = server.unprotect_request(&outer, &mut inner).unwrap();
+    assert_eq!(
+        plain
+            .no_response()
+            .and_then(Result::ok)
+            .map(NoResponse::get),
+        Some(NoResponse::SUPPRESS_ALL)
+    );
+}
+
+#[test]
+fn protect_observe_response_outer_max_age_zero_keeps_inner() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut path = OptionsBuilder::<2>::new();
+    path.push(Opt::uri_path("obs")).unwrap();
+    path.push(Opt::observe_register()).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected_req = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 128];
+    let (_plain, request) = server
+        .unprotect_request(&protected_req, &mut inner)
+        .unwrap();
+
+    let seq = encode_uint(1);
+    let age = encode_uint(90);
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::observe(&seq)).unwrap();
+    opts.push(Opt::max_age(&age)).unwrap();
+    let resp = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice())
+        .with_payload(b"obs");
+    let n = server.protect_response(&resp, request, &mut wire).unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::CONTENT);
+    assert_eq!(outer.max_age().and_then(Result::ok), Some(0));
+
+    let opened = client
+        .unprotect_response(&outer, request, &mut inner)
+        .unwrap();
+    assert_eq!(
+        opened.max_age().and_then(Result::ok),
+        Some(90),
+        "Inner Max-Age is the application value; Outer 0 is discarded (§8.4)"
+    );
+}
+
+#[test]
+fn stitch_discards_injected_outer_etag_max_age_no_response() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut path = OptionsBuilder::<1>::new();
+    path.push(Opt::uri_path("tv1")).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 192];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected_req = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 192];
+    let (_plain, request) = server
+        .unprotect_request(&protected_req, &mut inner)
+        .unwrap();
+
+    let age = encode_uint(45);
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::etag(b"real")).unwrap();
+    opts.push(Opt::max_age(&age)).unwrap();
+    let resp = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice())
+        .with_payload(b"ok");
+    let n = server.protect_response(&resp, request, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+
+    let fake_age = encode_uint(3600);
+    let fake_nr = encode_uint(u32::from(NoResponse::SUPPRESS_ALL));
+    let injected = [
+        Opt::etag(b"pwned"),
+        Opt::max_age(&fake_age),
+        Opt::no_response(&fake_nr),
+    ];
+    let mut tampered = [0u8; 192];
+    let tn = inject_outer_opts(&protected, &injected, &mut tampered);
+    let tampered_msg = decode(&tampered[..tn]).unwrap();
+    assert_eq!(tampered_msg.etag().next(), Some(&b"pwned"[..]));
+    assert_eq!(tampered_msg.max_age().and_then(Result::ok), Some(3600));
+    assert!(tampered_msg.no_response().is_some());
+
+    let opened = client
+        .unprotect_response(&tampered_msg, request, &mut inner)
+        .unwrap();
+    assert_eq!(
+        opened.etag().next(),
+        Some(&b"real"[..]),
+        "Outer ETag must not replace Inner ETag (§8.4)"
+    );
+    assert_eq!(
+        opened.max_age().and_then(Result::ok),
+        Some(45),
+        "Outer Max-Age must not replace Inner Max-Age (§8.4)"
+    );
+    assert!(
+        opened.no_response().is_none(),
+        "Outer No-Response is ignored (§4.1.3.6)"
+    );
 }
 
 #[test]
@@ -1011,4 +1250,122 @@ fn app_plain_block2_does_not_complete_oscore_call() {
         }
     }
     panic!("protected Block2 remainder did not complete after plain inject");
+}
+
+#[test]
+fn app_oscore_max_age_etag_stay_inner() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"Hello World!").max_age(120).etag(b"v1")
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("tv1", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("tv1").to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("protected request");
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server.transport().last_send.expect("protected response");
+    let resp = decode(&bytes[..n]).unwrap();
+    assert_eq!(resp.code(), Code::CHANGED);
+    assert!(resp.oscore().is_some());
+    assert!(resp.etag().next().is_none(), "App ETag must stay Inner");
+    assert!(
+        resp.max_age().is_none(),
+        "App Max-Age must stay Inner on a non-Observe success"
+    );
+
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(0).unwrap();
+    let response = client.take_response(call).expect("unprotected response");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), b"Hello World!");
+    assert_eq!(response.etag_bytes(), Some(&b"v1"[..]));
+}
+
+#[test]
+fn app_plain_etag_max_age_does_not_complete_oscore_call() {
+    use crate::{App, profiles};
+
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("tv1").to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("protected request");
+    let req = decode(&bytes[..n]).unwrap();
+
+    let age = encode_uint(60);
+    let opts = [Opt::etag(b"pwned"), Opt::max_age(&age)];
+    let plain = Message::new(Type::Acknowledgement, Code::CONTENT, req.message_id())
+        .with_token(req.token())
+        .with_options(&opts)
+        .with_payload(b"pwned");
+    let mut wire = [0u8; 256];
+    let pn = encode(&plain, &mut wire).unwrap();
+    client.transport_mut().inbox = Some((server_ep, wire, pn));
+    client.poll(0).unwrap();
+    assert!(
+        client.take_response(call).is_none(),
+        "unprotected ETag/Max-Age 2.xx must not complete an OSCORE Call"
+    );
+}
+
+#[test]
+fn app_unprotected_request_is_401_max_age_zero() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"nope")
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("tv1", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut path = OptionsBuilder::<1>::new();
+    path.push(Opt::uri_path("tv1")).unwrap();
+    let plain = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 256];
+    let pn = encode(&plain, &mut wire).unwrap();
+    server.transport_mut().inbox = Some((client_ep, wire, pn));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server.transport().last_send.expect("unprotected 4.01");
+    let resp = decode(&bytes[..n]).unwrap();
+    assert_eq!(resp.code(), Code::UNAUTHORIZED);
+    assert!(
+        resp.oscore().is_none(),
+        "OSCORE processing 4.01 is unprotected"
+    );
+    assert_eq!(
+        resp.max_age().and_then(Result::ok),
+        Some(0),
+        "unprotected OSCORE 4.01 uses Max-Age 0 (§8.2 / §4.1.3.1)"
+    );
 }
