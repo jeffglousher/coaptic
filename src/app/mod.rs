@@ -710,6 +710,35 @@ where
     }
 }
 
+/// Write a successfully unprotected Inner over the RX slot.
+///
+/// Block-wise assembly reads that slot (RFC 8613 §4.1.3.4.1). Encode or
+/// `write_rx` failure is an error — not `Ok(())` that drops the Inner.
+#[cfg(feature = "oscore")]
+pub(crate) fn write_unprotected_rx<Mem, E>(
+    engine: &mut Engine<Mem>,
+    rx: SlotId,
+    inner: &ParsedMessage<'_>,
+    peer: Endpoint,
+) -> Result<(), Error<E>>
+where
+    Mem: Storage + DatagramSlots,
+{
+    let mut inner_wire = [0u8; DATAGRAM_SCRATCH];
+    let n = match inner.encode(&mut inner_wire) {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = engine.release_rx(rx);
+            return Err(Error::Message(SlotMessageError::Encode(e)));
+        }
+    };
+    if let Err(e) = engine.write_rx(rx, &inner_wire[..n], peer) {
+        let _ = engine.release_rx(rx);
+        return Err(Error::Slot(e));
+    }
+    Ok(())
+}
+
 fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -869,19 +898,7 @@ where
                 // Inner Block-wise (RFC 8613 §4.1.3.4.1): assembly reads
                 // the RX slot. Replace the outer OSCORE datagram with the
                 // opened Inner so Block1/Block2 see Class E options.
-                let mut inner_wire = [0u8; DATAGRAM_SCRATCH];
-                match inner.encode(&mut inner_wire) {
-                    Ok(n) => {
-                        if engine.write_rx(rx, &inner_wire[..n], peer).is_err() {
-                            let _ = engine.release_rx(rx);
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => {
-                        let _ = engine.release_rx(rx);
-                        return Ok(());
-                    }
-                }
+                write_unprotected_rx(engine, rx, &inner, peer)?;
                 (inner, Some(req))
             }
             #[cfg(not(feature = "oscore"))]

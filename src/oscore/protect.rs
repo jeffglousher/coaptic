@@ -425,10 +425,11 @@ fn encode_outer(
     // Observe responses appear as 2.05 Content (cacheable) to
     // OSCORE-unaware proxies. Outer Max-Age 0 is the Dual Class U
     // field (`knowledge/rfcs/rfc8613.txt` §4.1.3.1). Application
-    // Max-Age stays Inner (`encode_as_outer(14)` is false).
+    // Max-Age stays Inner (`encode_as_outer(14)` is false). A full
+    // outer builder is OptionsFull — do not skip the inject.
     if code.is_response() && inner_opts.iter().any(is_observe) {
         opts.push(Opt::new(OptionNumber::MAX_AGE, &[]))
-            .map_err(|_| Error::Options)?;
+            .map_err(|_| Error::Encode(EncodeError::OptionsFull))?;
     }
     let msg = Message::new(ty, code, mid)
         .with_token(token)

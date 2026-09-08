@@ -129,20 +129,29 @@ pub(crate) fn inbound<'a>(
 }
 
 /// Encode `msg`, or OSCORE-protect a request into `tx`.
-pub(crate) fn encode_request<S: Storage + DatagramSlots>(
+///
+/// Size failures stay [`EncodeError::BufferTooSmall`] so the client may
+/// start Inner Block1. Other protect failures (feature `oscore`) are the
+/// App `Oscore` error and must not look like a size miss.
+pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
     ctx: &mut Field,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
-) -> Result<(), SlotMessageError> {
+) -> Result<(), super::Error<E>> {
     let _ = ctx;
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
         let mut wire = [0u8; super::DATAGRAM_SCRATCH];
-        let n = ctx.protect_request(msg, &mut wire).map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]);
+        let n = ctx
+            .protect_request(msg, &mut wire)
+            .map_err(protect_request_err)?;
+        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
     }
-    engine.encode_tx(tx, msg).map(|_| ())
+    engine
+        .encode_tx(tx, msg)
+        .map(|_| ())
+        .map_err(super::Error::from)
 }
 
 /// Encode `msg`, or OSCORE-protect a response bound to `request`.
@@ -221,5 +230,24 @@ fn protect_err(err: OscoreError) -> SlotMessageError {
             SlotMessageError::Encode(EncodeError::OptionsFull)
         }
         _ => SlotMessageError::Encode(EncodeError::BufferTooSmall),
+    }
+}
+
+/// Protect-request mapping used on the client send / Block1 start path.
+///
+/// Only size misses become [`EncodeError::BufferTooSmall`] (Block1 may
+/// start). Protocol failures (`SequenceExhausted`, `Encrypt`, …) stay
+/// [`super::Error::Oscore`] so they are not mistaken for a too-large body.
+#[cfg(feature = "oscore")]
+fn protect_request_err<E>(err: OscoreError) -> super::Error<E> {
+    match err {
+        OscoreError::BufferTooSmall | OscoreError::MessageLength => {
+            super::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+        }
+        OscoreError::Encode(e) => super::Error::Message(SlotMessageError::Encode(e)),
+        OscoreError::Options | OscoreError::Saturated => {
+            super::Error::Message(SlotMessageError::Encode(EncodeError::OptionsFull))
+        }
+        other => super::Error::Oscore(other),
     }
 }
