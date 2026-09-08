@@ -12,13 +12,17 @@ pub const DEFAULT_ROUTES: usize = 8;
 
 /// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
 ///
-/// The `/.well-known/core` scratch buffer is [`link_format_capacity`]:
-/// `N ×` this, floored at [`super::INLINE_PAYLOAD`] and capped at
-/// [`super::RESPONSE_BODY`]. A catalog that still does not fit is 5.00,
-/// never a silently truncated list.
+/// The `/.well-known/core` scratch buffer is [`LinkFormatScratch`] /
+/// [`link_format_capacity`]: `N ×` this, floored at [`super::INLINE_PAYLOAD`]
+/// and capped at [`super::RESPONSE_BODY`]. A catalog that still does not
+/// fit is 5.00, never a silently truncated list.
 pub const LINK_FORMAT_PER_ROUTE: usize = 24;
 
 /// Compile-time `/.well-known/core` payload bytes for a [`Site`] of `N` routes.
+///
+/// `[u8; link_format_capacity::<N>()]` is not a stable array length (the
+/// bound depends on `N`). [`LinkFormatScratch`] is the stack buffer
+/// [`App::poll`](super::App::poll) uses instead of `[u8; RESPONSE_BODY]`.
 #[must_use]
 pub const fn link_format_capacity<const N: usize>() -> usize {
     let n = N.saturating_mul(LINK_FORMAT_PER_ROUTE);
@@ -28,6 +32,65 @@ pub const fn link_format_capacity<const N: usize>() -> usize {
         RESPONSE_BODY
     } else {
         n
+    }
+}
+
+const _: () =
+    assert!(link_format_capacity::<DEFAULT_ROUTES>() == DEFAULT_ROUTES * LINK_FORMAT_PER_ROUTE);
+const _: () = assert!(link_format_capacity::<1>() == INLINE_PAYLOAD);
+
+/// Stack scratch for `/.well-known/core`, sized to [`link_format_capacity`].
+///
+/// `[u8; link_format_capacity::<N>()]` needs generic const exprs.
+/// `[[u8; LINK_FORMAT_PER_ROUTE]; N]` is a legal const-generic array; when
+/// that is below [`INLINE_PAYLOAD`], the 128-byte floor is used instead so
+/// a few longer paths still fit. Overflow stays 5.00.
+///
+/// For default `N = 8` this is ~192 bytes, not [`RESPONSE_BODY`] (4096).
+pub struct LinkFormatScratch<const N: usize> {
+    inner: LinkFormatInner<N>,
+}
+
+enum LinkFormatInner<const N: usize> {
+    /// `N × LINK_FORMAT_PER_ROUTE` when that is at least [`INLINE_PAYLOAD`].
+    PerRoute([[u8; LINK_FORMAT_PER_ROUTE]; N]),
+    /// [`INLINE_PAYLOAD`] floor when `N × 24` is smaller.
+    Inline([u8; INLINE_PAYLOAD]),
+}
+
+impl<const N: usize> LinkFormatScratch<N> {
+    /// Zeroed scratch for [`Site::dispatch`].
+    #[must_use]
+    pub const fn new() -> Self {
+        let inner = if N.saturating_mul(LINK_FORMAT_PER_ROUTE) >= INLINE_PAYLOAD {
+            LinkFormatInner::PerRoute([[0u8; LINK_FORMAT_PER_ROUTE]; N])
+        } else {
+            LinkFormatInner::Inline([0u8; INLINE_PAYLOAD])
+        };
+        Self { inner }
+    }
+}
+
+impl<const N: usize> AsMut<[u8]> for LinkFormatScratch<N> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        let cap = link_format_capacity::<N>();
+        match &mut self.inner {
+            LinkFormatInner::PerRoute(chunks) => {
+                let buf = chunks.as_flattened_mut();
+                let n = cap.min(buf.len());
+                &mut buf[..n]
+            }
+            LinkFormatInner::Inline(buf) => {
+                let n = cap.min(buf.len());
+                &mut buf[..n]
+            }
+        }
+    }
+}
+
+impl<const N: usize> Default for LinkFormatScratch<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -43,8 +106,8 @@ struct Entry {
 /// `N` is the maximum number of paths (default 8). GET+PUT on one path
 /// occupies one slot. Prefer [`crate::App::route`] / [`crate::app::AppBuilder::route`]
 /// on the happy path. This is a routing table, not an Engine memory area
-/// and not a shared application bag. `/.well-known/core` uses a
-/// compile-time catalog buffer ([`link_format_capacity`]).
+/// and not a shared application bag. `/.well-known/core` uses
+/// [`LinkFormatScratch`] ([`link_format_capacity`]).
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],
     len: usize,
@@ -94,8 +157,8 @@ impl<const N: usize> Site<N> {
 
     /// Serve `/.well-known/core` from registered paths (RFC 6690 link-format).
     ///
-    /// The catalog is written into a stack buffer sized by
-    /// [`link_format_capacity`] for this `N`. Paths that do not fit
+    /// The catalog is written into [`LinkFormatScratch`] (sized by
+    /// [`link_format_capacity`] for this `N`). Paths that do not fit
     /// yield 5.00; registered links are never dropped silently.
     pub const fn well_known_core(&mut self) -> &mut Self {
         self.well_known = true;
@@ -143,8 +206,9 @@ impl<const N: usize> Site<N> {
     /// Unbound method and unknown path use RFC 9290 problem details (CBOR).
     ///
     /// `catalog` is scratch for `/.well-known/core` when the list exceeds
-    /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Slice it to
-    /// [`link_format_capacity`] (capped at [`RESPONSE_BODY`]).
+    /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Pass
+    /// [`LinkFormatScratch`] (or any slice of
+    /// [`link_format_capacity`], capped at [`RESPONSE_BODY`]).
     #[must_use]
     pub fn dispatch<'a>(&self, request: Request<'_>, catalog: &'a mut [u8]) -> Response<'a> {
         for entry in self.entries.iter().flatten() {

@@ -110,7 +110,9 @@ pub use response::{
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
-pub use site::{DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, Site, link_format_capacity};
+pub use site::{
+    DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, LinkFormatScratch, Site, link_format_capacity,
+};
 
 use response::AssembledField;
 
@@ -235,8 +237,9 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
 
     /// Serve `/.well-known/core` from registered paths.
     ///
-    /// Catalog capacity is compile-time ([`link_format_capacity`] after
-    /// [`Self::routes`]). Overflow is 5.00, not a truncated list.
+    /// Catalog scratch is [`LinkFormatScratch`] (compile-time
+    /// [`link_format_capacity`] after [`Self::routes`]). Overflow is 5.00,
+    /// not a truncated list.
     #[must_use]
     pub fn well_known_core(mut self) -> Self {
         self.site.well_known_core();
@@ -1002,7 +1005,7 @@ where
         InboundBody::None | InboundBody::Complete(_) => {}
     }
 
-    let mut catalog = [0u8; RESPONSE_BODY];
+    let mut catalog = site::LinkFormatScratch::<N>::new();
     let (response, plan) = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
@@ -1011,7 +1014,7 @@ where
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
                 let plan = ObservePlan::from_request(site, &request);
-                (site.dispatch(request, &mut catalog), plan)
+                (site.dispatch(request, catalog.as_mut()), plan)
             }
             Err(request::PathError::BadUtf8 | request::PathError::EmptySegment) => (
                 Response::problem(Code::BAD_REQUEST).title("Bad Request"),
