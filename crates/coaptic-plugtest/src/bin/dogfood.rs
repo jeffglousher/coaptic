@@ -5,8 +5,9 @@
 //! cargo run -p coaptic-plugtest --bin dogfood
 //! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
 //! cargo run -p coaptic-plugtest --bin dogfood -- --json dogfood.json
+//! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
 //! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore
-//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2
+//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 //! ```
 
 use std::env;

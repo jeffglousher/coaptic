@@ -55,8 +55,8 @@ jobs:
       - run: cargo test --no-default-features
       - run: cargo test --all-features
       - run: cargo test -p coaptic-plugtest --features dtls,oscore
-      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
-      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2
+      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
+      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 
   doc:
     name: doc
