@@ -1229,8 +1229,8 @@ fn is_mixed_pair(name: &str) -> bool {
 /// client Block2). Flooring the sums means a silent swap onto that 0-floor
 /// cannot hide a cold assemble type.
 fn mixed_block_sums(pairs: &[JsonPair]) -> (u32, u32) {
-    let mut block1 = 0;
-    let mut block2 = 0;
+    let mut block1: u32 = 0;
+    let mut block2: u32 = 0;
     for p in pairs.iter().filter(|p| is_mixed_pair(&p.name)) {
         block1 = block1.saturating_add(p.metrics.block1_assemble);
         block2 = block2.saturating_add(p.metrics.block2_assemble);
