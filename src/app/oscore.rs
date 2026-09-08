@@ -176,6 +176,7 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots>(
     tx: SlotId,
     msg: &Message<'_>,
 ) -> Result<(), SlotMessageError> {
+    #[cfg(not(feature = "oscore"))]
     let _ = (ctx, request);
     #[cfg(feature = "oscore")]
     if let Some(oscore) = ctx.as_mut() {

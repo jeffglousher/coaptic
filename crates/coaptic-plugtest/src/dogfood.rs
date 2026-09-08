@@ -1615,7 +1615,7 @@ fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport
         out,
         "  oscore    client sender_seq={}  server sender_seq={}  protected_on_wire={}  observe_collected={}  server observe_notify={}  plain GET={}  inject={}",
         report.client_sender_seq,
-        report.server_sender_seq,
+        snap.oscore_sender_seq.unwrap_or(0),
         report.protected_on_wire,
         report.observe_collected,
         snap.metrics.observe_notify,
@@ -1663,6 +1663,13 @@ fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport
         return Err(PeerError(
             "OSCORE server had no SecurityContext after the timed window".into(),
         ));
+    }
+    let want_server = u64::try_from(cfg.iterations).unwrap_or(u64::MAX);
+    if snap.oscore_sender_seq.unwrap_or(0) < want_server {
+        return Err(PeerError(format!(
+            "OSCORE notify PIV stayed cold: server sender_seq={:?} want >= {want_server}",
+            snap.oscore_sender_seq
+        )));
     }
     if snap.oscore_replay_zero_fresh != Some(false) {
         return Err(PeerError(format!(

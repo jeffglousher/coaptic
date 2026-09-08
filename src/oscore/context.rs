@@ -29,7 +29,7 @@ pub struct DeriveParams<'a> {
 /// Both endpoints keep this association until the matching response is
 /// protected or verified. Observe registrations keep it for later
 /// notifications (`request_piv`). See `knowledge/rfcs/rfc8613.txt` §8 / §4.1.3.5.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RequestRef {
     kid: Id,
     piv: PartialIv,
@@ -56,7 +56,7 @@ impl RequestRef {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct Id {
     bytes: [u8; MAX_ID_LEN],
     len: u8,

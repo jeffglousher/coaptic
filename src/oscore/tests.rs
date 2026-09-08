@@ -558,7 +558,6 @@ fn live_request_table_is_four_and_saturates() {
 }
 
 #[test]
-#[test]
 fn observe_register_is_outer_fetch_and_dual_class() {
     let mut client = client_c1();
     let mut path = OptionsBuilder::<2>::new();
@@ -738,6 +737,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
     );
 }
 
+#[test]
 fn derive_rejects_identical_ids() {
     assert_eq!(
         SecurityContext::derive(DeriveParams {

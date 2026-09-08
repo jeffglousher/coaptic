@@ -3,7 +3,7 @@
 use super::{Error, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, MAX_PIV_LEN};
 
 /// Partial IV (Sender Sequence Number, leading zeroes stripped except `0`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PartialIv {
     bytes: [u8; MAX_PIV_LEN],
     len: u8,

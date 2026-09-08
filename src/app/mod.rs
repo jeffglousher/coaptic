@@ -820,6 +820,8 @@ where
             if let Some(ctx) = oscore.as_mut() {
                 let _ = ctx.take(interest.token());
             }
+            #[cfg(not(feature = "oscore"))]
+            let _ = interest;
         }
         let _ = engine.release_rx(rx);
         return Ok(());
@@ -1047,15 +1049,11 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
         let opted = response.observe_seq().is_some() || plan.has_source;
         if opted {
             let _ = engine.take_observe(key);
-            let mut interest = ObserveInterest::new(plan.token, peer).with_resource(plan.resource);
+            let interest = ObserveInterest::new(plan.token, peer).with_resource(plan.resource);
             #[cfg(feature = "oscore")]
-            {
-                interest = interest.with_oscore(oscore_req);
-            }
+            let interest = interest.with_oscore(oscore_req);
             #[cfg(not(feature = "oscore"))]
-            {
-                let _ = oscore_req;
-            }
+            let _ = oscore_req;
             if engine.insert_observe(interest).is_some() {
                 let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
                 let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
@@ -1202,6 +1200,7 @@ fn observe_endpoint_held<S: Storage + ObserveSlots>(
         .count()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_notification<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
