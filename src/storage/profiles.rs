@@ -4,7 +4,7 @@
 
 use super::exchange::ExchangeTable;
 use super::memory::MemoryProfile;
-use super::pool::{BodyPool, DatagramPool};
+use super::pool::{BodyPool, DatagramPool, DatagramScratch};
 use super::table::{DedupTable, ObserveTable};
 
 macro_rules! impl_profile {
@@ -36,6 +36,8 @@ macro_rules! impl_profile {
             type Dedup = DedupTable<$dedup>;
             type Observe = ObserveTable<$obs>;
             type Exchange = ExchangeTable<$tx_n>;
+            type RxScratch = DatagramScratch<$rx_b>;
+            type TxScratch = DatagramScratch<$tx_b>;
         }
 
         const _: () = {

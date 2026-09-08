@@ -14,6 +14,38 @@ use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, SlotMessageError};
 use crate::message::{BlockValue, Message, MessageId, ParsedMessage};
 
+/// One datagram of stack scratch. `N` is the profile RX or TX slot size.
+///
+/// `[u8; N]` has no `Default` for N > 32; this wrapper zeros with a const
+/// generic so Constrained (1152) does not reserve Default 1472.
+pub struct DatagramScratch<const N: usize>([u8; N]);
+
+impl<const N: usize> DatagramScratch<N> {
+    /// Zeroed scratch of `N` bytes.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self([0u8; N])
+    }
+}
+
+impl<const N: usize> Default for DatagramScratch<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> AsRef<[u8]> for DatagramScratch<N> {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> AsMut<[u8]> for DatagramScratch<N> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
 /// Pool of datagram slots (RX and TX are two pools of this type).
 ///
 /// Each slot holds CoAP message bytes (UDP payload) plus sidecar [`Endpoint`]

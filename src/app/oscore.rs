@@ -149,9 +149,11 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
     let _ = ctx;
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
-        let mut wire = [0u8; super::DATAGRAM_SCRATCH];
-        let n = ctx.protect_request(msg, &mut wire).map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
+        let mut wire = S::TxScratch::default();
+        let n = ctx
+            .protect_request(msg, wire.as_mut())
+            .map_err(protect_err)?;
+        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
         .encode_tx(tx, msg)
@@ -177,11 +179,11 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E>(
         let Some(request) = request else {
             return Err(protect_err(OscoreError::Context));
         };
-        let mut wire = [0u8; super::DATAGRAM_SCRATCH];
+        let mut wire = S::TxScratch::default();
         let n = ctx
-            .protect_response(msg, request, &mut wire)
+            .protect_response(msg, request, wire.as_mut())
             .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
+        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
         .encode_tx(tx, msg)
@@ -207,11 +209,11 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E>(
         let Some(request) = request else {
             return Err(protect_err(OscoreError::Context));
         };
-        let mut wire = [0u8; super::DATAGRAM_SCRATCH];
+        let mut wire = S::TxScratch::default();
         let n = oscore
-            .protect_response_with_piv(msg, request, &mut wire)
+            .protect_response_with_piv(msg, request, wire.as_mut())
             .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire[..n]).map_err(super::Error::from);
+        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
         .encode_tx(tx, msg)

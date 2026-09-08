@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use super::Access;
 use super::AccessMut;
 use super::BodySlots;
+use super::Capacities;
 use super::DatagramSlots;
 use super::DedupEntry;
 use super::DedupKey;
@@ -28,8 +29,8 @@ use super::block::{
     accept_incoming_role, block_offset, same_body_identity, start_incoming, store_incoming,
     write_range,
 };
-use super::capacities::Capacities;
 use super::exchange::ExchangeStore;
+use super::memory::MemoryProfile;
 use super::occupancy::HeapOccupancy;
 use super::pending::{
     PendingMark, PendingRto, next_due_slot, outstanding_pending, record_admission,
@@ -341,6 +342,9 @@ impl SlotPool for AllocDatagramPool {
 }
 
 impl DatagramSlots for AllocMemory {
+    type RxScratch = super::DatagramScratch<{ super::profiles::Default::RX_DATAGRAM_BYTES }>;
+    type TxScratch = super::DatagramScratch<{ super::profiles::Default::TX_DATAGRAM_BYTES }>;
+
     fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {
         self.rx.payload(id)
     }

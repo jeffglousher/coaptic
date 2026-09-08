@@ -63,7 +63,7 @@ pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use metrics::Metrics;
 pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
-pub use pool::{BodyPool, DatagramPool};
+pub use pool::{BodyPool, DatagramPool, DatagramScratch};
 pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
 pub use table::{
@@ -153,6 +153,28 @@ pub trait Storage {
 /// [`Memory`] and [`AllocMemory`] implement this so [`Engine`] can decode
 /// and encode without inventing protocol responses.
 pub trait DatagramSlots {
+    /// Compile-time RX slot bytes for stack scratch (inbound copy, OSCORE
+    /// unprotect, Block IO). [`Memory`] uses [`MemoryProfile::RX_DATAGRAM_BYTES`]
+    /// so Constrained does not reserve Default 1472.
+    ///
+    /// [`AllocMemory`] keeps the Default ceiling; a smaller runtime slot
+    /// fails loud on oversize copy.
+    const RX_DATAGRAM_BYTES: usize = 1472;
+
+    /// Compile-time TX slot bytes for stack scratch (OSCORE protect, Block
+    /// encode, Dedup replay copy). [`Memory`] uses
+    /// [`MemoryProfile::TX_DATAGRAM_BYTES`].
+    const TX_DATAGRAM_BYTES: usize = 1472;
+
+    /// Stack array for one RX datagram copy. [`Memory`] uses
+    /// [`DatagramScratch`] sized to [`MemoryProfile::RX_DATAGRAM_BYTES`]
+    /// so Constrained does not reserve Default 1472.
+    type RxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
+
+    /// Stack array for one TX datagram copy. [`Memory`] uses
+    /// [`DatagramScratch`] sized to [`MemoryProfile::TX_DATAGRAM_BYTES`].
+    type TxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
+
     /// Filled RX datagram, if `id` is occupied.
     fn rx_payload(&self, id: SlotId) -> Option<&[u8]>;
 

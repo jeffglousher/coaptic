@@ -7,8 +7,8 @@
 
 use coaptic::message::{BlockValue, Ids, Message, MessageId, Opt, OptionsBuilder, Token, Type};
 use coaptic::storage::{
-    BlockKey, BodyPool, DatagramPool, DedupTable, Engine, EngineBuilder, ExchangeTable, Memory,
-    MemoryProfile, ObserveTable, SlotId, WithBodies,
+    BlockKey, BodyPool, DatagramPool, DatagramScratch, DedupTable, Engine, EngineBuilder,
+    ExchangeTable, Memory, MemoryProfile, ObserveTable, SlotId, WithBodies,
 };
 use coaptic::{Code, ContentFormat, Endpoint};
 
@@ -49,6 +49,8 @@ impl MemoryProfile for SweepProfile {
     type Dedup = DedupTable<16>;
     type Observe = ObserveTable<8>;
     type Exchange = ExchangeTable<SWEEP_DGRAM_SLOTS>;
+    type RxScratch = DatagramScratch<SWEEP_DGRAM_BYTES>;
+    type TxScratch = DatagramScratch<SWEEP_DGRAM_BYTES>;
 }
 
 /// Engine used by the harness (block-wise on, large body).

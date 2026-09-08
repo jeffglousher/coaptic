@@ -981,52 +981,18 @@ where
         }
     }
 
-    match engine.apply_block2_rx(rx) {
-        Ok(progress) if progress.complete() => {
-            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
-            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
-            return Ok(());
-        }
-        Ok(progress) => {
-            take_exchange(engine, parsed, peer);
-            let outcome = send_block2_continue(
-                engine,
-                io,
-                lives,
-                ids,
-                oscore,
-                now_ms,
-                parsed,
-                peer,
-                progress.id(),
-            );
-            let _ = engine.release_rx(rx);
-            return outcome;
-        }
-        Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
-            let _ = engine.release_rx(rx);
-            return Ok(());
-        }
-        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
-        Err(e) => {
-            drop_client(engine, lives, parsed, peer, rx);
-            let _ = e;
-            return Ok(());
-        }
-    }
-
-    match engine.apply_q_block2_rx(rx) {
-        Ok(progress) if progress.complete() => {
-            let _ = engine.note_q_receive(progress.id(), now_ms);
-            accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
-            finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
-            return Ok(());
-        }
-        Ok(progress) => {
-            let _ = engine.note_q_receive(progress.id(), now_ms);
-            let outcome = if needs_q_continue(engine, progress.id()) {
+    // Classify from the already-decoded response. A plain 2.05 must not
+    // stack Block IO scratch via MissingBlock probes.
+    if parsed.block2().is_some() {
+        match engine.apply_block2_rx(rx) {
+            Ok(progress) if progress.complete() => {
+                accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
+                finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+                return Ok(());
+            }
+            Ok(progress) => {
                 take_exchange(engine, parsed, peer);
-                send_q_block2_continue(
+                let outcome = send_block2_continue(
                     engine,
                     io,
                     lives,
@@ -1036,17 +1002,55 @@ where
                     parsed,
                     peer,
                     progress.id(),
-                )
-            } else {
-                Ok(())
-            };
-            let _ = engine.release_rx(rx);
-            return outcome;
+                );
+                let _ = engine.release_rx(rx);
+                return outcome;
+            }
+            Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
+                let _ = engine.release_rx(rx);
+                return Ok(());
+            }
+            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
+            Err(e) => {
+                drop_client(engine, lives, parsed, peer, rx);
+                let _ = e;
+                return Ok(());
+            }
         }
-        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
-        Err(_) => {
-            drop_client(engine, lives, parsed, peer, rx);
-            return Ok(());
+    } else if parsed.q_block2().next().is_some() {
+        match engine.apply_q_block2_rx(rx) {
+            Ok(progress) if progress.complete() => {
+                let _ = engine.note_q_receive(progress.id(), now_ms);
+                accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
+                finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+                return Ok(());
+            }
+            Ok(progress) => {
+                let _ = engine.note_q_receive(progress.id(), now_ms);
+                let outcome = if needs_q_continue(engine, progress.id()) {
+                    take_exchange(engine, parsed, peer);
+                    send_q_block2_continue(
+                        engine,
+                        io,
+                        lives,
+                        ids,
+                        oscore,
+                        now_ms,
+                        parsed,
+                        peer,
+                        progress.id(),
+                    )
+                } else {
+                    Ok(())
+                };
+                let _ = engine.release_rx(rx);
+                return outcome;
+            }
+            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
+            Err(_) => {
+                drop_client(engine, lives, parsed, peer, rx);
+                return Ok(());
+            }
         }
     }
 
