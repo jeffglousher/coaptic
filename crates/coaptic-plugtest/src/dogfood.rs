@@ -1537,18 +1537,18 @@ impl<T: DatagramIo> DatagramIo for InjectPlainOnce<T> {
     }
 
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        if self.pending.is_none() && !self.injected.load(Ordering::SeqCst) {
-            if let Ok(parsed) = decode(bytes)
-                && parsed.oscore().is_some()
-                && parsed.code().is_request()
-            {
-                let plain = Message::new(Type::Acknowledgement, Code::CONTENT, parsed.message_id())
-                    .with_token(parsed.token())
-                    .with_payload(b"pwned");
-                let mut wire = [0u8; 256];
-                if let Ok(n) = encode(&plain, &mut wire) {
-                    self.pending = Some((dest, wire[..n].to_vec()));
-                }
+        if self.pending.is_none()
+            && !self.injected.load(Ordering::SeqCst)
+            && let Ok(parsed) = decode(bytes)
+            && parsed.oscore().is_some()
+            && parsed.code().is_request()
+        {
+            let plain = Message::new(Type::Acknowledgement, Code::CONTENT, parsed.message_id())
+                .with_token(parsed.token())
+                .with_payload(b"pwned");
+            let mut wire = [0u8; 256];
+            if let Ok(n) = encode(&plain, &mut wire) {
+                self.pending = Some((dest, wire[..n].to_vec()));
             }
         }
         self.inner.send(dest, bytes)
