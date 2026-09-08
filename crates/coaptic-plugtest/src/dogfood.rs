@@ -1073,11 +1073,13 @@ fn load_json_report(path: &std::path::Path) -> Result<JsonReport, PeerError> {
     serde_json::from_slice(&bytes).map_err(|e| format!("compare parse {path:?}: {e}").into())
 }
 
+type MetricField = (&'static str, fn(&MetricsDto) -> u32);
+
 /// Path-proving counters: a drop below the baseline is a regression.
 ///
 /// `rx_accepted` / `tx_ok` are informational — a CON retransmit can raise
 /// them on a loaded runner without meaning the path got colder.
-const METRIC_FLOORS: &[(&str, fn(&MetricsDto) -> u32)] = &[
+const METRIC_FLOORS: &[MetricField] = &[
     ("observe_notify", |m| m.observe_notify),
     ("observe_register", |m| m.observe_register),
     ("observe_cancel", |m| m.observe_cancel),
@@ -1086,7 +1088,7 @@ const METRIC_FLOORS: &[(&str, fn(&MetricsDto) -> u32)] = &[
 ];
 
 /// Error / saturation counters: a rise above the baseline is a regression.
-const METRIC_CEILS: &[(&str, fn(&MetricsDto) -> u32)] = &[
+const METRIC_CEILS: &[MetricField] = &[
     ("rx_error", |m| m.rx_error),
     ("tx_fail", |m| m.tx_fail),
     ("give_up", |m| m.give_up),
@@ -1095,7 +1097,7 @@ const METRIC_CEILS: &[(&str, fn(&MetricsDto) -> u32)] = &[
 ];
 
 /// Informational only (`progress` is idle poll ticks; retransmit/ACK vary with load).
-const METRIC_INFO: &[(&str, fn(&MetricsDto) -> u32)] = &[
+const METRIC_INFO: &[MetricField] = &[
     ("rx_accepted", |m| m.rx_accepted),
     ("tx_ok", |m| m.tx_ok),
     ("progress", |m| m.progress),
