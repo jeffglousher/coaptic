@@ -4,12 +4,21 @@
 //! cargo run -p coaptic-plugtest --bin dogfood
 //! cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
 //! cargo run -p coaptic-plugtest --bin dogfood -- --json dogfood.json
+//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore
+//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2
 //! ```
 //!
 //! Mixed-stack loops stay GET/PUT/POST, Observe **register**, and Block1/Block2
 //! against coap-rs (that peer is a register/deregister stub). The notify
 //! leg is coaptic-server [`App::notify`] collected by a coaptic-client
 //! [`App::take_response`] so [`Metrics::observe_notify`] is not left cold.
+//!
+//! `--oscore` (crate feature `oscore`) adds a coaptic↔coaptic OSCORE
+//! GET/PUT/POST loop: mirrored caller-owned SecurityContexts,
+//! `App::set_oscore` on both sides. Observe/Block-over-OSCORE is backlog.
+//! The run fails if protect/unprotect stays cold, a captured non-empty
+//! datagram lacks the OSCORE option, or a token-matching plain 2.xx
+//! completes a Call.
 //!
 //! [`App::reset_metrics`] / [`Engine::reset_metrics`] run at the start of
 //! each timed window (`progress` counts idle poll ticks). After each
@@ -31,9 +40,16 @@ use coaptic::storage::{DatagramIo, Engine, Storage};
 use coaptic::{App, Call, Endpoint, Metrics, Response, profiles};
 use serde::Serialize;
 
+#[cfg(feature = "oscore")]
+use coaptic::message::{Message, Type, decode, encode};
+#[cfg(feature = "oscore")]
+use coaptic::oscore::{DeriveParams, SecurityContext};
+
 use crate::coap_rs::CoapRsPeer;
 use crate::coaptic::bind_site;
 use crate::pcap::bind_loopback;
+#[cfg(feature = "oscore")]
+use crate::pcap::{Capture, CapturingIo};
 use crate::peer::{ClientRequest, ClientResponse, NotifyMailbox, Peer, PeerError};
 use crate::runner::harness_lock;
 use crate::site;
@@ -50,6 +66,8 @@ pub struct Config {
     pub block_timeout: Duration,
     /// Write a JSON report here after a successful run (`None` = stdout only).
     pub json_path: Option<PathBuf>,
+    /// OSCORE-protected coaptic↔coaptic GET/PUT/POST (feature `oscore`).
+    pub oscore: bool,
 }
 
 impl Default for Config {
@@ -59,6 +77,7 @@ impl Default for Config {
             timeout: Duration::from_millis(1500),
             block_timeout: Duration::from_millis(4000),
             json_path: None,
+            oscore: false,
         }
     }
 }
@@ -76,15 +95,26 @@ Notify collect (coaptic ↔ coaptic): register /obs, App::notify, collect the
 notification, deregister — so observe_notify is not left cold. coap-rs stays
 on the other verbs; it does not collect notifies.
 
+--oscore (requires --features oscore) adds a coaptic↔coaptic OSCORE
+GET/PUT/POST loop (Observe/Block-over-OSCORE is backlog). Mirrored
+caller-owned SecurityContexts; App::set_oscore on both sides. Fails if
+protect/unprotect is cold, a non-empty captured datagram is plaintext, or
+a token-matching plain 2.xx completes a Call.
+
 Prints wall min/mean/p50/p99/max (and Engine clock deltas on the coaptic
 client). Resets `app.metrics()` around each timed window, then prints the
 snapshot. Timings are host/load specific — not a CI golden.
+
+Default is 50 iterations (mixed + notify; OSCORE too when --oscore).
+CI smoke: --iterations 2, and --oscore --iterations 2.
 
 Options:
   --iterations N          loops per direction + notify collects (default 50)
   --timeout-ms N          small-exchange deadline (default 1500)
   --block-timeout-ms N    Block1/Block2 deadline (default 4000)
   --json PATH             write the same numbers as JSON
+  --oscore                OSCORE-protected coaptic↔coaptic GET/PUT/POST
+                          (requires: --features oscore)
   -h, --help              print this message
 ";
 
@@ -112,6 +142,12 @@ Options:
                 "--json" => {
                     cfg.json_path = Some(PathBuf::from(parse_string(flag, inline, &mut it)?));
                 }
+                "--oscore" => {
+                    if inline.is_some() {
+                        return Err("--oscore does not take a value".into());
+                    }
+                    cfg.oscore = true;
+                }
                 other => {
                     return Err(format!(
                         "unknown argument {other:?}\n{}",
@@ -122,6 +158,12 @@ Options:
         }
         if cfg.iterations == 0 {
             return Err("--iterations must be >= 1".into());
+        }
+        if cfg.oscore && !cfg!(feature = "oscore") {
+            return Err(
+                "--oscore requires: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore"
+                    .into(),
+            );
         }
         Ok(cfg)
     }
@@ -175,7 +217,8 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
     let t0 = Instant::now();
     writeln!(
         out,
-        "dogfood  coaptic ↔ coap-rs + notify collect  iterations={}  timeout={}ms  block={}ms",
+        "dogfood  coaptic ↔ coap-rs + notify collect{}  iterations={}  timeout={}ms  block={}ms",
+        if cfg.oscore { " + OSCORE" } else { "" },
         cfg.iterations,
         cfg.timeout.as_millis(),
         cfg.block_timeout.as_millis()
@@ -250,14 +293,28 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
         )));
     }
 
+    #[cfg(feature = "oscore")]
+    let oscore = if cfg.oscore {
+        Some(run_oscore_section(&cfg, &mut out)?)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "oscore"))]
+    let oscore: Option<OscoreReport> = None;
+
     let wall = t0.elapsed();
+    let oscore_wall = if cfg.oscore {
+        format!(" + {} OSCORE GET/PUT/POST", cfg.iterations)
+    } else {
+        String::new()
+    };
     writeln!(out, "\n== integration").map_err(io_err)?;
     writeln!(
         out,
-        "  wall     {:.3}s  (bind + {} loops × 2 mixed + {} notify collects)",
+        "  wall     {:.3}s  (bind + {} loops × 2 mixed + {} notify collects{oscore_wall})",
         wall.as_secs_f64(),
         cfg.iterations,
-        cfg.iterations
+        cfg.iterations,
     )
     .map_err(io_err)?;
     writeln!(
@@ -266,6 +323,14 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
         notify.collected, notify_server.metrics.observe_notify
     )
     .map_err(io_err)?;
+    if let Some(oscore) = oscore.as_ref() {
+        writeln!(
+            out,
+            "  oscore   protected_on_wire={}  client sender_seq={}  fail-closed plain GET={}  inject dropped",
+            oscore.protected_on_wire, oscore.client_sender_seq, oscore.plain_get_code
+        )
+        .map_err(io_err)?;
+    }
     writeln!(
         out,
         "  metrics  app.metrics() after timed window (reset_metrics around it)"
@@ -292,6 +357,7 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
             &caps,
             &notify,
             &notify_server,
+            oscore.as_ref(),
         )?;
         writeln!(out, "dogfood  json  {}", path.display()).map_err(io_err)?;
     }
@@ -342,6 +408,8 @@ struct ServerSnap {
     occupancy: String,
     metrics: Metrics,
     now_ms: u64,
+    oscore_sender_seq: Option<u64>,
+    oscore_replay_zero_fresh: Option<bool>,
 }
 
 impl CoapticServer {
@@ -381,6 +449,15 @@ impl Drop for CoapticServer {
 }
 
 fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
+    spawn_coaptic_server_cfg(false)
+}
+
+#[cfg(feature = "oscore")]
+fn spawn_oscore_server() -> Result<CoapticServer, PeerError> {
+    spawn_coaptic_server_cfg(true)
+}
+
+fn spawn_coaptic_server_cfg(attach_oscore: bool) -> Result<CoapticServer, PeerError> {
     let (sock, addr) = bind_loopback().map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     let reset = Arc::new(AtomicBool::new(false));
@@ -390,6 +467,8 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
         occupancy: String::from("occupancy rx=? tx=?"),
         metrics: Metrics::ZERO,
         now_ms: 0,
+        oscore_sender_seq: None,
+        oscore_replay_zero_fresh: None,
     }));
     let stop_t = Arc::clone(&stop);
     let reset_t = Arc::clone(&reset);
@@ -400,6 +479,12 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
         .name("coaptic-dogfood-server".into())
         .spawn(move || {
             let mut app = bind_site(sock);
+            #[cfg(feature = "oscore")]
+            if attach_oscore {
+                app.set_oscore(oscore_server_ctx());
+            }
+            #[cfg(not(feature = "oscore"))]
+            let _ = attach_oscore;
             let origin = Instant::now();
             let mut pending: Option<(Vec<String>, Vec<u8>)> = None;
             while !stop_t.load(Ordering::SeqCst) {
@@ -431,10 +516,19 @@ fn spawn_coaptic_server() -> Result<CoapticServer, PeerError> {
                 }
                 let occupancy = occupancy_line(app.engine_mut());
                 let metrics = app.metrics();
+                #[cfg(feature = "oscore")]
+                let (oscore_sender_seq, oscore_replay_zero_fresh) = match app.oscore() {
+                    Some(ctx) => (Some(ctx.sender_seq()), Some(ctx.replay_fresh(0))),
+                    None => (None, None),
+                };
+                #[cfg(not(feature = "oscore"))]
+                let (oscore_sender_seq, oscore_replay_zero_fresh) = (None, None);
                 *snap_t.lock().expect("snap") = ServerSnap {
                     occupancy,
                     metrics,
                     now_ms: now,
+                    oscore_sender_seq,
+                    oscore_replay_zero_fresh,
                 };
                 thread::yield_now();
             }
@@ -768,6 +862,17 @@ struct JsonPair {
     capacities: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collected: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oscore: Option<OscoreDto>,
+}
+
+#[derive(Serialize)]
+struct OscoreDto {
+    client_sender_seq: u64,
+    server_sender_seq: u64,
+    protected_on_wire: usize,
+    fail_closed_plain_get: String,
+    inject_dropped: bool,
 }
 
 #[derive(Serialize)]
@@ -781,7 +886,39 @@ struct JsonReport {
     wall_s: f64,
     observe_collected: usize,
     observe_notify: u32,
+    oscore: bool,
     pairs: Vec<JsonPair>,
+}
+
+struct OscoreReport {
+    get: Series,
+    put: Series,
+    post: Series,
+    loop_: Series,
+    client_occupancy: String,
+    client_metrics: Metrics,
+    client_now_ms: u64,
+    client_sender_seq: u64,
+    server_sender_seq: u64,
+    protected_on_wire: usize,
+    plain_get_code: Code,
+    injected_plain: bool,
+}
+
+impl OscoreReport {
+    fn write(&self, indent: &str, out: &mut impl Write) -> io::Result<()> {
+        self.get.write(indent, out)?;
+        self.put.write(indent, out)?;
+        self.post.write(indent, out)?;
+        self.loop_.write(indent, out)
+    }
+
+    fn series(&self) -> Vec<SeriesStats> {
+        [&self.get, &self.put, &self.post, &self.loop_]
+            .into_iter()
+            .map(Series::stats)
+            .collect()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -798,10 +935,61 @@ fn write_json_report(
     caps: &str,
     notify: &NotifyReport,
     notify_server: &ServerSnap,
+    oscore: Option<&OscoreReport>,
 ) -> Result<(), PeerError> {
     let host = std::env::var("HOST")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok();
+    let mut pairs = vec![
+        JsonPair {
+            name: "coap-rs → coaptic",
+            series: rs_to_coaptic.series(),
+            occupancy: rs_to_coaptic_snap.occupancy.clone(),
+            now_ms: rs_to_coaptic_snap.now_ms,
+            metrics: MetricsDto::from(rs_to_coaptic_snap.metrics),
+            capacities: None,
+            collected: None,
+            oscore: None,
+        },
+        JsonPair {
+            name: "coaptic → coap-rs",
+            series: coaptic_to_rs.series(),
+            occupancy: client_occ.to_owned(),
+            now_ms: client_now,
+            metrics: MetricsDto::from(*client_metrics),
+            capacities: Some(caps.to_owned()),
+            collected: None,
+            oscore: None,
+        },
+        JsonPair {
+            name: "coaptic ↔ coaptic observe notify",
+            series: notify.series(),
+            occupancy: notify_server.occupancy.clone(),
+            now_ms: notify_server.now_ms,
+            metrics: MetricsDto::from(notify_server.metrics),
+            capacities: None,
+            collected: Some(notify.collected),
+            oscore: None,
+        },
+    ];
+    if let Some(oscore) = oscore {
+        pairs.push(JsonPair {
+            name: "coaptic ↔ coaptic OSCORE",
+            series: oscore.series(),
+            occupancy: oscore.client_occupancy.clone(),
+            now_ms: oscore.client_now_ms,
+            metrics: MetricsDto::from(oscore.client_metrics),
+            capacities: None,
+            collected: None,
+            oscore: Some(OscoreDto {
+                client_sender_seq: oscore.client_sender_seq,
+                server_sender_seq: oscore.server_sender_seq,
+                protected_on_wire: oscore.protected_on_wire,
+                fail_closed_plain_get: oscore.plain_get_code.to_string(),
+                inject_dropped: oscore.injected_plain,
+            }),
+        });
+    }
     let report = JsonReport {
         schema: "coaptic-dogfood/1",
         caveat: "Timings and counters are host/load specific (example host). Not a CI golden.",
@@ -812,35 +1000,8 @@ fn write_json_report(
         wall_s: wall.as_secs_f64(),
         observe_collected: notify.collected,
         observe_notify: notify_server.metrics.observe_notify,
-        pairs: vec![
-            JsonPair {
-                name: "coap-rs → coaptic",
-                series: rs_to_coaptic.series(),
-                occupancy: rs_to_coaptic_snap.occupancy.clone(),
-                now_ms: rs_to_coaptic_snap.now_ms,
-                metrics: MetricsDto::from(rs_to_coaptic_snap.metrics),
-                capacities: None,
-                collected: None,
-            },
-            JsonPair {
-                name: "coaptic → coap-rs",
-                series: coaptic_to_rs.series(),
-                occupancy: client_occ.to_owned(),
-                now_ms: client_now,
-                metrics: MetricsDto::from(*client_metrics),
-                capacities: Some(caps.to_owned()),
-                collected: None,
-            },
-            JsonPair {
-                name: "coaptic ↔ coaptic observe notify",
-                series: notify.series(),
-                occupancy: notify_server.occupancy.clone(),
-                now_ms: notify_server.now_ms,
-                metrics: MetricsDto::from(notify_server.metrics),
-                capacities: None,
-                collected: Some(notify.collected),
-            },
-        ],
+        oscore: cfg.oscore,
+        pairs,
     };
     let file = std::fs::File::create(path).map_err(|e| format!("json create {path:?}: {e}"))?;
     serde_json::to_writer_pretty(file, &report).map_err(|e| format!("json write: {e}"))?;
@@ -1309,6 +1470,354 @@ fn expect_codes(label: &str, iter: usize, got: Code, want: &[Code]) -> Result<()
     }
 }
 
+/// RFC 8613 Appendix C.1 Master Secret (test-only; not for production).
+#[cfg(feature = "oscore")]
+const OSCORE_MASTER_SECRET: [u8; 16] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+];
+#[cfg(feature = "oscore")]
+const OSCORE_MASTER_SALT: [u8; 8] = [0x9e, 0x7c, 0xa9, 0x22, 0x23, 0x78, 0x63, 0x40];
+
+#[cfg(feature = "oscore")]
+fn oscore_client_ctx() -> SecurityContext {
+    SecurityContext::derive(DeriveParams {
+        master_secret: &OSCORE_MASTER_SECRET,
+        master_salt: &OSCORE_MASTER_SALT,
+        sender_id: &[],
+        recipient_id: &[0x01],
+        id_context: &[],
+    })
+    .expect("dogfood OSCORE client derive")
+}
+
+#[cfg(feature = "oscore")]
+fn oscore_server_ctx() -> SecurityContext {
+    SecurityContext::derive(DeriveParams {
+        master_secret: &OSCORE_MASTER_SECRET,
+        master_salt: &OSCORE_MASTER_SALT,
+        sender_id: &[0x01],
+        recipient_id: &[],
+        id_context: &[],
+    })
+    .expect("dogfood OSCORE server derive")
+}
+
+/// Inject one token-matching plaintext 2.xx before the real datagram.
+///
+/// Fail-closed must drop it so [`Call`] does not complete on "pwned".
+#[cfg(feature = "oscore")]
+struct InjectPlainOnce<T> {
+    inner: T,
+    pending: Option<(Endpoint, Vec<u8>)>,
+    injected: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "oscore")]
+impl<T> InjectPlainOnce<T> {
+    fn new(inner: T, injected: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            pending: None,
+            injected,
+        }
+    }
+}
+
+#[cfg(feature = "oscore")]
+impl<T: DatagramIo> DatagramIo for InjectPlainOnce<T> {
+    type Error = T::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        if let Some((ep, bytes)) = self.pending.take() {
+            self.injected.store(true, Ordering::SeqCst);
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            return Ok(Some((bytes.len(), ep)));
+        }
+        self.inner.recv(buf)
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if self.pending.is_none() && !self.injected.load(Ordering::SeqCst) {
+            if let Ok(parsed) = decode(bytes)
+                && parsed.oscore().is_some()
+                && parsed.code().is_request()
+            {
+                let plain = Message::new(Type::Acknowledgement, Code::CONTENT, parsed.message_id())
+                    .with_token(parsed.token())
+                    .with_payload(b"pwned");
+                let mut wire = [0u8; 256];
+                if let Ok(n) = encode(&plain, &mut wire) {
+                    self.pending = Some((dest, wire[..n].to_vec()));
+                }
+            }
+        }
+        self.inner.send(dest, bytes)
+    }
+}
+
+#[cfg(feature = "oscore")]
+fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport, PeerError> {
+    site::reset();
+    let server = spawn_oscore_server()?;
+    let dest = server.addr;
+    writeln!(out, "\n== coaptic ↔ coaptic  OSCORE  server={dest}").map_err(io_err)?;
+
+    let plain_get_code = oscore_plain_get(dest, cfg.timeout)?;
+    if plain_get_code != Code::UNAUTHORIZED {
+        return Err(PeerError(format!(
+            "OSCORE fail-closed: plain GET /test got {plain_get_code}, expected {}",
+            Code::UNAUTHORIZED
+        )));
+    }
+
+    server.reset_metrics()?;
+    let report = run_oscore_client(cfg, dest)?;
+    report.write("  ", out).map_err(io_err)?;
+    let snap = server.snapshot();
+    drop(server);
+
+    writeln!(
+        out,
+        "  engine    {}  now_ms={}  (coaptic server)",
+        snap.occupancy, snap.now_ms
+    )
+    .map_err(io_err)?;
+    writeln!(out, "  app.metrics()  {}", snap.metrics).map_err(io_err)?;
+    writeln!(
+        out,
+        "  client    {}  now_ms={}  (coaptic client)",
+        report.client_occupancy, report.client_now_ms
+    )
+    .map_err(io_err)?;
+    writeln!(out, "  client app.metrics()  {}", report.client_metrics).map_err(io_err)?;
+    writeln!(
+        out,
+        "  oscore    client sender_seq={}  server sender_seq={}  protected_on_wire={}  plain GET={}  inject={}",
+        report.client_sender_seq,
+        report.server_sender_seq,
+        report.protected_on_wire,
+        plain_get_code,
+        if report.injected_plain {
+            "dropped"
+        } else {
+            "missing"
+        }
+    )
+    .map_err(io_err)?;
+
+    let want = u64::try_from(cfg.iterations.saturating_mul(3)).unwrap_or(u64::MAX);
+    if report.client_sender_seq < want {
+        return Err(PeerError(format!(
+            "OSCORE path stayed cold: client sender_seq={} want >= {want} (GET/PUT/POST × {})",
+            report.client_sender_seq, cfg.iterations
+        )));
+    }
+    let want_wire = cfg.iterations.saturating_mul(6);
+    if report.protected_on_wire < want_wire {
+        return Err(PeerError(format!(
+            "OSCORE path stayed cold: protected_on_wire={} want >= {want_wire}",
+            report.protected_on_wire
+        )));
+    }
+    if !report.injected_plain {
+        return Err(PeerError(
+            "OSCORE fail-closed: never injected a plain 2.xx (protect path cold?)".into(),
+        ));
+    }
+    if snap.oscore_sender_seq.is_none() {
+        return Err(PeerError(
+            "OSCORE server had no SecurityContext after the timed window".into(),
+        ));
+    }
+    if snap.oscore_replay_zero_fresh != Some(false) {
+        return Err(PeerError(format!(
+            "OSCORE unprotect stayed cold: server replay_fresh(0)={:?}",
+            snap.oscore_replay_zero_fresh
+        )));
+    }
+    if snap.metrics.rx_accepted == 0 || snap.metrics.tx_ok == 0 {
+        return Err(PeerError(format!(
+            "OSCORE server metrics stayed cold: {}",
+            snap.metrics
+        )));
+    }
+    if report.client_metrics.rx_accepted == 0 || report.client_metrics.tx_ok == 0 {
+        return Err(PeerError(format!(
+            "OSCORE client metrics stayed cold: {}",
+            report.client_metrics
+        )));
+    }
+
+    Ok(OscoreReport {
+        plain_get_code,
+        server_sender_seq: snap.oscore_sender_seq.unwrap_or(0),
+        ..report
+    })
+}
+
+#[cfg(feature = "oscore")]
+fn oscore_plain_get(dest: SocketAddr, timeout: Duration) -> Result<Code, PeerError> {
+    let (sock, _) = bind_loopback().map_err(|e| e.to_string())?;
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(sock)
+        .map_err(|e| format!("bind plain GET: {e}"))?;
+    let origin = Instant::now();
+    let peer = Endpoint::from(dest);
+    let now = elapsed_ms(origin).saturating_add(1);
+    let call = app
+        .get("test")
+        .to(peer)
+        .send(now)
+        .map_err(|e| format!("send plain GET /test: {e}"))?;
+    let got = wait_call(&mut app, call, origin, timeout)?;
+    Ok(got.code)
+}
+
+#[cfg(feature = "oscore")]
+fn run_oscore_client(cfg: &Config, dest: SocketAddr) -> Result<OscoreReport, PeerError> {
+    let (sock, local) = bind_loopback().map_err(|e| e.to_string())?;
+    let capture = Capture::new();
+    let injected = Arc::new(AtomicBool::new(false));
+    let io = InjectPlainOnce::new(
+        CapturingIo::new(sock, local, capture.clone()),
+        Arc::clone(&injected),
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(io)
+        .map_err(|e| format!("bind OSCORE client: {e}"))?;
+    app.set_oscore(oscore_client_ctx());
+    app.reset_metrics();
+    let origin = Instant::now();
+    let peer = Endpoint::from(dest);
+    let mut get = Series::new("OSCORE GET /test");
+    let mut put = Series::new("OSCORE PUT /test");
+    let mut post = Series::new("OSCORE POST /test");
+    let mut loop_ = Series::new("OSCORE LOOP (GET/PUT/POST)");
+
+    for i in 0..cfg.iterations {
+        let loop_t0 = Instant::now();
+        let loop_e0 = elapsed_ms(origin);
+
+        timed_call(
+            &mut app,
+            origin,
+            cfg.timeout,
+            &mut get,
+            |app, now| {
+                app.get("test")
+                    .to(peer)
+                    .send(now)
+                    .map_err(|e| format!("send OSCORE GET /test: {e}").into())
+            },
+            |got| {
+                expect_codes("OSCORE GET /test", i, got.code, &[Code::CONTENT])?;
+                if got.payload == b"pwned" {
+                    return Err(PeerError(format!(
+                        "iteration {i} OSCORE GET /test: plain 2.xx completed the Call"
+                    )));
+                }
+                if got.payload != site::TEST_BODY {
+                    return Err(PeerError(format!(
+                        "iteration {i} OSCORE GET /test: payload {} bytes, expected {}",
+                        got.payload.len(),
+                        site::TEST_BODY.len()
+                    )));
+                }
+                Ok(())
+            },
+        )?;
+
+        timed_call(
+            &mut app,
+            origin,
+            cfg.timeout,
+            &mut put,
+            |app, now| {
+                app.put("test")
+                    .payload(site::TEST_BODY)
+                    .content_format(ContentFormat::TEXT_PLAIN)
+                    .to(peer)
+                    .send(now)
+                    .map_err(|e| format!("send OSCORE PUT /test: {e}").into())
+            },
+            |got| expect_codes("OSCORE PUT /test", i, got.code, &[Code::CHANGED]),
+        )?;
+
+        timed_call(
+            &mut app,
+            origin,
+            cfg.timeout,
+            &mut post,
+            |app, now| {
+                app.post("test")
+                    .payload(site::TEST_BODY)
+                    .content_format(ContentFormat::TEXT_PLAIN)
+                    .to(peer)
+                    .send(now)
+                    .map_err(|e| format!("send OSCORE POST /test: {e}").into())
+            },
+            |got| {
+                expect_codes(
+                    "OSCORE POST /test",
+                    i,
+                    got.code,
+                    &[Code::CREATED, Code::CHANGED],
+                )
+            },
+        )?;
+
+        loop_.record(
+            loop_t0.elapsed(),
+            Some(elapsed_ms(origin).saturating_sub(loop_e0)),
+        );
+    }
+
+    let client_sender_seq = app
+        .oscore()
+        .ok_or("OSCORE client dropped SecurityContext")?
+        .sender_seq();
+    let protected_on_wire = count_protected_on_wire(&capture)?;
+    let now = elapsed_ms(origin);
+    Ok(OscoreReport {
+        get,
+        put,
+        post,
+        loop_,
+        client_occupancy: occupancy_line(app.engine_mut()),
+        client_metrics: app.metrics(),
+        client_now_ms: now,
+        client_sender_seq,
+        server_sender_seq: 0,
+        protected_on_wire,
+        plain_get_code: Code::EMPTY,
+        injected_plain: injected.load(Ordering::SeqCst),
+    })
+}
+
+#[cfg(feature = "oscore")]
+fn count_protected_on_wire(capture: &Capture) -> Result<usize, PeerError> {
+    let mut protected = 0usize;
+    for pkt in capture.snapshot() {
+        let Ok(parsed) = decode(&pkt.bytes) else {
+            return Err(PeerError("OSCORE capture: undecodable datagram".into()));
+        };
+        if parsed.is_empty() {
+            continue;
+        }
+        if parsed.oscore().is_some() {
+            protected += 1;
+        } else {
+            return Err(PeerError(format!(
+                "OSCORE capture: non-empty {} without OSCORE option (plain completion?)",
+                parsed.code()
+            )));
+        }
+    }
+    Ok(protected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Config, percentile, run};
@@ -1346,6 +1855,21 @@ mod tests {
         assert!(cfg.iterations > 2, "default must be above CI smoke");
         assert_eq!(cfg.iterations, 50);
         assert!(cfg.json_path.is_none());
+        assert!(!cfg.oscore);
+    }
+
+    #[test]
+    fn config_oscore_flag() {
+        let parsed = Config::from_args(["--oscore"]);
+        #[cfg(feature = "oscore")]
+        {
+            assert!(parsed.unwrap().oscore);
+        }
+        #[cfg(not(feature = "oscore"))]
+        {
+            let err = parsed.unwrap_err();
+            assert!(err.contains("--features oscore"), "{err}");
+        }
     }
 
     #[test]
@@ -1376,8 +1900,60 @@ mod tests {
         assert_eq!(report["schema"], "coaptic-dogfood/1");
         assert_eq!(report["iterations"], 5);
         assert_eq!(report["observe_collected"], 5);
+        assert_eq!(report["oscore"], false);
         assert!(
             report["observe_notify"].as_u64().unwrap_or(0) >= 5,
+            "{report}"
+        );
+        eprintln!("{s}");
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn timed_dogfood_oscore_smoke() {
+        let mut buf = Vec::new();
+        let json_path = std::env::temp_dir().join(format!(
+            "coaptic-dogfood-oscore-smoke-{}.json",
+            std::process::id()
+        ));
+        let cfg = Config {
+            iterations: 2,
+            json_path: Some(json_path.clone()),
+            oscore: true,
+            ..Config::default()
+        };
+        run(cfg, &mut buf).expect("oscore dogfood smoke");
+        let s = String::from_utf8_lossy(&buf);
+        assert!(s.contains("coaptic ↔ coaptic  OSCORE"), "{s}");
+        assert!(s.contains("OSCORE GET /test"), "{s}");
+        assert!(s.contains("OSCORE PUT /test"), "{s}");
+        assert!(s.contains("OSCORE POST /test"), "{s}");
+        assert!(s.contains("protected_on_wire="), "{s}");
+        assert!(s.contains("fail-closed plain GET="), "{s}");
+        assert!(s.contains("inject dropped"), "{s}");
+        assert!(s.contains("dogfood  ok"), "{s}");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&json_path).expect("json file")).expect("json");
+        let _ = std::fs::remove_file(&json_path);
+        assert_eq!(report["oscore"], true);
+        let pair = report["pairs"]
+            .as_array()
+            .and_then(|ps| ps.iter().find(|p| p["name"] == "coaptic ↔ coaptic OSCORE"))
+            .expect("oscore pair");
+        let oscore = &pair["oscore"];
+        assert!(
+            oscore["client_sender_seq"].as_u64().unwrap_or(0) >= 6,
+            "{report}"
+        );
+        assert!(
+            oscore["protected_on_wire"].as_u64().unwrap_or(0) >= 12,
+            "{report}"
+        );
+        assert_eq!(oscore["inject_dropped"], true);
+        assert!(
+            oscore["fail_closed_plain_get"]
+                .as_str()
+                .is_some_and(|c| c.contains("4.01") || c.contains("UNAUTHORIZED")),
             "{report}"
         );
         eprintln!("{s}");

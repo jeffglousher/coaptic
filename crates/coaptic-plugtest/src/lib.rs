@@ -8,6 +8,7 @@
 //! cargo test -p coaptic-plugtest
 //! cargo test -p coaptic-plugtest --features dtls
 //! cargo run -p coaptic-plugtest --bin dogfood
+//! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore
 //! ```
 //!
 //! # Architecture
@@ -18,9 +19,12 @@
 //!   implementing [`peer::Peer`].
 //! - [`dogfood`] — timed coaptic ↔ coap-rs loops (GET/PUT/POST, Observe
 //!   register, block-wise) plus a coaptic↔coaptic Observe notify collect.
-//!   Wall min/mean/p50/p99/max; [`coaptic::App::reset_metrics`] around
-//!   each timed window; snapshot via [`coaptic::App::metrics`]. Optional
-//!   `--json` report (host/load specific).
+//!   `--oscore` (feature `oscore`) adds a protected coaptic↔coaptic
+//!   GET/PUT/POST loop and fails if the OSCORE path is cold or a plain
+//!   completion sneaks through. Wall min/mean/p50/p99/max;
+//!   [`coaptic::App::reset_metrics`] around each timed window; snapshot
+//!   via [`coaptic::App::metrics`]. Optional `--json` report (host/load
+//!   specific).
 //! - [`runner`] — each vendored TD × useful role pairs (coaptic server /
 //!   coap-rs client, and the swap). Same-impl coaptic↔coaptic is also run
 //!   for base GETs.
