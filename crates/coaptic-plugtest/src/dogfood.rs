@@ -9,10 +9,14 @@
 //! cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 //! ```
 //!
-//! Mixed-stack loops stay GET/PUT/POST, Observe **register**, and Block1/Block2
-//! against coap-rs (that peer is a register/deregister stub). The notify
-//! leg is coaptic-server [`App::notify`] collected by a coaptic-client
-//! [`App::take_response`] so [`Metrics::observe_notify`] is not left cold.
+//! Mixed-stack loops (both directions) are GET/PUT/POST, Observe
+//! **register/deregister**, and Block1/Block2 against coap-rs under the
+//! same timed load as the rest of the bin. The run fails if those
+//! [`Metrics`] stay cold (`observe_register` / `observe_cancel` /
+//! Block assemble), even without `--compare`. coap-rs is a
+//! register/deregister stub: the notify leg is coaptic-server
+//! [`App::notify`] collected by a coaptic-client [`App::take_response`]
+//! so [`Metrics::observe_notify`] is not left cold.
 //!
 //! `--oscore` (crate feature `oscore`) adds a coaptic↔coaptic OSCORE
 //! GET/PUT/POST loop plus Observe register/notify collect and Inner
@@ -21,7 +25,8 @@
 //! The run fails if protect/unprotect, protected notify, or protected
 //! Block1/Block2 stays cold, a captured non-empty datagram lacks the
 //! OSCORE option, or a token-matching plain 2.xx / plaintext notify
-//! completes a Call.
+//! completes a Call. The `coap` 0.28 peer has no OSCORE API, so that
+//! path stays coaptic↔coaptic.
 //!
 //! [`App::reset_metrics`] / [`Engine::reset_metrics`] run at the start of
 //! each timed window (`progress` counts idle poll ticks). After each
@@ -96,12 +101,21 @@ impl Config {
 cargo run -p coaptic-plugtest --bin dogfood -- [OPTIONS]
 
 Timed dogfood over loopback UDP.
-Mixed stack (both directions): coap-rs client → coaptic server, and coaptic
-client → coap-rs server. Each iteration is GET/PUT/POST /test, Observe register
-GET /obs, Block2 GET /large, Block1 PUT /large-update.
-Notify collect (coaptic ↔ coaptic): register /obs, App::notify, collect the
-notification, deregister — so observe_notify is not left cold. coap-rs stays
-on the other verbs; it does not collect notifies.
+
+coap-rs peer (both directions, same N as the rest of the bin):
+  coap-rs client → coaptic server, and coaptic client → coap-rs server.
+  Each iteration is GET/PUT/POST /test, Observe register GET /obs,
+  Block2 GET /large, Block1 PUT /large-update, then deregister / DELETE
+  /obs. Fails if observe_register / observe_cancel or Block assemble
+  stay cold (not only --compare).
+
+Still coaptic-only:
+  Observe notify collect (register /obs, App::notify, take_response,
+  deregister) — coap-rs is a register/deregister stub.
+  OSCORE GET/PUT/POST + notify + Inner Block (--oscore) — coap 0.28 has
+  no OSCORE API.
+
+Skip: DTLS dogfood, coap-rs OSCORE, full ETSI plugtest matrix.
 
 --oscore (requires --features oscore) adds a coaptic↔coaptic OSCORE
 GET/PUT/POST loop plus Observe register/notify collect and Inner
@@ -113,7 +127,7 @@ non-empty captured datagram is plaintext, or a token-matching plain
 
 Prints wall min/mean/p50/p99/max (and Engine clock deltas on the coaptic
 client). Resets `app.metrics()` around each timed window, then prints the
-snapshot.
+snapshot and a coverage section (mixed vs still coaptic-only).
 
 --json PATH writes schema coaptic-dogfood/1 (Metrics + series timings).
 --compare PATH diffs this run against that file: fail if observe_notify /
@@ -128,7 +142,7 @@ baselines. Refresh (same flags as CI):
     --oscore --iterations 2 \\
     --json crates/coaptic-plugtest/baselines/dogfood-oscore.json
 
-Default is 50 iterations (mixed + notify; OSCORE too when --oscore).
+Default is 50 iterations (mixed coap-rs + notify; OSCORE too when --oscore).
 CI smoke: --iterations 2, and --oscore --iterations 2.
 
 Options:
@@ -284,6 +298,7 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
     writeln!(out, "  app.metrics()  {client_metrics}").map_err(io_err)?;
     writeln!(out, "  capacities  {caps}").map_err(io_err)?;
     rs_server.stop_server();
+    prove_mixed_stack(cfg.iterations, &rs_to_coaptic.metrics, &client_metrics)?;
 
     site::reset();
     let server = spawn_coaptic_server()?;
@@ -354,6 +369,20 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
         notify.collected, notify_server.metrics.observe_notify
     )
     .map_err(io_err)?;
+    writeln!(
+        out,
+        "  mixed    coap-rs→coaptic  observe_register={}  observe_cancel={}  block1_assemble={}  (server)",
+        rs_to_coaptic.metrics.observe_register,
+        rs_to_coaptic.metrics.observe_cancel,
+        rs_to_coaptic.metrics.block1_assemble
+    )
+    .map_err(io_err)?;
+    writeln!(
+        out,
+        "  mixed    coaptic→coap-rs  observe_register={}  observe_cancel={}  block2_assemble={}  (client)",
+        client_metrics.observe_register, client_metrics.observe_cancel, client_metrics.block2_assemble
+    )
+    .map_err(io_err)?;
     if let Some(oscore) = oscore.as_ref() {
         writeln!(
             out,
@@ -372,6 +401,7 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
         "  caveat   wall timings print as delta; Metrics floors fail on regression"
     )
     .map_err(io_err)?;
+    write_coverage(cfg.oscore, &mut out).map_err(io_err)?;
     writeln!(out, "dogfood  ok").map_err(io_err)?;
 
     let report = build_json_report(
@@ -400,6 +430,95 @@ pub fn run(cfg: Config, mut out: impl Write) -> Result<(), PeerError> {
 
 fn io_err(e: io::Error) -> PeerError {
     PeerError(e.to_string())
+}
+
+/// Fail-closed: mixed-stack Metrics must prove the coap-rs peer actually ran.
+///
+/// `--compare` floors the same counters vs a baseline; this check runs even
+/// without `--compare` so a stub peer cannot hide behind response codes alone.
+fn prove_mixed_stack(
+    iterations: usize,
+    rs_to_coaptic: &Metrics,
+    coaptic_to_rs: &Metrics,
+) -> Result<(), PeerError> {
+    let n = u32::try_from(iterations).unwrap_or(u32::MAX);
+    prove_floor(
+        "coap-rs → coaptic observe_register",
+        rs_to_coaptic.observe_register,
+        n,
+    )?;
+    prove_floor(
+        "coap-rs → coaptic observe_cancel",
+        rs_to_coaptic.observe_cancel,
+        n,
+    )?;
+    prove_floor(
+        "coap-rs → coaptic block1_assemble",
+        rs_to_coaptic.block1_assemble,
+        n,
+    )?;
+    if rs_to_coaptic.rx_accepted == 0 || rs_to_coaptic.tx_ok == 0 {
+        return Err(PeerError(format!(
+            "mixed-stack path stayed cold: coap-rs → coaptic rx_accepted={} tx_ok={}",
+            rs_to_coaptic.rx_accepted, rs_to_coaptic.tx_ok
+        )));
+    }
+    prove_floor(
+        "coaptic → coap-rs observe_register",
+        coaptic_to_rs.observe_register,
+        n,
+    )?;
+    prove_floor(
+        "coaptic → coap-rs observe_cancel",
+        coaptic_to_rs.observe_cancel,
+        n,
+    )?;
+    prove_floor(
+        "coaptic → coap-rs block2_assemble",
+        coaptic_to_rs.block2_assemble,
+        n,
+    )?;
+    if coaptic_to_rs.rx_accepted == 0 || coaptic_to_rs.tx_ok == 0 {
+        return Err(PeerError(format!(
+            "mixed-stack path stayed cold: coaptic → coap-rs rx_accepted={} tx_ok={}",
+            coaptic_to_rs.rx_accepted, coaptic_to_rs.tx_ok
+        )));
+    }
+    Ok(())
+}
+
+fn prove_floor(label: &str, got: u32, want: u32) -> Result<(), PeerError> {
+    if got < want {
+        Err(PeerError(format!(
+            "mixed-stack path stayed cold: {label}={got} want >= {want}"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn write_coverage(oscore: bool, out: &mut impl Write) -> io::Result<()> {
+    writeln!(out, "\n== coverage")?;
+    writeln!(
+        out,
+        "  peer      coap-rs  GET/PUT/POST /test, OBS register/deregister /obs, Block1/Block2 (both directions)"
+    )?;
+    writeln!(
+        out,
+        "  same      Observe notify collect  (coap-rs is register/deregister only)"
+    )?;
+    if oscore {
+        writeln!(
+            out,
+            "  same      OSCORE GET/PUT/POST + notify + Inner Block  (coap-rs has no OSCORE)"
+        )?;
+    } else {
+        writeln!(out, "  same      OSCORE  (--oscore; coap-rs has no OSCORE)")?;
+    }
+    writeln!(
+        out,
+        "  skip      DTLS dogfood, coap-rs OSCORE, full ETSI plugtest matrix"
+    )
 }
 
 fn occupancy_line<S: Storage>(engine: &mut Engine<S>) -> String {
@@ -2348,8 +2467,8 @@ fn count_protected_on_wire(capture: &Capture) -> Result<usize, PeerError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareOutcome, Config, JsonPair, JsonReport, MetricsDto, OscoreDto, SeriesStats,
-        WallStats, compare_reports, percentile, run,
+        CompareOutcome, Config, JsonPair, JsonReport, Metrics, MetricsDto, OscoreDto, SeriesStats,
+        WallStats, compare_reports, percentile, prove_mixed_stack, run,
     };
 
     fn empty_wall() -> WallStats {
@@ -2518,6 +2637,55 @@ mod tests {
     }
 
     #[test]
+    fn compare_missing_mixed_pair_fails() {
+        let base = report(MetricsDto {
+            observe_register: 2,
+            block1_assemble: 4,
+            ..MetricsDto::default()
+        });
+        let mut run = base.clone();
+        run.pairs.retain(|p| p.name != "coap-rs → coaptic");
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("missing pair") && r.contains("coap-rs → coaptic")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn mixed_stack_cold_metrics_fail() {
+        let err = prove_mixed_stack(2, &Metrics::ZERO, &Metrics::ZERO).unwrap_err();
+        assert!(
+            err.0.contains("stayed cold") && err.0.contains("coap-rs"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn mixed_stack_warm_metrics_ok() {
+        let server = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block1_assemble: 2,
+            ..Metrics::ZERO
+        };
+        let client = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block2_assemble: 2,
+            ..Metrics::ZERO
+        };
+        prove_mixed_stack(2, &server, &client).expect("warm mixed-stack");
+    }
+
+    #[test]
     fn compare_error_counter_rise_fails() {
         let base = report(MetricsDto::default());
         let mut run = base.clone();
@@ -2645,6 +2813,11 @@ mod tests {
         assert!(s.contains("app.metrics()"), "{s}");
         assert!(s.contains("rx_accepted="), "{s}");
         assert!(s.contains("observe  collected=5"), "{s}");
+        assert!(s.contains("mixed    coap-rs→coaptic"), "{s}");
+        assert!(s.contains("== coverage"), "{s}");
+        assert!(s.contains("peer      coap-rs"), "{s}");
+        assert!(s.contains("same      Observe notify collect"), "{s}");
+        assert!(s.contains("coap-rs has no OSCORE"), "{s}");
         assert!(s.contains("dogfood  ok"), "{s}");
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&json_path).expect("json file")).expect("json");
@@ -2655,6 +2828,31 @@ mod tests {
         assert_eq!(report["oscore"], false);
         assert!(
             report["observe_notify"].as_u64().unwrap_or(0) >= 5,
+            "{report}"
+        );
+        let pairs = report["pairs"].as_array().expect("pairs");
+        let rs_to = pairs
+            .iter()
+            .find(|p| p["name"] == "coap-rs → coaptic")
+            .expect("coap-rs → coaptic pair");
+        assert!(
+            rs_to["metrics"]["observe_register"].as_u64().unwrap_or(0) >= 5,
+            "{report}"
+        );
+        assert!(
+            rs_to["metrics"]["block1_assemble"].as_u64().unwrap_or(0) >= 5,
+            "{report}"
+        );
+        let to_rs = pairs
+            .iter()
+            .find(|p| p["name"] == "coaptic → coap-rs")
+            .expect("coaptic → coap-rs pair");
+        assert!(
+            to_rs["metrics"]["observe_register"].as_u64().unwrap_or(0) >= 5,
+            "{report}"
+        );
+        assert!(
+            to_rs["metrics"]["block2_assemble"].as_u64().unwrap_or(0) >= 5,
             "{report}"
         );
         eprintln!("{s}");
@@ -2696,6 +2894,11 @@ mod tests {
         assert!(s.contains("protected_on_wire="), "{s}");
         assert!(s.contains("fail-closed plain GET="), "{s}");
         assert!(s.contains("inject dropped"), "{s}");
+        assert!(s.contains("== coverage"), "{s}");
+        assert!(
+            s.contains("OSCORE GET/PUT/POST + notify + Inner Block"),
+            "{s}"
+        );
         assert!(s.contains("dogfood  ok"), "{s}");
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&json_path).expect("json file")).expect("json");
