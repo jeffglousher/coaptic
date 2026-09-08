@@ -306,6 +306,9 @@ impl SecurityContext {
     ///
     /// At most one notification without Partial IV. A Partial IV must be
     /// strictly greater than the Notification Number (largest accepted).
+    /// The piggybacked register ACK (`protect_response` without Partial
+    /// IV) is not a notification for this budget — App does not call this
+    /// with `None` for that ACK.
     pub fn accept_notification(
         &mut self,
         token: Token,
