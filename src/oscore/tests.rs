@@ -561,6 +561,36 @@ fn live_request_table_is_four_and_saturates() {
 }
 
 #[test]
+fn accept_notification_duplicate_piv_is_replay() {
+    let mut ctx = client_c1();
+    let token = Token::from_checked(&[1]);
+    let request = RequestRef::from_kid(&[], PartialIv::from_seq(1)).unwrap();
+    ctx.remember_live(token, request, true).unwrap();
+
+    ctx.accept_notification(token, None).unwrap();
+    assert_eq!(
+        ctx.accept_notification(token, None),
+        Err(Error::Replay),
+        "at most one notification without Partial IV"
+    );
+
+    let piv = PartialIv::from_seq(5);
+    ctx.accept_notification(token, Some(piv)).unwrap();
+    assert_eq!(
+        ctx.accept_notification(token, Some(piv)),
+        Err(Error::Replay),
+        "duplicate notify PIV is Replay (RFC 8613 §7.4.1)"
+    );
+    assert_eq!(
+        ctx.accept_notification(token, Some(PartialIv::from_seq(4))),
+        Err(Error::Replay),
+        "Notification Number must strictly increase"
+    );
+    ctx.accept_notification(token, Some(PartialIv::from_seq(6)))
+        .unwrap();
+}
+
+#[test]
 fn observe_register_is_outer_fetch_and_dual_class() {
     let mut client = client_c1();
     let mut path = OptionsBuilder::<2>::new();
@@ -946,6 +976,44 @@ fn protect_observe_response_outer_max_age_zero_keeps_inner() {
         opened.max_age().and_then(Result::ok),
         Some(90),
         "Inner Max-Age is the application value; Outer 0 is discarded (§8.4)"
+    );
+}
+
+#[test]
+fn protect_observe_response_outer_max_age_options_full() {
+    use crate::error::EncodeError;
+
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut path = OptionsBuilder::<2>::new();
+    path.push(Opt::uri_path("obs")).unwrap();
+    path.push(Opt::observe_register()).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 256];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected_req = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 256];
+    let (_plain, request) = server
+        .unprotect_request(&protected_req, &mut inner)
+        .unwrap();
+
+    // 14 Class U copies + Observe fill 15 outer slots; OSCORE is the 16th.
+    // Injected Max-Age 0 must be OptionsFull, not a silent skip (§4.1.3.1).
+    let seq = encode_uint(1);
+    let mut opts = OptionsBuilder::<16>::new();
+    for _ in 0..14 {
+        opts.push(Opt::uri_host("x")).unwrap();
+    }
+    opts.push(Opt::observe(&seq)).unwrap();
+    let resp = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice())
+        .with_payload(b"obs");
+    assert_eq!(
+        server.protect_response(&resp, request, &mut wire),
+        Err(Error::Encode(EncodeError::OptionsFull))
     );
 }
 
@@ -1367,5 +1435,98 @@ fn app_unprotected_request_is_401_max_age_zero() {
         resp.max_age().and_then(Result::ok),
         Some(0),
         "unprotected OSCORE 4.01 uses Max-Age 0 (§8.2 / §4.1.3.1)"
+    );
+}
+
+#[test]
+fn write_unprotected_rx_fails_loud_on_encode() {
+    use crate::app::write_unprotected_rx;
+    use crate::error::{EncodeError, SlotMessageError};
+    use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
+
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build(Memory::<profiles::Default>::new())
+        .expect("engine");
+    let rx = engine.acquire_rx().expect("rx");
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    engine
+        .write_rx(rx, &[0x40, 0x01, 0x00, 0x01], peer)
+        .expect("seed");
+
+    let big = [0x41u8; 1500];
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
+    let mut buf = [0u8; 1600];
+    let n = encode(&msg, &mut buf).unwrap();
+    let inner = decode(&buf[..n]).unwrap();
+
+    let err = write_unprotected_rx::<_, &'static str>(&mut engine, rx, &inner, peer).unwrap_err();
+    assert_eq!(
+        err,
+        crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+    );
+    assert_eq!(
+        engine.release_rx(rx),
+        Err(SlotError::NotOccupied),
+        "failed write must release the RX slot"
+    );
+}
+
+#[test]
+fn write_unprotected_rx_fails_loud_on_slot_overflow() {
+    use crate::app::write_unprotected_rx;
+    use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
+
+    let mut engine = EngineBuilder::new()
+        .profile::<profiles::Constrained>()
+        .block_wise(false)
+        .build(Memory::<profiles::Constrained>::new())
+        .expect("engine");
+    let rx = engine.acquire_rx().expect("rx");
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    engine
+        .write_rx(rx, &[0x40, 0x01, 0x00, 0x01], peer)
+        .expect("seed");
+
+    // Encodes into DATAGRAM_SCRATCH (1472) but not Constrained RX (1152).
+    let big = [0x41u8; 1200];
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
+    let mut buf = [0u8; 1472];
+    let n = encode(&msg, &mut buf).unwrap();
+    let inner = decode(&buf[..n]).unwrap();
+
+    let err = write_unprotected_rx::<_, &'static str>(&mut engine, rx, &inner, peer).unwrap_err();
+    assert_eq!(err, crate::Error::Slot(SlotError::LengthExceedsSlot));
+    assert_eq!(engine.release_rx(rx), Err(SlotError::NotOccupied));
+}
+
+#[test]
+fn exhausted_sender_seq_is_oscore_error_not_block1() {
+    use crate::{App, profiles};
+
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(Loopback::default())
+        .unwrap();
+    let mut ctx = client_c1();
+    ctx.set_sender_seq(1 << 40);
+    client.set_oscore(ctx);
+
+    let err = client
+        .put("tv1")
+        .payload(b"hello")
+        .to(server_ep)
+        .send(0)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        crate::Error::Oscore(Error::SequenceExhausted),
+        "protect SequenceExhausted must not collapse to BufferTooSmall / Block1 start"
+    );
+    assert!(
+        client.transport().last_send.is_none(),
+        "exhausted PIV must not emit a datagram"
     );
 }

@@ -789,9 +789,10 @@ where
     match super::oscore::encode_request(oscore, engine, tx, &msg) {
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             // Inner Block-wise: fragment first, then protect each
             // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
+            // Protocol protect failures are `Error::Oscore`, not this arm.
             send_client_block1(
                 engine,
                 io,
@@ -811,7 +812,7 @@ where
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
-            Err(Error::Message(e))
+            Err(e)
         }
     }
 }
@@ -1257,7 +1258,7 @@ where
     };
     if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
         let _ = engine.release_tx(tx);
-        return Err(Error::Message(e));
+        return Err(e);
     }
     match engine.record_request(tx, peer) {
         Ok(Some(_)) => {}
@@ -1513,7 +1514,7 @@ where
         .with_payload(&chunk[..n]);
     if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
         let _ = engine.release_tx(tx);
-        return Err(Error::Message(e));
+        return Err(e);
     }
     finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
 }
