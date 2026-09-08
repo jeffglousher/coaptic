@@ -61,9 +61,10 @@ In-crate `cargo test --test plugtest` is an Engine↔Engine byte exchange (no so
 cargo test -p coaptic-plugtest
 cargo test -p coaptic-plugtest --features dtls
 cargo run -p coaptic-plugtest --bin dogfood
+cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore
 ```
 
-The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise) plus a coaptic↔coaptic Observe notify collect so `observe_notify` is not left cold. Default is 50 iterations. It prints timing plus `app.metrics()`; optional `--json PATH` writes the same snapshot (host/load specific). CI smokes `--iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#131](https://github.com/jeffglousher/coaptic/issues/131) (ruthless dogfood).
+The `dogfood` bin is timed coaptic ↔ coap-rs over loopback UDP (both directions, GET/PUT/POST, Observe register, block-wise) plus a coaptic↔coaptic Observe notify collect so `observe_notify` is not left cold. `--oscore` (feature `oscore`) adds a protected coaptic↔coaptic GET/PUT/POST loop (`App::set_oscore` on both sides) and fails if the OSCORE path is cold or a plain 2.xx completes a Call. Default is 50 iterations for both modes. It prints timing plus `app.metrics()`; optional `--json PATH` writes the same snapshot (host/load specific). CI smokes `--iterations 2` and `--oscore --iterations 2`. Tracking: issue [#49](https://github.com/jeffglousher/coaptic/issues/49) (plugtest) / [#131](https://github.com/jeffglousher/coaptic/issues/131) (ruthless dogfood) / [#140](https://github.com/jeffglousher/coaptic/issues/140) (OSCORE dogfood).
 
 ## Example
 

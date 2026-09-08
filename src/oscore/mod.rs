@@ -123,6 +123,9 @@ pub const AEAD_AES_CCM_16_64_128: i32 = 10;
 pub const OSCORE_VERSION: u8 = 1;
 /// In-flight Token→[`RequestRef`] bindings on [`SecurityContext`].
 ///
-/// Same cap as the App client inbox. [`SecurityContext::remember`] returns
-/// [`Error::Saturated`] when a fifth distinct Token arrives.
+/// Client-side: [`protect_request`] remembers so a later
+/// [`unprotect_response`] can look up the request Partial IV. Same cap as
+/// the App client inbox. [`SecurityContext::remember`] returns
+/// [`Error::Saturated`] when a fifth distinct Token arrives. The server
+/// holds [`RequestRef`] on the inbound exchange, not in this table.
 pub const LIVE_REQUESTS: usize = 4;

@@ -380,6 +380,58 @@ fn app_protected_get_round_trip() {
 }
 
 #[test]
+fn app_five_sequential_oscore_gets() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"ok")
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("tv1", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    for i in 0..=LIVE_REQUESTS {
+        let call = client
+            .get("tv1")
+            .to(server_ep)
+            .send(u64::from(i as u32))
+            .unwrap();
+        let (_, bytes, n) = client.transport().last_send.expect("protected request");
+        server.transport_mut().inbox = Some((client_ep, bytes, n));
+        server.transport_mut().last_send = None;
+        server.poll(u64::from(i as u32)).unwrap();
+        let (_, bytes, n) = server
+            .transport()
+            .last_send
+            .unwrap_or_else(|| panic!("response {i} dropped (live table?)"));
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(u64::from(i as u32)).unwrap();
+        let response = client
+            .take_response(call)
+            .unwrap_or_else(|| panic!("call {i} incomplete"));
+        assert_eq!(response.code(), Code::CONTENT);
+        assert_eq!(response.payload(), b"ok");
+    }
+    assert_eq!(
+        client.oscore().expect("ctx").sender_seq(),
+        (LIVE_REQUESTS + 1) as u64
+    );
+}
+
+#[test]
 fn app_plain_response_does_not_complete_oscore_call() {
     use crate::{App, profiles};
 

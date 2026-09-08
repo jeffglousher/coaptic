@@ -209,7 +209,10 @@ pub fn unprotect_request<'a>(
     )?;
     let inner = decode(&out[..n])?;
     let request = RequestRef::from_kid(kid, piv)?;
-    ctx.remember(protected.token(), request)?;
+    // Caller (App) holds `request` on the inbound exchange for
+    // `protect_response`. The live Token table is the client in-flight
+    // set (`protect_request` → `unprotect_response`); do not remember
+    // here or sequential server Tokens saturate `LIVE_REQUESTS`.
     Ok((inner, request))
 }
 

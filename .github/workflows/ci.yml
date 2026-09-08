@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo clippy -p coaptic-plugtest --all-targets --features dtls -- -D warnings
+      - run: cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 
   test:
     name: test
@@ -54,8 +54,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --no-default-features
       - run: cargo test --all-features
-      - run: cargo test -p coaptic-plugtest --features dtls
+      - run: cargo test -p coaptic-plugtest --features dtls,oscore
       - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2
+      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2
 
   doc:
     name: doc
