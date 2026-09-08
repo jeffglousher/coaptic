@@ -394,6 +394,83 @@ fn malformed_block2_is_bad_option() {
 }
 
 #[test]
+fn unrecognized_critical_option_is_bad_option() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::new(65001), &[])];
+    let (wire, n) = encode_req_extra(Code::GET, &["sensors", "temp"], &extra, &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CONTENT,
+        "must not dispatch unknown critical"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn oscore_option_without_context_is_bad_option_not_outer_post() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
+    let (wire, n) = encode_req_extra(Code::POST, &["items"], &extra, b"ciphertext");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["items"], post(post_create))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CREATED,
+        "OSCORE without context must not run the outer POST handler"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
+    let (wire, n) = encode_req_extra(Code::FETCH, &["probe"], &extra, b"ciphertext");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["probe"], fetch(fetch_query))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CONTENT,
+        "OSCORE without context must not run the outer FETCH handler"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
@@ -1246,7 +1323,8 @@ fn well_known_core_small_n_keeps_inline_floor() {
 }
 
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
-/// critical options can be 4.02, so this number is safe to carry through decode.
+/// critical options (e.g. 65001) are 4.02 before the handler, so this
+/// number is safe to carry through decode and App dispatch.
 #[derive(Clone, Copy)]
 struct Experimental(OptionNumber);
 
@@ -2492,6 +2570,9 @@ fn client_get_round_trip_without_slot_id() {
     let response = app.take_response(call).expect("matched");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 4);
+    assert!(response.body().is_none());
     assert_eq!(response.format(), Some(ContentFormat::TEXT_PLAIN));
     assert_eq!(response.token(), Some(call.token()));
     assert_eq!(response.peer(), Some(peer));
@@ -2499,6 +2580,58 @@ fn client_get_round_trip_without_slot_id() {
     assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn client_take_response_truncates_non_block_payload_at_inline() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let (mid, token) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        let first = decode(&bytes[..n]).expect("decode first");
+        (first.message_id(), first.token())
+    };
+    let payload = [b'x'; 200];
+    inject_piggyback_ack(&mut app, peer, mid, token, &payload);
+    app.poll(0).expect("match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload().len(), INLINE_PAYLOAD);
+    assert_eq!(response.payload(), &payload[..INLINE_PAYLOAD]);
+    assert!(response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 200);
+    assert!(
+        response.body().is_none(),
+        "datagram App has no Block2 assembled hold"
+    );
+}
+
+#[test]
+fn client_take_response_inline_payload_exact_is_not_truncated() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app
+        .get(&["sensors", "temp"])
+        .to(peer)
+        .send(0)
+        .expect("send");
+    let (mid, token) = {
+        let (_, bytes, n) = app.transport().sent[0].expect("first");
+        let first = decode(&bytes[..n]).expect("decode first");
+        (first.message_id(), first.token())
+    };
+    let payload = [b'y'; INLINE_PAYLOAD];
+    inject_piggyback_ack(&mut app, peer, mid, token, &payload);
+    app.poll(0).expect("match");
+    let response = app.take_response(call).expect("matched");
+    assert_eq!(response.payload(), &payload);
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), INLINE_PAYLOAD);
 }
 
 #[test]

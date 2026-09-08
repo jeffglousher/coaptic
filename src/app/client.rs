@@ -3,9 +3,14 @@
 //! ```text
 //! Outgoing --encode--> TX slot
 //! poll matches Token + endpoint
-//! RX --copy--> Response
-//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
+//! RX --copy--> Response::payload  (non-Block: min(len, INLINE_PAYLOAD) = 128)
+//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()  (RESPONSE_BODY)
 //! ```
+//!
+//! A 200-byte piggybacked 2.05 with [`.block_wise::<false>()`](super::AppBuilder::block_wise)
+//! copies 128 bytes into [`Response::payload`]. Check
+//! [`Response::payload_truncated`]. The full assembled representation is
+//! [`Response::body`], not a 4KiB field on [`Response`].
 //!
 //! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId).
 //! [`App::poll`](super::App::poll) advances this alongside site routing on
@@ -36,6 +41,11 @@ const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 /// Identity for [`App::take_response`](super::App::take_response). Not a
 /// slot. After [`Outgoing::observe`], the same `Call` yields the initial
 /// representation and later notifications.
+///
+/// Non-Block [`Response::payload`] is at most
+/// [`INLINE_PAYLOAD`](super::INLINE_PAYLOAD) (128) bytes — see
+/// [`Response::payload_truncated`]. Assembled Block2 is
+/// [`Response::body`].
 ///
 /// ```
 /// # use coaptic::storage::DatagramIo;
@@ -98,6 +108,7 @@ struct ReplyMeta {
     peer: Endpoint,
     payload: [u8; INLINE_PAYLOAD],
     payload_len: u16,
+    payload_src_len: u16,
     content_format: Option<ContentFormat>,
     observe: Option<u32>,
     etag: [u8; 8],
@@ -128,6 +139,7 @@ impl ReplyMeta {
             peer,
             payload,
             payload_len: n as u16,
+            payload_src_len: u16::try_from(src.len()).unwrap_or(u16::MAX),
             content_format: parsed.content_format().and_then(Result::ok),
             observe: parsed.observe().and_then(Result::ok),
             etag,
@@ -144,7 +156,8 @@ impl ReplyMeta {
             self.peer,
             &self.payload[..usize::from(self.payload_len)],
             self.content_format,
-        );
+        )
+        .with_payload_src_len(self.payload_src_len);
         if self.etag_len > 0 {
             response = response.etag(&self.etag[..usize::from(self.etag_len)]);
         }
@@ -163,6 +176,7 @@ impl ReplyMeta {
             peer: call.peer(),
             payload: [0u8; INLINE_PAYLOAD],
             payload_len: 0,
+            payload_src_len: 0,
             content_format: None,
             observe: None,
             etag: [0; 8],
@@ -445,11 +459,19 @@ where
     /// Take the matched [`Response`] for `call`, if [`App::poll`](Self::poll)
     /// has completed it.
     ///
+    /// **Non-Block payload is at most [`super::INLINE_PAYLOAD`] (128) bytes.** A
+    /// 200-byte piggybacked 2.05 with
+    /// [`.block_wise::<false>()`](super::AppBuilder::block_wise) copies 128
+    /// bytes into [`Response::payload`]. Check
+    /// [`Response::payload_truncated`] / [`Response::payload_src_len`].
+    /// [`Response`] does not own a 4KiB copy.
+    ///
     /// When `BLOCK_WISE` and Block2 / Q-Block2 assembled, copies the RX
     /// body into an App hold and returns [`Response::body`] borrowed from
-    /// that hold (released from the Engine). A later [`Self::take_response`]
-    /// or [`Self::poll`] overwrites the hold. Datagram App has no hold.
-    /// After [`Outgoing::observe`], the same `call` yields the initial
+    /// that hold (released from the Engine, capped at
+    /// [`super::RESPONSE_BODY`]). A later [`Self::take_response`] or
+    /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
+    /// [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
     pub fn take_response(&mut self, call: Call) -> Option<Response<'_>> {
         let (response, body) = self.inbox.take(call)?;

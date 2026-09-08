@@ -332,7 +332,9 @@ fn unrecognized_critical_is_structured_not_policy() {
     let parsed = decode(bytes).expect("opaque parse");
     assert!(!OptionNumber::BLOCK2.is_rfc7252());
     assert!(OptionNumber::BLOCK2.is_critical());
+    assert!(OptionNumber::BLOCK2.is_known());
     assert_eq!(parsed.unrecognized_critical(), Some(OptionNumber::BLOCK2));
+    assert_eq!(parsed.unknown_critical(), None);
     assert_eq!(
         parsed.check_rfc7252_options(),
         Err(ParseError::UnrecognizedCritical(OptionNumber::BLOCK2))
@@ -345,9 +347,33 @@ fn unrecognized_critical_is_structured_not_policy() {
     let parsed = decode(bytes).expect("opaque parse");
     assert!(!OptionNumber::OBSERVE.is_rfc7252());
     assert!(!OptionNumber::OBSERVE.is_critical());
+    assert!(OptionNumber::OBSERVE.is_known());
     assert_eq!(parsed.unrecognized_critical(), None);
+    assert_eq!(parsed.unknown_critical(), None);
     parsed.check_rfc7252_options().expect("elective Observe");
     parsed.check_rfc7252_formats().expect("not Table 4");
+
+    // IANA experimental 65001 is odd ⇒ critical and not in the known stack.
+    let opts = [Opt::new(OptionNumber::new(65001), &[])];
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(5)).with_options(&opts);
+    let bytes = encode_to(&msg, &mut buf);
+    let parsed = decode(bytes).expect("opaque parse");
+    assert!(OptionNumber::new(65001).is_critical());
+    assert!(!OptionNumber::new(65001).is_known());
+    assert_eq!(
+        parsed.unrecognized_critical(),
+        Some(OptionNumber::new(65001))
+    );
+    assert_eq!(parsed.unknown_critical(), Some(OptionNumber::new(65001)));
+    // 65000 is even ⇒ elective; decode accepts it, neither check reports it.
+    let opts = [Opt::new(OptionNumber::new(65000), &[])];
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(6)).with_options(&opts);
+    let bytes = encode_to(&msg, &mut buf);
+    let parsed = decode(bytes).expect("opaque parse");
+    assert!(!OptionNumber::new(65000).is_critical());
+    assert!(!OptionNumber::new(65000).is_known());
+    assert_eq!(parsed.unrecognized_critical(), None);
+    assert_eq!(parsed.unknown_critical(), None);
 }
 
 #[test]

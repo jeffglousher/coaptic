@@ -1216,6 +1216,20 @@ mod unit_tests {
         assert!(!OptionNumber::NO_RESPONSE.is_rfc7252());
         assert!(!OptionNumber::NO_RESPONSE.is_critical());
         assert!(OptionNumber::NO_RESPONSE.is_unsafe());
+        assert!(OptionNumber::URI_PATH.is_known());
+        assert!(OptionNumber::OSCORE.is_known());
+        assert!(OptionNumber::OSCORE.is_critical());
+        assert!(OptionNumber::BLOCK2.is_known());
+        assert!(OptionNumber::Q_BLOCK1.is_known());
+        assert!(OptionNumber::Q_BLOCK2.is_known());
+        assert!(OptionNumber::BLOCK1.is_known());
+        assert!(OptionNumber::SIZE2.is_known());
+        assert!(OptionNumber::ECHO.is_known());
+        assert!(OptionNumber::HOP_LIMIT.is_known());
+        assert!(OptionNumber::REQUEST_TAG.is_known());
+        assert!(OptionNumber::NO_RESPONSE.is_known());
+        assert!(!OptionNumber::new(65001).is_known());
+        assert!(!OptionNumber::new(65000).is_known());
         assert_eq!(option_value_format(OptionNumber::HOP_LIMIT), None);
         assert_eq!(option_value_format(OptionNumber::NO_RESPONSE), None);
     }

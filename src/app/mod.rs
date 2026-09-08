@@ -7,12 +7,16 @@
 //!
 //! Outgoing (get/put) --encode--> TX slot
 //! poll matches Token + endpoint
-//! RX --copy--> Response
+//! RX --copy--> Response::payload  (non-Block: min(len, INLINE_PAYLOAD) = 128)
+//! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()
 //! ```
 //!
 //! [`Request`] is a borrowed view for the handler call only. [`Response`] is
 //! owned intent — the same type [`App::take_response`] yields for a
-//! completed [`Call`]. The reactor owns per-slot state machines inside
+//! completed [`Call`]. Non-Block client payloads copy at most
+//! [`INLINE_PAYLOAD`] (128) bytes; check
+//! [`Response::payload_truncated`]. Assembled Block2 is
+//! [`Response::body`]. The reactor owns per-slot state machines inside
 //! [`App::poll`]. This module is not a seventh memory area and does **not**
 //! own a global mutable shared bag. Domain data that outlives a request
 //! stays outside `App`.
@@ -126,7 +130,10 @@ pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_W
 ///
 /// Handlers see a borrowed [`Request`] and return an owned [`Response`].
 /// Outbound work is [`Self::get`] / [`Self::put`] → [`Outgoing::send`] →
-/// [`Self::take_response`]. The reactor owns per-slot state machines
+/// [`Self::take_response`]. Non-Block [`Response::payload`] copies at most
+/// [`INLINE_PAYLOAD`] (128) bytes; [`Response::payload_truncated`] is
+/// `true` when the datagram was longer. Assembled Block2 / Q-Block2 is
+/// [`Response::body`]. The reactor owns per-slot state machines
 /// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
 /// raise it with [`AppBuilder::routes`]. `BLOCK_WISE` is
 /// [`AppBuilder::block_wise`]: `false` stores only [`Memory<P>`] (no body
@@ -264,7 +271,10 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
     ///
     /// The flag is a const generic so [`App`] RAM matches Storage:
     /// `.block_wise::<false>()` does not reserve RX/TX body arrays or the
-    /// client Block2 assembled hold.
+    /// client Block2 assembled hold. A piggybacked payload larger than
+    /// [`INLINE_PAYLOAD`] (128) is still truncated on
+    /// [`App::take_response`] in either mode; enable Block2 and read
+    /// [`Response::body`] for the full representation.
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
         AppBuilder {
@@ -491,7 +501,9 @@ where
     /// **Inbound.** Handlers see a borrowed [`Request`] and return an owned
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
     /// (RFC 7252 ping). Incomplete Block1 / Q-Block1 is 2.31 (handler not
-    /// run); a complete body is [`Request::body`]. A large response ships
+    /// run); a complete body is [`Request::body`]. Unrecognized critical
+    /// options (not in the implemented set) and an OSCORE option with no
+    /// attached context are 4.02 before the handler. A large response ships
     /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
     /// with [`Response::problem`]. Apply-error 4.08 uses problem details;
     /// Q-Block1 holes after `NON_RECEIVE_TIMEOUT` use
@@ -517,8 +529,11 @@ where
     /// drops that observer (RFC 7641 §4.5; RST has no Token).
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
-    /// is the [`Response`] ([`Response::body`] when Block2 / Q-Block2
-    /// assembled). Continues reuse the path from [`Outgoing::send`]. Uri-Query,
+    /// is the [`Response`]. Non-Block [`Response::payload`] copies at most
+    /// [`INLINE_PAYLOAD`] (128) bytes ([`Response::payload_truncated`] when
+    /// the datagram was longer). [`Response::body`] is the assembled Block2
+    /// / Q-Block2 representation. Continues reuse the path from
+    /// [`Outgoing::send`]. Uri-Query,
     /// Accept, ETag, If-Match / If-None-Match, and early Block2 are set on
     /// [`Outgoing`]. An Observe subscribe ([`Outgoing::observe`]) uses the
     /// same [`Call`].
@@ -800,6 +815,16 @@ where
     }
 }
 
+/// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
+/// attached context, or a malformed Block / Q-Block2 value.
+fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> bool {
+    parsed.unknown_critical().is_some()
+        || (parsed.oscore().is_some() && !oscore::is_active(oscore))
+        || matches!(parsed.block2(), Some(Err(_)))
+        || matches!(parsed.q_block2().next(), Some(Err(_)))
+        || matches!(parsed.block1(), Some(Err(_)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
@@ -919,10 +944,10 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
-    if matches!(parsed.block2(), Some(Err(_)))
-        || matches!(parsed.q_block2().next(), Some(Err(_)))
-        || matches!(parsed.block1(), Some(Err(_)))
-    {
+    // Known-stack critical check and OSCORE-without-context run here,
+    // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
+    // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
+    if bad_option_request(&parsed, oscore) {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
