@@ -96,7 +96,8 @@
 //! Timed mixed-stack dogfood + Observe notify collect:
 //! `cargo run -p coaptic-plugtest --bin dogfood`. CI compares `--iterations 2`
 //! against `crates/coaptic-plugtest/baselines/` (`--compare`; Metrics floors
-//! fail, wall timings print as delta).
+//! fail, including mixed-pair Block assemble sums; wall timings print as
+//! delta; `progress` is informational).
 //!
 //! # Future / backlog
 //!
