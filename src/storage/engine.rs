@@ -59,13 +59,6 @@ pub struct Engine<S: Storage> {
     metrics: Metrics,
 }
 
-/// Stack temp while splitting Engine borrows (decode RX then `&mut` body,
-/// or body range then `&mut` TX). Sized to the shipped Default datagram
-/// (IPv4 UDP max on Ethernet), not the 4096 complete-body slot. BERT
-/// [`Engine::encode_bert1_tx`] / [`Engine::encode_bert2_tx`] `max_payload`
-/// must fit this; shipped profiles are datagram-limited.
-const BLOCK_IO_SCRATCH: usize = 1472;
-
 impl<S: Storage> Engine<S> {
     pub(crate) fn from_storage(storage: S) -> Self {
         Self {
@@ -1915,7 +1908,8 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        let mut tmp = [0u8; BLOCK_IO_SCRATCH];
+        // Profile-sized copy so Constrained does not stack Default 1472.
+        let mut tmp = S::RxScratch::default();
         let (token, block, expected, identity, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
@@ -1939,18 +1933,18 @@ impl<S: Storage + BodySlots> Engine<S> {
             };
             let identity = which.read_identity(&parsed)?;
             let payload = parsed.payload();
-            if payload.len() > tmp.len() {
+            if payload.len() > tmp.as_ref().len() {
                 return Err(BlockTransferError::PayloadLength);
             }
-            tmp[..payload.len()].copy_from_slice(payload);
+            tmp.as_mut()[..payload.len()].copy_from_slice(payload);
             (parsed.token(), block, expected, identity, payload.len())
         };
         let key = BlockKey::new(token, endpoint).with_identity(identity);
         match which {
-            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp[..n], expected),
-            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp[..n], expected),
-            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp[..n], expected),
-            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp[..n], expected),
+            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
+            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
+            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected),
+            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected),
         }
     }
 
@@ -1985,7 +1979,7 @@ impl<S: Storage + BodySlots> Engine<S> {
             .storage
             .tx_body_transfer(body_id)
             .ok_or(BlockTransferError::NoTransfer)?;
-        let mut tmp = [0u8; BLOCK_IO_SCRATCH];
+        let mut tmp = S::TxScratch::default();
         let payload = self
             .storage
             .tx_body_payload(body_id)
@@ -1994,10 +1988,10 @@ impl<S: Storage + BodySlots> Engine<S> {
             .offset()
             .checked_add(issued.len())
             .ok_or(BlockTransferError::Overflow)?;
-        if end > payload.len() || issued.len() > tmp.len() {
+        if end > payload.len() || issued.len() > tmp.as_ref().len() {
             return Err(BlockTransferError::Overflow);
         }
-        tmp[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+        tmp.as_mut()[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
         let encoded = issued.block().encode();
         let size_n = u32::try_from(transfer.filled()).map_err(|_| BlockTransferError::Overflow)?;
         let size = encode_uint(size_n);
@@ -2046,7 +2040,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let msg = Message::new(ty, code, message_id)
             .with_token(transfer.token())
             .with_options(opts.as_slice())
-            .with_payload(&tmp[..issued.len()]);
+            .with_payload(&tmp.as_ref()[..issued.len()]);
         let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
             SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
             SlotMessageError::Parse(p) => BlockTransferError::Parse(p),

@@ -8,6 +8,7 @@ use super::BodyTag;
 #[cfg(feature = "alloc")]
 use super::Capacities;
 use super::DatagramPool;
+use super::DatagramSlots;
 use super::DedupEntry;
 use super::DedupKey;
 use super::DedupTable;
@@ -210,6 +211,51 @@ fn no_alloc_backends_pass_pool_suite() {
         .build(Memory::<profiles::Constrained>::new())
         .expect("constrained");
     pool_suite(&mut constrained, profiles::Constrained::RX_DATAGRAM_SLOTS);
+}
+
+#[test]
+fn datagram_slots_scratch_follows_profile() {
+    assert_eq!(
+        <Memory<profiles::Default> as DatagramSlots>::RX_DATAGRAM_BYTES,
+        profiles::Default::RX_DATAGRAM_BYTES
+    );
+    assert_eq!(
+        core::mem::size_of::<<Memory<profiles::Default> as DatagramSlots>::RxScratch>(),
+        1472
+    );
+    assert_eq!(
+        core::mem::size_of::<<Memory<profiles::Constrained> as DatagramSlots>::RxScratch>(),
+        1152
+    );
+    assert_eq!(
+        core::mem::size_of::<<Memory<profiles::Constrained> as DatagramSlots>::RxScratch>(),
+        1152
+    );
+    assert!(
+        core::mem::size_of::<<Memory<profiles::Constrained> as DatagramSlots>::RxScratch>()
+            < core::mem::size_of::<<Memory<profiles::Default> as DatagramSlots>::RxScratch>(),
+        "Constrained must not pay Default 1472"
+    );
+}
+
+#[test]
+fn apply_block1_rx_missing_on_plain_get() {
+    let mut engine = build_default_bodies();
+    let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+    let token = sample_token(&[0xab]);
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(7)).with_token(token);
+    let mut buf = [0u8; 64];
+    let n = encode(&msg, &mut buf).expect("encode");
+    let rx = engine.acquire_rx().expect("rx");
+    engine.write_rx(rx, &buf[..n], ep).expect("write");
+    assert_eq!(
+        engine.apply_block1_rx(rx),
+        Err(BlockTransferError::MissingBlock)
+    );
+    assert_eq!(
+        engine.apply_q_block1_rx(rx),
+        Err(BlockTransferError::MissingBlock)
+    );
 }
 
 #[test]

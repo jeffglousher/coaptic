@@ -1561,6 +1561,7 @@ fn write_unprotected_rx_fails_loud_on_encode() {
 #[test]
 fn write_unprotected_rx_fails_loud_on_slot_overflow() {
     use crate::app::write_unprotected_rx;
+    use crate::error::{EncodeError, SlotMessageError};
     use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
 
     let mut engine = EngineBuilder::new()
@@ -1574,7 +1575,7 @@ fn write_unprotected_rx_fails_loud_on_slot_overflow() {
         .write_rx(rx, &[0x40, 0x01, 0x00, 0x01], peer)
         .expect("seed");
 
-    // Encodes into DATAGRAM_SCRATCH (1472) but not Constrained RX (1152).
+    // Profile-sized scratch is Constrained RX (1152); 1200-byte Inner fails loud.
     let big = [0x41u8; 1200];
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
     let mut buf = [0u8; 1472];
@@ -1582,7 +1583,10 @@ fn write_unprotected_rx_fails_loud_on_slot_overflow() {
     let inner = decode(&buf[..n]).unwrap();
 
     let err = write_unprotected_rx::<_, &'static str>(&mut engine, rx, &inner, peer).unwrap_err();
-    assert_eq!(err, crate::Error::Slot(SlotError::LengthExceedsSlot));
+    assert_eq!(
+        err,
+        crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+    );
     assert_eq!(engine.release_rx(rx), Err(SlotError::NotOccupied));
 }
 

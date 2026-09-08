@@ -120,9 +120,6 @@ pub use site::{
 
 use response::AssembledField;
 
-/// Scratch for one inbound or outbound datagram (crate Default profile).
-const DATAGRAM_SCRATCH: usize = 1472;
-
 /// Engine storage selected by [`AppBuilder::block_wise`].
 pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_WISE>>::Store;
 
@@ -712,34 +709,48 @@ enum InboundBody {
     Complete(SlotId),
 }
 
-fn assemble_inbound_body<Mem>(engine: &mut Engine<Mem>, rx: SlotId, now_ms: u64) -> InboundBody
+fn assemble_inbound_body<Mem>(
+    engine: &mut Engine<Mem>,
+    rx: SlotId,
+    now_ms: u64,
+    parsed: &ParsedMessage<'_>,
+) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
 {
-    match engine.apply_block1_rx(rx) {
-        Ok(progress) if progress.complete() => return InboundBody::Complete(progress.id()),
-        Ok(_) => return InboundBody::Continue,
-        // Retransmit of an already-acked NUM (RFC 7959): replay 2.31, not 4.08.
-        Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
-            return InboundBody::Continue;
-        }
-        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
-        Err(_) => return InboundBody::IncompleteEntity,
+    // Classify from the first decode. Plain GET must not enter apply_*
+    // (each stacks profile-sized Block IO scratch, then MissingBlock).
+    if parsed.block1().is_some() {
+        return match engine.apply_block1_rx(rx) {
+            Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
+            Ok(_) => InboundBody::Continue,
+            // Retransmit of an already-acked NUM (RFC 7959): replay 2.31, not 4.08.
+            Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
+                InboundBody::Continue
+            }
+            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
+                InboundBody::None
+            }
+            Err(_) => InboundBody::IncompleteEntity,
+        };
     }
-    match engine.apply_q_block1_rx(rx) {
-        Ok(progress) if progress.complete() => {
-            let _ = engine.note_q_receive(progress.id(), now_ms);
-            InboundBody::Complete(progress.id())
-        }
-        Ok(progress) => {
-            let _ = engine.note_q_receive(progress.id(), now_ms);
-            InboundBody::Continue
-        }
-        Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
-            InboundBody::None
-        }
-        Err(_) => InboundBody::IncompleteEntity,
+    if parsed.q_block1().is_some() {
+        return match engine.apply_q_block1_rx(rx) {
+            Ok(progress) if progress.complete() => {
+                let _ = engine.note_q_receive(progress.id(), now_ms);
+                InboundBody::Complete(progress.id())
+            }
+            Ok(progress) => {
+                let _ = engine.note_q_receive(progress.id(), now_ms);
+                InboundBody::Continue
+            }
+            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
+                InboundBody::None
+            }
+            Err(_) => InboundBody::IncompleteEntity,
+        };
     }
+    InboundBody::None
 }
 
 /// Write a successfully unprotected Inner over the RX slot.
@@ -756,15 +767,15 @@ pub(crate) fn write_unprotected_rx<Mem, E>(
 where
     Mem: Storage + DatagramSlots,
 {
-    let mut inner_wire = [0u8; DATAGRAM_SCRATCH];
-    let n = match inner.encode(&mut inner_wire) {
+    let mut inner_wire = Mem::RxScratch::default();
+    let n = match inner.encode(inner_wire.as_mut()) {
         Ok(n) => n,
         Err(e) => {
             let _ = engine.release_rx(rx);
             return Err(Error::Message(SlotMessageError::Encode(e)));
         }
     };
-    if let Err(e) = engine.write_rx(rx, &inner_wire[..n], peer) {
+    if let Err(e) = engine.write_rx(rx, &inner_wire.as_ref()[..n], peer) {
         let _ = engine.release_rx(rx);
         return Err(Error::Slot(e));
     }
@@ -865,8 +876,8 @@ where
         return Ok(());
     };
 
-    let mut scratch = [0u8; DATAGRAM_SCRATCH];
-    let n = match copy_rx(engine, rx, &mut scratch) {
+    let mut scratch = Mem::RxScratch::default();
+    let n = match copy_rx(engine, rx, scratch.as_mut()) {
         Ok(n) => n,
         Err(e) => {
             let _ = engine.release_rx(rx);
@@ -874,7 +885,7 @@ where
         }
     };
 
-    let parsed = match decode(&scratch[..n]) {
+    let parsed = match decode(&scratch.as_ref()[..n]) {
         Ok(parsed) => parsed,
         Err(_) => {
             Metrics::inc(&mut engine.metrics_mut().rx_error);
@@ -928,8 +939,8 @@ where
         }
     }
 
-    let mut inner_scratch = [0u8; DATAGRAM_SCRATCH];
-    let opened = match oscore::inbound(oscore, &parsed, &mut inner_scratch) {
+    let mut inner_scratch = Mem::RxScratch::default();
+    let opened = match oscore::inbound(oscore, &parsed, inner_scratch.as_mut()) {
         Ok(opened) => opened,
         Err(e) => {
             let outcome = oscore_inbound_error(engine, io, &parsed, peer, now_ms, e, dedup_closed);
@@ -1052,7 +1063,7 @@ where
         }
     }
 
-    let assembled = assemble_inbound_body(engine, rx, now_ms);
+    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed);
     match assembled {
         InboundBody::Continue => {
             let outcome = send_response(
@@ -2170,11 +2181,11 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
             return KeepTx::No;
         };
         let slice = access.as_bytes();
-        if slice.len() > DATAGRAM_SCRATCH {
+        if slice.len() > S::TX_DATAGRAM_BYTES {
             None
         } else {
-            let mut buf = [0u8; DATAGRAM_SCRATCH];
-            buf[..slice.len()].copy_from_slice(slice);
+            let mut buf = S::TxScratch::default();
+            buf.as_mut()[..slice.len()].copy_from_slice(slice);
             Some((buf, slice.len()))
         }
     };
@@ -2186,7 +2197,7 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
         };
     };
     if n <= DedupEntry::REPLAY_MAX {
-        entry = entry.with_replay(&buf[..n]);
+        entry = entry.with_replay(&buf.as_ref()[..n]);
         let _ = note_dedup_store(engine, entry, request, dedup_closed);
         KeepTx::No
     } else if note_dedup_store(engine, entry.with_tx_pin(tx), request, dedup_closed) {

@@ -375,6 +375,27 @@ fn get_sensors_temp_is_content() {
 }
 
 #[test]
+fn constrained_plain_get_is_content() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_temp))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let (_, bytes, n) = app.transport().last_send.expect("sent");
+    let parsed = decode(&bytes[..n]).expect("decode");
+    assert_eq!(parsed.code(), Code::CONTENT);
+    assert_eq!(parsed.payload(), b"21.5");
+    assert!(parsed.block1().is_none());
+    assert!(parsed.block2().is_none());
+}
+
+#[test]
 fn malformed_block2_is_bad_option() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::new(OptionNumber::BLOCK2, &[1, 0, 0, 0])];

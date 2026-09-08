@@ -78,6 +78,12 @@ pub trait MemoryProfile {
     type Observe: SlotPool + Default;
     /// Outstanding-request table. Sized from [`Self::TX_DATAGRAM_SLOTS`].
     type Exchange: SlotPool + Default;
+    /// Stack scratch for one RX datagram copy ([`crate::storage::DatagramScratch`]
+    /// of [`Self::RX_DATAGRAM_BYTES`]).
+    type RxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
+    /// Stack scratch for one TX datagram copy ([`crate::storage::DatagramScratch`]
+    /// of [`Self::TX_DATAGRAM_BYTES`]).
+    type TxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
 }
 
 /// Selects [`Memory`] vs [`Memory<P, WithBodies<P>>`] from a const `block_wise` flag.
@@ -345,6 +351,11 @@ where
     P::RxDatagram: DatagramBytes,
     P::TxDatagram: DatagramBytes,
 {
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+
     fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {
         DatagramBytes::payload(&self.rx, id)
     }
@@ -413,6 +424,12 @@ where
         DatagramBytes::access_mut(&mut self.tx, id)
     }
 }
+
+const _: () = {
+    assert!(<Memory<super::profiles::Default> as DatagramSlots>::RX_DATAGRAM_BYTES == 1472);
+    assert!(<Memory<super::profiles::Constrained> as DatagramSlots>::RX_DATAGRAM_BYTES == 1152);
+    assert!(<Memory<super::profiles::Constrained> as DatagramSlots>::TX_DATAGRAM_BYTES == 1152);
+};
 
 impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
 where
