@@ -8,7 +8,10 @@
 use core::mem::size_of;
 
 use coaptic::Response;
-use coaptic::app::{App, DEFAULT_ROUTES, RESPONSE_BODY};
+use coaptic::app::{
+    App, DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, LinkFormatScratch, RESPONSE_BODY,
+    link_format_capacity,
+};
 use coaptic::profiles;
 use coaptic::storage::{Memory, MemoryLayout, WithBodies};
 
@@ -96,5 +99,35 @@ fn response_is_not_a_4kib_copy() {
     assert!(
         n < 768,
         "Response must not own [u8;4096] (got {n}; ~520 with inline 128 + location slices)"
+    );
+}
+
+/// `/.well-known/core` catalog is poll stack ([`LinkFormatScratch`]), not a
+/// field of [`App`] / [`Response`]. Default N=8 is ~192 bytes, not 4096.
+#[test]
+fn well_known_core_scratch_is_not_4kib() {
+    const CAP: usize = link_format_capacity::<DEFAULT_ROUTES>();
+    const _: () = assert!(CAP == DEFAULT_ROUTES * LINK_FORMAT_PER_ROUTE);
+    const _: () = assert!(CAP == 192);
+
+    let n = size_of::<LinkFormatScratch<DEFAULT_ROUTES>>();
+    assert!(n >= CAP, "scratch {n} must hold catalog capacity {CAP}");
+    assert!(
+        n < RESPONSE_BODY / 8,
+        "N={DEFAULT_ROUTES} scratch {n} should be ~{CAP}, not RESPONSE_BODY={RESPONSE_BODY}"
+    );
+
+    let floor = size_of::<LinkFormatScratch<1>>();
+    assert!(
+        floor >= 128,
+        "N=1 scratch {floor} must hold the 128-byte floor"
+    );
+    assert!(floor < 256, "N=1 scratch {floor} should be ~128, not 4KiB");
+
+    let n16 = size_of::<LinkFormatScratch<16>>();
+    assert!(n16 >= link_format_capacity::<16>());
+    assert!(
+        n16 < RESPONSE_BODY / 4,
+        "N=16 scratch {n16} should be ~384, not 4KiB"
     );
 }

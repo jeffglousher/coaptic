@@ -3,9 +3,9 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
-    AppAssembled, DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, Method,
-    RESPONSE_BODY, Request, Response, Site, fetch, get, ipatch, link_format_capacity, patch, post,
-    put,
+    AppAssembled, DEFAULT_ROUTES, Error, INLINE_PAYLOAD, LINK_FORMAT_PER_ROUTE, LinkFormatScratch,
+    Method, RESPONSE_BODY, Request, Response, Site, fetch, get, ipatch, link_format_capacity,
+    patch, post, put,
 };
 use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
@@ -1172,8 +1172,8 @@ fn well_known_core_lists_all_registered_routes_past_inline() {
     assert_eq!(site.len(), 16);
     assert_eq!(site.capacity(), 16);
 
-    let mut scratch = [0u8; RESPONSE_BODY];
-    let response = dispatch_well_known(&site, &mut scratch);
+    let mut scratch = LinkFormatScratch::<16>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
     let body = core::str::from_utf8(response.payload()).expect("utf8");
@@ -1219,11 +1219,30 @@ fn well_known_core_overflow_is_internal_error() {
 
     let mut site = Site::<1>::new();
     site.route(TOO_LONG, get(get_temp)).well_known_core();
-    let mut scratch = [0u8; RESPONSE_BODY];
-    let response = dispatch_well_known(&site, &mut scratch);
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
     assert_eq!(response.code(), Code::INTERNAL_SERVER_ERROR);
     assert!(response.payload().is_empty());
     assert_ne!(response.format(), Some(ContentFormat::LINK_FORMAT));
+}
+
+/// A path longer than [`LINK_FORMAT_PER_ROUTE`] still fits on N=1 because
+/// capacity floors at [`INLINE_PAYLOAD`].
+#[test]
+fn well_known_core_small_n_keeps_inline_floor() {
+    const PATH: &str = "sensors/temperature/celsius";
+    const _: () = assert!(PATH.len() + 3 > LINK_FORMAT_PER_ROUTE);
+    const _: () = assert!(PATH.len() + 3 <= INLINE_PAYLOAD);
+    const _: () = assert!(link_format_capacity::<1>() == INLINE_PAYLOAD);
+
+    let mut site = Site::<1>::new();
+    site.route(PATH, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(response.payload()).expect("utf8");
+    assert_eq!(body, "</sensors/temperature/celsius>");
 }
 
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
