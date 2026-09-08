@@ -103,11 +103,12 @@
 //! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
 //! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
 //! window). `App::set_oscore` attaches it; Engine does not store keys.
-//! Group OSCORE, other ciphers, outer Block-wise over OSCORE, and
-//! first-party DTLS remain backlog — the `coaptic-plugtest` harness
-//! (feature `dtls`) wraps webrtc-dtls as a
-//! [`DatagramIo`](storage::DatagramIo). Alternative networks (6LoWPAN,
-//! LoRaWAN, …) are the same future / backlog.
+//! Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy
+//! hop-by-hop), and first-party DTLS remain backlog — the
+//! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
+//! [`DatagramIo`](storage::DatagramIo). Inner Block-wise (Block1/Block2:
+//! fragment then protect) is on the App path. Alternative networks
+//! (6LoWPAN, LoRaWAN, …) are the same future / backlog.
 //!
 //! # Features
 //!

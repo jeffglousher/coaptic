@@ -50,7 +50,8 @@ pub enum Error {
     Parse(ParseError),
     /// Class E / U option list exceeded the fixed builder used here.
     Options,
-    /// This slice does not protect outer Block-wise over OSCORE.
+    /// Outer Block-wise over OSCORE (proxy hop-by-hop) is not in this slice.
+    /// Inner Block-wise (fragment then protect) is supported on the App path.
     Unsupported,
 }
 
@@ -76,7 +77,7 @@ impl core::fmt::Display for Error {
             Self::Encode(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
             Self::Options => f.write_str("OSCORE option list is full"),
-            Self::Unsupported => f.write_str("OSCORE Block-wise is not in this slice"),
+            Self::Unsupported => f.write_str("OSCORE outer Block-wise is not in this slice"),
         }
     }
 }

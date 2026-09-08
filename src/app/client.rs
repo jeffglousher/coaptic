@@ -789,13 +789,14 @@ where
     match super::oscore::encode_request(oscore, engine, tx, &msg) {
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall))
-            if !super::oscore::is_active(oscore) =>
-        {
+        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+            // Inner Block-wise: fragment first, then protect each
+            // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
             send_client_block1(
                 engine,
                 io,
                 ids,
+                oscore,
                 now_ms,
                 spec.dest,
                 spec.ty,
@@ -820,6 +821,7 @@ fn send_client_block1<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -859,6 +861,7 @@ where
             engine,
             io,
             ids,
+            oscore,
             now_ms,
             dest,
             ty,
@@ -876,6 +879,7 @@ where
             engine,
             io,
             ids,
+            oscore,
             now_ms,
             dest,
             ty,
@@ -901,6 +905,7 @@ pub(crate) fn complete_client<Mem, T>(
     inbox: &mut ClientInbox,
     lives: &mut ClientLives,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
@@ -942,8 +947,9 @@ where
                 BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
             ) {
                 if parsed.code() == Code::CONTINUE {
-                    let outcome =
-                        continue_block1_tx(engine, io, lives, ids, now_ms, parsed, peer, body);
+                    let outcome = continue_block1_tx(
+                        engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
+                    );
                     let _ = engine.release_rx(rx);
                     return outcome;
                 }
@@ -960,8 +966,17 @@ where
         }
         Ok(progress) => {
             take_exchange(engine, parsed, peer);
-            let outcome =
-                send_block2_continue(engine, io, lives, ids, now_ms, parsed, peer, progress.id());
+            let outcome = send_block2_continue(
+                engine,
+                io,
+                lives,
+                ids,
+                oscore,
+                now_ms,
+                parsed,
+                peer,
+                progress.id(),
+            );
             let _ = engine.release_rx(rx);
             return outcome;
         }
@@ -988,7 +1003,17 @@ where
             let _ = engine.note_q_receive(progress.id(), now_ms);
             let outcome = if needs_q_continue(engine, progress.id()) {
                 take_exchange(engine, parsed, peer);
-                send_q_block2_continue(engine, io, lives, ids, now_ms, parsed, peer, progress.id())
+                send_q_block2_continue(
+                    engine,
+                    io,
+                    lives,
+                    ids,
+                    oscore,
+                    now_ms,
+                    parsed,
+                    peer,
+                    progress.id(),
+                )
             } else {
                 Ok(())
             };
@@ -1114,6 +1139,7 @@ fn send_block2_continue<Mem, T>(
     io: &mut T,
     lives: &ClientLives,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -1134,6 +1160,7 @@ where
         io,
         lives,
         ids,
+        oscore,
         now_ms,
         parsed.token(),
         peer,
@@ -1148,6 +1175,7 @@ fn send_q_block2_continue<Mem, T>(
     io: &mut T,
     lives: &ClientLives,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -1168,6 +1196,7 @@ where
         io,
         lives,
         ids,
+        oscore,
         now_ms,
         parsed.token(),
         peer,
@@ -1182,6 +1211,7 @@ fn send_followup<Mem, T>(
     io: &mut T,
     lives: &ClientLives,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     token: Token,
     peer: Endpoint,
@@ -1225,7 +1255,7 @@ where
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    if let Err(e) = engine.encode_tx(tx, &msg) {
+    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
         let _ = engine.release_tx(tx);
         return Err(Error::Message(e));
     }
@@ -1251,6 +1281,7 @@ fn continue_block1_tx<Mem, T>(
     io: &mut T,
     lives: &ClientLives,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -1279,6 +1310,7 @@ where
                 engine,
                 io,
                 ids,
+                oscore,
                 now_ms,
                 peer,
                 ty,
@@ -1298,6 +1330,7 @@ where
                 engine,
                 io,
                 ids,
+                oscore,
                 now_ms,
                 peer,
                 ty,
@@ -1320,6 +1353,7 @@ fn issue_block1<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1339,6 +1373,7 @@ where
         engine,
         io,
         ids,
+        oscore,
         now_ms,
         dest,
         ty,
@@ -1357,6 +1392,7 @@ fn issue_q_block1_window<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
     first_ty: Type,
@@ -1394,6 +1430,7 @@ where
             engine,
             io,
             ids,
+            oscore,
             now_ms,
             dest,
             ty,
@@ -1418,6 +1455,7 @@ fn send_block1_issued<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1473,7 +1511,7 @@ where
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(&chunk[..n]);
-    if let Err(e) = engine.encode_tx(tx, &msg) {
+    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
         let _ = engine.release_tx(tx);
         return Err(Error::Message(e));
     }

@@ -34,14 +34,20 @@
 //! Observe register/notify is in this slice: Observe is Class E+U
 //! (RFC 8613 Figure 5). Requests use Outer Code FETCH; responses use
 //! Content. Notifications include a new Partial IV (the first register
-//! ACK may omit it). Other dual-class options (Block, Max-Age, Size,
-//! No-Response) stay Inner — this is not a silent Outer bucket.
+//! ACK may omit it).
+//!
+//! Block1 / Block2 / Size1 / Size2 are Dual (Figure 5) but App uses the
+//! **Inner** field: fragment the CoAP message, then OSCORE-protect each
+//! datagram (`knowledge/rfcs/rfc8613.txt` §4.1.3.4.1). They are not
+//! copied to Outer (that would look like hop-by-hop fragmentation of
+//! the OSCORE message). Max-Age and No-Response stay Inner. Incoming
+//! Outer Block is not treated as an application body (fail-closed).
 //!
 //! # What this slice does not do
 //!
 //! Group OSCORE, other AEAD/HKDF algorithms, EDHOC / ACE key establishment,
-//! outer Block-wise over OSCORE, and first-party DTLS (still harness
-//! `DatagramIo` only).
+//! Outer Block-wise over OSCORE (proxy hop-by-hop), and first-party DTLS
+//! (still harness `DatagramIo` only).
 //!
 //! Wire format lives in `knowledge/rfcs/rfc8613.txt`. This module does not
 //! restate it.

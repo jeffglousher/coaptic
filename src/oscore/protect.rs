@@ -414,7 +414,7 @@ fn encode_outer(
     let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
     for opt in inner_opts {
         let n = opt.number().get();
-        if header::is_oscore(n) || !header::classify(n).in_outer() {
+        if header::is_oscore(n) || !header::encode_as_outer(n) {
             continue;
         }
         opts.push(*opt).map_err(|_| Error::Options)?;
@@ -456,6 +456,8 @@ fn stitch_inner(
     // Re-encode so Class U outer options (Uri-Host, …) sit beside Class E.
     // Dual Observe: Inner is authoritative for presence; on a notification
     // Inner is empty, so surface Outer Observe for App `observe_seq`.
+    // Dual Block/Size stay Inner-only: do not merge an Outer Block into
+    // the application message (that field is hop-by-hop, §4.1.3.4.2).
     let mut merged = [0u8; INNER];
     let n = {
         let fake = decode(&out[..header_end + rest.len()])?;
