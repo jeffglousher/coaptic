@@ -1325,7 +1325,7 @@ where
         oscore_req,
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
             if !oscore::is_active(oscore) =>
         {
             let _ = engine.release_tx(tx);
@@ -1333,7 +1333,7 @@ where
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
-            Err(e.into())
+            Err(e)
         }
     };
     outcome?;
@@ -1450,14 +1450,16 @@ where
         meta.oscore,
     ) {
         Ok(()) => finish_send(engine, io, tx, meta.dest, pending),
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+            // True size miss: Inner Block2 (also under OSCORE). Protocol
+            // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
             let meta = SendResponse { mid, ..meta };
             start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
-            Err(e.into())
+            Err(e)
         }
     }
 }
@@ -1524,13 +1526,15 @@ where
             KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
             KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
         },
-        Err(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+            // True size miss: Inner Block2 (also under OSCORE). Protocol
+            // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
             start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
-            Err(e.into())
+            Err(e)
         }
     }
 }
@@ -1717,7 +1721,7 @@ where
         meta.oscore,
     ) {
         let _ = engine.release_tx(tx);
-        return Err(e.into());
+        return Err(e);
     }
     finish_send(engine, io, tx, meta.dest, pending)
 }
@@ -1742,7 +1746,7 @@ fn copy_issued<S: Storage + BodySlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_response<S: Storage + DatagramSlots>(
+fn encode_response<S: Storage + DatagramSlots, E>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
@@ -1754,7 +1758,7 @@ fn encode_response<S: Storage + DatagramSlots>(
     block1: Option<BlockValue>,
     oscore_ctx: &oscore::Field,
     oscore_req: oscore::Request,
-) -> Result<(), SlotMessageError> {
+) -> Result<(), Error<E>> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
     let observe = response
@@ -1812,13 +1816,15 @@ fn encode_response<S: Storage + DatagramSlots>(
                 .with_payload(payload);
             oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
         }
-        Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
-        Err(e) => Err(SlotMessageError::Encode(e)),
+        Err(EncodeError::OptionsFull) => {
+            encode_options_full_500(engine, tx, ty, mid, token, oscore_ctx, oscore_req)
+        }
+        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_notification<S: Storage + DatagramSlots>(
+fn encode_notification<S: Storage + DatagramSlots, E>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
@@ -1828,7 +1834,7 @@ fn encode_notification<S: Storage + DatagramSlots>(
     payload: &[u8],
     oscore_ctx: &mut oscore::Field,
     oscore_req: oscore::Request,
-) -> Result<(), SlotMessageError> {
+) -> Result<(), Error<E>> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
     let observe = response
@@ -1858,8 +1864,10 @@ fn encode_notification<S: Storage + DatagramSlots>(
                 .with_payload(payload);
             oscore::encode_notification(oscore_ctx, oscore_req, engine, tx, &msg)
         }
-        Err(EncodeError::OptionsFull) => encode_options_full_500(engine, tx, ty, mid, token),
-        Err(e) => Err(SlotMessageError::Encode(e)),
+        Err(EncodeError::OptionsFull) => {
+            encode_options_full_500(engine, tx, ty, mid, token, oscore_ctx, oscore_req)
+        }
+        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
     }
 }
 
@@ -1872,24 +1880,31 @@ pub(crate) fn push_opt<'a, const N: usize>(
         .map_err(|_| EncodeError::OptionsFull)
 }
 
-fn encode_options_full_500<S: Storage + DatagramSlots>(
+/// 5.00 when the response option list cannot be built.
+///
+/// Under attached OSCORE this is OSCORE-protected. It must not fall back
+/// to plaintext.
+pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
     mid: MessageId,
     token: crate::message::Token,
-) -> Result<(), SlotMessageError> {
+    oscore_ctx: &oscore::Field,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
     let response = Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
     let cf = response.format().map(crate::ContentFormat::encode);
     let mut opts = OptionsBuilder::<4>::new();
     if let Some(ref encoded) = cf {
-        push_opt(&mut opts, Opt::content_format(encoded)).map_err(SlotMessageError::Encode)?;
+        push_opt(&mut opts, Opt::content_format(encoded))
+            .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
     }
     let msg = Message::new(ty, response.code(), mid)
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(response.payload());
-    engine.encode_tx(tx, &msg).map(|_| ())
+    oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
 }
 
 enum Replay<E> {
