@@ -156,6 +156,10 @@ pub struct App<
     inbox: client::ClientInbox,
     lives: client::ClientLives,
     echo_fresh_ms: Option<u64>,
+    /// Last POST/PATCH/FETCH whose Dedup insert failed. A CON retransmit
+    /// of that Message ID + peer is ACKed without a handler re-run until
+    /// `due_ms` (fail-closed, not Miss). Not a seventh memory area.
+    dedup_closed: Option<DedupClosed>,
     /// Caller-owned OSCORE context (`()` without the `oscore` feature).
     oscore: oscore::Field,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
@@ -305,6 +309,7 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            dedup_closed: None,
             oscore: oscore::empty_field(),
             assembled: Default::default(),
         })
@@ -330,6 +335,7 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_fresh_ms: self.echo_fresh_ms,
+            dedup_closed: None,
             oscore: oscore::empty_field(),
             assembled: Default::default(),
         })
@@ -517,10 +523,15 @@ where
     /// second handler call while the row is live (`EXCHANGE_LIFETIME`):
     /// the cached ACK bytes, or a pinned TX slot when the ACK does not
     /// fit the compact sidecar. POST / PATCH / FETCH never re-run on a
-    /// live row (empty ACK if there is nothing to replay). GET / PUT /
+    /// live row (empty ACK if there is nothing to replay). If Dedup insert
+    /// fails after the first POST / PATCH / FETCH (table full of
+    /// never-expire rows), a retransmit is still ACKed without a handler
+    /// re-run until `EXCHANGE_LIFETIME` (fail-closed, not Miss). GET / PUT /
     /// DELETE / iPATCH replay when a cache exists; without one, re-run is
     /// allowed (RFC 7252 §4.5 MAY). After `EXCHANGE_LIFETIME` expiry,
     /// Dedup Miss is a new exchange (POST / PATCH / FETCH may re-run).
+    /// Proxy-Uri or Proxy-Scheme on a request is 5.05 before the site
+    /// (origin; this crate is not a forward-proxy).
     /// An OSCORE CON retransmit is keyed on the *outer* Message ID so the
     /// cached protected ACK is replayed without a second unprotect.
     /// Observe register / deregister and
@@ -558,6 +569,7 @@ where
             &mut self.lives,
             &mut self.oscore,
             self.echo_fresh_ms,
+            &mut self.dedup_closed,
             now_ms,
         )
     }
@@ -607,6 +619,7 @@ fn poll_engine<Mem, T, const N: usize>(
     lives: &mut client::ClientLives,
     oscore: &mut oscore::Field,
     echo_fresh_ms: Option<u64>,
+    dedup_closed: &mut Option<DedupClosed>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -620,7 +633,7 @@ where
         Err(DatagramIoError::Saturated) => (None, true),
         Err(e) => return Err(e.into()),
     };
-    expire_request_dedup(engine, now_ms);
+    expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, now_ms);
     let progress = engine.progress(now_ms);
 
@@ -646,6 +659,7 @@ where
             ids,
             oscore,
             echo_fresh_ms,
+            dedup_closed,
             now_ms,
             rx,
         )?;
@@ -682,7 +696,7 @@ where
     }
 
     if let Some(recover) = progress.qblock_recover() {
-        send_qblock_recover(engine, io, ids, now_ms, recover)?;
+        send_qblock_recover(engine, io, ids, now_ms, recover, dedup_closed)?;
     }
     if recv_saturated {
         return Err(Error::Saturated);
@@ -763,6 +777,7 @@ fn send_qblock_recover<Mem, T>(
     ids: &mut Ids,
     now_ms: u64,
     recover: QBlockRecover,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -801,6 +816,7 @@ where
                 q_block2: None,
                 block1: None,
                 oscore: oscore::no_request(),
+                request: Code::GET,
             };
             send_response(
                 engine,
@@ -809,6 +825,7 @@ where
                 &Response::missing_blocks(nums.into_iter().take(n)),
                 now_ms,
                 &oscore::empty_field(),
+                dedup_closed,
             )
         }
         _ => Ok(()),
@@ -835,6 +852,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     ids: &mut Ids,
     oscore: &mut oscore::Field,
     echo_fresh_ms: Option<u64>,
+    dedup_closed: &mut Option<DedupClosed>,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -901,7 +919,7 @@ where
     // must replay the cached protected ACK before unprotect, or the
     // replay window consumes the Partial IV and the client never ACKs.
     if parsed.code().is_request() && parsed.ty() == Type::Confirmable {
-        match replay_con_request(engine, io, peer, &parsed, now_ms) {
+        match replay_con_request(engine, io, peer, &parsed, now_ms, dedup_closed) {
             Replay::Hit(outcome) => {
                 let _ = engine.release_rx(rx);
                 return outcome;
@@ -914,7 +932,7 @@ where
     let opened = match oscore::inbound(oscore, &parsed, &mut inner_scratch) {
         Ok(opened) => opened,
         Err(e) => {
-            let outcome = oscore_inbound_error(engine, io, &parsed, peer, now_ms, e);
+            let outcome = oscore_inbound_error(engine, io, &parsed, peer, now_ms, e, dedup_closed);
             let _ = engine.release_rx(rx);
             return outcome;
         }
@@ -944,6 +962,33 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
+    // Origin: Proxy-Uri / Proxy-Scheme MUST 5.05 (RFC 7252 §5.10.2).
+    // Before the site so a missing Uri-Path is not 4.04.
+    if parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some() {
+        let meta = SendResponse {
+            dest: peer,
+            ty: parsed.ty(),
+            mid: parsed.message_id(),
+            token: parsed.token(),
+            no_response,
+            block2: None,
+            q_block2: None,
+            block1: None,
+            oscore: oscore_req,
+            request: parsed.code(),
+        };
+        let outcome = send_response(
+            engine,
+            io,
+            meta,
+            &Response::problem(Code::PROXYING_NOT_SUPPORTED).title("Proxying Not Supported"),
+            now_ms,
+            oscore,
+            dedup_closed,
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
@@ -958,6 +1003,7 @@ where
             q_block2: None,
             block1: None,
             oscore: oscore_req,
+            request: parsed.code(),
         };
         let outcome = send_response(
             engine,
@@ -966,6 +1012,7 @@ where
             &Response::problem(Code::BAD_OPTION).title("Bad Option"),
             now_ms,
             oscore,
+            dedup_closed,
         );
         let _ = engine.release_rx(rx);
         return outcome;
@@ -983,14 +1030,22 @@ where
         q_block2,
         block1,
         oscore: oscore_req,
+        request: parsed.code(),
     };
 
     if let Some(fresh_ms) = echo_fresh_ms {
         match Engine::<Mem>::echo_freshness(&parsed, now_ms, fresh_ms) {
             EchoFreshness::Fresh => {}
             EchoFreshness::Missing | EchoFreshness::Invalid | EchoFreshness::Stale => {
-                let outcome =
-                    send_response(engine, io, meta, &unauthorized_echo(now_ms), now_ms, oscore);
+                let outcome = send_response(
+                    engine,
+                    io,
+                    meta,
+                    &unauthorized_echo(now_ms),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
+                );
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -1007,6 +1062,7 @@ where
                 &Response::new(Code::CONTINUE),
                 now_ms,
                 oscore,
+                dedup_closed,
             );
             let _ = engine.release_rx(rx);
             return outcome;
@@ -1023,6 +1079,7 @@ where
                     .title("Request Entity Incomplete"),
                 now_ms,
                 oscore,
+                dedup_closed,
             );
             let _ = engine.release_rx(rx);
             return outcome;
@@ -1054,9 +1111,18 @@ where
     let response = apply_observe(engine, now_ms, peer, response, plan, oscore_req);
 
     let outcome = if response.is_separate() {
-        send_separate(engine, io, ids, now_ms, meta, &response, oscore)
+        send_separate(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            &response,
+            oscore,
+            dedup_closed,
+        )
     } else {
-        send_response(engine, io, meta, &response, now_ms, oscore)
+        send_response(engine, io, meta, &response, now_ms, oscore, dedup_closed)
     };
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
@@ -1307,6 +1373,7 @@ where
         q_block2: None,
         block1: None,
         oscore: oscore_req,
+        request: Code::GET,
     };
 
     let Some(tx) = engine.acquire_tx() else {
@@ -1385,6 +1452,7 @@ where
     outcome
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_separate<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -1393,6 +1461,7 @@ fn send_separate<S, T>(
     meta: SendResponse,
     response: &Response<'_>,
     oscore_ctx: &oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -1418,7 +1487,14 @@ where
     let ty = match meta.ty {
         Type::Confirmable => {
             send_empty_ack(engine, io, meta.dest, meta.mid)?;
-            remember_empty_ack(engine, meta.dest, meta.mid, now_ms);
+            remember_empty_ack(
+                engine,
+                meta.dest,
+                meta.mid,
+                now_ms,
+                meta.request,
+                dedup_closed,
+            );
             Type::Confirmable
         }
         Type::NonConfirmable => Type::NonConfirmable,
@@ -1471,6 +1547,7 @@ fn send_response<S, T>(
     response: &Response<'_>,
     now_ms: u64,
     oscore_ctx: &oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -1480,7 +1557,14 @@ where
         return match meta.ty {
             Type::Confirmable => {
                 send_empty_ack(engine, io, meta.dest, meta.mid)?;
-                remember_empty_ack(engine, meta.dest, meta.mid, now_ms);
+                remember_empty_ack(
+                    engine,
+                    meta.dest,
+                    meta.mid,
+                    now_ms,
+                    meta.request,
+                    dedup_closed,
+                );
                 Ok(())
             }
             Type::NonConfirmable | Type::Acknowledgement | Type::Reset => Ok(()),
@@ -1522,7 +1606,16 @@ where
         oscore_ctx,
         meta.oscore,
     ) {
-        Ok(()) => match remember_tx_reply(engine, tx, meta.dest, meta.mid, meta.ty, now_ms) {
+        Ok(()) => match remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            meta.mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        ) {
             KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
             KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
         },
@@ -1917,6 +2010,13 @@ enum KeepTx {
     No,
 }
 
+/// Last POST/PATCH/FETCH whose Dedup insert failed. Compact: one key.
+#[derive(Clone, Copy)]
+struct DedupClosed {
+    key: DedupKey,
+    due_ms: u64,
+}
+
 /// GET / PUT / DELETE / iPATCH may re-run when a live Dedup row has no
 /// replay (RFC 7252 §4.5 MAY). POST / PATCH / FETCH never re-run.
 fn request_may_rerun_on_duplicate(code: Code) -> bool {
@@ -1929,20 +2029,22 @@ fn replay_con_request<S, T>(
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
     now_ms: u64,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Replay<T::Error>
 where
     S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
-    let Some(id) = engine.lookup_dedup(DedupKey::new(parsed.message_id(), peer)) else {
-        return Replay::Miss;
+    let key = DedupKey::new(parsed.message_id(), peer);
+    let Some(id) = engine.lookup_dedup(key) else {
+        return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     };
     let Some(entry) = engine.dedup_entry(id) else {
-        return Replay::Miss;
+        return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     };
     if entry.due_ms() != 0 && now_ms >= entry.due_ms() {
         release_dedup_row(engine, entry);
-        return Replay::Miss;
+        return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     }
     if let Some(bytes) = entry.replay() {
         return Replay::Hit(send_replay_bytes(engine, io, peer, bytes));
@@ -1955,9 +2057,54 @@ where
     } else {
         // Never silent: ACK the CON so the client stops RTO. Persist the
         // empty ACK so a later Miss-after-lifetime is the only re-run path.
-        remember_empty_ack(engine, peer, parsed.message_id(), now_ms);
+        remember_empty_ack(
+            engine,
+            peer,
+            parsed.message_id(),
+            now_ms,
+            parsed.code(),
+            dedup_closed,
+        );
         Replay::Hit(send_empty_ack(engine, io, peer, parsed.message_id()))
     }
+}
+
+/// POST / PATCH / FETCH: insert failure after the first response is
+/// fail-closed (empty ACK), not Miss.
+fn replay_closed<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    peer: Endpoint,
+    parsed: &ParsedMessage<'_>,
+    now_ms: u64,
+    dedup_closed: &mut Option<DedupClosed>,
+) -> Replay<T::Error>
+where
+    S: Storage + DatagramSlots + DedupSlots,
+    T: DatagramIo,
+{
+    if request_may_rerun_on_duplicate(parsed.code()) {
+        return Replay::Miss;
+    }
+    let Some(closed) = *dedup_closed else {
+        return Replay::Miss;
+    };
+    if closed.key != DedupKey::new(parsed.message_id(), peer) {
+        return Replay::Miss;
+    }
+    if closed.due_ms != 0 && now_ms >= closed.due_ms {
+        *dedup_closed = None;
+        return Replay::Miss;
+    }
+    remember_empty_ack(
+        engine,
+        peer,
+        parsed.message_id(),
+        now_ms,
+        parsed.code(),
+        dedup_closed,
+    );
+    Replay::Hit(send_empty_ack(engine, io, peer, parsed.message_id()))
 }
 
 fn send_replay_bytes<S, T>(
@@ -2001,6 +2148,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     engine: &mut Engine<S>,
     tx: SlotId,
@@ -2008,6 +2156,8 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     mid: MessageId,
     request_ty: Type,
     now_ms: u64,
+    request: Code,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> KeepTx {
     if request_ty != Type::Confirmable {
         return KeepTx::No;
@@ -2016,7 +2166,7 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     let mut entry = DedupEntry::new(mid, dest).with_due_ms(due);
     let copied = {
         let Ok(access) = engine.access_tx(tx) else {
-            remember_empty_ack(engine, dest, mid, now_ms);
+            remember_empty_ack(engine, dest, mid, now_ms, request, dedup_closed);
             return KeepTx::No;
         };
         let slice = access.as_bytes();
@@ -2029,7 +2179,7 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
         }
     };
     let Some((buf, n)) = copied else {
-        return if store_request_dedup(engine, entry.with_tx_pin(tx)) {
+        return if note_dedup_store(engine, entry.with_tx_pin(tx), request, dedup_closed) {
             KeepTx::Yes
         } else {
             KeepTx::No
@@ -2037,9 +2187,9 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     };
     if n <= DedupEntry::REPLAY_MAX {
         entry = entry.with_replay(&buf[..n]);
-        let _ = store_request_dedup(engine, entry);
+        let _ = note_dedup_store(engine, entry, request, dedup_closed);
         KeepTx::No
-    } else if store_request_dedup(engine, entry.with_tx_pin(tx)) {
+    } else if note_dedup_store(engine, entry.with_tx_pin(tx), request, dedup_closed) {
         KeepTx::Yes
     } else {
         KeepTx::No
@@ -2051,17 +2201,55 @@ fn remember_empty_ack<S: Storage + DedupSlots>(
     dest: Endpoint,
     mid: MessageId,
     now_ms: u64,
+    request: Code,
+    dedup_closed: &mut Option<DedupClosed>,
 ) {
     let mut buf = [0u8; 16];
     let Ok(n) = encode(&Message::empty_ack(mid), &mut buf) else {
+        if !request_may_rerun_on_duplicate(request)
+            && dedup_closed
+                .as_ref()
+                .is_none_or(|c| c.key != DedupKey::new(mid, dest))
+        {
+            *dedup_closed = Some(DedupClosed {
+                key: DedupKey::new(mid, dest),
+                due_ms: dedup_due_ms(now_ms),
+            });
+        }
         return;
     };
-    let _ = store_request_dedup(
+    let _ = note_dedup_store(
         engine,
         DedupEntry::new(mid, dest)
             .with_due_ms(dedup_due_ms(now_ms))
             .with_replay(&buf[..n]),
+        request,
+        dedup_closed,
     );
+}
+
+fn note_dedup_store<S: Storage + DedupSlots>(
+    engine: &mut Engine<S>,
+    entry: DedupEntry,
+    request: Code,
+    dedup_closed: &mut Option<DedupClosed>,
+) -> bool {
+    let key = entry.key();
+    let due_ms = entry.due_ms();
+    if store_request_dedup(engine, entry) {
+        if dedup_closed.as_ref().is_some_and(|c| c.key == key) {
+            *dedup_closed = None;
+        }
+        true
+    } else {
+        if !request_may_rerun_on_duplicate(request) {
+            let already = dedup_closed.as_ref().is_some_and(|c| c.key == key);
+            if !already {
+                *dedup_closed = Some(DedupClosed { key, due_ms });
+            }
+        }
+        false
+    }
 }
 
 fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) -> bool {
@@ -2097,7 +2285,16 @@ fn dedup_due_ms(now_ms: u64) -> u64 {
     now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
 }
 
-fn expire_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, now_ms: u64) {
+fn expire_request_dedup<S: Storage + DedupSlots>(
+    engine: &mut Engine<S>,
+    dedup_closed: &mut Option<DedupClosed>,
+    now_ms: u64,
+) {
+    if let Some(closed) = *dedup_closed {
+        if closed.due_ms != 0 && now_ms >= closed.due_ms {
+            *dedup_closed = None;
+        }
+    }
     if engine.storage_mut().dedup().is_empty() {
         return;
     }
@@ -2232,6 +2429,7 @@ fn oscore_inbound_error<S, T>(
     peer: Endpoint,
     now_ms: u64,
     err: oscore::InboundError,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -2256,6 +2454,7 @@ where
             q_block2: None,
             block1: None,
             oscore: oscore::no_request(),
+            request: parsed.code(),
         };
         send_response(
             engine,
@@ -2269,11 +2468,12 @@ where
                 .max_age(0),
             now_ms,
             &oscore::empty_field(),
+            dedup_closed,
         )
     }
     #[cfg(not(feature = "oscore"))]
     {
-        let _ = (engine, io, parsed, peer, now_ms, err);
+        let _ = (engine, io, parsed, peer, now_ms, err, dedup_closed);
         Ok(())
     }
 }
@@ -2312,6 +2512,8 @@ struct SendResponse {
     block1: Option<BlockValue>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
     oscore: oscore::Request,
+    /// Inbound request code (Dedup fail-closed for POST / PATCH / FETCH).
+    request: Code,
 }
 
 fn copy_rx<S: Storage + DatagramSlots, E>(
