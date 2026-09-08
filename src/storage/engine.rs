@@ -522,12 +522,15 @@ impl<S: Storage + PendingCons> Engine<S> {
 
     /// Next pending CON whose timeout is due at caller `now_ms`, if any.
     ///
-    /// Scans pending TX slots in index order (O(n)). On
-    /// [`Retransmit::Due`], doubles the timeout and increments attempts.
-    /// On [`Retransmit::GiveUp`], clears pending. Does not send —
-    /// [`crate::App::poll`] sends Due and releases GiveUp. See
-    /// `knowledge/rfcs/rfc7252.txt` §4.2.
+    /// Scans pending TX slots in index order (O(n)). Skips the scan when
+    /// the TX pool is empty. On [`Retransmit::Due`], doubles the timeout
+    /// and increments attempts. On [`Retransmit::GiveUp`], clears pending.
+    /// Does not send — [`crate::App::poll`] sends Due and releases GiveUp.
+    /// See `knowledge/rfcs/rfc7252.txt` §4.2.
     pub fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+        if self.storage.tx_datagram().is_empty() {
+            return None;
+        }
         let event = self.storage.poll_retransmit(now_ms);
         match event {
             Some(Retransmit::Due(_)) => Metrics::inc(&mut self.metrics.con_retransmit),
@@ -1080,6 +1083,9 @@ fn poll_observe_lifetime<S: Storage + ObserveSlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
 ) -> Option<ObserveExpiry> {
+    if engine.storage_mut().observe().is_empty() {
+        return None;
+    }
     let n = engine.storage_mut().observe().slot_count();
     if n == 0 {
         return None;

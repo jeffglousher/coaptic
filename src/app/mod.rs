@@ -2055,6 +2055,9 @@ fn dedup_due_ms(now_ms: u64) -> u64 {
 }
 
 fn expire_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, now_ms: u64) {
+    if engine.storage_mut().dedup().is_empty() {
+        return;
+    }
     let n = engine.capacities().dedup_entries;
     for i in 0..n {
         let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {

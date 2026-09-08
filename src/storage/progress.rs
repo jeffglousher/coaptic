@@ -2,6 +2,8 @@
 //!
 //! One call is bounded: at most one retransmit, one unpinned RX step, one
 //! Observe notify, one Observe lifetime expiry, and one Q-Block recover.
+//! Empty RX / TX / Observe / incoming-body tables skip their scans
+//! ([`super::SlotPool::is_empty`]).
 
 use super::BodySlots;
 use super::DatagramSlots;
@@ -143,20 +145,52 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// ([`crate::App::poll`] sends a due CON). Does not release
     /// pinned slots (except a Q-Block body exhausted after
     /// `NON_MAX_RETRANSMIT`). Does not invent 4.02 / RST / 2.31 / 4.08 policy.
+    /// Empty tables are skipped in O(1) via [`super::SlotPool::occupied_count`]
+    /// (CON / Observe / Q-Block scans run only while that area is occupied).
     pub fn progress(&mut self, now_ms: u64) -> Progress {
         Metrics::inc(&mut self.metrics_mut().progress);
-        let retransmit = self.poll_retransmit(now_ms);
+        let rx_busy = !self.storage_mut().rx_datagram().is_empty();
+        let tx_busy = !self.storage_mut().tx_datagram().is_empty();
+        let observe_busy = !self.storage_mut().observe().is_empty();
+        let qblock_busy = self
+            .storage_mut()
+            .rx_body()
+            .is_some_and(|pool| !pool.is_empty());
+        if !rx_busy && !tx_busy && !observe_busy && !qblock_busy {
+            return Progress::idle();
+        }
+        let retransmit = if tx_busy {
+            self.poll_retransmit(now_ms)
+        } else {
+            None
+        };
         if let Some(Retransmit::GiveUp(pending)) = retransmit {
             let _ = self.mark_observe_unacked_due(pending.message_id(), pending.endpoint(), now_ms);
         }
-        let rx_ready = next_unpinned_rx(self);
-        let observe_expired = self.poll_observe_lifetime(now_ms);
+        let rx_ready = if rx_busy {
+            next_unpinned_rx(self)
+        } else {
+            None
+        };
+        let observe_expired = if observe_busy {
+            self.poll_observe_lifetime(now_ms)
+        } else {
+            None
+        };
         Progress {
             retransmit,
             rx_ready,
-            observe_notify: progress_observe(self, now_ms),
+            observe_notify: if observe_busy {
+                progress_observe(self, now_ms)
+            } else {
+                None
+            },
             observe_expired,
-            qblock_recover: progress_qblock(self, now_ms),
+            qblock_recover: if qblock_busy {
+                progress_qblock(self, now_ms)
+            } else {
+                None
+            },
         }
     }
 }
@@ -170,6 +204,9 @@ fn progress_observe<S: Storage + ObserveSlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
 ) -> Option<SlotId> {
+    if engine.storage_mut().observe().is_empty() {
+        return None;
+    }
     let n = engine.storage_mut().observe().slot_count();
     if n == 0 {
         return None;
@@ -221,6 +258,13 @@ fn progress_qblock<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
 ) -> Option<QBlockRecover> {
+    if engine
+        .storage_mut()
+        .rx_body()
+        .is_none_or(|pool| pool.is_empty())
+    {
+        return None;
+    }
     let n = engine.storage_mut().rx_body()?.slot_count();
     if n == 0 {
         return None;
@@ -288,6 +332,9 @@ fn progress_qblock<S: Storage + BodySlots>(
 /// Advances the cursor past the visited slot (or by one when every occupied
 /// slot is pinned) so the next call does not restart at slot zero.
 fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
+    if engine.storage_mut().rx_datagram().is_empty() {
+        return None;
+    }
     let n = engine.storage_mut().rx_datagram().slot_count();
     if n == 0 {
         return None;

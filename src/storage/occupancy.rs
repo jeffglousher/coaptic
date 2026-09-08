@@ -3,9 +3,11 @@
 //! Acquire starts at the cursor and wraps. A successful acquire leaves the cursor
 //! on the following index so the next pass does not restart at zero.
 //!
-//! Datagram and body pools pin an occupied slot while [`super::Access`] is
-//! live. [`release`] returns [`SlotError::Pinned`] for that id. Rotate does
-//! not evict, so it does not consult the pin bit.
+//! [`Occupancy::occupied_count`] is a live counter (increment acquire,
+//! decrement release) so idle [`super::Engine::progress`] can skip empty
+//! tables in O(1). Datagram and body pools pin an occupied slot while
+//! [`super::Access`] is live. [`release`] returns [`SlotError::Pinned`]
+//! for that id. Rotate does not evict, so it does not consult the pin bit.
 
 use super::slot::{SlotError, SlotId};
 
@@ -93,6 +95,7 @@ pub(crate) struct Occupancy<const N: usize> {
     occupied: [bool; N],
     pinned: [bool; N],
     cursor: usize,
+    count: usize,
 }
 
 impl<const N: usize> Occupancy<N> {
@@ -101,15 +104,25 @@ impl<const N: usize> Occupancy<N> {
             occupied: [false; N],
             pinned: [false; N],
             cursor: 0,
+            count: 0,
         }
     }
 
     pub(crate) fn acquire(&mut self) -> Option<SlotId> {
-        acquire(&mut self.occupied, &mut self.pinned, &mut self.cursor)
+        if self.count == N {
+            return None;
+        }
+        let id = acquire(&mut self.occupied, &mut self.pinned, &mut self.cursor)?;
+        self.count += 1;
+        debug_assert_eq!(self.count, occupied_count(&self.occupied));
+        Some(id)
     }
 
     pub(crate) fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
-        release(&mut self.occupied, &self.pinned, id)
+        release(&mut self.occupied, &self.pinned, id)?;
+        self.count -= 1;
+        debug_assert_eq!(self.count, occupied_count(&self.occupied));
+        Ok(())
     }
 
     pub(crate) fn try_pin(&mut self, id: SlotId) -> Result<(), SlotError> {
@@ -152,8 +165,8 @@ impl<const N: usize> Occupancy<N> {
         N
     }
 
-    pub(crate) fn occupied_count(&self) -> usize {
-        occupied_count(&self.occupied)
+    pub(crate) const fn occupied_count(&self) -> usize {
+        self.count
     }
 
     pub(crate) fn is_occupied(&self, id: SlotId) -> bool {
@@ -171,6 +184,7 @@ pub(crate) struct HeapOccupancy {
     occupied: alloc::boxed::Box<[bool]>,
     pinned: alloc::boxed::Box<[bool]>,
     cursor: usize,
+    count: usize,
 }
 
 #[cfg(feature = "alloc")]
@@ -180,15 +194,25 @@ impl HeapOccupancy {
             occupied: alloc::vec![false; n].into_boxed_slice(),
             pinned: alloc::vec![false; n].into_boxed_slice(),
             cursor: 0,
+            count: 0,
         }
     }
 
     pub(crate) fn acquire(&mut self) -> Option<SlotId> {
-        acquire(&mut self.occupied, &mut self.pinned, &mut self.cursor)
+        if self.count == self.occupied.len() {
+            return None;
+        }
+        let id = acquire(&mut self.occupied, &mut self.pinned, &mut self.cursor)?;
+        self.count += 1;
+        debug_assert_eq!(self.count, occupied_count(&self.occupied));
+        Some(id)
     }
 
     pub(crate) fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
-        release(&mut self.occupied, &self.pinned, id)
+        release(&mut self.occupied, &self.pinned, id)?;
+        self.count -= 1;
+        debug_assert_eq!(self.count, occupied_count(&self.occupied));
+        Ok(())
     }
 
     pub(crate) fn try_pin(&mut self, id: SlotId) -> Result<(), SlotError> {
@@ -212,7 +236,7 @@ impl HeapOccupancy {
     }
 
     pub(crate) fn occupied_count(&self) -> usize {
-        occupied_count(&self.occupied)
+        self.count
     }
 
     pub(crate) fn is_occupied(&self, id: SlotId) -> bool {
@@ -298,5 +322,35 @@ mod tests {
         assert_eq!(occ.cursor(), 1);
         occ.advance(0);
         assert_eq!(occ.cursor(), 1);
+    }
+
+    #[test]
+    fn occupied_count_tracks_acquire_release() {
+        let mut occ = Occupancy::<2>::new();
+        assert_eq!(occ.occupied_count(), 0);
+        let a = occ.acquire().expect("a");
+        assert_eq!(occ.occupied_count(), 1);
+        let b = occ.acquire().expect("b");
+        assert_eq!(occ.occupied_count(), 2);
+        assert!(occ.acquire().is_none());
+        assert_eq!(occ.occupied_count(), 2);
+        occ.release(a).expect("release a");
+        assert_eq!(occ.occupied_count(), 1);
+        occ.release(b).expect("release b");
+        assert_eq!(occ.occupied_count(), 0);
+        assert_eq!(occ.release(a), Err(SlotError::NotOccupied));
+        assert_eq!(occ.occupied_count(), 0);
+    }
+
+    #[test]
+    fn occupied_count_unchanged_while_pinned() {
+        let mut occ = Occupancy::<1>::new();
+        let id = occ.acquire().expect("acquire");
+        occ.try_pin(id).expect("pin");
+        assert_eq!(occ.release(id), Err(SlotError::Pinned));
+        assert_eq!(occ.occupied_count(), 1);
+        occ.unpin(id).expect("unpin");
+        occ.release(id).expect("release");
+        assert_eq!(occ.occupied_count(), 0);
     }
 }
