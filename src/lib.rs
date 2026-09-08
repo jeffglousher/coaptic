@@ -19,7 +19,7 @@
 //!
 //! Outgoing (get/put) --encode--> TX slot
 //! poll matches Token + endpoint
-//! RX --copy--> Response
+//! RX --copy--> Response::payload  (non-Block: min(len, INLINE_PAYLOAD) = 128)
 //! ```
 //!
 //! ```
@@ -56,9 +56,14 @@
 //! ([`app::IntoPath`]; empty segments are rejected). Handlers are
 //! `fn(Request<'_>) -> Response`. One [`Response`] type covers handler
 //! intent and a completed client exchange ([`App::take_response`]).
-//! Observe subscribe is [`Outgoing::observe`]; the initial representation
-//! and later notifications use the same [`Call`]. [`Outgoing::deregister`]
-//! sends Observe=1. Structured 4.xx bodies use [`Response::problem`]
+//! Non-Block [`Response::payload`] copies at most
+//! [`app::INLINE_PAYLOAD`] (128) bytes; a longer piggybacked 2.05 with
+//! `.block_wise::<false>()` is truncated —
+//! [`Response::payload_truncated`] is `true`. Assembled Block2 / Q-Block2
+//! is [`Response::body`]. Observe subscribe is [`Outgoing::observe`]; the
+//! initial representation and later notifications use the same [`Call`].
+//! [`Outgoing::deregister`] sends Observe=1. Structured 4.xx bodies use
+//! [`Response::problem`]
 //! (RFC 9290). Q-Block1 holes from `poll` use [`Response::missing_blocks`]
 //! (RFC 9177, Content-Format 272). Time-based Echo freshness is
 //! [`app::AppBuilder::echo_freshness`].

@@ -8,6 +8,17 @@ use crate::message::{
 use crate::storage::{Endpoint, MemoryProfile};
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
+///
+/// **128, not the datagram size.** [`super::App::take_response`] copies
+/// `min(len, INLINE_PAYLOAD)` of a **non-Block** reply. A 200-byte
+/// piggybacked 2.05 with [`.block_wise::<false>()`](super::AppBuilder::block_wise)
+/// therefore yields 128 bytes in [`Response::payload`]. Check
+/// [`Response::payload_truncated`]. Assembled Block2 / Q-Block2 uses
+/// [`RESPONSE_BODY`] via [`Response::body`], not this cap.
+///
+/// Handler [`Response::payload_copy`] / [`Response::content_copy`] use the
+/// same bound. [`Response::content`] (`'static`) and
+/// [`Response::payload_copy_full`] (borrow) are not cut at 128.
 pub const INLINE_PAYLOAD: usize = 128;
 
 /// Cap for assembled client Block2 bodies (not a field of [`Response`];
@@ -53,24 +64,36 @@ impl IntoResponse for Response<'static> {
 /// Owned response: handler intent, or a client snapshot from
 /// [`App::take_response`](super::App::take_response).
 ///
-/// One type on both faces. Handlers return this; [`App::poll`](super::App::poll)
-/// encodes it (one datagram, or Block2 / Q-Block2 from the TX body when
-/// the payload is large). Handlers do not opt in and do not see slot
-/// identifiers.
+/// # Client snapshots
+///
+/// [`App::take_response`](super::App::take_response) copies a **non-Block**
+/// datagram into [`Self::payload`] at most [`INLINE_PAYLOAD`] (**128**
+/// bytes). A 200-byte piggybacked 2.05 with
+/// [`.block_wise::<false>()`](super::AppBuilder::block_wise) therefore
+/// yields 128 bytes here — not the full representation. Check
+/// [`Self::payload_truncated`] (and [`Self::payload_src_len`]). Assembled
+/// Block2 / Q-Block2 is [`Self::body`] (up to [`RESPONSE_BODY`]), borrowed
+/// from [`super::App`] until the next `take_response` / `poll`.
+///
+/// This type does **not** own `[u8; RESPONSE_BODY]`. The assembled hold
+/// lives on [`super::App`] so `Copy` does not memcpy 4KiB.
+///
+/// # Both faces
+///
+/// Handlers return this; [`App::poll`](super::App::poll) encodes it (one
+/// datagram, or Block2 / Q-Block2 from the TX body when the payload is
+/// large). Handlers do not opt in and do not see slot identifiers.
 ///
 /// A completed [`Call`](super::Call) is the same type: [`Self::code`] /
-/// [`Self::payload`] (this datagram, truncated at [`INLINE_PAYLOAD`], or a
-/// borrowed catalog) / [`Self::body`] (assembled Block2 / Q-Block2,
-/// borrowed from [`super::App`] until the next `take_response` / `poll`) /
-/// [`Self::problem_details`] / [`Self::missing_block_nums`]. Snapshot
-/// [`Self::ty`] / [`Self::token`] / [`Self::peer`] are `Some` after a
-/// completed client exchange. A 2.01 Created can carry
-/// [`Self::location_path`] / [`Self::location_query`] (bounded, `'static`,
-/// no heap). [`Self::separate`] is an empty ACK to a CON request, then the
-/// representation in a later CON (new Message ID).
+/// [`Self::payload`] / [`Self::body`] / [`Self::problem_details`] /
+/// [`Self::missing_block_nums`]. Snapshot [`Self::ty`] / [`Self::token`] /
+/// [`Self::peer`] are `Some` after a completed client exchange. A 2.01
+/// Created can carry [`Self::location_path`] / [`Self::location_query`]
+/// (bounded, `'static`, no heap). [`Self::separate`] is an empty ACK to a
+/// CON request, then the representation in a later CON (new Message ID).
 ///
-/// The type does **not** own `[u8; RESPONSE_BODY]`. Handler returns and
-/// [`Self::observe`] copy the small header + inline/`'static` payload only.
+/// Handler returns and [`Self::observe`] copy the small header +
+/// inline/`'static` payload only.
 ///
 /// ```
 /// use coaptic::{ContentFormat, Response};
@@ -78,6 +101,7 @@ impl IntoResponse for Response<'static> {
 /// let response = Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN);
 /// assert_eq!(response.code(), coaptic::Code::CONTENT);
 /// assert_eq!(response.payload(), b"21.5");
+/// assert!(!response.payload_truncated());
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Response<'a> {
@@ -99,6 +123,9 @@ pub struct Response<'a> {
     location_query: [&'static str; LOCATION_MAX],
     location_query_len: u8,
     separate: bool,
+    /// Length of the source before [`INLINE_PAYLOAD`] / [`RESPONSE_BODY`]
+    /// copy. Greater than [`Self::payload`] when truncated.
+    payload_src_len: u16,
 }
 
 impl<'a> Response<'a> {
@@ -124,6 +151,7 @@ impl<'a> Response<'a> {
             location_query: [""; LOCATION_MAX],
             location_query_len: 0,
             separate: false,
+            payload_src_len: 0,
         }
     }
 
@@ -135,6 +163,11 @@ impl<'a> Response<'a> {
 
     /// 2.05 Content, copying `payload` into the inline buffer (truncated at
     /// [`INLINE_PAYLOAD`]).
+    ///
+    /// Same 128-byte cap as a client snapshot [`Self::payload`]. Longer
+    /// input sets [`Self::payload_truncated`]. Prefer [`Self::content`]
+    /// (`'static`) or [`Self::payload_copy_full`] (borrow) when the body
+    /// must not be cut.
     #[must_use]
     pub fn content_copy(payload: &[u8]) -> Self {
         Self::new(Code::CONTENT).payload_copy(payload)
@@ -334,6 +367,7 @@ impl<'a> Response<'a> {
                 .unwrap_or(ContentFormat::PROBLEM_DETAILS),
         );
         self.payload = encode_problem_payload(self.code, title, detail);
+        self.payload_src_len = src_len_u16(payload_stored_len(&self.payload));
         self
     }
 
@@ -492,6 +526,9 @@ impl<'a> Response<'a> {
     }
 
     /// Replace the payload with a `'static` slice.
+    ///
+    /// Not truncated at [`INLINE_PAYLOAD`]. Clears
+    /// [`Self::payload_truncated`].
     #[must_use]
     pub const fn with_static(mut self, payload: &'static [u8]) -> Self {
         self.payload = if payload.is_empty() {
@@ -499,12 +536,18 @@ impl<'a> Response<'a> {
         } else {
             Payload::Static(payload)
         };
+        self.payload_src_len = src_len_u16(payload.len());
         self
     }
 
     /// Replace the payload by copying into the inline buffer.
+    ///
+    /// Copies `min(len, `[`INLINE_PAYLOAD`]`)`. Longer input is truncated;
+    /// [`Self::payload_truncated`] is then `true`. This is the same cap
+    /// [`super::App::take_response`] uses for a non-Block client snapshot.
     #[must_use]
     pub fn payload_copy(mut self, payload: &[u8]) -> Self {
+        self.payload_src_len = src_len_u16(payload.len());
         let n = payload.len().min(INLINE_PAYLOAD);
         let mut bytes = [0u8; INLINE_PAYLOAD];
         bytes[..n].copy_from_slice(&payload[..n]);
@@ -522,7 +565,8 @@ impl<'a> Response<'a> {
     /// Use `payload` as the body without copying (catalog / poll scratch).
     ///
     /// Lengths that fit inline use [`Self::payload_copy`]. Larger slices are
-    /// borrowed for `'a`.
+    /// borrowed for `'a` (capped at [`RESPONSE_BODY`]). This is the handler
+    /// path that is **not** silently cut at [`INLINE_PAYLOAD`].
     #[must_use]
     pub fn payload_copy_full(self, payload: &'a [u8]) -> Self {
         if payload.len() <= INLINE_PAYLOAD {
@@ -530,6 +574,7 @@ impl<'a> Response<'a> {
         }
         let n = payload.len().min(RESPONSE_BODY);
         let mut response = self;
+        response.payload_src_len = src_len_u16(payload.len());
         response.payload = Payload::Borrowed(&payload[..n]);
         response
     }
@@ -540,7 +585,28 @@ impl<'a> Response<'a> {
         self.code
     }
 
-    /// Payload bytes.
+    /// Payload bytes of this datagram (or handler body).
+    ///
+    /// **Client snapshots** from [`App::take_response`](super::App::take_response):
+    /// a **non-Block** piggybacked payload is copied at most
+    /// [`INLINE_PAYLOAD`] (**128**). A 200-byte 2.05 with
+    /// [`.block_wise::<false>()`](super::AppBuilder::block_wise) therefore
+    /// returns 128 bytes here. Check [`Self::payload_truncated`]. The full
+    /// Block2 / Q-Block2 representation is [`Self::body`], not this slice.
+    ///
+    /// Handler [`Self::payload_copy`] / [`Self::content_copy`] use the same
+    /// cap. [`Self::content`] and [`Self::payload_copy_full`] do not.
+    ///
+    /// ```
+    /// use coaptic::Response;
+    /// use coaptic::app::INLINE_PAYLOAD;
+    ///
+    /// let body = [b'x'; 200];
+    /// let response = Response::content_copy(&body);
+    /// assert_eq!(response.payload().len(), INLINE_PAYLOAD);
+    /// assert!(response.payload_truncated());
+    /// assert_eq!(response.payload_src_len(), 200);
+    /// ```
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         match self.payload {
@@ -549,6 +615,27 @@ impl<'a> Response<'a> {
             Payload::Inline { ref bytes, len } => &bytes[..usize::from(len)],
             Payload::Borrowed(bytes) => bytes,
         }
+    }
+
+    /// Whether [`Self::payload`] is shorter than the source that produced it.
+    ///
+    /// `true` after [`Self::payload_copy`] / [`super::App::take_response`]
+    /// when the non-Block datagram (or handler copy) exceeded
+    /// [`INLINE_PAYLOAD`], or after [`Self::payload_copy_full`] when the
+    /// borrow was capped at [`RESPONSE_BODY`].
+    #[must_use]
+    pub fn payload_truncated(&self) -> bool {
+        usize::from(self.payload_src_len) > self.payload().len()
+    }
+
+    /// Source length before the inline / assembled copy cap.
+    ///
+    /// For a client snapshot this is the datagram payload length (may
+    /// exceed [`INLINE_PAYLOAD`]). Equal to `payload().len()` when
+    /// nothing was truncated.
+    #[must_use]
+    pub const fn payload_src_len(&self) -> usize {
+        self.payload_src_len as usize
     }
 
     /// Content-Format, if set.
@@ -607,8 +694,11 @@ impl<'a> Response<'a> {
     /// Complete assembled response body, if Block2 / Q-Block2 filled an RX body area.
     ///
     /// `None` when this is handler intent or a single-datagram client
-    /// snapshot. Borrowed from [`super::App`] after [`super::App::take_response`]
-    /// (truncated at [`RESPONSE_BODY`]). Invalidated by a later take or poll.
+    /// snapshot (including a truncated piggyback — see
+    /// [`Self::payload_truncated`]). Borrowed from [`super::App`] after
+    /// [`super::App::take_response`] (truncated at [`RESPONSE_BODY`]).
+    /// Invalidated by a later take or poll. This is the client path for a
+    /// representation larger than [`INLINE_PAYLOAD`].
     #[must_use]
     pub const fn body(&self) -> Option<&'a [u8]> {
         self.assembled
@@ -628,8 +718,10 @@ impl<'a> Response<'a> {
         peer: Endpoint,
         payload: &[u8],
         content_format: Option<ContentFormat>,
+        payload_src_len: u16,
     ) -> Self {
         let mut response = Self::new(code).payload_copy(payload);
+        response.payload_src_len = payload_src_len;
         response.content_format = content_format;
         response.ty = Some(ty);
         response.token = Some(token);
@@ -648,6 +740,22 @@ impl<'a> Response<'a> {
 enum Field {
     Title,
     Detail,
+}
+
+const fn src_len_u16(n: usize) -> u16 {
+    if n > u16::MAX as usize {
+        u16::MAX
+    } else {
+        n as u16
+    }
+}
+
+fn payload_stored_len(payload: &Payload<'_>) -> usize {
+    match *payload {
+        Payload::Empty => 0,
+        Payload::Static(bytes) | Payload::Borrowed(bytes) => bytes.len(),
+        Payload::Inline { len, .. } => usize::from(len),
+    }
 }
 
 fn copy_problem_field<'a>(src: Option<&str>, buf: &'a mut [u8]) -> Option<&'a str> {
@@ -793,7 +901,10 @@ pub(crate) type AssembledField<P, const BLOCK_WISE: bool> = <P as AppAssembled<B
 
 #[cfg(test)]
 mod assembled_hold_tests {
-    use super::{AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, RESPONSE_BODY};
+    use super::{
+        AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, INLINE_PAYLOAD, RESPONSE_BODY,
+        Response,
+    };
     use crate::profiles;
     use core::mem::size_of;
 
@@ -819,5 +930,28 @@ mod assembled_hold_tests {
         assert_eq!(none.view(), None);
         none.store(b"x");
         assert_eq!(none.view(), None);
+    }
+
+    #[test]
+    fn content_copy_truncates_at_inline_payload() {
+        let src = [b'y'; 200];
+        let response = Response::content_copy(&src);
+        assert_eq!(response.payload().len(), INLINE_PAYLOAD);
+        assert_eq!(response.payload(), &src[..INLINE_PAYLOAD]);
+        assert!(response.payload_truncated());
+        assert_eq!(response.payload_src_len(), 200);
+        assert!(response.body().is_none());
+        let exact = [b'z'; INLINE_PAYLOAD];
+        let fits = Response::content_copy(&exact);
+        assert!(!fits.payload_truncated());
+        assert_eq!(fits.payload_src_len(), INLINE_PAYLOAD);
+        let small = Response::content(b"21.5");
+        assert!(!small.payload_truncated());
+        assert_eq!(small.payload_src_len(), 4);
+        const BORROWED: [u8; 200] = [b'w'; 200];
+        let full = Response::changed().payload_copy_full(&BORROWED);
+        assert_eq!(full.payload(), &BORROWED);
+        assert!(!full.payload_truncated());
+        assert_eq!(full.payload_src_len(), 200);
     }
 }
