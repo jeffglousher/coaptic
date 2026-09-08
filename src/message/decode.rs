@@ -86,13 +86,27 @@ impl<'a> ParsedMessage<'a> {
     /// First critical option whose number is not defined in RFC 7252.
     ///
     /// Decode itself accepts any well-formed option as opaque bytes. This
-    /// report is for a caller that wants known-option checking; it is not a
-    /// 4.02 / RST decision.
+    /// report is for a caller that wants Table 4 checking; it is not a
+    /// 4.02 / RST decision. Block / OSCORE / … are reported here even
+    /// though [`Self::unknown_critical`] treats them as known.
     #[must_use]
     pub fn unrecognized_critical(self) -> Option<OptionNumber> {
         self.options().find_map(|opt| {
             let n = opt.number();
             (n.is_critical() && !n.is_rfc7252()).then_some(n)
+        })
+    }
+
+    /// First critical option whose number is not in [`OptionNumber::is_known`].
+    ///
+    /// [`decode`] does not call this. [`crate::App`] uses it for 4.02
+    /// before handlers. Distinct from [`Self::unrecognized_critical`]
+    /// (RFC 7252 Table 4 only).
+    #[must_use]
+    pub fn unknown_critical(self) -> Option<OptionNumber> {
+        self.options().find_map(|opt| {
+            let n = opt.number();
+            (n.is_critical() && !n.is_known()).then_some(n)
         })
     }
 
@@ -124,8 +138,10 @@ impl<'a> ParsedMessage<'a> {
 /// Parse one CoAP datagram (UDP payload). Does not require [`crate::storage::Engine`].
 ///
 /// Options are accepted as opaque number + value. Optional checks:
-/// [`ParsedMessage::check_rfc7252_options`] (unrecognized critical) and
-/// [`ParsedMessage::check_rfc7252_formats`] (known option, wrong format).
+/// [`ParsedMessage::check_rfc7252_options`] (Table 4 unrecognized
+/// critical), [`ParsedMessage::unknown_critical`] (implemented stack),
+/// and [`ParsedMessage::check_rfc7252_formats`] (known option, wrong
+/// format).
 pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     if buf.len() < 4 {
         return Err(ParseError::TruncatedHeader);

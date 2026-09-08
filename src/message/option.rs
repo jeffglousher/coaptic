@@ -103,12 +103,37 @@ impl OptionNumber {
     ///
     /// Other registered numbers (Observe, Block, Q-Block, Echo, Hop-Limit,
     /// No-Response, …) parse as opaque options and are not included here.
+    /// See [`Self::is_known`] for the implemented stack.
     #[must_use]
     pub const fn is_rfc7252(self) -> bool {
         matches!(
             self.0,
             1 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 14 | 15 | 17 | 20 | 35 | 39 | 60
         )
+    }
+
+    /// Whether this number is in the implemented option set.
+    ///
+    /// RFC 7252 Table 4 plus Observe, OSCORE, Hop-Limit, Q-Block1, Block2,
+    /// Block1, Size2, Q-Block2, Echo, No-Response, and Request-Tag.
+    /// [`crate::App`] 4.02s a critical option that is not in this set.
+    #[must_use]
+    pub const fn is_known(self) -> bool {
+        self.is_rfc7252()
+            || matches!(
+                self,
+                Self::OBSERVE
+                    | Self::OSCORE
+                    | Self::HOP_LIMIT
+                    | Self::Q_BLOCK1
+                    | Self::BLOCK2
+                    | Self::BLOCK1
+                    | Self::SIZE2
+                    | Self::Q_BLOCK2
+                    | Self::ECHO
+                    | Self::NO_RESPONSE
+                    | Self::REQUEST_TAG
+            )
     }
 
     /// Least-significant bit set: critical.
