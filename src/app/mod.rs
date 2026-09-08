@@ -392,8 +392,9 @@ impl<
     /// reuses the same ciphertext.
     ///
     /// This slice covers a pairwise context on the happy-path
-    /// request/response, Observe register/notify, and Inner Block-wise
-    /// (Block1/Block2: fragment, then protect). Outer Block-wise (proxy
+    /// request/response, Observe register/notify, Inner Block-wise
+    /// (Block1/Block2: fragment, then protect), and Dual-class
+    /// Max-Age / No-Response / ETag placement. Outer Block-wise (proxy
     /// hop-by-hop), group OSCORE, and other ciphers are out.
     ///
     /// Fail-closed while a context is attached: a non-empty datagram
@@ -2197,7 +2198,12 @@ where
             engine,
             io,
             meta,
-            &Response::problem(Code::UNAUTHORIZED).title("Unauthorized"),
+            // Unprotected OSCORE processing error: Max-Age 0 so a
+            // cacheable 4.01 does not stick in intermediaries
+            // (`knowledge/rfcs/rfc8613.txt` §8.2 / §4.1.3.1).
+            &Response::problem(Code::UNAUTHORIZED)
+                .title("Unauthorized")
+                .max_age(0),
             now_ms,
             &oscore::empty_field(),
         )

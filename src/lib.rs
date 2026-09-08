@@ -107,8 +107,9 @@
 //! hop-by-hop), and first-party DTLS remain backlog — the
 //! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
 //! [`DatagramIo`](storage::DatagramIo). Inner Block-wise (Block1/Block2:
-//! fragment then protect) is on the App path. Alternative networks
-//! (6LoWPAN, LoRaWAN, …) are the same future / backlog.
+//! fragment then protect) and Dual-class Max-Age / No-Response / ETag
+//! placement are on the App path. Alternative networks (6LoWPAN,
+//! LoRaWAN, …) are the same future / backlog.
 //!
 //! # Features
 //!

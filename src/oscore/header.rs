@@ -203,7 +203,8 @@ pub(crate) fn encode_option(
     Ok(i)
 }
 
-/// Class E (inner) vs Class U (outer). Unknown options are Class E.
+/// Class E (inner) vs Class U (outer). Unknown options are Class E
+/// (`knowledge/rfcs/rfc8613.txt` §4.1).
 ///
 /// RFC 8613 Figure 5 Dual (E+U) options are not one encode rule:
 ///
@@ -213,7 +214,21 @@ pub(crate) fn encode_option(
 ///   uses the **Inner** field only (fragment, then protect;
 ///   §4.1.3.4.1). They are not copied to Outer — that would look like
 ///   hop-by-hop fragmentation of the OSCORE datagram (§4.1.3.4.2).
-/// - Max-Age and No-Response stay Inner in this slice.
+/// - Max-Age (14) is Dual. The **application** value stays Inner
+///   (end-to-end freshness, §4.1.3.1). Observe responses additionally
+///   get a constructed Outer Max-Age 0 so OSCORE-unaware proxies do
+///   not cache 2.05 Content. Incoming Outer Max-Age is discarded
+///   (§8.4 step 1).
+/// - No-Response (258) is Dual but **MUST** be Inner; Outer SHOULD NOT
+///   be present (§4.1.3.6). This slice does not emit the optional
+///   Outer 26. The server ignores Outer No-Response (stitch drops Dual).
+///
+/// ETag (4) is Figure 5 Class E only — not Dual. An Outer ETag is
+/// discarded (§8.4).
+///
+/// Hop-Limit (16) is not in Figure 5 (RFC 8768). It requires proxy
+/// processing, so it is Class U / Outer (§4.1: new options are Class E
+/// unless they need proxy processing).
 ///
 /// Incoming Outer Block on an OSCORE datagram is not merged into Inner
 /// and is not treated as an application body. A truncated ciphertext
@@ -231,9 +246,13 @@ impl OptionClass {
     }
 }
 
-/// Whether `number` is written on the OSCORE (outer) message.
+/// Whether `number` is copied from the original message onto the OSCORE
+/// (outer) datagram.
 ///
-/// Dual Block/Size stay Inner-only. Dual Observe is copied both ways.
+/// Dual Observe is copied both ways. Other Duals stay Inner-only on
+/// this copy: Block/Size (§4.1.3.4.1), application Max-Age (§4.1.3.1),
+/// No-Response (§4.1.3.6). Observe responses inject Outer Max-Age 0
+/// separately in `encode_outer` — that is not this copy.
 pub(crate) fn encode_as_outer(number: u16) -> bool {
     match classify(number) {
         OptionClass::Outer => true,
@@ -244,8 +263,12 @@ pub(crate) fn encode_as_outer(number: u16) -> bool {
 
 pub(crate) fn classify(number: u16) -> OptionClass {
     match number {
+        // Figure 5 Class U only, plus Hop-Limit (16, RFC 8768).
         3 | 7 | 9 | 16 | 35 | 39 => OptionClass::Outer,
-        6 | 23 | 27 | 28 | 60 => OptionClass::Dual,
+        // Figure 5 Dual (E+U): Observe, Max-Age, Block2, Block1, Size2,
+        // Size1, No-Response. ETag (4) is Class E — it belongs in `_`.
+        6 | 14 | 23 | 27 | 28 | 60 | 258 => OptionClass::Dual,
+        // Figure 5 Class E and unknown options (§4.1).
         _ => OptionClass::Inner,
     }
 }

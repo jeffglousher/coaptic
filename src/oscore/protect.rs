@@ -2,7 +2,8 @@
 
 use crate::error::EncodeError;
 use crate::message::{
-    Code, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token, Type, decode, write_option,
+    Code, Message, MessageId, Opt, OptionNumber, OptionsBuilder, ParsedMessage, Token, Type,
+    decode, write_option,
 };
 
 use super::aead::{self, Aad};
@@ -421,6 +422,14 @@ fn encode_outer(
     }
     opts.push(Opt::oscore(&oscore[..oscore_n]))
         .map_err(|_| Error::Options)?;
+    // Observe responses appear as 2.05 Content (cacheable) to
+    // OSCORE-unaware proxies. Outer Max-Age 0 is the Dual Class U
+    // field (`knowledge/rfcs/rfc8613.txt` §4.1.3.1). Application
+    // Max-Age stays Inner (`encode_as_outer(14)` is false).
+    if code.is_response() && inner_opts.iter().any(is_observe) {
+        opts.push(Opt::new(OptionNumber::MAX_AGE, &[]))
+            .map_err(|_| Error::Options)?;
+    }
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
@@ -453,11 +462,12 @@ fn stitch_inner(
     out[4..header_end].copy_from_slice(token.as_bytes());
     out[header_end..header_end + rest.len()].copy_from_slice(rest);
 
-    // Re-encode so Class U outer options (Uri-Host, …) sit beside Class E.
-    // Dual Observe: Inner is authoritative for presence; on a notification
-    // Inner is empty, so surface Outer Observe for App `observe_seq`.
-    // Dual Block/Size stay Inner-only: do not merge an Outer Block into
-    // the application message (that field is hop-by-hop, §4.1.3.4.2).
+    // Re-encode so Class U-only outer options (Uri-Host, Hop-Limit, …)
+    // sit beside Class E. Dual options on the outer datagram are not
+    // merged: Observe is special-cased below; Block/Size stay Inner
+    // (§4.1.3.4.2); Max-Age Outer is discarded (§8.4); No-Response
+    // Outer is ignored (§4.1.3.6). Class E on the outer (ETag, …) is
+    // discarded (§8.2 / §8.4).
     let mut merged = [0u8; INNER];
     let n = {
         let fake = decode(&out[..header_end + rest.len()])?;
