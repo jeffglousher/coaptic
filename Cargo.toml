@@ -13,7 +13,8 @@ license = "MIT OR Apache-2.0"
 description = "Stand-alone no_std CoAP engine"
 repository = "https://github.com/jeffglousher/coaptic"
 homepage = "https://github.com/jeffglousher/coaptic"
-documentation = "https://docs.rs/coaptic"
+# docs.rs after crates.io 0.1.0 (#132). Until then, rustdoc is `cargo doc --open`.
+documentation = "https://github.com/jeffglousher/coaptic"
 readme = "README.md"
 categories = ["no-std", "embedded", "network-programming"]
 keywords = ["coap", "no-std", "embedded", "no-alloc"]
