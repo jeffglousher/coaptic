@@ -2,9 +2,12 @@
 
 use super::{
     DeriveParams, Error, LIVE_REQUESTS, OscoreContext, RequestRef, SecurityContext, cbor,
-    header::PartialIv,
+    header::{self, OptionClass, PartialIv},
 };
-use crate::message::{Code, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode, encode};
+use crate::message::{
+    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, Token, Type, decode,
+    encode,
+};
 use crate::storage::{DatagramIo, Endpoint};
 
 fn hex(s: &str) -> [u8; 64] {
@@ -750,4 +753,262 @@ fn derive_rejects_identical_ids() {
         .unwrap_err(),
         Error::IdCollision
     );
+}
+
+#[test]
+fn block_and_size_are_dual_inner_encode() {
+    assert_eq!(header::classify(6), OptionClass::Dual);
+    assert_eq!(header::classify(23), OptionClass::Dual);
+    assert_eq!(header::classify(27), OptionClass::Dual);
+    assert_eq!(header::classify(28), OptionClass::Dual);
+    assert_eq!(header::classify(60), OptionClass::Dual);
+    assert!(header::classify(23).in_plaintext());
+    assert!(header::encode_as_outer(6), "Observe is both fields");
+    assert!(
+        !header::encode_as_outer(23) && !header::encode_as_outer(27),
+        "Block stays Inner-only on encode"
+    );
+    assert!(!header::encode_as_outer(28) && !header::encode_as_outer(60));
+}
+
+#[test]
+fn protect_keeps_block2_inner_not_outer() {
+    let mut client = client_c1();
+    let block = BlockValue::from_size(0, false, 1024).expect("szx").encode();
+    let mut opts = OptionsBuilder::<2>::new();
+    opts.push(Opt::uri_path("large")).unwrap();
+    opts.push(Opt::block2(&block)).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice());
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::POST);
+    assert!(outer.oscore().is_some());
+    assert!(
+        outer.block2().is_none(),
+        "Inner Block-wise must not copy Block2 to Outer"
+    );
+
+    let mut server = server_c1();
+    let mut inner = [0u8; 128];
+    let (plain, _) = server.unprotect_request(&outer, &mut inner).unwrap();
+    assert_eq!(plain.code(), Code::GET);
+    let got = plain.block2().expect("Inner Block2").expect("val");
+    assert_eq!(got.num(), 0);
+    assert!(!got.more());
+}
+
+const LARGE: [u8; 2000] = [b'B'; 2000];
+const WIRE: usize = 1472;
+
+#[derive(Default)]
+struct WideLoopback {
+    inbox: Option<(Endpoint, [u8; WIRE], usize)>,
+    last_send: Option<(Endpoint, [u8; WIRE], usize)>,
+}
+
+impl DatagramIo for WideLoopback {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((ep, bytes, n)) = self.inbox.take() else {
+            return Ok(None);
+        };
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(Some((n, ep)))
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes.len() > WIRE {
+            return Err("too long");
+        }
+        let mut slot = [0u8; WIRE];
+        slot[..bytes.len()].copy_from_slice(bytes);
+        self.last_send = Some((dest, slot, bytes.len()));
+        Ok(bytes.len())
+    }
+}
+
+fn pump_oscore_block(
+    client: &mut crate::App<crate::storage::profiles::Default, WideLoopback, 8, true>,
+    server: &mut crate::App<crate::storage::profiles::Default, WideLoopback, 8, true>,
+    client_ep: Endpoint,
+    server_ep: Endpoint,
+    now: u64,
+) {
+    if let Some((_, bytes, n)) = client.transport_mut().last_send.take() {
+        server.transport_mut().inbox = Some((client_ep, bytes, n));
+        server.poll(now).unwrap();
+    }
+    if let Some((_, bytes, n)) = server.transport_mut().last_send.take() {
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(now).unwrap();
+    }
+}
+
+#[test]
+fn app_oscore_block2_get_assembles() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("large", get(hello))
+        .bind(WideLoopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("large").to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("protected GET");
+    let req = decode(&bytes[..n]).unwrap();
+    assert!(req.oscore().is_some());
+    assert!(req.block2().is_none(), "Block2 is Inner");
+
+    for t in 0u64..8 {
+        pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
+        if let Some(got) = client.take_response(call) {
+            assert_eq!(got.code(), Code::CONTENT);
+            assert_eq!(got.body().expect("assembled"), &LARGE[..]);
+            assert!(
+                server.metrics().block2_assemble >= 1 || client.metrics().block2_assemble >= 1,
+                "Block2 path must not stay cold"
+            );
+            return;
+        }
+    }
+    panic!("OSCORE Block2 GET did not complete");
+}
+
+#[test]
+fn app_oscore_block1_put_assembles() {
+    use crate::{App, Request, Response, profiles, put};
+
+    fn accept(req: Request<'_>) -> Response<'static> {
+        if req.body() == Some(&LARGE[..]) {
+            Response::changed()
+        } else {
+            Response::new(Code::BAD_REQUEST)
+        }
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("upload", put(accept))
+        .bind(WideLoopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client
+        .put("upload")
+        .payload(&LARGE)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .to(server_ep)
+        .send(0)
+        .unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("protected Block1");
+    let req = decode(&bytes[..n]).unwrap();
+    assert!(req.oscore().is_some());
+    assert!(req.block1().is_none(), "Block1 is Inner");
+    assert_eq!(req.code(), Code::POST);
+
+    for t in 0u64..8 {
+        pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
+        if let Some(got) = client.take_response(call) {
+            assert_eq!(got.code(), Code::CHANGED);
+            assert!(
+                server.metrics().block1_assemble >= 1,
+                "Block1 path must not stay cold"
+            );
+            return;
+        }
+    }
+    panic!("OSCORE Block1 PUT did not complete");
+}
+
+#[test]
+fn app_plain_block2_does_not_complete_oscore_call() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("large", get(hello))
+        .bind(WideLoopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("large").to(server_ep).send(0).unwrap();
+    pump_oscore_block(&mut client, &mut server, client_ep, server_ep, 0);
+    assert!(
+        client.take_response(call).is_none(),
+        "first Block2 is not the complete body"
+    );
+
+    let token = call.token();
+    let mid = client
+        .transport()
+        .last_send
+        .map(|(_, bytes, n)| decode(&bytes[..n]).unwrap().message_id())
+        .unwrap_or(MessageId::new(99));
+    let last = BlockValue::from_size(1, false, 1024)
+        .expect("num 1")
+        .encode();
+    let opts = [Opt::block2(&last)];
+    let plain = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(&LARGE[1024..]);
+    let mut wire = [0u8; WIRE];
+    let pn = encode(&plain, &mut wire).unwrap();
+    client.transport_mut().inbox = Some((server_ep, wire, pn));
+    client.poll(1).unwrap();
+    assert!(
+        client.take_response(call).is_none(),
+        "unprotected Block2 must not complete an OSCORE Call"
+    );
+
+    // Real protected remainder still completes.
+    for t in 2u64..10 {
+        pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
+        if let Some(got) = client.take_response(call) {
+            assert_eq!(got.body().expect("assembled"), &LARGE[..]);
+            return;
+        }
+    }
+    panic!("protected Block2 remainder did not complete after plain inject");
 }

@@ -392,13 +392,15 @@ impl<
     /// reuses the same ciphertext.
     ///
     /// This slice covers a pairwise context on the happy-path
-    /// request/response and Observe register/notify. Outer Block-wise,
-    /// group OSCORE, and other ciphers are out.
+    /// request/response, Observe register/notify, and Inner Block-wise
+    /// (Block1/Block2: fragment, then protect). Outer Block-wise (proxy
+    /// hop-by-hop), group OSCORE, and other ciphers are out.
     ///
     /// Fail-closed while a context is attached: a non-empty datagram
     /// without an OSCORE option is rejected (4.01 on a request; a plain
-    /// 2.xx does not complete a [`Call`]). Empty ACK/RST stay unprotected
-    /// (RFC 7252 reliability). AEAD failure is a silent drop.
+    /// 2.xx or plain Block completion does not complete a [`Call`]).
+    /// Empty ACK/RST stay unprotected (RFC 7252 reliability). AEAD
+    /// failure is a silent drop.
     #[cfg(feature = "oscore")]
     pub fn set_oscore(&mut self, ctx: crate::oscore::SecurityContext) -> &mut Self {
         self.oscore = Some(ctx);
@@ -863,6 +865,22 @@ where
         Some((inner, req)) => {
             #[cfg(feature = "oscore")]
             {
+                // Inner Block-wise (RFC 8613 §4.1.3.4.1): assembly reads
+                // the RX slot. Replace the outer OSCORE datagram with the
+                // opened Inner so Block1/Block2 see Class E options.
+                let mut inner_wire = [0u8; DATAGRAM_SCRATCH];
+                match inner.encode(&mut inner_wire) {
+                    Ok(n) => {
+                        if engine.write_rx(rx, &inner_wire[..n], peer).is_err() {
+                            let _ = engine.release_rx(rx);
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => {
+                        let _ = engine.release_rx(rx);
+                        return Ok(());
+                    }
+                }
                 (inner, Some(req))
             }
             #[cfg(not(feature = "oscore"))]
@@ -874,7 +892,9 @@ where
     };
 
     if !parsed.code().is_request() {
-        return client::complete_client(engine, io, inbox, lives, ids, now_ms, peer, &parsed, rx);
+        return client::complete_client(
+            engine, io, inbox, lives, ids, oscore, now_ms, peer, &parsed, rx,
+        );
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);

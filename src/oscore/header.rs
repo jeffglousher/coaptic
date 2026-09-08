@@ -205,9 +205,19 @@ pub(crate) fn encode_option(
 
 /// Class E (inner) vs Class U (outer). Unknown options are Class E.
 ///
-/// Observe is Dual (Figure 5 E+U). Other dual-class options (Max-Age,
-/// Block, Size, No-Response) stay Inner in this slice — do not silently
-/// treat them as Outer.
+/// RFC 8613 Figure 5 Dual (E+U) options are not one encode rule:
+///
+/// - Observe (6) is copied to **both** fields (Inner value + Outer
+///   proxy/cache). See `knowledge/rfcs/rfc8613.txt` §4.1.3.5.
+/// - Block1 (27), Block2 (23), Size1 (60), Size2 (28) are Dual but App
+///   uses the **Inner** field only (fragment, then protect;
+///   §4.1.3.4.1). They are not copied to Outer — that would look like
+///   hop-by-hop fragmentation of the OSCORE datagram (§4.1.3.4.2).
+/// - Max-Age and No-Response stay Inner in this slice.
+///
+/// Incoming Outer Block on an OSCORE datagram is not merged into Inner
+/// and is not treated as an application body. A truncated ciphertext
+/// fails AEAD (silent drop). App does not emit Outer Block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OptionClass {
     Inner,
@@ -219,16 +229,23 @@ impl OptionClass {
     pub(crate) const fn in_plaintext(self) -> bool {
         matches!(self, Self::Inner | Self::Dual)
     }
+}
 
-    pub(crate) const fn in_outer(self) -> bool {
-        matches!(self, Self::Outer | Self::Dual)
+/// Whether `number` is written on the OSCORE (outer) message.
+///
+/// Dual Block/Size stay Inner-only. Dual Observe is copied both ways.
+pub(crate) fn encode_as_outer(number: u16) -> bool {
+    match classify(number) {
+        OptionClass::Outer => true,
+        OptionClass::Dual => number == 6,
+        OptionClass::Inner => false,
     }
 }
 
 pub(crate) fn classify(number: u16) -> OptionClass {
     match number {
         3 | 7 | 9 | 16 | 35 | 39 => OptionClass::Outer,
-        6 => OptionClass::Dual,
+        6 | 23 | 27 | 28 | 60 => OptionClass::Dual,
         _ => OptionClass::Inner,
     }
 }

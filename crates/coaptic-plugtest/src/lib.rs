@@ -20,8 +20,9 @@
 //! - [`dogfood`] — timed coaptic ↔ coap-rs loops (GET/PUT/POST, Observe
 //!   register, block-wise) plus a coaptic↔coaptic Observe notify collect.
 //!   `--oscore` (feature `oscore`) adds a protected coaptic↔coaptic
-//!   GET/PUT/POST + Observe notify loop and fails if the OSCORE path or
-//!   protected notify is cold or a plain completion sneaks through. Wall min/mean/p50/p99/max;
+//!   GET/PUT/POST + Observe notify + Inner Block-wise loop and fails if
+//!   the OSCORE path, protected notify, or protected Block is cold or a
+//!   plain completion sneaks through. Wall min/mean/p50/p99/max;
 //!   [`coaptic::App::reset_metrics`] around each timed window; snapshot
 //!   via [`coaptic::App::metrics`]. Optional `--json` report (host/load
 //!   specific).

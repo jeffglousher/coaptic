@@ -14,11 +14,13 @@
 //! [`App::take_response`] so [`Metrics::observe_notify`] is not left cold.
 //!
 //! `--oscore` (crate feature `oscore`) adds a coaptic↔coaptic OSCORE
-//! GET/PUT/POST loop plus Observe register/notify collect: mirrored
+//! GET/PUT/POST loop plus Observe register/notify collect and Inner
+//! Block-wise (Block2 GET /large, Block1 PUT /large-update): mirrored
 //! caller-owned SecurityContexts, `App::set_oscore` on both sides.
-//! The run fails if protect/unprotect or protected notify stays cold,
-//! a captured non-empty datagram lacks the OSCORE option, or a
-//! token-matching plain 2.xx / plaintext notify completes a Call.
+//! The run fails if protect/unprotect, protected notify, or protected
+//! Block1/Block2 stays cold, a captured non-empty datagram lacks the
+//! OSCORE option, or a token-matching plain 2.xx / plaintext notify
+//! completes a Call.
 //!
 //! [`App::reset_metrics`] / [`Engine::reset_metrics`] run at the start of
 //! each timed window (`progress` counts idle poll ticks). After each
@@ -96,11 +98,12 @@ notification, deregister — so observe_notify is not left cold. coap-rs stays
 on the other verbs; it does not collect notifies.
 
 --oscore (requires --features oscore) adds a coaptic↔coaptic OSCORE
-GET/PUT/POST loop plus Observe register/notify collect. Mirrored
+GET/PUT/POST loop plus Observe register/notify collect and Inner
+Block-wise (Block2 GET /large, Block1 PUT /large-update). Mirrored
 caller-owned SecurityContexts; App::set_oscore on both sides. Fails if
-protect/unprotect or protected notify is cold, a non-empty captured
-datagram is plaintext, or a token-matching plain 2.xx / plaintext notify
-completes a Call.
+protect/unprotect, protected notify, or protected Block stays cold, a
+non-empty captured datagram is plaintext, or a token-matching plain
+2.xx / plaintext notify completes a Call.
 
 Prints wall min/mean/p50/p99/max (and Engine clock deltas on the coaptic
 client). Resets `app.metrics()` around each timed window, then prints the
@@ -115,7 +118,8 @@ Options:
   --block-timeout-ms N    Block1/Block2 deadline (default 4000)
   --json PATH             write the same numbers as JSON
   --oscore                OSCORE-protected coaptic↔coaptic GET/PUT/POST
-                          + Observe notify (requires: --features oscore)
+                          + Observe notify + Block1/Block2
+                          (requires: --features oscore)
   -h, --help              print this message
 ";
 
@@ -901,6 +905,8 @@ struct OscoreReport {
     post: Series,
     obs_register: Series,
     obs_notify: Series,
+    block2: Series,
+    block1: Series,
     loop_: Series,
     client_occupancy: String,
     client_metrics: Metrics,
@@ -920,6 +926,8 @@ impl OscoreReport {
         self.post.write(indent, out)?;
         self.obs_register.write(indent, out)?;
         self.obs_notify.write(indent, out)?;
+        self.block2.write(indent, out)?;
+        self.block1.write(indent, out)?;
         self.loop_.write(indent, out)
     }
 
@@ -930,6 +938,8 @@ impl OscoreReport {
             &self.post,
             &self.obs_register,
             &self.obs_notify,
+            &self.block2,
+            &self.block1,
             &self.loop_,
         ]
         .into_iter()
@@ -1628,18 +1638,31 @@ fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport
     )
     .map_err(io_err)?;
 
-    let want = u64::try_from(cfg.iterations.saturating_mul(5)).unwrap_or(u64::MAX);
+    // GET/PUT/POST + OBS register/deregister + Block2 (2) + Block1 (2).
+    let want = u64::try_from(cfg.iterations.saturating_mul(9)).unwrap_or(u64::MAX);
     if report.client_sender_seq < want {
         return Err(PeerError(format!(
-            "OSCORE path stayed cold: client sender_seq={} want >= {want} (GET/PUT/POST/OBS-reg/OBS-dereg × {})",
+            "OSCORE path stayed cold: client sender_seq={} want >= {want} (GET/PUT/POST/OBS/BLOCK × {})",
             report.client_sender_seq, cfg.iterations
         )));
     }
-    let want_wire = cfg.iterations.saturating_mul(11);
+    let want_wire = cfg.iterations.saturating_mul(19);
     if report.protected_on_wire < want_wire {
         return Err(PeerError(format!(
             "OSCORE path stayed cold: protected_on_wire={} want >= {want_wire}",
             report.protected_on_wire
+        )));
+    }
+    if report.client_metrics.block2_assemble == 0 {
+        return Err(PeerError(format!(
+            "OSCORE Block2 stayed cold: client block2_assemble={}",
+            report.client_metrics.block2_assemble
+        )));
+    }
+    if snap.metrics.block1_assemble == 0 {
+        return Err(PeerError(format!(
+            "OSCORE Block1 stayed cold: server block1_assemble={}",
+            snap.metrics.block1_assemble
         )));
     }
     if report.observe_collected != cfg.iterations {
@@ -1742,8 +1765,11 @@ fn run_oscore_client(
     let mut post = Series::new("OSCORE POST /test");
     let mut obs_register = Series::new("OSCORE OBS register /obs");
     let mut obs_notify = Series::new("OSCORE OBS notify /obs");
-    let mut loop_ = Series::new("OSCORE LOOP (GET/PUT/POST/OBS)");
+    let mut block2 = Series::new("OSCORE BLOCK2 GET /large");
+    let mut block1 = Series::new("OSCORE BLOCK1 PUT /large-update");
+    let mut loop_ = Series::new("OSCORE LOOP (GET/PUT/POST/OBS/BLOCK)");
     let mut observe_collected = 0usize;
+    let large = site::large_body();
 
     for i in 0..cfg.iterations {
         let loop_t0 = Instant::now();
@@ -1893,6 +1919,64 @@ fn run_oscore_client(
             .map_err(|e| format!("send OSCORE OBS deregister: {e}"))?;
         wait_call(&mut app, off, origin, cfg.timeout)?;
 
+        timed_call(
+            &mut app,
+            origin,
+            cfg.block_timeout,
+            &mut block2,
+            |app, now| {
+                app.get("large")
+                    .to(peer)
+                    .send(now)
+                    .map_err(|e| format!("send OSCORE GET /large: {e}").into())
+            },
+            |got| {
+                expect_codes("OSCORE BLOCK2 GET /large", i, got.code, &[Code::CONTENT])?;
+                if got.payload == b"pwned" {
+                    return Err(PeerError(
+                        "OSCORE fail-closed: plain 2.xx completed Block2".into(),
+                    ));
+                }
+                let n = got.assembled_len();
+                if n != site::LARGE_LEN {
+                    return Err(PeerError(format!(
+                        "iteration {i} OSCORE BLOCK2 GET /large: assembled {n}, expected {}",
+                        site::LARGE_LEN
+                    )));
+                }
+                Ok(())
+            },
+        )?;
+
+        timed_call(
+            &mut app,
+            origin,
+            cfg.block_timeout,
+            &mut block1,
+            |app, now| {
+                app.put("large-update")
+                    .payload(&large)
+                    .content_format(ContentFormat::TEXT_PLAIN)
+                    .to(peer)
+                    .send(now)
+                    .map_err(|e| format!("send OSCORE PUT /large-update: {e}").into())
+            },
+            |got| {
+                expect_codes(
+                    "OSCORE BLOCK1 PUT /large-update",
+                    i,
+                    got.code,
+                    &[Code::CHANGED],
+                )?;
+                if got.payload == b"pwned" {
+                    return Err(PeerError(
+                        "OSCORE fail-closed: plain 2.xx completed Block1".into(),
+                    ));
+                }
+                Ok(())
+            },
+        )?;
+
         loop_.record(
             loop_t0.elapsed(),
             Some(elapsed_ms(origin).saturating_sub(loop_e0)),
@@ -1911,6 +1995,8 @@ fn run_oscore_client(
         post,
         obs_register,
         obs_notify,
+        block2,
+        block1,
         loop_,
         client_occupancy: occupancy_line(app.engine_mut()),
         client_metrics: app.metrics(),
@@ -2090,6 +2176,8 @@ mod tests {
         assert!(s.contains("OSCORE PUT /test"), "{s}");
         assert!(s.contains("OSCORE POST /test"), "{s}");
         assert!(s.contains("OSCORE OBS notify /obs"), "{s}");
+        assert!(s.contains("OSCORE BLOCK2 GET /large"), "{s}");
+        assert!(s.contains("OSCORE BLOCK1 PUT /large-update"), "{s}");
         assert!(s.contains("protected_on_wire="), "{s}");
         assert!(s.contains("fail-closed plain GET="), "{s}");
         assert!(s.contains("inject dropped"), "{s}");
