@@ -1,5 +1,7 @@
 //! Timed coaptic ↔ coap-rs dogfood + coaptic↔coaptic Observe notify collect.
-//! `--oscore` adds a protected GET/PUT/POST + Observe notify + Block1/Block2 loop.
+//! Mixed-stack Metrics must stay warm. `--oscore` adds a protected
+//! GET/PUT/POST + Observe notify + Block1/Block2 loop (coaptic-only;
+//! coap-rs has no OSCORE).
 //!
 //! ```text
 //! cargo run -p coaptic-plugtest --bin dogfood

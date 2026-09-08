@@ -11,7 +11,11 @@ cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/c
 cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 ```
 
-Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register, Block2/Block1. A third leg is coaptic↔coaptic Observe **notify collect** (`App::notify` → client `take_response`) so `observe_notify` is not left cold — coap-rs is a register/deregister stub. `--oscore` (feature `oscore`) adds a coaptic↔coaptic OSCORE GET/PUT/POST loop plus Observe register/notify collect and Inner Block-wise (Block2 GET /large, Block1 PUT /large-update) with mirrored caller-owned `SecurityContext`s; the run fails if protect/unprotect, protected notify, or protected Block stays cold, or a token-matching plain 2.xx / plaintext notify completes a Call. Default is 50 iterations; short CI smoke: `--iterations 2` and `--oscore --iterations 2`. Prints wall min/mean/p50/p99/max, Engine occupancy, and `app.metrics()`.
+Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/PUT/POST, Observe register/deregister, Block2/Block1. The run fails if mixed-stack `observe_register` / `observe_cancel` or Block assemble stay cold — not only `--compare`. A third leg is coaptic↔coaptic Observe **notify collect** (`App::notify` → client `take_response`) so `observe_notify` is not left cold — coap-rs is a register/deregister stub. `--oscore` (feature `oscore`) adds a coaptic↔coaptic OSCORE GET/PUT/POST loop plus Observe register/notify collect and Inner Block-wise (Block2 GET /large, Block1 PUT /large-update) with mirrored caller-owned `SecurityContext`s; the run fails if protect/unprotect, protected notify, or protected Block stays cold, or a token-matching plain 2.xx / plaintext notify completes a Call. The `coap` 0.28 peer has no OSCORE API. Default is 50 iterations; short CI smoke: `--iterations 2` and `--oscore --iterations 2`. Prints wall min/mean/p50/p99/max, Engine occupancy, `app.metrics()`, and a **coverage** section (mixed vs still coaptic-only).
+
+**Covered (coap-rs, both directions):** GET/PUT/POST `/test`, Observe register/deregister `/obs`, Block2 GET `/large`, Block1 PUT `/large-update`.
+
+**Still coaptic-only:** Observe notify collect; OSCORE (`--oscore`). **Skip:** DTLS dogfood, coap-rs OSCORE, full ETSI plugtest matrix.
 
 `--json PATH` writes schema `coaptic-dogfood/1` (Metrics + series timings). `--compare PATH` diffs this run against that file: **fail** if path-proving counters drop (`observe_notify`, `block1_assemble`, `block2_assemble`, …) or error counters rise; **print** wall-timing deltas (host/load specific, not a fail). CI compares the `--iterations 2` smokes to [`baselines/dogfood.json`](baselines/dogfood.json) and [`baselines/dogfood-oscore.json`](baselines/dogfood-oscore.json). Refresh those files with the same flags after an intentional Metrics change:
 
@@ -20,7 +24,7 @@ cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --json crates/coap
 cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --json crates/coaptic-plugtest/baselines/dogfood-oscore.json
 ```
 
-Tracking: [#150](https://github.com/jeffglousher/coaptic/issues/150) / [#131](https://github.com/jeffglousher/coaptic/issues/131) / [#140](https://github.com/jeffglousher/coaptic/issues/140) / [#142](https://github.com/jeffglousher/coaptic/issues/142) / [#144](https://github.com/jeffglousher/coaptic/issues/144).
+Tracking: [#152](https://github.com/jeffglousher/coaptic/issues/152) / [#150](https://github.com/jeffglousher/coaptic/issues/150) / [#131](https://github.com/jeffglousher/coaptic/issues/131) / [#140](https://github.com/jeffglousher/coaptic/issues/140) / [#142](https://github.com/jeffglousher/coaptic/issues/142) / [#144](https://github.com/jeffglousher/coaptic/issues/144).
 
 This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness is Engine↔Engine only (no sockets).
 
