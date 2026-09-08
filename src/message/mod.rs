@@ -16,8 +16,12 @@
 //! is Engine BERT (future / backlog on the App face).
 //!
 //! Optional, not used by [`decode`]:
-//! [`ParsedMessage::check_rfc7252_options`] (unrecognized critical) and
-//! [`ParsedMessage::check_rfc7252_formats`] (known option, wrong format).
+//! [`ParsedMessage::check_rfc7252_options`] (Table 4 unrecognized
+//! critical), [`ParsedMessage::unknown_critical`] (implemented stack),
+//! and [`ParsedMessage::check_rfc7252_formats`] (known option, wrong
+//! format). [`crate::App`] 4.02s [`ParsedMessage::unknown_critical`] and
+//! an OSCORE option with no attached context.
+//!
 //! Wire format lives in `knowledge/rfcs/`. This module does not restate it.
 
 mod builder;
