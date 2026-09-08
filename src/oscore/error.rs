@@ -50,7 +50,7 @@ pub enum Error {
     Parse(ParseError),
     /// Class E / U option list exceeded the fixed builder used here.
     Options,
-    /// This slice does not protect Block-wise or Observe notifications.
+    /// This slice does not protect outer Block-wise over OSCORE.
     Unsupported,
 }
 
@@ -76,7 +76,7 @@ impl core::fmt::Display for Error {
             Self::Encode(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
             Self::Options => f.write_str("OSCORE option list is full"),
-            Self::Unsupported => f.write_str("OSCORE feature is not in this slice"),
+            Self::Unsupported => f.write_str("OSCORE Block-wise is not in this slice"),
         }
     }
 }

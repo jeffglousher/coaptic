@@ -558,6 +558,186 @@ fn live_request_table_is_four_and_saturates() {
 }
 
 #[test]
+fn observe_register_is_outer_fetch_and_dual_class() {
+    let mut client = client_c1();
+    let mut path = OptionsBuilder::<2>::new();
+    path.push(Opt::uri_path("obs")).unwrap();
+    path.push(Opt::observe_register()).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 64];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::FETCH);
+    assert_eq!(outer.observe().and_then(Result::ok), Some(0));
+    assert!(outer.oscore().is_some());
+
+    let mut server = server_c1();
+    let mut inner = [0u8; 64];
+    let (plain, _) = server.unprotect_request(&outer, &mut inner).unwrap();
+    assert_eq!(plain.code(), Code::GET);
+    assert_eq!(plain.observe().and_then(Result::ok), Some(0));
+}
+
+#[test]
+fn observe_notification_inner_empty_outer_seq_and_piv() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut path = OptionsBuilder::<2>::new();
+    path.push(Opt::uri_path("obs")).unwrap();
+    path.push(Opt::observe_register()).unwrap();
+    let req = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(path.as_slice());
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&req, &mut wire).unwrap();
+    let protected_req = decode(&wire[..n]).unwrap();
+    let mut inner = [0u8; 128];
+    let (_plain, request) = server
+        .unprotect_request(&protected_req, &mut inner)
+        .unwrap();
+
+    let seq = crate::message::encode_uint(3);
+    let mut opts = OptionsBuilder::<1>::new();
+    opts.push(Opt::observe(&seq)).unwrap();
+    let resp = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(2))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(opts.as_slice())
+        .with_payload(b"obs-1");
+    let n = server
+        .protect_response_with_piv(&resp, request, &mut wire)
+        .unwrap();
+    let outer = decode(&wire[..n]).unwrap();
+    assert_eq!(outer.code(), Code::CONTENT);
+    assert_eq!(outer.observe().and_then(Result::ok), Some(3));
+    let header = super::OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
+    assert!(header.piv.is_some(), "notification MUST carry a Partial IV");
+
+    let opened = client
+        .unprotect_response(&outer, request, &mut inner)
+        .unwrap();
+    assert_eq!(opened.code(), Code::CONTENT);
+    assert_eq!(opened.payload(), b"obs-1");
+    assert_eq!(opened.observe().and_then(Result::ok), Some(3));
+}
+
+#[test]
+fn app_oscore_observe_register_notify() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"obs-0").observe(0)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("obs", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("protected register");
+    let req = decode(&bytes[..n]).unwrap();
+    assert_eq!(req.code(), Code::FETCH);
+    assert!(req.oscore().is_some());
+    assert_eq!(req.observe().and_then(Result::ok), Some(0));
+
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server
+        .transport()
+        .last_send
+        .expect("protected register ACK");
+    let resp = decode(&bytes[..n]).unwrap();
+    assert_eq!(resp.code(), Code::CONTENT);
+    assert!(resp.oscore().is_some());
+
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(0).unwrap();
+    let initial = client.take_response(call).expect("register");
+    assert_eq!(initial.code(), Code::CONTENT);
+    assert_eq!(initial.payload(), b"obs-0");
+    assert!(initial.observe_seq().is_some());
+
+    server.transport_mut().last_send = None;
+    let sent = server
+        .notify(10, &["obs"], Response::content(b"obs-1"))
+        .expect("notify");
+    assert_eq!(sent, 1);
+    let (_, bytes, n) = server.transport().last_send.expect("protected notify");
+    let note = decode(&bytes[..n]).unwrap();
+    assert!(note.oscore().is_some());
+    assert_eq!(note.code(), Code::CONTENT);
+    assert!(note.observe().is_some());
+
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(10).unwrap();
+    let got = client.take_response(call).expect("protected notification");
+    assert_eq!(got.payload(), b"obs-1");
+    assert!(got.observe_seq().is_some());
+}
+
+#[test]
+fn app_plain_notify_does_not_complete_oscore_observe() {
+    use crate::{App, Request, Response, get, profiles};
+
+    fn hello(_req: Request<'_>) -> Response<'static> {
+        Response::content(b"obs-0").observe(0)
+    }
+
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("obs", get(hello))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+
+    let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.expect("register");
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server.transport().last_send.expect("ACK");
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(0).unwrap();
+    let _ = client.take_response(call).expect("initial");
+
+    let seq = crate::message::encode_uint(1);
+    let opts = [Opt::observe(&seq)];
+    let plain = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(99))
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(b"pwned");
+    let mut wire = [0u8; 256];
+    let pn = encode(&plain, &mut wire).unwrap();
+    client.transport_mut().inbox = Some((server_ep, wire, pn));
+    client.poll(10).unwrap();
+    assert!(
+        client.take_response(call).is_none(),
+        "plain Observe notify must not complete an OSCORE Call"
+    );
+}
+
+#[test]
 fn derive_rejects_identical_ids() {
     assert_eq!(
         SecurityContext::derive(DeriveParams {

@@ -1,4 +1,5 @@
 //! Timed coaptic ↔ coap-rs dogfood + coaptic↔coaptic Observe notify collect.
+//! `--oscore` adds a protected GET/PUT/POST + Observe notify loop.
 //!
 //! ```text
 //! cargo run -p coaptic-plugtest --bin dogfood

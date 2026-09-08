@@ -27,8 +27,9 @@ pub struct DeriveParams<'a> {
 /// Binding of a request Partial IV (and `kid`) to a Token.
 ///
 /// Both endpoints keep this association until the matching response is
-/// protected or verified. See `knowledge/rfcs/rfc8613.txt` §8.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// protected or verified. Observe registrations keep it for later
+/// notifications (`request_piv`). See `knowledge/rfcs/rfc8613.txt` §8 / §4.1.3.5.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RequestRef {
     kid: Id,
     piv: PartialIv,
@@ -55,7 +56,7 @@ impl RequestRef {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct Id {
     bytes: [u8; MAX_ID_LEN],
     len: u8,
@@ -95,7 +96,18 @@ pub struct SecurityContext {
     sender_seq: u64,
     replay_left: u64,
     replay_bits: u32,
-    live: [Option<(Token, RequestRef)>; super::LIVE_REQUESTS],
+    live: [Option<LiveRequest>; super::LIVE_REQUESTS],
+}
+
+/// Token→[`RequestRef`] row. Observe registrations keep the row so
+/// notifications can reuse `request_piv` (RFC 8613 §4.1.3.5 / §7.4.1).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LiveRequest {
+    token: Token,
+    request: RequestRef,
+    observe: bool,
+    notify_no_piv: bool,
+    notify_number: Option<u64>,
 }
 
 impl SecurityContext {
@@ -163,7 +175,7 @@ impl SecurityContext {
             sender_seq: 0,
             replay_left: 0,
             replay_bits: 0,
-            live: [None; 4],
+            live: [None; super::LIVE_REQUESTS],
         })
     }
 
@@ -233,15 +245,31 @@ impl SecurityContext {
     /// [`crate::oscore::LIVE_REQUESTS`] (4) bindings — the same cap as the
     /// App client inbox. A fifth distinct Token is [`Error::Saturated`].
     pub fn remember(&mut self, token: Token, request: RequestRef) -> Result<(), Error> {
+        self.remember_live(token, request, false)
+    }
+
+    pub(crate) fn remember_live(
+        &mut self,
+        token: Token,
+        request: RequestRef,
+        observe: bool,
+    ) -> Result<(), Error> {
+        let binding = LiveRequest {
+            token,
+            request,
+            observe,
+            notify_no_piv: false,
+            notify_number: None,
+        };
         for row in &mut self.live {
-            if row.as_ref().is_some_and(|(t, _)| *t == token) {
-                *row = Some((token, request));
+            if row.as_ref().is_some_and(|r| r.token == token) {
+                *row = Some(binding);
                 return Ok(());
             }
         }
         for row in &mut self.live {
             if row.is_none() {
-                *row = Some((token, request));
+                *row = Some(binding);
                 return Ok(());
             }
         }
@@ -253,17 +281,58 @@ impl SecurityContext {
     pub fn lookup(&self, token: Token) -> Option<RequestRef> {
         self.live
             .iter()
-            .find_map(|row| row.and_then(|(t, r)| (t == token).then_some(r)))
+            .find_map(|row| row.and_then(|r| (r.token == token).then_some(r.request)))
+    }
+
+    /// Whether this Token is an in-flight Observe registration.
+    #[must_use]
+    pub fn is_observe(&self, token: Token) -> bool {
+        self.live
+            .iter()
+            .any(|row| row.is_some_and(|r| r.token == token && r.observe))
     }
 
     /// Remove and return a request binding.
     pub fn take(&mut self, token: Token) -> Option<RequestRef> {
         for row in &mut self.live {
-            if row.as_ref().is_some_and(|(t, _)| *t == token) {
-                return row.take().map(|(_, r)| r);
+            if row.as_ref().is_some_and(|r| r.token == token) {
+                return row.take().map(|r| r.request);
             }
         }
         None
+    }
+
+    /// Replay-protect an Observe notification (RFC 8613 §7.4.1).
+    ///
+    /// At most one notification without Partial IV. A Partial IV must be
+    /// strictly greater than the Notification Number (largest accepted).
+    pub fn accept_notification(
+        &mut self,
+        token: Token,
+        piv: Option<PartialIv>,
+    ) -> Result<(), Error> {
+        let row = self
+            .live
+            .iter_mut()
+            .find_map(|row| row.as_mut().filter(|r| r.token == token))
+            .ok_or(Error::Context)?;
+        match piv {
+            None => {
+                if row.notify_no_piv {
+                    return Err(Error::Replay);
+                }
+                row.notify_no_piv = true;
+                Ok(())
+            }
+            Some(piv) => {
+                let seq = piv.seq();
+                if row.notify_number.is_some_and(|n| seq <= n) {
+                    return Err(Error::Replay);
+                }
+                row.notify_number = Some(seq);
+                Ok(())
+            }
+        }
     }
 
     pub(crate) fn take_sender_piv(&mut self) -> Result<PartialIv, Error> {

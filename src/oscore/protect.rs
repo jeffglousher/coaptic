@@ -156,7 +156,7 @@ pub fn protect_request(
     };
     let n = encode_outer(
         plain.ty(),
-        Code::POST,
+        outer_code(plain.code(), plain.options()),
         plain.message_id(),
         plain.token(),
         plain.options(),
@@ -166,7 +166,8 @@ pub fn protect_request(
         &ciphertext[..ct_len],
         out,
     )?;
-    ctx.remember(plain.token(), request)?;
+    let observe = plain.options().iter().any(is_observe);
+    ctx.remember_live(plain.token(), request, observe)?;
     Ok(n)
 }
 
@@ -240,7 +241,7 @@ pub fn protect_response(
     )?;
     encode_outer(
         plain.ty(),
-        Code::CHANGED,
+        outer_code(plain.code(), plain.options()),
         plain.message_id(),
         plain.token(),
         plain.options(),
@@ -277,7 +278,7 @@ pub fn protect_response_piv(
     )?;
     encode_outer(
         plain.ty(),
-        Code::CHANGED,
+        outer_code(plain.code(), plain.options()),
         plain.message_id(),
         plain.token(),
         plain.options(),
@@ -332,6 +333,26 @@ fn parse_protected<'a>(protected: &ParsedMessage<'a>) -> Result<OscoreHeader<'a>
     OscoreHeader::parse(value)
 }
 
+fn is_observe(opt: &Opt<'_>) -> bool {
+    opt.number().get() == 6
+}
+
+/// Outer Code: FETCH / Content when Observe is present (RFC 8613 §4.1.3.5).
+fn outer_code(inner: Code, opts: &[Opt<'_>]) -> Code {
+    if !opts.iter().any(is_observe) {
+        return if inner.is_request() {
+            Code::POST
+        } else {
+            Code::CHANGED
+        };
+    }
+    if inner.is_request() {
+        Code::FETCH
+    } else {
+        Code::CONTENT
+    }
+}
+
 fn encode_plaintext(plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
     if out.is_empty() {
         return Err(Error::BufferTooSmall);
@@ -339,15 +360,22 @@ fn encode_plaintext(plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error>
     out[0] = plain.code().as_raw();
     let mut i = 1;
     let mut prev = 0u16;
+    let notify = plain.code().is_response();
     for opt in plain.options() {
         let n = opt.number().get();
-        if header::is_oscore(n) || header::classify(n) != OptionClass::Inner {
+        if header::is_oscore(n) || !header::classify(n).in_plaintext() {
             continue;
         }
         if n < prev {
             return Err(Error::Encode(EncodeError::OptionsNotAscending));
         }
-        i = write_option(out, i, u32::from(n - prev), opt.value())?;
+        // Notifications: Inner Observe MUST be empty (RFC 8613 §4.1.3.5.2).
+        let value = if n == 6 && notify {
+            &[][..]
+        } else {
+            opt.value()
+        };
+        i = write_option(out, i, u32::from(n - prev), value)?;
         prev = n;
     }
     if !plain.payload().is_empty() {
@@ -386,7 +414,7 @@ fn encode_outer(
     let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
     for opt in inner_opts {
         let n = opt.number().get();
-        if header::is_oscore(n) || header::classify(n) != OptionClass::Outer {
+        if header::is_oscore(n) || !header::classify(n).in_outer() {
             continue;
         }
         opts.push(*opt).map_err(|_| Error::Options)?;
@@ -426,9 +454,12 @@ fn stitch_inner(
     out[header_end..header_end + rest.len()].copy_from_slice(rest);
 
     // Re-encode so Class U outer options (Uri-Host, …) sit beside Class E.
+    // Dual Observe: Inner is authoritative for presence; on a notification
+    // Inner is empty, so surface Outer Observe for App `observe_seq`.
     let mut merged = [0u8; INNER];
     let n = {
         let fake = decode(&out[..header_end + rest.len()])?;
+        let outer_observe = outer_opts.clone().find(|opt| is_observe(opt));
         let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
         for opt in outer_opts {
             let n = opt.number().get();
@@ -438,6 +469,12 @@ fn stitch_inner(
             opts.push(opt).map_err(|_| Error::Options)?;
         }
         for opt in fake.options() {
+            if is_observe(&opt) && opt.value().is_empty() {
+                if let Some(outer) = outer_observe {
+                    opts.push(outer).map_err(|_| Error::Options)?;
+                    continue;
+                }
+            }
             opts.push(opt).map_err(|_| Error::Options)?;
         }
         let msg = Message::new(ty, fake.code(), mid)

@@ -27,15 +27,21 @@
 //!
 //! App with a context attached is fail-closed: a non-empty datagram without
 //! an OSCORE option is rejected (unprotected 4.01 on a request; a plain
-//! response does not complete a [`crate::Call`]). AEAD failure is a silent
-//! drop (no unprotected 4.00 decrypt oracle). Empty ACK/RST stay
-//! unprotected (RFC 7252 reliability).
+//! response or notification does not complete a [`crate::Call`]). AEAD
+//! failure is a silent drop (no unprotected 4.00 decrypt oracle). Empty
+//! ACK/RST stay unprotected (RFC 7252 reliability).
+//!
+//! Observe register/notify is in this slice: Observe is Class E+U
+//! (RFC 8613 Figure 5). Requests use Outer Code FETCH; responses use
+//! Content. Notifications include a new Partial IV (the first register
+//! ACK may omit it). Other dual-class options (Block, Max-Age, Size,
+//! No-Response) stay Inner — this is not a silent Outer bucket.
 //!
 //! # What this slice does not do
 //!
 //! Group OSCORE, other AEAD/HKDF algorithms, EDHOC / ACE key establishment,
-//! Observe or outer Block-wise over OSCORE, and first-party DTLS (still
-//! harness `DatagramIo` only).
+//! outer Block-wise over OSCORE, and first-party DTLS (still harness
+//! `DatagramIo` only).
 //!
 //! Wire format lives in `knowledge/rfcs/rfc8613.txt`. This module does not
 //! restate it.
@@ -124,8 +130,10 @@ pub const OSCORE_VERSION: u8 = 1;
 /// In-flight Token→[`RequestRef`] bindings on [`SecurityContext`].
 ///
 /// Client-side: [`protect_request`] remembers so a later
-/// [`unprotect_response`] can look up the request Partial IV. Same cap as
-/// the App client inbox. [`SecurityContext::remember`] returns
+/// [`unprotect_response`] can look up the request Partial IV. Observe
+/// registrations keep the row for notifications. Same cap as the App
+/// client inbox. [`SecurityContext::remember`] returns
 /// [`Error::Saturated`] when a fifth distinct Token arrives. The server
-/// holds [`RequestRef`] on the inbound exchange, not in this table.
+/// holds [`RequestRef`] on the inbound exchange / Observe interest, not
+/// in this table.
 pub const LIVE_REQUESTS: usize = 4;
