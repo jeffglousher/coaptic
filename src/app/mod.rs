@@ -501,7 +501,9 @@ where
     /// **Inbound.** Handlers see a borrowed [`Request`] and return an owned
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
     /// (RFC 7252 ping). Incomplete Block1 / Q-Block1 is 2.31 (handler not
-    /// run); a complete body is [`Request::body`]. A large response ships
+    /// run); a complete body is [`Request::body`]. Unrecognized critical
+    /// options (not in the implemented set) and an OSCORE option with no
+    /// attached context are 4.02 before the handler. A large response ships
     /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
     /// with [`Response::problem`]. Apply-error 4.08 uses problem details;
     /// Q-Block1 holes after `NON_RECEIVE_TIMEOUT` use
@@ -813,6 +815,16 @@ where
     }
 }
 
+/// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
+/// attached context, or a malformed Block / Q-Block2 value.
+fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> bool {
+    parsed.unknown_critical().is_some()
+        || (parsed.oscore().is_some() && !oscore::is_active(oscore))
+        || matches!(parsed.block2(), Some(Err(_)))
+        || matches!(parsed.q_block2().next(), Some(Err(_)))
+        || matches!(parsed.block1(), Some(Err(_)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_rx<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
@@ -932,10 +944,10 @@ where
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
-    if matches!(parsed.block2(), Some(Err(_)))
-        || matches!(parsed.q_block2().next(), Some(Err(_)))
-        || matches!(parsed.block1(), Some(Err(_)))
-    {
+    // Known-stack critical check and OSCORE-without-context run here,
+    // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
+    // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
+    if bad_option_request(&parsed, oscore) {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),

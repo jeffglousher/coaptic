@@ -394,6 +394,83 @@ fn malformed_block2_is_bad_option() {
 }
 
 #[test]
+fn unrecognized_critical_option_is_bad_option() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::new(65001), &[])];
+    let (wire, n) = encode_req_extra(Code::GET, &["sensors", "temp"], &extra, &[]);
+    let mut app = app_with_site(Loopback {
+        inbox: Some((peer, wire, n)),
+        last_send: None,
+    });
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CONTENT,
+        "must not dispatch unknown critical"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn oscore_option_without_context_is_bad_option_not_outer_post() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
+    let (wire, n) = encode_req_extra(Code::POST, &["items"], &extra, b"ciphertext");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["items"], post(post_create))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CREATED,
+        "OSCORE without context must not run the outer POST handler"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
+    let (wire, n) = encode_req_extra(Code::FETCH, &["probe"], &extra, b"ciphertext");
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["probe"], fetch(fetch_query))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::BAD_OPTION);
+    assert_ne!(
+        parsed.code,
+        Code::CONTENT,
+        "OSCORE without context must not run the outer FETCH handler"
+    );
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
@@ -1246,7 +1323,8 @@ fn well_known_core_small_n_keeps_inline_floor() {
 }
 
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
-/// critical options can be 4.02, so this number is safe to carry through decode.
+/// critical options (e.g. 65001) are 4.02 before the handler, so this
+/// number is safe to carry through decode and App dispatch.
 #[derive(Clone, Copy)]
 struct Experimental(OptionNumber);
 
