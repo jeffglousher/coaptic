@@ -18,9 +18,10 @@
 //! [`SlotPool::release`]. The App happy path does not need them.
 //! [`Engine::progress`] is one bounded pass: CON retransmit, one unpinned
 //! RX step, one Observe notify, at most one Observe expiry, at most one
-//! due Q-Block recover. This module does not invent 4.02 / 4.08 / 2.31 /
-//! RST policy. [`Metrics`] are wrapping `u32` counters on [`Engine`];
-//! copy with [`Engine::metrics`] / [`crate::App::metrics`].
+//! due Q-Block recover. Empty tables skip those scans. This module does
+//! not invent 4.02 / 4.08 / 2.31 / RST policy. [`Metrics`] are wrapping
+//! `u32` counters on [`Engine`]; copy with [`Engine::metrics`] /
+//! [`crate::App::metrics`].
 
 mod access;
 mod block;
@@ -94,7 +95,14 @@ pub trait SlotPool {
     fn slot_count(&self) -> usize;
 
     /// How many slots are currently occupied.
+    ///
+    /// O(1): occupancy tracks a live counter on acquire / release.
     fn occupied_count(&self) -> usize;
+
+    /// Whether every slot is free. Default is [`Self::occupied_count`] `== 0`.
+    fn is_empty(&self) -> bool {
+        self.occupied_count() == 0
+    }
 
     /// Whether `id` names an occupied slot in this pool.
     fn is_occupied(&self, id: SlotId) -> bool;

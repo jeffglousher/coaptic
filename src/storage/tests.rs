@@ -468,6 +468,25 @@ fn progress_idle() {
 }
 
 #[test]
+fn progress_idle_empty_tables_still_counts() {
+    let mut engine = build_default_bodies();
+    engine.reset_metrics();
+    for _ in 0..4 {
+        assert_eq!(engine.progress(0), crate::storage::Progress::idle());
+    }
+    assert_eq!(engine.metrics().progress, 4);
+    assert_eq!(engine.rx_occupied(), 0);
+    assert_eq!(engine.tx_occupied(), 0);
+    assert!(engine.storage_mut().observe().is_empty());
+    assert!(
+        engine
+            .storage_mut()
+            .rx_body()
+            .is_some_and(|pool| pool.is_empty())
+    );
+}
+
+#[test]
 fn progress_retransmit_due() {
     let mut engine = build_default();
     let ep = Endpoint::v4([192, 0, 2, 81], 5683);
