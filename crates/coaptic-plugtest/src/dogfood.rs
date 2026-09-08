@@ -34,7 +34,10 @@
 //! [`App::metrics`] / [`Engine::metrics`]. Optional `--json PATH` writes
 //! the same numbers. Optional `--compare PATH` diffs against a checked-in
 //! baseline: **fail** if path-proving counters drop or error counters
-//! rise; **print** wall-timing deltas (host/load specific, not a fail).
+//! rise (including mixed-pair `sum(block1_assemble)` / `sum(block2_assemble)`,
+//! so a pair-local 0 floor cannot hide a cold assemble path); **print**
+//! wall-timing deltas (host/load specific, not a fail). `progress` stays
+//! informational. N=2 CI smoke is a lock, not a perf SLA.
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -132,9 +135,12 @@ snapshot and a coverage section (mixed vs still coaptic-only).
 --json PATH writes schema coaptic-dogfood/1 (Metrics + series timings).
 --compare PATH diffs this run against that file: fail if observe_notify /
 block1_assemble / block2_assemble (or other path-proving floors) drop, or
-if error counters rise. Wall timings print as delta only — host/load
-specific, not a fail. CI smokes --iterations 2 against the checked-in
-baselines. Refresh (same flags as CI):
+if error counters rise. Mixed-pair sum(block1_assemble) and
+sum(block2_assemble) are also floors (pair-local 0 on one direction
+cannot hide a cold assemble type if the other pair carries the count).
+Wall timings print as delta only — host/load specific, not a fail.
+progress is informational. CI smokes --iterations 2 against the
+checked-in baselines (a lock, not a perf SLA). Refresh (same flags as CI):
 
   cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 \\
     --json crates/coaptic-plugtest/baselines/dogfood.json
@@ -436,6 +442,9 @@ fn io_err(e: io::Error) -> PeerError {
 ///
 /// `--compare` floors the same counters vs a baseline; this check runs even
 /// without `--compare` so a stub peer cannot hide behind response codes alone.
+/// Block assemble is floored per expected direction **and** as
+/// `sum(block1_assemble)` / `sum(block2_assemble)` across the pair so a
+/// silent swap onto the other direction's 0-floor cannot hide a cold type.
 fn prove_mixed_stack(
     iterations: usize,
     rs_to_coaptic: &Metrics,
@@ -484,6 +493,19 @@ fn prove_mixed_stack(
             coaptic_to_rs.rx_accepted, coaptic_to_rs.tx_ok
         )));
     }
+    let block1 = rs_to_coaptic
+        .block1_assemble
+        .saturating_add(coaptic_to_rs.block1_assemble);
+    let block2 = rs_to_coaptic
+        .block2_assemble
+        .saturating_add(coaptic_to_rs.block2_assemble);
+    prove_floor("mixed sum(block1_assemble)", block1, n)?;
+    prove_floor("mixed sum(block2_assemble)", block2, n)?;
+    prove_floor(
+        "mixed sum(block1_assemble)+sum(block2_assemble)",
+        block1.saturating_add(block2),
+        n.saturating_mul(2),
+    )?;
     Ok(())
 }
 
@@ -1116,7 +1138,7 @@ fn build_json_report(
         .ok();
     let mut pairs = vec![
         JsonPair {
-            name: "coap-rs → coaptic".into(),
+            name: MIXED_RS_TO_COAPTIC.into(),
             series: rs_to_coaptic.series(),
             occupancy: rs_to_coaptic_snap.occupancy.clone(),
             now_ms: rs_to_coaptic_snap.now_ms,
@@ -1126,7 +1148,7 @@ fn build_json_report(
             oscore: None,
         },
         JsonPair {
-            name: "coaptic → coap-rs".into(),
+            name: MIXED_COAPTIC_TO_RS.into(),
             series: coaptic_to_rs.series(),
             occupancy: client_occ.to_owned(),
             now_ms: client_now,
@@ -1168,7 +1190,7 @@ fn build_json_report(
     }
     JsonReport {
         schema: "coaptic-dogfood/1".into(),
-        caveat: "Wall timings are host/load specific (printed as delta, not a fail). Path-proving Metrics floors fail the run on regression.".into(),
+        caveat: "Wall timings are host/load specific (printed as delta, not a fail). Path-proving Metrics floors fail the run on regression. Mixed-pair sum(block1_assemble)+sum(block2_assemble) is a floor (N=2 smoke lock, not a perf SLA). progress is informational.".into(),
         host,
         iterations: cfg.iterations,
         timeout_ms: u64::try_from(cfg.timeout.as_millis()).unwrap_or(u64::MAX),
@@ -1193,6 +1215,28 @@ fn load_json_report(path: &std::path::Path) -> Result<JsonReport, PeerError> {
 }
 
 type MetricField = (&'static str, fn(&MetricsDto) -> u32);
+
+const MIXED_RS_TO_COAPTIC: &str = "coap-rs → coaptic";
+const MIXED_COAPTIC_TO_RS: &str = "coaptic → coap-rs";
+
+fn is_mixed_pair(name: &str) -> bool {
+    name == MIXED_RS_TO_COAPTIC || name == MIXED_COAPTIC_TO_RS
+}
+
+/// Block assemble totals across mixed coap-rs pairs (name-independent).
+///
+/// Pair-local floors of 0 on one direction are expected (server Block1 vs
+/// client Block2). Flooring the sums means a silent swap onto that 0-floor
+/// cannot hide a cold assemble type.
+fn mixed_block_sums(pairs: &[JsonPair]) -> (u32, u32) {
+    let mut block1: u32 = 0;
+    let mut block2: u32 = 0;
+    for p in pairs.iter().filter(|p| is_mixed_pair(&p.name)) {
+        block1 = block1.saturating_add(p.metrics.block1_assemble);
+        block2 = block2.saturating_add(p.metrics.block2_assemble);
+    }
+    (block1, block2)
+}
 
 /// Path-proving counters: a drop below the baseline is a regression.
 ///
@@ -1304,6 +1348,16 @@ fn compare_reports(run: &JsonReport, baseline: &JsonReport) -> CompareOutcome {
         "observe_notify",
         run.observe_notify,
         baseline.observe_notify,
+    );
+
+    let (run_b1, run_b2) = mixed_block_sums(&run.pairs);
+    let (base_b1, base_b2) = mixed_block_sums(&baseline.pairs);
+    out.floor_u32("sum(block1_assemble)", run_b1, base_b1);
+    out.floor_u32("sum(block2_assemble)", run_b2, base_b2);
+    out.floor_u32(
+        "sum(block1)+sum(block2)",
+        run_b1.saturating_add(run_b2),
+        base_b1.saturating_add(base_b2),
     );
 
     for base_pair in &baseline.pairs {
@@ -2519,7 +2573,7 @@ mod tests {
             observe_notify: metrics.observe_notify,
             oscore: false,
             pairs: vec![
-                pair("coap-rs → coaptic", metrics.clone()),
+                pair(super::MIXED_RS_TO_COAPTIC, metrics.clone()),
                 pair(
                     "coaptic ↔ coaptic observe notify",
                     MetricsDto {
@@ -2529,6 +2583,36 @@ mod tests {
                 ),
             ],
         }
+    }
+
+    /// Complementary mixed-pair Block floors, matching checked-in baselines:
+    /// server Block1=4 / Block2=0, client Block1=0 / Block2=4.
+    fn mixed_baseline() -> JsonReport {
+        let mut base = report(MetricsDto {
+            rx_accepted: 18,
+            tx_ok: 18,
+            observe_register: 2,
+            observe_cancel: 2,
+            block1_assemble: 4,
+            block2_assemble: 0,
+            ..MetricsDto::default()
+        });
+        base.pairs.insert(
+            1,
+            pair(
+                super::MIXED_COAPTIC_TO_RS,
+                MetricsDto {
+                    rx_accepted: 18,
+                    tx_ok: 18,
+                    observe_register: 2,
+                    observe_cancel: 2,
+                    block1_assemble: 0,
+                    block2_assemble: 4,
+                    ..MetricsDto::default()
+                },
+            ),
+        );
+        base
     }
 
     fn assert_ok(out: CompareOutcome) {
@@ -2637,6 +2721,79 @@ mod tests {
     }
 
     #[test]
+    fn compare_mixed_block_sums_identity_ok() {
+        let base = mixed_baseline();
+        let mut run = base.clone();
+        run.wall_s = 0.9;
+        run.pairs[0].metrics.progress = 999;
+        run.pairs[1].metrics.progress = 999;
+        assert_ok(compare_reports(&run, &base));
+    }
+
+    #[test]
+    fn compare_mixed_block1_cold_fails_sum() {
+        // Pair-local Block2 floor on the server pair is 0, so stuffing
+        // Block1 counts into Block2 would pass that field. The cross-pair
+        // sum(block1_assemble) must still fail.
+        let base = mixed_baseline();
+        let mut run = base.clone();
+        run.pairs[0].metrics.block1_assemble = 0;
+        run.pairs[0].metrics.block2_assemble = 4;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("sum(block1_assemble)")),
+            "{:?}",
+            out.regressions
+        );
+        // Combined total can stay 8 (4+4 → 0+8); that must not hide Block1 cold.
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("sum(block1_assemble) dropped 4 → 0")),
+            "{:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
+    fn compare_mixed_block_swap_onto_zero_floor_fails() {
+        // Silent direction swap: each type is still warm, but on the
+        // pair whose pair-local floor was 0. Per-pair non-zero floors
+        // and the expected-direction fail-closed checks catch this;
+        // the sums stay 4+4 (not a total-cold hide).
+        let base = mixed_baseline();
+        let mut run = base.clone();
+        run.pairs[0].metrics.block1_assemble = 0;
+        run.pairs[0].metrics.block2_assemble = 4;
+        run.pairs[1].metrics.block1_assemble = 4;
+        run.pairs[1].metrics.block2_assemble = 0;
+        let out = compare_reports(&run, &base);
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("block1_assemble") && r.contains("dropped 4 → 0")),
+            "{:?}",
+            out.regressions
+        );
+        assert!(
+            out.regressions
+                .iter()
+                .any(|r| r.contains("block2_assemble") && r.contains("dropped 4 → 0")),
+            "{:?}",
+            out.regressions
+        );
+        assert!(
+            !out.regressions
+                .iter()
+                .any(|r| r.contains("sum(block1_assemble)") || r.contains("sum(block2_assemble)")),
+            "type totals still warm: {:?}",
+            out.regressions
+        );
+    }
+
+    #[test]
     fn compare_missing_mixed_pair_fails() {
         let base = report(MetricsDto {
             observe_register: 2,
@@ -2644,12 +2801,12 @@ mod tests {
             ..MetricsDto::default()
         });
         let mut run = base.clone();
-        run.pairs.retain(|p| p.name != "coap-rs → coaptic");
+        run.pairs.retain(|p| p.name != super::MIXED_RS_TO_COAPTIC);
         let out = compare_reports(&run, &base);
         assert!(
             out.regressions
                 .iter()
-                .any(|r| r.contains("missing pair") && r.contains("coap-rs → coaptic")),
+                .any(|r| r.contains("missing pair") && r.contains(super::MIXED_RS_TO_COAPTIC)),
             "{:?}",
             out.regressions
         );
@@ -2683,6 +2840,62 @@ mod tests {
             ..Metrics::ZERO
         };
         prove_mixed_stack(2, &server, &client).expect("warm mixed-stack");
+    }
+
+    #[test]
+    fn mixed_stack_block_sum_swap_fails() {
+        // Block1 counts land on the client (0-floor direction); server Block1 cold.
+        let server = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block1_assemble: 0,
+            block2_assemble: 2,
+            ..Metrics::ZERO
+        };
+        let client = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block1_assemble: 2,
+            block2_assemble: 0,
+            ..Metrics::ZERO
+        };
+        let err = prove_mixed_stack(2, &server, &client).unwrap_err();
+        assert!(
+            err.0.contains("stayed cold") && err.0.contains("block1_assemble"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn mixed_stack_block1_absorbed_as_block2_fails() {
+        // Total assemble still 4, but Block1 went cold (all counted as Block2).
+        let server = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block1_assemble: 0,
+            block2_assemble: 2,
+            ..Metrics::ZERO
+        };
+        let client = Metrics {
+            rx_accepted: 10,
+            tx_ok: 10,
+            observe_register: 2,
+            observe_cancel: 2,
+            block2_assemble: 2,
+            ..Metrics::ZERO
+        };
+        let err = prove_mixed_stack(2, &server, &client).unwrap_err();
+        assert!(
+            err.0.contains("stayed cold")
+                && (err.0.contains("block1_assemble") || err.0.contains("sum(block1")),
+            "{err}"
+        );
     }
 
     #[test]

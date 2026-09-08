@@ -17,14 +17,14 @@ Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/
 
 **Still coaptic-only:** Observe notify collect; OSCORE (`--oscore`). **Skip:** DTLS dogfood, coap-rs OSCORE, full ETSI plugtest matrix.
 
-`--json PATH` writes schema `coaptic-dogfood/1` (Metrics + series timings). `--compare PATH` diffs this run against that file: **fail** if path-proving counters drop (`observe_notify`, `block1_assemble`, `block2_assemble`, …) or error counters rise; **print** wall-timing deltas (host/load specific, not a fail). CI compares the `--iterations 2` smokes to [`baselines/dogfood.json`](baselines/dogfood.json) and [`baselines/dogfood-oscore.json`](baselines/dogfood-oscore.json). Refresh those files with the same flags after an intentional Metrics change:
+`--json PATH` writes schema `coaptic-dogfood/1` (Metrics + series timings). `--compare PATH` diffs this run against that file: **fail** if path-proving counters drop (`observe_notify`, `block1_assemble`, `block2_assemble`, mixed-pair `sum(block1_assemble)` / `sum(block2_assemble)`, …) or error counters rise; **print** wall-timing deltas (host/load specific, not a fail). Pair-local Block assemble of 0 on one mixed direction is expected (server Block1 vs client Block2); the cross-pair sums are the name-independent floor so a silent swap cannot hide a cold assemble type. `progress` stays informational. CI compares the `--iterations 2` smokes to [`baselines/dogfood.json`](baselines/dogfood.json) and [`baselines/dogfood-oscore.json`](baselines/dogfood-oscore.json) (a lock, not a perf SLA). Refresh those files with the same flags after an intentional Metrics change:
 
 ```bash
 cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --json crates/coaptic-plugtest/baselines/dogfood.json
 cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --json crates/coaptic-plugtest/baselines/dogfood-oscore.json
 ```
 
-Tracking: [#152](https://github.com/jeffglousher/coaptic/issues/152) / [#150](https://github.com/jeffglousher/coaptic/issues/150) / [#131](https://github.com/jeffglousher/coaptic/issues/131) / [#140](https://github.com/jeffglousher/coaptic/issues/140) / [#142](https://github.com/jeffglousher/coaptic/issues/142) / [#144](https://github.com/jeffglousher/coaptic/issues/144).
+Tracking: [#154](https://github.com/jeffglousher/coaptic/issues/154) / [#152](https://github.com/jeffglousher/coaptic/issues/152) / [#150](https://github.com/jeffglousher/coaptic/issues/150) / [#131](https://github.com/jeffglousher/coaptic/issues/131) / [#140](https://github.com/jeffglousher/coaptic/issues/140) / [#142](https://github.com/jeffglousher/coaptic/issues/142) / [#144](https://github.com/jeffglousher/coaptic/issues/144).
 
 This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness is Engine↔Engine only (no sockets).
 

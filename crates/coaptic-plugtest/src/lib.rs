@@ -29,7 +29,10 @@
 //!   [`coaptic::App::reset_metrics`] around each timed window; snapshot
 //!   via [`coaptic::App::metrics`]. Optional `--json` writes schema
 //!   `coaptic-dogfood/1`. `--compare PATH` fails if path-proving Metrics
-//!   drop vs a checked-in baseline; wall timings print as delta only.
+//!   drop vs a checked-in baseline (including mixed-pair
+//!   `sum(block1_assemble)` / `sum(block2_assemble)`); wall timings print
+//!   as delta only. `progress` is informational; N=2 is a smoke lock, not
+//!   a perf SLA.
 //! - [`runner`] — each vendored TD × useful role pairs (coaptic server /
 //!   coap-rs client, and the swap). Same-impl coaptic↔coaptic is also run
 //!   for base GETs.
