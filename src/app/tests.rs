@@ -471,6 +471,69 @@ fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
 }
 
 #[test]
+fn proxy_uri_is_505_not_404() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5")
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::proxy_uri("coap://example.com/x")];
+    let (wire, n) = encode_req_extra(Code::GET, &[], &extra, &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement, "CON still ACK'd");
+    assert_eq!(parsed.code, Code::PROXYING_NOT_SUPPORTED);
+    assert_ne!(parsed.code, Code::NOT_FOUND, "must not 4.04 a Proxy-Uri");
+    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    assert_eq!(HITS.load(Ordering::SeqCst), 0, "handler must not run");
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn proxy_scheme_is_505_before_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_get(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::proxy_scheme("coap")];
+    let (wire, n) = encode_req_extra(Code::GET, &["sensors", "temp"], &extra, &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(counting_get))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.code, Code::PROXYING_NOT_SUPPORTED);
+    assert_ne!(
+        parsed.code,
+        Code::CONTENT,
+        "must not dispatch a Proxy-Scheme request"
+    );
+    assert_eq!(HITS.load(Ordering::SeqCst), 0, "handler must not run");
+}
+
+#[test]
 fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
@@ -767,6 +830,78 @@ fn duplicate_con_post_empty_dedup_row_acks_without_rerun() {
         HITS.load(Ordering::SeqCst),
         1,
         "must not silence-then-rerun before EXCHANGE_LIFETIME"
+    );
+}
+
+#[test]
+fn duplicate_con_post_insert_failure_does_not_rerun() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_post(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    HITS.store(0, Ordering::SeqCst);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let filler = Endpoint::v4([192, 0, 2, 99], 5683);
+    let mid = MessageId::new(0x1001);
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["leds", "0"], post(counting_post))
+        .bind(RecordIo {
+            inbox: Some((peer, wire, n)),
+            ..RecordIo::default()
+        })
+        .expect("bind");
+
+    // Never-expire Engine-pair rows fill the table. App will not evict
+    // `due_ms == 0`, so store_request_dedup fails after the first POST.
+    for i in 0..profiles::Default::DEDUP_ENTRIES {
+        let row = DedupEntry::new(MessageId::new(i as u16), filler);
+        assert_eq!(row.due_ms(), 0);
+        app.engine_mut().insert_dedup(row).expect("fill");
+    }
+
+    app.poll(0).expect("first");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 1);
+    let key = DedupKey::new(mid, peer);
+    assert!(
+        app.engine().lookup_dedup(key).is_none(),
+        "insert must fail while the table is full of never-expire rows"
+    );
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).expect("retransmit after insert failure");
+    assert_eq!(
+        HITS.load(Ordering::SeqCst),
+        1,
+        "POST must not re-run when Dedup insert failed"
+    );
+    assert_eq!(app.transport().sent_n, 2, "must ACK, not silence");
+    let (_, ack_bytes, ack_n) = app.transport().sent[1].expect("fail-closed ACK");
+    let ack = decode(&ack_bytes[..ack_n]).expect("decode");
+    assert!(ack.is_empty_ack(), "no cached replay: empty ACK");
+    assert_eq!(ack.message_id(), mid);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).expect("second retransmit");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().sent_n, 3);
+
+    let live = u64::from(Transmission::EXCHANGE_LIFETIME_MS) - 1;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(live).expect("still live");
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .expect("expired");
+    assert_eq!(
+        HITS.load(Ordering::SeqCst),
+        2,
+        "after EXCHANGE_LIFETIME a new exchange may run"
     );
 }
 
