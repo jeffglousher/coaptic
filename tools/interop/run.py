@@ -218,6 +218,38 @@ def summary(samples):
             "p99": ordered[math.ceil(.99 * len(samples)) - 1], "max": max(samples)}
 
 
+def measure_requests(iterations, request_fn):
+    samples, host, failures = [], [], []
+    clock = None
+    started = time.perf_counter_ns()
+    for index in range(iterations):
+        try:
+            event = request_fn()
+            expect(event)
+            validate_timing(event)
+            if type(event.get("host_total_ns")) is not int or event["host_total_ns"] < 0:
+                raise RuntimeError("invalid host timing")
+            if clock is not None and event["clock"] != clock:
+                raise RuntimeError("request clock changed within benchmark")
+            clock = event["clock"]
+            samples.append(event["elapsed_ns"])
+            host.append(event["host_total_ns"])
+        except Exception as error:
+            failures.append({"sample_index": index, "error": str(error)})
+            break  # No retries or successful-sample substitution.
+    wall_ns = time.perf_counter_ns() - started
+    result = {"clock": clock, "requested_samples": iterations,
+              "samples_ns": {"request": samples, "host_total": host},
+              "failures": len(failures), "sample_failures": failures}
+    if samples:
+        result.update({"request_ns": summary(samples), "host_total_ns": summary(host),
+                       "request_us": summary([n / 1000 for n in samples]),
+                       "host_total_us": summary([n / 1000 for n in host])})
+    if not failures:
+        result["serial_host_requests_per_second"] = iterations * 1e9 / wall_ns
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coaptic", required=True, type=Path)
@@ -264,25 +296,12 @@ def main():
                     expect(request(peers[client], transport, service.number))
                     expect(request(peers[client], transport, service.number, path="missing"), 132, None)
                     expect(request(peers[client], transport, service.number, path="large"), 69, LARGE)
-                    samples, host = [], []
-                    clock = None
-                    wall = time.perf_counter()
-                    for _ in range(args.iterations):
-                        event = request(peers[client], transport, service.number)
-                        expect(event)
-                        if clock is not None and event["clock"] != clock:
-                            raise RuntimeError("request clock changed within benchmark")
-                        clock = event["clock"]
-                        samples.append(event["elapsed_ns"])
-                        host.append(event["host_total_ns"])
-                    elapsed = time.perf_counter() - wall
+                    measured = measure_requests(args.iterations,
+                        lambda: request(peers[client], transport, service.number))
                     report["benchmarks"].append({"pair": label, "server": service.ready,
-                        "startup_ms": service.startup_ms, "clock": clock,
-                        "samples_ns": {"request": samples, "host_total": host},
-                        "request_ns": summary(samples), "host_total_ns": summary(host),
-                        "request_us": summary([n / 1000 for n in samples]),
-                        "host_total_us": summary([n / 1000 for n in host]), "serial_host_requests_per_second": args.iterations / elapsed,
-                        "failures": 0})
+                        "startup_ms": service.startup_ms, **measured})
+                    if measured["failures"]:
+                        raise AssertionError(f"request measurement failed: {measured['sample_failures']}")
                     if transport == "dtls":
                         refused = request(peers[client], transport, service.number, key="incorrect", timeout=1500)
                         if refused["exit_code"] == 0 or not any(s in refused.get("message", "").lower() for s in ("timeout", "timed out", "deadline", "handshake", "decrypt", "alert", "elapsed")):
