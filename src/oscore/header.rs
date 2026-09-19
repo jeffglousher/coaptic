@@ -11,25 +11,23 @@ pub struct PartialIv {
 
 impl PartialIv {
     /// Encode `seq` as a Partial IV.
-    #[must_use]
-    pub const fn from_seq(seq: u64) -> Self {
+    ///
+    /// Returns [`Error::PartialIv`] when `seq` needs more than five bytes.
+    pub const fn from_seq(seq: u64) -> Result<Self, Error> {
         let be = seq.to_be_bytes();
         let mut start = 0;
         while start < 8 && be[start] == 0 {
             start += 1;
         }
         if start == 8 {
-            return Self {
+            return Ok(Self {
                 bytes: [0, 0, 0, 0, 0],
                 len: 1,
-            };
+            });
         }
         let len = 8 - start;
         if len > MAX_PIV_LEN {
-            return Self {
-                bytes: [0xff; MAX_PIV_LEN],
-                len: MAX_PIV_LEN as u8,
-            };
+            return Err(Error::PartialIv);
         }
         let mut bytes = [0u8; MAX_PIV_LEN];
         let mut i = 0;
@@ -37,10 +35,10 @@ impl PartialIv {
             bytes[i] = be[start + i];
             i += 1;
         }
-        Self {
+        Ok(Self {
             bytes,
             len: len as u8,
-        }
+        })
     }
 
     /// Parse a Partial IV from the OSCORE option.

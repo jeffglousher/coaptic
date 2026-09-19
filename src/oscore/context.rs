@@ -342,7 +342,7 @@ impl SecurityContext {
         if self.sender_seq >= (1 << 40) {
             return Err(Error::SequenceExhausted);
         }
-        let piv = PartialIv::from_seq(self.sender_seq);
+        let piv = PartialIv::from_seq(self.sender_seq)?;
         self.sender_seq += 1;
         Ok(piv)
     }

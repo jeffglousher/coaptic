@@ -49,6 +49,22 @@ Observe subscribe is `app.get(path).observe().to(peer).send(now)`; the initial r
 
 Pairwise [OSCORE](https://datatracker.ietf.org/doc/html/rfc8613) (RFC 8613) is the optional `oscore` feature: you own the `SecurityContext` (Master Secret, Sender/Recipient IDs, replay window) and attach it with `App::set_oscore`. Engine does not store keys. Observe register/notify is on the App path (Class E+U Observe, Outer FETCH/Content, notification Partial IV, Outer Max-Age 0). Block1/Block2 are Dual (Figure 5) but App uses the Inner field: fragment, then protect. Application Max-Age and No-Response stay Inner (Dual, Inner-only encode); ETag is Class E only. Incoming Outer Block / Outer ETag / Outer Max-Age / Outer No-Response are not treated as application fields. Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy hop-by-hop), first-party DTLS, and alternative networks (6LoWPAN, LoRaWAN, …) stay backlog ([#46](https://github.com/jeffglousher/coaptic/issues/46) / [#138](https://github.com/jeffglousher/coaptic/issues/138)). DTLS is harness `DatagramIo` only (`coaptic-plugtest --features dtls`).
 
+## Operational limits
+
+- App holds four live client requests, including Observe subscriptions and
+  unread completed replies; profile resources may impose lower limits.
+  Exhaustion returns `Error::Saturated` rather than evicting a request.
+- One pairwise OSCORE context per App, with four live Token bindings. Use
+  separate Apps for independent peers or key epochs; replacing a context
+  does not migrate live exchanges or subscriptions. Timed Q-Block gap
+  recovery with OSCORE returns `Error::Unsupported` without sending plaintext.
+- `.block_wise::<true>()` uses 4 KiB per body slot even for Constrained:
+  8 KiB of RX/TX bodies for Constrained, 16 KiB for Default, plus a 4 KiB
+  assembled client-body hold and bookkeeping. Datagram-only mode omits these.
+- Unknown critical response options reject the response; unknown elective
+  options are ignored. A rejected CON response gets RST, while a matching
+  piggybacked ACK stops request retransmission without completing the Call.
+
 ## Features
 
 Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies `alloc`). Optional `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without `oscore` the library crate has zero dependencies.
