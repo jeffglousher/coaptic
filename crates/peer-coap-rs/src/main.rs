@@ -107,7 +107,7 @@ async fn run() -> Result<(), Error> {
         support::response(
             response.message.header.code.into(),
             &response.message.payload,
-            start,
+            start.elapsed(),
         );
         Ok::<(), Error>(())
     };

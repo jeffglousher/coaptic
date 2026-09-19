@@ -340,6 +340,21 @@ def main():
                     "verified": "140 distinct authenticated POST effects across reused endpoint", "trace": relay.trace}
         case(f"dtls-churn:coaptic->{server}", churn)
 
+    if not args.libcoap_udp_only:
+        def c_server_reconnect():
+            with Server(peers["libcoap"], "dtls") as service:
+                with Proxy(service.number, "dtls-reconnect") as relay:
+                    for _ in range(140):
+                        expect(request(peers["coaptic"], "dtls", relay.number, path="counter", method="POST"), 68, b"")
+                    expect(request(peers["coaptic"], "dtls", relay.number, path="counter"), 69, b"140")
+                    endpoint = relay.back.getsockname()
+                    alerts = sum(row["direction"] == "request" and row["hex"].startswith("15") for row in relay.trace)
+                    if alerts < 141:
+                        raise AssertionError(f"missing terminal client records: {alerts}")
+            return {"server_endpoint": endpoint, "connections": 141, "client_alert_records": alerts,
+                    "verified": "Coaptic explicit shutdown and 140 independent POST effects", "trace": relay.trace}
+        case("dtls-clean-reconnect:coaptic->libcoap", c_server_reconnect)
+
     # Fault tests target Coaptic's guarantees; alternative clients remain independent.
     for client in peers:
         for mode in ("drop-reply", "duplicate-request", "blackhole"):

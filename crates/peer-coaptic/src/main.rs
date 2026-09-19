@@ -106,8 +106,20 @@ async fn run() -> Result<(), Error> {
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
-        if let Some(r) = app.take_response(call) {
-            support::response(r.code().as_raw(), r.body().unwrap_or(r.payload()), start);
+        let response = app.take_response(call).map(|r| {
+            (
+                r.code().as_raw(),
+                r.body().unwrap_or(r.payload()).to_vec(),
+                start.elapsed(),
+            )
+        });
+        if let Some((code, body, elapsed)) = response {
+            // Flush CloseNotify before the runtime exits. Response timing ends
+            // at assembly; host timing includes this bounded session shutdown.
+            if let Io::Dtls(io) = app.transport_mut() {
+                io.close().await?;
+            }
+            support::response(code, &body, elapsed);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(1));

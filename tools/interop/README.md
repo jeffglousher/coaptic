@@ -41,7 +41,7 @@ Library dependencies and peer dependency versions need not match.
 
 ## Tested surface
 
-The full run contains 30 scenario results (26 with local C-peer DTLS excluded):
+The full run contains 31 scenario results (26 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -66,6 +66,13 @@ Unit tests in both peers cover unverified replacement preserving an active
 association, malformed routing input, pending capacity/timeout reclamation,
 stale cleanup and listener shutdown. These are fixture tests, not a general
 DTLS implementation qualification.
+
+One additional Linux case sends 140 fresh Coaptic counter POSTs and a GET to
+libcoap at one fixed endpoint, checking explicit client shutdown and all effects.
+This does not qualify abrupt-client replacement at the libcoap server. The legacy
+Rust client exits without explicit shutdown in the Rust-server reuse scenarios.
+Coaptic awaits bounded DTLS shutdown before process exit; request timing stops
+at response assembly and host timing includes shutdown.
 
 Only the repeated small GET (17-byte payload) is benchmarked. Block2, refusal and
 fault checks establish correctness; they are not throughput benchmarks. Each
