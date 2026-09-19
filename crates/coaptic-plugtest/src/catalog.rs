@@ -164,8 +164,9 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
         _ if OBS.contains(&id) => {
             Some("coverage gap #199: Observe scenario steps and notification assertions incomplete")
         }
-        _ if LINK.contains(&id) => {
-            Some("coverage gap #199: complete link-format and filter assertions incomplete")
+        "TD_COAP_LINK_04" => Some("coverage gap #199: fixture lacks the required empty rt group"),
+        "TD_COAP_LINK_09" => {
+            Some("coverage gap #199: full hierarchical discovery assertions incomplete")
         }
         _ => None,
     }

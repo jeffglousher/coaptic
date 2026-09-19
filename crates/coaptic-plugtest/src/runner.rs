@@ -375,13 +375,48 @@ fn block1(
 fn link(client: &mut dyn Peer, dest: SocketAddr, query: &[&str]) -> Result<(), PeerError> {
     let mut r = ClientRequest::get(&[".well-known", "core"]);
     r.query = query.iter().map(|s| (*s).to_owned()).collect();
+    // Request bounded blocks so the full catalog is not a truncated inline snapshot.
+    r.block2 = Some((0, false, 64));
     let got = client.send_request(dest, &r)?;
     expect_codes("link", got.code, &[Code::CONTENT])?;
-    if got.content_format != Some(40) && got.content_format.is_some() {
-        // some stacks omit CF; payload still link-format
+    // Independent expected membership: do not reuse the server's filter.
+    let indices: &[usize] = match query {
+        [] => &[0, 1, 2, 3, 4, 5],
+        ["rt=Type1"] => &[0, 2],
+        ["rt=*"] => &[0, 1, 2],
+        ["rt=Type2"] => &[0, 1],
+        ["if=If*"] => &[0, 1],
+        ["sz=*"] => &[0, 5],
+        ["href=/link1"] => &[1],
+        ["href=/link*"] => &[1, 2, 3],
+        _ => return Err(PeerError("link: unknown expected query".into())),
+    };
+    check_link_payload(
+        got.content_format,
+        got.body.as_deref().unwrap_or(&got.payload),
+        indices,
+    )
+}
+
+fn check_link_payload(
+    format: Option<u16>,
+    payload: &[u8],
+    indices: &[usize],
+) -> Result<(), PeerError> {
+    if format != Some(40) {
+        return Err(PeerError(
+            "link: missing or incorrect application/link-format".into(),
+        ));
     }
-    if got.payload.is_empty() {
-        return Err(PeerError("empty well-known/core".into()));
+    let text = std::str::from_utf8(payload).map_err(|e| PeerError(e.to_string()))?;
+    let mut actual: Vec<&str> = text.split(',').collect();
+    let mut expected: Vec<&str> = indices.iter().map(|i| site::LINK_CATALOG[*i]).collect();
+    actual.sort_unstable();
+    expected.sort_unstable();
+    if actual != expected {
+        return Err(PeerError(format!(
+            "link: expected {expected:?}, received {actual:?}"
+        )));
     }
     Ok(())
 }
@@ -463,4 +498,26 @@ pub fn run_suite(ids: &[&str], pairs: &[Pair]) -> Vec<TdResult> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod link_grade_tests {
+    use super::*;
+
+    #[test]
+    fn exact_discovery_refuses_missing_extra_duplicate_and_truncated_links() {
+        let valid = site::LINK_CATALOG[1];
+        check_link_payload(Some(40), valid.as_bytes(), &[1]).unwrap();
+        for format in [None, Some(0), Some(50)] {
+            assert!(check_link_payload(format, valid.as_bytes(), &[1]).is_err());
+        }
+        for invalid in [
+            String::new(),
+            valid[..valid.len() - 1].to_owned(),
+            format!("{valid},{valid}"),
+            format!("{valid},{}", site::LINK_CATALOG[3]),
+        ] {
+            assert!(check_link_payload(Some(40), invalid.as_bytes(), &[1]).is_err());
+        }
+    }
 }
