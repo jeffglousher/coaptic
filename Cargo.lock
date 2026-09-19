@@ -1228,6 +1228,7 @@ dependencies = [
 name = "peer-coaptic"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "coaptic",
  "serde_json",
  "tokio",

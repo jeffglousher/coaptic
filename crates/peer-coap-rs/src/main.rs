@@ -1,5 +1,10 @@
 //! Isolated coap-rs peer, owning its old DTLS stack.
 #![forbid(unsafe_code)]
+macro_rules! conn_as_any {
+    () => {};
+}
+#[path = "../../../tools/interop/dtls_listener.rs"]
+mod dtls_listener;
 #[path = "../../../tools/interop/support.rs"]
 mod support;
 use coap::{Server, client::CoAPClient, request::RequestBuilder};
@@ -28,7 +33,8 @@ async fn run() -> Result<(), Error> {
     let start = Instant::now();
     if a.server {
         let server = if a.dtls {
-            let listener = webrtc_dtls::listener::listen(a.address(), config(&a.key)).await?;
+            let listener =
+                dtls_listener::BoundedListener::bind(a.address(), config(&a.key)).await?;
             let _ = listener.addr().await?;
             Server::from_listeners(vec![Box::new(TimedListener(listener))])
         } else {
