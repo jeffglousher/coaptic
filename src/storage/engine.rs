@@ -1493,6 +1493,35 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.start_block2(key, body, szx)
     }
 
+    /// Select a classic Block2 response range without advancing a transfer cursor.
+    /// Used by App for independently tokened RFC 7959 requests.
+    pub(crate) fn requested_block2(
+        &self,
+        id: SlotId,
+        requested: BlockValue,
+    ) -> Result<OutgoingBlock, BlockTransferError> {
+        let transfer = self
+            .storage
+            .tx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != BlockRole::OutgoingBlock2 || requested.is_bert() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let size = usize::from(requested.size());
+        let offset = usize::try_from(requested.num())
+            .ok()
+            .and_then(|n| n.checked_mul(size))
+            .ok_or(BlockTransferError::Overflow)?;
+        let total = transfer.filled();
+        if offset > total || (offset == total && total > 0) {
+            return Err(BlockTransferError::Gap);
+        }
+        let len = (total - offset).min(size);
+        let more = offset + len < total;
+        let block = BlockValue::new(requested.num(), more, requested.szx())?;
+        Ok(OutgoingBlock::new(id, block, offset, len, !more))
+    }
+
     /// Issue the next in-order outgoing Block2 range. Bytes stay in the body slot.
     #[inline]
     pub fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {

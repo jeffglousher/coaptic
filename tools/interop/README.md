@@ -1,0 +1,38 @@
+# Independent process interoperability
+
+Three separately built executables communicate only over loopback UDP/DTLS:
+
+- `peer-coaptic`: Coaptic App, webrtc-dtls 0.12 / util 0.11. No coap-rs dependency.
+- `peer-coap-rs`: coap 0.28.1, its own webrtc-dtls 0.8 / util 0.8. No Coaptic dependency.
+- `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; this initial matrix exercises PSK DTLS, not OSCORE.
+
+libcoap is BSD-2-Clause; its independent source/build is outside the published library. OpenSSL is a test-machine dependency. No C FFI or DTLS dependency enters Coaptic. Lockfile pins Rust peers; the C source pin is checked by CMake. These are test fixtures, with a public, non-production PSK (`sesame`).
+
+## Build and run
+
+Requires stable Rust, Python 3.10+, CMake 3.20+, a C compiler and OpenSSL development headers/libraries.
+
+```sh
+cargo build --locked --release -p peer-coaptic -p peer-coap-rs
+git init /tmp/libcoap
+git -C /tmp/libcoap fetch --depth 1 https://github.com/obgm/libcoap.git 7cf7465b784baded4de183290c547d582becfd28
+git -C /tmp/libcoap checkout --detach FETCH_HEAD
+cmake -S tools/interop/libcoap -B target/libcoap-peer -DLIBCOAP_SOURCE=/tmp/libcoap -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
+cmake --build target/libcoap-peer --parallel 2
+python3 -m unittest discover -s tools/interop -p 'test_*.py'
+python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --output target/process-interop.json
+```
+
+Windows: use MSVC (`-G "Visual Studio 17 2022" -A x64`, `--config Release`) and `.exe` paths. Without native OpenSSL, configure `-DENABLE_DTLS=OFF -DENABLE_OSCORE=OFF` and explicitly pass `--libcoap-udp-only`. The resulting report records the missing C-peer DTLS coverage; CI does not use this exception. Build directories may live on another drive.
+
+## Coverage and interpretation
+
+Both directions between Coaptic and each independent peer, plus Coaptic self-pair: GET exact bytes, 4.04 status, 2,000-byte Block2 assembly and repeated fresh client sessions. DTLS adds wrong-PSK refusal followed by successful service. Peer startup is bounded by 8 seconds; client deadline is bounded by its argument plus a process-kill margin. Children are always reaped. Server restarts reuse the same UDP port.
+
+A bounded UDP relay records actual datagrams and injects one lost response, one duplicate request, or a blackhole. Lost replies must cause observable retransmission. Counter POST followed by GET must prove exactly one handler effect under duplication/retransmission. Blackhole must return a protocol timeout, not a process crash or supervisor kill. Restart checks explicitly expect fresh in-memory fixture state; they make no storage durability claim.
+
+JSON schema `coaptic-process-interop/1` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Libcoap's clock has millisecond resolution. Never infer a performance ranking from CI smoke N=10, mixed debug/release builds, or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
+
+This complements the existing ETSI catalog/pcap harness. It does not replace its Observe, OSCORE, certificate, Q-Block, FETCH/PATCH or complete option checks. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
+
+The separate processes resolve #185's DTLS type coupling. Old DTLS dependencies remain solely for the old independent peer and legacy harness; their presence in the workspace lockfile is intentional. Reverting this slice removes the new executables/runner without changing their external dependencies globally.

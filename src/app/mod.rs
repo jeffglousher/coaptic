@@ -1620,6 +1620,10 @@ where
         }
     }
 
+    if meta.block2.is_some() && meta.q_block2.is_none() && response.code().is_success() {
+        return start_outgoing(engine, io, meta, response, ty, key, oscore_ctx);
+    }
+
     let Some(tx) = acquire_tx_or_evict(engine) else {
         return Err(Error::Saturated);
     };
@@ -1753,11 +1757,43 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
-    let issued = engine.next_block2(id).map_err(Error::Block)?;
+    let range = match meta.block2 {
+        Some(requested) => engine.requested_block2(id, requested),
+        None => engine.next_block2(id),
+    };
+    let issued = match range {
+        Ok(issued) => issued,
+        Err(BlockTransferError::Gap) => {
+            let _ = engine.release_tx_body(id);
+            let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
+            let error = Response::bad_request();
+            if let Err(e) = encode_response(
+                engine,
+                tx,
+                ty,
+                mid,
+                meta.token,
+                &error,
+                error.payload(),
+                None,
+                meta.block1,
+                oscore_ctx,
+                meta.oscore,
+            ) {
+                let _ = engine.release_tx(tx);
+                return Err(e);
+            }
+            return finish_send(engine, io, tx, meta.dest, pending);
+        }
+        Err(e) => return Err(Error::Block(e)),
+    };
     send_issued(
         engine, io, meta, response, ty, mid, issued, false, pending, oscore_ctx,
     )?;
-    if issued.complete() {
+    // Classic requests are independent exchanges and may change tokens. The
+    // handler supplies the representation for each request; retain state only
+    // for a notification whose body must survive until its follow-up blocks.
+    if issued.complete() || (pending.is_none() && response.observe_seq().is_none()) {
         let _ = engine.release_tx_body(id);
     }
     Ok(())

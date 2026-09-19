@@ -1,0 +1,11 @@
+[package]
+name = "peer-coaptic"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+coaptic = { path = "../..", features = ["std"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+webrtc-dtls = "0.12"
+webrtc-util = "0.11"

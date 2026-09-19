@@ -1,0 +1,109 @@
+//! Process-isolated Coaptic peer. No coap-rs types or dependencies.
+#![forbid(unsafe_code)]
+mod dtls;
+#[path = "../../../tools/interop/support.rs"]
+mod support;
+use coaptic::storage::{DatagramIo, Endpoint};
+use coaptic::{App, Method, Request, Response, get, profiles};
+use std::{
+    net::UdpSocket,
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
+};
+use support::{Args, Error};
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+fn count(_: Request<'_>) -> Response<'static> {
+    Response::content_copy(COUNTER.load(Ordering::SeqCst).to_string().as_bytes())
+}
+fn increment(_: Request<'_>) -> Response<'static> {
+    COUNTER.fetch_add(1, Ordering::SeqCst);
+    Response::changed()
+}
+enum Io {
+    Udp(UdpSocket),
+    Dtls(dtls::DtlsIo),
+}
+impl DatagramIo for Io {
+    type Error = std::io::Error;
+    fn recv(&mut self, b: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        match self {
+            Self::Udp(s) => DatagramIo::recv(s, b),
+            Self::Dtls(s) => s.recv(b),
+        }
+    }
+    fn send(&mut self, d: Endpoint, b: &[u8]) -> Result<usize, Self::Error> {
+        match self {
+            Self::Udp(s) => DatagramIo::send(s, d, b),
+            Self::Dtls(s) => s.send(d, b),
+        }
+    }
+}
+async fn run() -> Result<(), Error> {
+    let a = Args::parse()?;
+    let start = Instant::now();
+    let io = if a.dtls {
+        let config = dtls::psk_config(a.key.as_bytes());
+        if a.server {
+            // Explicit port: the parent reserves a unique port and probes readiness on wire.
+            let (_, io) = dtls::DtlsIo::listen_at(a.address(), config).await?;
+            Io::Dtls(io)
+        } else {
+            Io::Dtls(dtls::DtlsIo::connect(a.address(), config).await?)
+        }
+    } else {
+        let socket = UdpSocket::bind(if a.server {
+            a.address()
+        } else {
+            ([127, 0, 0, 1], 0).into()
+        })?;
+        socket.set_nonblocking(true)?;
+        Io::Udp(socket)
+    };
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .routes::<3>()
+        .route(
+            "/test",
+            get(|_: Request<'_>| Response::content(support::BODY)),
+        )
+        .route(
+            "/large",
+            get(|_: Request<'_>| Response::content(&support::LARGE)),
+        )
+        .route("/counter", get(count).post(increment))
+        .bind(io)
+        .map_err(|e| format!("bind: {e:?}"))?;
+    if a.server {
+        support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, a.dtls);
+        loop {
+            app.poll(start.elapsed().as_millis() as u64 + 1)
+                .map_err(|e| format!("poll: {e}"))?;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    let path = match a.path.as_str() {
+        "test" => &["test"][..],
+        "large" => &["large"][..],
+        "counter" => &["counter"][..],
+        _ => &["missing"][..],
+    };
+    let call = app
+        .request(if a.post { Method::Post } else { Method::Get }, path)
+        .to(Endpoint::from(a.address()))
+        .send(1)
+        .map_err(|e| format!("send: {e}"))?;
+    while start.elapsed() < Duration::from_millis(a.timeout) {
+        app.poll(start.elapsed().as_millis() as u64 + 1)
+            .map_err(|e| format!("poll: {e}"))?;
+        if let Some(r) = app.take_response(call) {
+            support::response(r.code().as_raw(), r.body().unwrap_or(r.payload()), start);
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Err("request timed out".into())
+}
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+async fn main() -> std::process::ExitCode {
+    support::finish(run().await)
+}

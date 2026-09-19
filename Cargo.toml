@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/coaptic-plugtest"]
+members = [".", "crates/coaptic-plugtest", "crates/peer-coaptic", "crates/peer-coap-rs"]
 default-members = ["."]
 resolver = "2"
 
