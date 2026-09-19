@@ -1,7 +1,7 @@
 //! HKDF-SHA-256 and AES-CCM-16-64-128. RustCrypto only; no hand-rolled AEAD.
 
 use aes::Aes128;
-use ccm::aead::{AeadInPlace, KeyInit, generic_array::GenericArray};
+use ccm::aead::{AeadInOut, KeyInit, Tag};
 use ccm::{
     Ccm,
     consts::{U8, U13},
@@ -63,13 +63,9 @@ pub(crate) fn seal(
         return Err(Error::BufferTooSmall);
     }
     out[..plaintext.len()].copy_from_slice(plaintext);
-    let cipher = Aes128Ccm::new(GenericArray::from_slice(key));
+    let cipher = Aes128Ccm::new(key.into());
     let tag = cipher
-        .encrypt_in_place_detached(
-            GenericArray::from_slice(nonce),
-            aad,
-            &mut out[..plaintext.len()],
-        )
+        .encrypt_inout_detached(nonce.into(), aad, (&mut out[..plaintext.len()]).into())
         .map_err(|_| Error::Encrypt)?;
     out[plaintext.len()..n].copy_from_slice(&tag);
     Ok(n)
@@ -90,15 +86,11 @@ pub(crate) fn open(
         return Err(Error::BufferTooSmall);
     }
     out[..pt_len].copy_from_slice(&ciphertext[..pt_len]);
-    let tag = GenericArray::from_slice(&ciphertext[pt_len..]);
-    let cipher = Aes128Ccm::new(GenericArray::from_slice(key));
+    let tag =
+        Tag::<Aes128Ccm>::try_from(&ciphertext[pt_len..]).map_err(|_| Error::MessageLength)?;
+    let cipher = Aes128Ccm::new(key.into());
     cipher
-        .decrypt_in_place_detached(
-            GenericArray::from_slice(nonce),
-            aad,
-            &mut out[..pt_len],
-            tag,
-        )
+        .decrypt_inout_detached(nonce.into(), aad, (&mut out[..pt_len]).into(), &tag)
         .map_err(|_| Error::Decrypt)?;
     Ok(pt_len)
 }

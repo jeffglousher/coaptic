@@ -9,3 +9,25 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      oscore-crypto:
+        patterns:
+          - aes
+          - ccm
+          - hkdf
+          - sha2
+      dtls-interop:
+        patterns:
+          - coap
+          - webrtc-dtls
+          - webrtc-util
+          - rustls
+    # coap 0.28.1 exposes DTLS 0.8 / util 0.8 / rustls 0.21 types.
+    # Revisit all three together when the interoperability peer migrates (#185).
+    ignore:
+      - dependency-name: webrtc-dtls
+        update-types: [version-update:semver-major]
+      - dependency-name: webrtc-util
+        update-types: [version-update:semver-major]
+      - dependency-name: rustls
+        update-types: [version-update:semver-major]
