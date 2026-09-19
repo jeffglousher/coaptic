@@ -23,8 +23,12 @@ updates:
           - webrtc-util
           - rustls
     # coap 0.28.1 exposes DTLS 0.8 / util 0.8 / rustls 0.21 types.
-    # Revisit all three together when the interoperability peer migrates (#185).
+    # Those versions remain in the legacy peer; peer-coaptic is independently
+    # on DTLS 0.12 / util 0.11. Qualify future majors with the process matrix (#191).
     ignore:
+      # aes 0.9.3 raises MSRV above the library Rust 1.85 contract.
+      - dependency-name: aes
+        versions: ["0.9.3"]
       - dependency-name: webrtc-dtls
         update-types: [version-update:semver-major]
       - dependency-name: webrtc-util

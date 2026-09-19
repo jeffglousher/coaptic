@@ -4097,3 +4097,67 @@ fn response_unknown_option_policy_precedes_completion_and_ack() {
         }
     }
 }
+
+#[test]
+fn block2_requests_with_new_tokens_select_requested_ranges_and_release_slots() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(&["large"], get(get_large))
+        .bind(WideLoopback::default())
+        .expect("bind");
+    // More independent requests than the TX body pool capacity, including
+    // backwards seeks and a smaller negotiated size. Tokens need not match.
+    for (i, num) in [2, 0, 1, 2, 3, 0].into_iter().enumerate() {
+        let block = BlockValue::from_size(num, false, 512)
+            .expect("block")
+            .encode();
+        let token = Token::from_checked(&[i as u8]);
+        let (wire, n) = encode_wide_token(
+            Code::GET,
+            &["large"],
+            &[Opt::block2(&block)],
+            0x7000 + i as u16,
+            token,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().send_n = 0;
+        app.poll(i as u64).expect("requested block");
+        let response = last_wide(&app);
+        let got = response.block2().unwrap().unwrap();
+        assert_eq!(got.num(), num);
+        assert_eq!(got.size(), 512);
+        assert_eq!(response.token(), token);
+        let offset = num as usize * 512;
+        let end = (offset + 512).min(LARGE.len());
+        assert_eq!(response.payload(), &LARGE[offset..end]);
+        assert_eq!(got.more(), end < LARGE.len());
+        assert!(
+            app.engine_mut()
+                .lookup_tx_body(BlockKey::new(token, peer))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn block2_outside_representation_refuses_without_retaining_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let block = BlockValue::from_size(100, false, 512).unwrap().encode();
+    let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::block2(&block)], 0x7100);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(&["large"], get(get_large))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(0).expect("bad range is a protocol rejection");
+    assert_eq!(last_wide(&app).code(), Code::BAD_REQUEST);
+    assert!(
+        app.engine_mut()
+            .lookup_tx_body(BlockKey::new(Token::from_checked(&[0xA1]), peer))
+            .is_none()
+    );
+}

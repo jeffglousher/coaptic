@@ -95,3 +95,11 @@ API: `cargo doc --open` (version tags also publish rustdoc to GitHub Pages; docs
 The crate is public. Pull requests to `main` must pass `fmt`, `clippy`, `test`, `doc`, and `package`. Merges are squash-only. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Licensed MIT OR Apache-2.0.
+
+### Independent peers and measurements
+
+[Process interoperability](https://github.com/jeffglousher/coaptic/blob/main/tools/interop/README.md) runs separately built Coaptic,
+coap-rs and pinned libcoap C executables over UDP/DTLS. It verifies both directions,
+block-wise responses, authentication refusal, deterministic packet loss/duplication,
+timeouts and process restart, and writes provenance-bearing JSON timing results.
+The existing plugtest suite retains the broader protocol coverage.

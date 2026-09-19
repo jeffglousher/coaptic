@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/coaptic-plugtest"]
+members = [".", "crates/coaptic-plugtest", "crates/peer-coaptic", "crates/peer-coap-rs"]
 default-members = ["."]
 resolver = "2"
 
@@ -26,7 +26,7 @@ include = [
     "tests/**",
     "LICENSE-APACHE",
     "LICENSE-MIT",
-    "README.md",
+    "/README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "rust-toolchain.toml",

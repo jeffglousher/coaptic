@@ -24,3 +24,6 @@ rustc-ice-*.txt
 #.idea/
 
 # knowledge/rfcs/*.pdf stay in the tree.
+
+# Python process harness bytecode
+__pycache__/
