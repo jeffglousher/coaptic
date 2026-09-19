@@ -20,7 +20,7 @@ git -C /tmp/libcoap checkout --detach FETCH_HEAD
 cmake -S tools/interop/libcoap -B target/libcoap-peer -DLIBCOAP_SOURCE=/tmp/libcoap -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
 cmake --build target/libcoap-peer --parallel 2
 python3 -m unittest discover -s tools/interop -p 'test_*.py'
-python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --output target/process-interop.json
+python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --build-note "all peers Release; record OS/compiler here" --output target/process-interop.json
 ```
 
 Windows: use MSVC (`-G "Visual Studio 17 2022" -A x64`, `--config Release`) and `.exe` paths. Without native OpenSSL, configure `-DENABLE_DTLS=OFF -DENABLE_OSCORE=OFF` and explicitly pass `--libcoap-udp-only`. The resulting report records the missing C-peer DTLS coverage; CI does not use this exception. Build directories may live on another drive.
@@ -35,4 +35,35 @@ JSON schema `coaptic-process-interop/1` records source/dirty state, platform, ex
 
 This complements the existing ETSI catalog/pcap harness. It does not replace its Observe, OSCORE, certificate, Q-Block, FETCH/PATCH or complete option checks. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
 
-The separate processes resolve #185's DTLS type coupling. Old DTLS dependencies remain solely for the old independent peer and legacy harness; their presence in the workspace lockfile is intentional. Reverting this slice removes the new executables/runner without changing their external dependencies globally.
+Old DTLS dependencies remain isolated to the legacy peer and harness. Their
+known advisory debt is tracked in [#193](https://github.com/jeffglousher/coaptic/issues/193).
+Library dependencies and peer dependency versions need not match.
+
+## Tested surface
+
+The full run contains 22 scenario results:
+
+- Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
+  Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
+  exact GET bytes, 4.04, 2,000-byte Block2 and repeated fresh clients. DTLS also
+  checks wrong-key refusal and subsequent valid service.
+- Twelve UDP reliability scenarios: each of the three clients against a Coaptic
+  server, with dropped reply, duplicated request, blackhole and server restart.
+  This does not test faults against alternative servers or over DTLS.
+
+Only the repeated small GET (17-byte payload) is benchmarked. Block2, refusal and
+fault checks establish correctness; they are not throughput benchmarks. Each
+sample creates a fresh client process. Adapter polling and session setup are part
+of the result, so these timings do not isolate engine execution cost.
+
+Not measured here: warm sessions, concurrent/saturated load, CPU or memory cost,
+OSCORE performance across independent stacks, real radios/WANs, long soaks,
+combined loss/reordering/delay, or durable state recovery. Compiling a libcoap
+feature does not establish interoperability coverage for it.
+
+To inspect a retained CI result, download `process-interop` from its workflow run.
+Check `source`, `dirty`, `build_note`, executable hashes and `iterations` before
+comparing `benchmarks`. Report request and host timings separately, retain failure
+counts, and accompany numbers with the scenario scope above. Checked-in dogfood
+baselines belong to a different harness and are coverage floors, not current
+process measurements.
