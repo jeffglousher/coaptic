@@ -92,8 +92,15 @@ impl Id {
 /// Pairwise OSCORE context: keys, Sender Sequence Number, replay window.
 ///
 /// You own this value. [`crate::App`] stores it only after
-/// [`crate::App::set_oscore`].
-#[derive(Clone)]
+/// [`crate::App::set_oscore`]. A live context is intentionally not `Clone`:
+/// copying its sender state could reuse a nonce (RFC 8613 section 7.2.1).
+///
+/// ```compile_fail
+/// # use coaptic::oscore::SecurityContext;
+/// fn duplicate(context: SecurityContext) {
+///     let _duplicate = context.clone();
+/// }
+/// ```
 pub struct SecurityContext {
     sender_id: Id,
     recipient_id: Id,
@@ -239,9 +246,23 @@ impl SecurityContext {
         self.sender_seq
     }
 
-    /// Set the next Sender Sequence Number (reboot / test vectors).
-    pub const fn set_sender_seq(&mut self, seq: u64) {
+    /// Advance the next Sender Sequence Number, for example past a durably
+    /// reserved range after reboot (RFC 8613 section 7.5 and Appendix B.1).
+    ///
+    /// Refuses rollback and values beyond the exhausted sentinel `2^40`.
+    /// Refusal leaves the context unchanged. This does not persist state:
+    /// the caller must durably reserve numbers before using them and restore
+    /// recipient replay protection separately. Deriving the same context again
+    /// starts at zero and is not a safe restart procedure by itself.
+    pub const fn set_sender_seq(&mut self, seq: u64) -> Result<(), Error> {
+        if seq < self.sender_seq {
+            return Err(Error::SequenceRollback);
+        }
+        if seq > (1u64 << 40) {
+            return Err(Error::SequenceExhausted);
+        }
         self.sender_seq = seq;
+        Ok(())
     }
 
     /// Whether `kid` (and optional `kid context`) selects this Recipient Context.
