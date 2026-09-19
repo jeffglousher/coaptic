@@ -10,8 +10,8 @@ use core::fmt;
 /// [`crate::Call`].
 ///
 /// This type does not use [`std::net`] on the default `no_std` path. The
-/// `std` feature adds conversions. IPv6 flowinfo and scope id are not
-/// stored; they are zero when converting to [`std::net::SocketAddrV6`].
+/// `std` feature adds conversions. IPv6 scope identifiers are retained as
+/// part of peer identity; flow information is not retained and converts to zero.
 ///
 /// ```
 /// use coaptic::Endpoint;
@@ -23,8 +23,8 @@ use core::fmt;
 pub enum Endpoint {
     /// IPv4 address and UDP port (network-order octets).
     V4([u8; 4], u16),
-    /// IPv6 address and UDP port (network-order octets).
-    V6([u8; 16], u16),
+    /// IPv6 address, UDP port and scope identifier (network-order address octets).
+    V6([u8; 16], u16, u32),
 }
 
 impl Endpoint {
@@ -37,14 +37,29 @@ impl Endpoint {
     /// IPv6 endpoint.
     #[must_use]
     pub const fn v6(addr: [u8; 16], port: u16) -> Self {
-        Self::V6(addr, port)
+        Self::V6(addr, port, 0)
+    }
+
+    /// IPv6 endpoint with an interface/zone scope identifier.
+    #[must_use]
+    pub const fn v6_scoped(addr: [u8; 16], port: u16, scope_id: u32) -> Self {
+        Self::V6(addr, port, scope_id)
+    }
+
+    /// IPv6 scope identifier, or zero for IPv4.
+    #[must_use]
+    pub const fn scope_id(self) -> u32 {
+        match self {
+            Self::V6(_, _, scope) => scope,
+            Self::V4(_, _) => 0,
+        }
     }
 
     /// UDP port.
     #[must_use]
     pub const fn port(self) -> u16 {
         match self {
-            Self::V4(_, port) | Self::V6(_, port) => port,
+            Self::V4(_, port) | Self::V6(_, port, _) => port,
         }
     }
 
@@ -53,15 +68,16 @@ impl Endpoint {
     pub const fn as_ipv4(self) -> Option<([u8; 4], u16)> {
         match self {
             Self::V4(addr, port) => Some((addr, port)),
-            Self::V6(_, _) => None,
+            Self::V6(_, _, _) => None,
         }
     }
 
     /// IPv6 octets and port, if this is [`Self::V6`].
+    /// Use [`Self::scope_id`] for its zone identifier.
     #[must_use]
     pub const fn as_ipv6(self) -> Option<([u8; 16], u16)> {
         match self {
-            Self::V6(addr, port) => Some((addr, port)),
+            Self::V6(addr, port, _) => Some((addr, port)),
             Self::V4(_, _) => None,
         }
     }
@@ -73,7 +89,7 @@ impl fmt::Display for Endpoint {
             Self::V4(addr, port) => {
                 write!(f, "{}.{}.{}.{}:{port}", addr[0], addr[1], addr[2], addr[3])
             }
-            Self::V6(addr, port) => {
+            Self::V6(addr, port, scope) => {
                 write!(f, "[")?;
                 for (i, chunk) in addr.chunks_exact(2).enumerate() {
                     if i > 0 {
@@ -81,6 +97,9 @@ impl fmt::Display for Endpoint {
                     }
                     let group = u16::from_be_bytes([chunk[0], chunk[1]]);
                     write!(f, "{group:x}")?;
+                }
+                if scope != 0 {
+                    write!(f, "%{scope}")?;
                 }
                 write!(f, "]:{port}")
             }
@@ -98,7 +117,7 @@ impl From<std::net::SocketAddrV4> for Endpoint {
 #[cfg(feature = "std")]
 impl From<std::net::SocketAddrV6> for Endpoint {
     fn from(addr: std::net::SocketAddrV6) -> Self {
-        Self::V6(addr.ip().octets(), addr.port())
+        Self::V6(addr.ip().octets(), addr.port(), addr.scope_id())
     }
 }
 
@@ -119,8 +138,8 @@ impl From<Endpoint> for std::net::SocketAddr {
             Endpoint::V4(octets, port) => {
                 std::net::SocketAddr::V4(std::net::SocketAddrV4::new(octets.into(), port))
             }
-            Endpoint::V6(octets, port) => {
-                std::net::SocketAddr::V6(std::net::SocketAddrV6::new(octets.into(), port, 0, 0))
+            Endpoint::V6(octets, port, scope) => {
+                std::net::SocketAddr::V6(std::net::SocketAddrV6::new(octets.into(), port, 0, scope))
             }
         }
     }
@@ -163,6 +182,12 @@ mod tests {
         );
         let loopback = Endpoint::v6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 5683);
         assert_eq!(loopback.to_string(), "[0:0:0:0:0:0:0:1]:5683");
+        let scoped = Endpoint::v6_scoped(
+            [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            5683,
+            2,
+        );
+        assert_eq!(scoped.to_string(), "[fe80:0:0:0:0:0:0:1%2]:5683");
     }
 
     #[cfg(feature = "std")]
@@ -194,16 +219,18 @@ mod tests {
         assert_eq!(Endpoint::from(sock6), v6);
 
         let scoped = SocketAddrV6::new(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1), 5683, 7, 2);
-        let stripped = Endpoint::from(scoped);
-        assert_eq!(
-            stripped,
-            Endpoint::v6([0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 5683)
+        let retained = Endpoint::from(scoped);
+        assert_eq!(retained.scope_id(), 2);
+        let other_scope = Endpoint::v6_scoped(scoped.ip().octets(), 5683, 3);
+        assert_ne!(
+            retained, other_scope,
+            "same address on different interfaces is a different peer"
         );
-        let back: SocketAddr = stripped.into();
+        let back: SocketAddr = retained.into();
         match back {
             SocketAddr::V6(v) => {
                 assert_eq!(v.flowinfo(), 0);
-                assert_eq!(v.scope_id(), 0);
+                assert_eq!(v.scope_id(), 2);
             }
             SocketAddr::V4(_) => panic!("expected v6"),
         }

@@ -73,6 +73,17 @@ impl Capture {
     /// Ephemeral ports stay in the file; the grader wildcards them. Message
     /// ID / Token live in the CoAP payload and are not rewritten.
     pub fn write_pcap(&self, mut w: impl std::io::Write) -> std::io::Result<()> {
+        let packets = self.snapshot();
+        if packets
+            .iter()
+            .filter(|p| !p.decrypted)
+            .any(|p| !p.src.is_ipv4() || !p.dst.is_ipv4() || p.bytes.len() > 65_507)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "IPv4 capture requires IPv4 endpoints and a legal UDP payload length",
+            ));
+        }
         // magic, v2.4, thiszone, sigfigs, snaplen, LINKTYPE_RAW
         w.write_all(&0xa1b2c3d4u32.to_le_bytes())?;
         w.write_all(&2u16.to_le_bytes())?;
@@ -81,7 +92,7 @@ impl Capture {
         w.write_all(&0u32.to_le_bytes())?;
         w.write_all(&0xffffu32.to_le_bytes())?;
         w.write_all(&101u32.to_le_bytes())?;
-        for pkt in self.snapshot() {
+        for pkt in packets {
             if pkt.decrypted {
                 continue;
             }
@@ -223,6 +234,28 @@ pub fn bind_loopback() -> std::io::Result<(UdpSocket, SocketAddr)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pcap_refuses_ipv6_and_oversize_instead_of_fabricating_ipv4_evidence() {
+        for (src, body) in [
+            ("[fe80::1%2]:5683", vec![0; 4]),
+            ("127.0.0.1:5683", vec![0; 65_508]),
+        ] {
+            let cap = Capture::new();
+            cap.push(
+                src.parse().unwrap(),
+                "127.0.0.1:5684".parse().unwrap(),
+                &body,
+                false,
+            );
+            let mut bytes = Vec::new();
+            assert_eq!(
+                cap.write_pcap(&mut bytes).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput
+            );
+            assert!(bytes.is_empty());
+        }
+    }
 
     #[test]
     fn pcap_records_have_consistent_endian_and_valid_ipv4_udp_layout() {
