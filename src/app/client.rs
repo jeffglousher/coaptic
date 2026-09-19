@@ -588,7 +588,7 @@ where
         self
     }
 
-    /// Accept option.
+    /// Accept option, retained on every Block1, Q-Block1 and Block2 request.
     #[must_use]
     pub const fn accept(mut self, format: ContentFormat) -> Self {
         self.accept = Some(format);
@@ -596,6 +596,8 @@ where
     }
 
     /// ETag option (conditional GET / validation).
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`]; conditional upload retention is not implemented.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
@@ -603,6 +605,8 @@ where
     }
 
     /// If-Match option.
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
     #[must_use]
     pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
         self.if_match = Some(tag);
@@ -610,6 +614,8 @@ where
     }
 
     /// If-None-Match option.
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -618,7 +624,8 @@ where
 
     /// Append a Uri-Query value. Total query bytes are bounded to 256 at send;
     /// each value is bounded to 255 bytes. Empty values are ignored. More than
-    /// [`super::MAX_PATH_SEGMENTS`] values are rejected at send.
+    /// [`super::MAX_PATH_SEGMENTS`] values are rejected at send. Values and
+    /// their order are retained across Block1, Q-Block1 and Block2 requests.
     #[must_use]
     pub fn query(mut self, value: &'a str) -> Self {
         if value.is_empty() {
@@ -876,6 +883,14 @@ where
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+            // These conditions cannot be dropped while changing to Block1.
+            // Until the App retains their transfer-specific semantics, refuse
+            // fragmentation instead of turning a conditional write into an
+            // unconditional one (RFC 7959 section 2.10).
+            if spec.if_match.is_some() || spec.if_none_match || spec.etag.is_some() {
+                let _ = engine.release_tx(tx);
+                return Err(Error::ConditionalUploadUnsupported);
+            }
             // Inner Block-wise: fragment first, then protect each
             // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
             // Protocol protect failures are `Error::Oscore`, not this arm.
@@ -890,6 +905,8 @@ where
                 spec.code,
                 spec.token,
                 spec.path,
+                spec.queries,
+                spec.accept,
                 spec.payload,
                 spec.content_format,
                 spec.q_block1,
@@ -915,6 +932,8 @@ fn send_client_block1<Mem, T>(
     code: Code,
     token: Token,
     path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
     payload: &[u8],
     content_format: Option<ContentFormat>,
     q_block1: bool,
@@ -955,6 +974,8 @@ where
             code,
             token,
             path,
+            queries,
+            accept,
             content_format,
             body,
             Some(tx),
@@ -973,6 +994,8 @@ where
             code,
             token,
             path,
+            queries,
+            accept,
             content_format,
             body,
             Some(tx),
@@ -1421,6 +1444,15 @@ where
     let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
+    let mut queries = [""; MAX_PATH_SEGMENTS];
+    let mut query_n = 0;
+    if let Some(live) = live.as_ref() {
+        for query in live.queries.values() {
+            queries[query_n] = query;
+            query_n += 1;
+        }
+    }
+    let accept = live.and_then(|live| live.accept);
     match transfer.role() {
         BlockRole::OutgoingBlock1 => {
             take_exchange(engine, parsed, peer);
@@ -1435,6 +1467,8 @@ where
                 code,
                 parsed.token(),
                 segments,
+                &queries[..query_n],
+                accept,
                 content_format,
                 body,
                 None,
@@ -1455,6 +1489,8 @@ where
                 code,
                 parsed.token(),
                 segments,
+                &queries[..query_n],
+                accept,
                 content_format,
                 body,
                 None,
@@ -1478,6 +1514,8 @@ fn issue_block1<Mem, T>(
     code: Code,
     token: Token,
     path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     body: SlotId,
     tx: Option<SlotId>,
@@ -1498,6 +1536,8 @@ where
         code,
         token,
         path,
+        queries,
+        accept,
         content_format,
         issued,
         false,
@@ -1517,6 +1557,8 @@ fn issue_q_block1_window<Mem, T>(
     code: Code,
     token: Token,
     path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     body: SlotId,
     mut tx: Option<SlotId>,
@@ -1555,6 +1597,8 @@ where
             code,
             token,
             path,
+            queries,
+            accept,
             content_format,
             issued,
             true,
@@ -1580,6 +1624,8 @@ fn send_block1_issued<Mem, T>(
     code: Code,
     token: Token,
     path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     issued: OutgoingBlock,
     q_block1: bool,
@@ -1601,6 +1647,7 @@ where
     };
     let mid = ids.next();
     let cf = content_format.map(ContentFormat::encode);
+    let acc = accept.map(ContentFormat::encode);
     let blk = issued.block().encode();
     let size = size1.map(encode_uint);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
@@ -1610,6 +1657,12 @@ where
         }
         if let Some(ref encoded) = cf {
             push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        for query in queries {
+            push_opt(&mut opts, Opt::uri_query(query))?;
+        }
+        if let Some(ref encoded) = acc {
+            push_opt(&mut opts, Opt::accept(encoded))?;
         }
         if q_block1 {
             push_opt(&mut opts, Opt::q_block1(&blk))?;

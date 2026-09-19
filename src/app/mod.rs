@@ -2667,6 +2667,10 @@ pub enum Error<E> {
     Block(BlockTransferError),
     /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
     Path,
+    /// The payload requires fragmentation, but App cannot retain its ETag,
+    /// If-Match or If-None-Match semantics. Nothing has been sent. Use a payload
+    /// fitting one datagram or construct a conditional transfer with [`Engine`].
+    ConditionalUploadUnsupported,
     /// OSCORE protect / unprotect failed (feature `oscore`).
     #[cfg(feature = "oscore")]
     Oscore(crate::oscore::Error),
@@ -2708,6 +2712,9 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            Self::ConditionalUploadUnsupported => {
+                f.write_str("conditional fragmented uploads are unsupported")
+            }
             #[cfg(feature = "oscore")]
             Self::Oscore(e) => write!(f, "{e}"),
         }
@@ -2726,7 +2733,7 @@ where
             Self::Message(e) => Some(e),
             Self::Saturated => None,
             Self::Block(e) => Some(e),
-            Self::Path => None,
+            Self::Path | Self::ConditionalUploadUnsupported => None,
             #[cfg(feature = "oscore")]
             Self::Oscore(e) => Some(e),
         }

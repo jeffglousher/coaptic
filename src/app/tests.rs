@@ -4265,3 +4265,194 @@ fn excess_query_count_is_refused_instead_of_silently_dropped() {
     assert_eq!(app.transport().len, 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
+
+#[test]
+fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
+    struct CheckedUpload {
+        pipe: Pipe,
+        requests: usize,
+        assembled: [u8; 2000],
+        filled: usize,
+    }
+    impl Default for CheckedUpload {
+        fn default() -> Self {
+            Self {
+                pipe: Pipe::default(),
+                requests: 0,
+                assembled: [0; 2000],
+                filled: 0,
+            }
+        }
+    }
+    impl DatagramIo for CheckedUpload {
+        type Error = &'static str;
+        fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.pipe.recv(buf)
+        }
+        fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            let parsed = decode(bytes).unwrap();
+            if parsed.code() == Code::PUT {
+                let mut queries = parsed.uri_query();
+                assert_eq!(queries.next(), Some(Ok("target=one")));
+                assert_eq!(queries.next(), Some(Ok("version=2")));
+                assert_eq!(queries.next(), None);
+                assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(
+                    parsed.content_format(),
+                    Some(Ok(ContentFormat::OCTET_STREAM))
+                );
+                let block = parsed
+                    .block1()
+                    .or_else(|| parsed.q_block1())
+                    .unwrap()
+                    .unwrap();
+                let offset = block.num() as usize * usize::from(block.size());
+                assert_eq!(offset, self.filled);
+                self.assembled[offset..offset + parsed.payload().len()]
+                    .copy_from_slice(parsed.payload());
+                self.filled += parsed.payload().len();
+                self.requests += 1;
+            }
+            self.pipe.send(dest, bytes)
+        }
+    }
+    for qblock in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<true>()
+            .route(
+                "upload",
+                put(|req: Request<'_>| {
+                    assert_eq!(req.body().unwrap(), &LARGE[..]);
+                    Response::changed()
+                }),
+            )
+            .bind(CheckedUpload::default())
+            .unwrap();
+        let mut request = app
+            .put("upload")
+            .to(Endpoint::v4([192, 0, 2, 2], 5683))
+            .query("target=one")
+            .query("version=2")
+            .accept(ContentFormat::OCTET_STREAM)
+            .content_format(ContentFormat::OCTET_STREAM)
+            .payload(&LARGE);
+        if qblock {
+            request = request.q_block1();
+        }
+        let call = request.send(0).unwrap();
+        let mut complete = false;
+        for now in 0..100 {
+            app.poll(now).unwrap();
+            if let Some(response) = app.take_response(call) {
+                assert_eq!(response.code(), Code::CHANGED);
+                complete = true;
+                break;
+            }
+        }
+        assert!(complete);
+        assert!(app.transport().requests > 1);
+        assert_eq!(
+            &app.transport().assembled[..app.transport().filled],
+            &LARGE[..]
+        );
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn upload_query_overflow_refuses_without_io_or_body_allocation() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let long = [b'x'; 257];
+    let text = core::str::from_utf8(&long).unwrap();
+    for qblock in [false, true] {
+        for count_overflow in [false, true] {
+            let mut app = pipe_app();
+            let mut outgoing = app.put("upload").to(peer).payload(&LARGE);
+            if qblock {
+                outgoing = outgoing.q_block1();
+            }
+            if count_overflow {
+                for _ in 0..9 {
+                    outgoing = outgoing.query("x=1");
+                }
+            } else {
+                outgoing = outgoing.query(&text[..255]).query(&text[..2]);
+            }
+            assert_eq!(
+                outgoing.send(0),
+                Err(Error::Message(SlotMessageError::Encode(
+                    EncodeError::OptionValueTooLong
+                )))
+            );
+            assert_eq!(app.transport().len, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            // A rejected upload must not consume the bounded outgoing body pool
+            // or live-call admission: all normal block-wise work still completes.
+            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        for condition in 0..3 {
+            let mut app = pipe_app();
+            let mut request = app.put("upload").to(peer).payload(&LARGE);
+            if qblock {
+                request = request.q_block1();
+            }
+            request = match condition {
+                0 => request.if_match(b"version"),
+                1 => request.if_none_match(),
+                _ => request.etag(b"version"),
+            };
+            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+            assert_eq!(
+                app.transport().len,
+                0,
+                "no unconditional fragment may escape"
+            );
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        }
+    }
+}
+
+#[test]
+fn single_datagram_conditional_upload_preserves_conditions() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for condition in 0..3 {
+        let mut app = pipe_app();
+        let request = app.put("upload").to(peer).payload(b"small");
+        let request = match condition {
+            0 => request.if_match(b"version"),
+            1 => request.if_none_match(),
+            _ => request.etag(b"version"),
+        };
+        request.send(0).unwrap();
+        let (_, bytes, n) = app.transport().slots[0].as_ref().unwrap();
+        let message = decode(&bytes[..*n]).unwrap();
+        assert_eq!(message.payload(), b"small");
+        assert!(message.block1().is_none());
+        let option = match condition {
+            0 => OptionNumber::IF_MATCH,
+            1 => OptionNumber::IF_NONE_MATCH,
+            _ => OptionNumber::ETAG,
+        };
+        assert_eq!(
+            message.get_option(option).map(Opt::value),
+            Some(if condition == 1 {
+                &b""[..]
+            } else {
+                &b"version"[..]
+            })
+        );
+    }
+}
