@@ -1,4 +1,13 @@
 //! Modern DTLS socket adapter owned only by the Coaptic executable.
+macro_rules! conn_as_any {
+    () => {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    };
+}
+#[path = "../../../tools/interop/dtls_listener.rs"]
+pub(crate) mod listener;
 use coaptic::storage::{DatagramIo, Endpoint};
 use std::{
     collections::HashMap,
@@ -8,35 +17,21 @@ use std::{
 };
 use tokio::sync::mpsc as tmpsc;
 use webrtc_dtls::{cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn};
-use webrtc_util::conn::{Conn, Listener};
+use webrtc_util::conn::Conn;
 type Routes = Arc<Mutex<HashMap<SocketAddr, tmpsc::Sender<Vec<u8>>>>>;
 pub struct DtlsIo {
     incoming: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
     routes: Routes,
 }
 impl DtlsIo {
-    pub async fn listen_at(addr: SocketAddr, config: Config) -> Result<(SocketAddr, Self), String> {
-        let listener = webrtc_dtls::listener::listen(addr, config)
-            .await
-            .map_err(|e| e.to_string())?;
+    pub fn accepted(conn: Arc<dyn Conn + Send + Sync>, peer: SocketAddr) -> Self {
         let (tx, rx) = mpsc::sync_channel(64);
         let routes: Routes = Arc::default();
-        let map = routes.clone();
-        tokio::spawn(async move {
-            loop {
-                match tokio::time::timeout(Duration::from_secs(2), listener.accept()).await {
-                    Ok(Ok((conn, peer))) => attach(conn, peer, tx.clone(), map.clone()),
-                    _ => tokio::time::sleep(Duration::from_millis(10)).await,
-                }
-            }
-        });
-        Ok((
-            addr,
-            Self {
-                incoming: rx,
-                routes,
-            },
-        ))
+        attach(conn, peer, tx, routes.clone());
+        Self {
+            incoming: rx,
+            routes,
+        }
     }
     pub async fn connect(
         addr: SocketAddr,
@@ -70,11 +65,16 @@ fn attach(
     let (out, mut rx) = tmpsc::channel::<Vec<u8>>(64);
     {
         let mut map = routes.lock().expect("routes");
-        if map.len() >= 128 {
+        if map.len() >= 128 && !map.contains_key(&peer) {
+            tokio::spawn(async move {
+                let _ = conn.close().await;
+            });
             return;
         }
-        map.insert(peer, out);
+        map.insert(peer, out.clone());
     }
+    let route = out.downgrade();
+    drop(out);
     tokio::spawn(async move {
         let mut buf = [0; 4096];
         loop {
@@ -85,9 +85,22 @@ fn attach(
                 outgoing=rx.recv()=>match outgoing {Some(bytes)=>{if conn.send(&bytes).await.is_err(){break;}},None=>break}
             }
         }
-        routes.lock().expect("routes").remove(&peer);
+        {
+            let mut map = routes.lock().expect("routes");
+            if route.upgrade().is_some_and(|old| {
+                map.get(&peer)
+                    .is_some_and(|current| current.same_channel(&old))
+            }) {
+                map.remove(&peer);
+            }
+        }
         let _ = conn.close().await;
     });
+}
+impl Drop for DtlsIo {
+    fn drop(&mut self) {
+        self.routes.lock().expect("routes").clear();
+    }
 }
 impl DatagramIo for DtlsIo {
     type Error = std::io::Error;

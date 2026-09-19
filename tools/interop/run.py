@@ -168,7 +168,7 @@ class Proxy:
                     except ConnectionResetError:
                         # Windows reports late ICMP port-unreachable when a
                         # one-shot client exits after the first duplicate reply.
-                        if self.mode == "duplicate-request" and sock is self.front:
+                        if self.mode in ("duplicate-request", "dtls-reconnect") and sock is self.front:
                             continue
                         raise
                     incoming = sock is self.front
@@ -176,7 +176,7 @@ class Proxy:
                         raise RuntimeError("unexpected proxy upstream")
                     action = "forward"
                     if incoming:
-                        if client is not None and source != client:
+                        if client is not None and source != client and self.mode != "dtls-reconnect":
                             raise RuntimeError("multiple clients in single-request fault proxy")
                         client = source
                     if self.mode == "blackhole":
@@ -185,7 +185,7 @@ class Proxy:
                         action, dropped = "drop", True
                     elif self.mode == "duplicate-request" and incoming and not duplicated:
                         action, duplicated = "duplicate", True
-                    if len(self.trace) >= 256:
+                    if len(self.trace) >= (8192 if self.mode == "dtls-reconnect" else 256):
                         raise RuntimeError("proxy trace limit exceeded")
                     self.trace.append({"direction": "request" if incoming else "response",
                                        "action": action, "hex": data.hex()})
@@ -269,7 +269,7 @@ def main():
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
               "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
-              "limitations": ["PSK DTLS only; OSCORE/Observe/certificate scenarios remain in the existing harness; no claim of full ETSI coverage"],
+              "limitations": ["PSK DTLS only; this suite does not qualify OSCORE, Observe or certificates; no claim of full ETSI coverage"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "cases": [], "benchmarks": []}
     if args.libcoap_udp_only:
@@ -310,6 +310,35 @@ def main():
                         expect(request(peers[client], transport, service.number))
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
             case(label, matrix)
+
+    # The relay preserves one server-visible UDP endpoint across fresh clients.
+    for server in ("coaptic", "coap-rs"):
+        for client in peers:
+            if client == "libcoap" and args.libcoap_udp_only:
+                continue
+            def reconnect(server=server, client=client):
+                with Server(peers[server], "dtls") as service:
+                    with Proxy(service.number, "dtls-reconnect") as relay:
+                        for _ in range(3):
+                            expect(request(peers[client], "dtls", relay.number))
+                        refused = request(peers[client], "dtls", relay.number, key="incorrect", timeout=1500)
+                        if refused["exit_code"] == 0:
+                            raise AssertionError("wrong-key reconnect unexpectedly succeeded")
+                        expect(request(peers[client], "dtls", relay.number))
+                        endpoint = relay.back.getsockname()
+                return {"server_endpoint": endpoint, "successful_connections": 4,
+                        "wrong_key_result": refused, "trace": relay.trace}
+            case(f"dtls-reconnect:{client}->{server}", reconnect)
+        def churn(server=server):
+            with Server(peers[server], "dtls") as service:
+                with Proxy(service.number, "dtls-reconnect") as relay:
+                    for _ in range(140):
+                        expect(request(peers["coaptic"], "dtls", relay.number, path="counter", method="POST"), 68, b"")
+                    expect(request(peers["coaptic"], "dtls", relay.number, path="counter"), 69, b"140")
+                    endpoint = relay.back.getsockname()
+            return {"server_endpoint": endpoint, "connections": 141,
+                    "verified": "140 distinct authenticated POST effects across reused endpoint", "trace": relay.trace}
+        case(f"dtls-churn:coaptic->{server}", churn)
 
     # Fault tests target Coaptic's guarantees; alternative clients remain independent.
     for client in peers:

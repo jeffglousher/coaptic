@@ -41,7 +41,7 @@ Library dependencies and peer dependency versions need not match.
 
 ## Tested surface
 
-The full run contains 22 scenario results:
+The full run contains 30 scenario results (26 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -49,7 +49,23 @@ The full run contains 22 scenario results:
   checks wrong-key refusal and subsequent valid service.
 - Twelve UDP reliability scenarios: each of the three clients against a Coaptic
   server, with dropped reply, duplicated request, blackhole and server restart.
-  This does not test faults against alternative servers or over DTLS.
+  This does not test datagram loss against alternative servers or over DTLS.
+- Six DTLS endpoint-reuse scenarios: each client against each Rust server, using
+ a relay with one fixed server-visible UDP endpoint. Three fresh authenticated
+ connections, one wrong-key refusal, then another successful connection.
+- Two DTLS churn scenarios: 140 fresh authenticated counter POSTs and a GET
+ proving all 140 effects, at one reused endpoint, against each Rust server.
+
+The Rust fixture listeners share routing source, compiled independently against
+their respective DTLS versions. Routing preserves the active association until
+the backend verifies a replacement handshake (RFC 6347 section 4.2.8). Bounds:
+128 peer endpoints, 16 pending handshakes, 32 packets per route, 4,096-byte
+datagrams, two-second handshake deadline and 30-second route idle deadline.
+Initial fragmented ClientHello messages are unsupported by these PSK fixtures.
+Unit tests in both peers cover unverified replacement preserving an active
+association, malformed routing input, pending capacity/timeout reclamation,
+stale cleanup and listener shutdown. These are fixture tests, not a general
+DTLS implementation qualification.
 
 Only the repeated small GET (17-byte payload) is benchmarked. Block2, refusal and
 fault checks establish correctness; they are not throughput benchmarks. Each
