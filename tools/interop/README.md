@@ -31,9 +31,9 @@ Both directions between Coaptic and each independent peer, plus Coaptic self-pai
 
 A bounded UDP relay records actual datagrams and injects one lost response, one duplicate request, or a blackhole. Lost replies must cause observable retransmission. Counter POST followed by GET must prove exactly one handler effect under duplication/retransmission. Blackhole must return a protocol timeout, not a process crash or supervisor kill. Restart checks explicitly expect fresh in-memory fixture state; they make no storage durability claim.
 
-JSON schema `coaptic-process-interop/1` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Libcoap's clock has millisecond resolution. Never infer a performance ranking from CI smoke N=10, mixed debug/release builds, or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
+JSON schema `coaptic-process-interop/2` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Peer protocol `coaptic-peer/2` requires integer nanosecond samples and clock metadata. Libcoap uses `CLOCK_MONOTONIC` on POSIX and `QueryPerformanceCounter` on Windows; Rust uses `Instant` (its resolution is reported as unknown). All peers stop timing before JSON formatting. Raw request/host samples and nanosecond summaries are retained; microsecond summaries are derived without integer truncation. OS-reported clock resolution is not measurement accuracy. Old peer executables are rejected: rebuild all peers with this runner. Default and CI use 100 samples per pairing, still a smoke benchmark. Never infer a performance ranking from mixed debug/release builds or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
 
-This complements the existing ETSI catalog/pcap harness. It does not replace its Observe, OSCORE, certificate, Q-Block, FETCH/PATCH or complete option checks. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
+This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, OSCORE, certificates, Q-Block, FETCH/PATCH or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
 
 Old DTLS dependencies remain isolated to the legacy peer and harness. Their
 known advisory debt is tracked in [#193](https://github.com/jeffglousher/coaptic/issues/193).
@@ -41,7 +41,7 @@ Library dependencies and peer dependency versions need not match.
 
 ## Tested surface
 
-The full run contains 22 scenario results:
+The full run contains 31 scenario results (26 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -49,7 +49,30 @@ The full run contains 22 scenario results:
   checks wrong-key refusal and subsequent valid service.
 - Twelve UDP reliability scenarios: each of the three clients against a Coaptic
   server, with dropped reply, duplicated request, blackhole and server restart.
-  This does not test faults against alternative servers or over DTLS.
+  This does not test datagram loss against alternative servers or over DTLS.
+- Six DTLS endpoint-reuse scenarios: each client against each Rust server, using
+ a relay with one fixed server-visible UDP endpoint. Three fresh authenticated
+ connections, one wrong-key refusal, then another successful connection.
+- Two DTLS churn scenarios: 140 fresh authenticated counter POSTs and a GET
+ proving all 140 effects, at one reused endpoint, against each Rust server.
+
+The Rust fixture listeners share routing source, compiled independently against
+their respective DTLS versions. Routing preserves the active association until
+the backend verifies a replacement handshake (RFC 6347 section 4.2.8). Bounds:
+128 peer endpoints, 16 pending handshakes, 32 packets per route, 4,096-byte
+datagrams, two-second handshake deadline and 30-second route idle deadline.
+Initial fragmented ClientHello messages are unsupported by these PSK fixtures.
+Unit tests in both peers cover unverified replacement preserving an active
+association, malformed routing input, pending capacity/timeout reclamation,
+stale cleanup and listener shutdown. These are fixture tests, not a general
+DTLS implementation qualification.
+
+One additional Linux case sends 140 fresh Coaptic counter POSTs and a GET to
+libcoap at one fixed endpoint, checking explicit client shutdown and all effects.
+This does not qualify abrupt-client replacement at the libcoap server. The legacy
+Rust client exits without explicit shutdown in the Rust-server reuse scenarios.
+Coaptic awaits bounded DTLS shutdown before process exit; request timing stops
+at response assembly and host timing includes shutdown.
 
 Only the repeated small GET (17-byte payload) is benchmarked. Block2, refusal and
 fault checks establish correctness; they are not throughput benchmarks. Each
@@ -67,3 +90,8 @@ comparing `benchmarks`. Report request and host timings separately, retain failu
 counts, and accompany numbers with the scenario scope above. Checked-in dogfood
 baselines belong to a different harness and are coverage floors, not current
 process measurements.
+
+Failed timed requests stop that pairing without retry or replacement. The report
+retains successful raw samples, the requested sample count and the zero-based
+failed sample index/error. Partial summaries cover successes only; a failed
+measurement has no throughput value and the suite exits unsuccessfully.

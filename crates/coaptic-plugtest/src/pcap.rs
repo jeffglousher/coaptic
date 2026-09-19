@@ -73,15 +73,26 @@ impl Capture {
     /// Ephemeral ports stay in the file; the grader wildcards them. Message
     /// ID / Token live in the CoAP payload and are not rewritten.
     pub fn write_pcap(&self, mut w: impl std::io::Write) -> std::io::Result<()> {
+        let packets = self.snapshot();
+        if packets
+            .iter()
+            .filter(|p| !p.decrypted)
+            .any(|p| !p.src.is_ipv4() || !p.dst.is_ipv4() || p.bytes.len() > 65_507)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "IPv4 capture requires IPv4 endpoints and a legal UDP payload length",
+            ));
+        }
         // magic, v2.4, thiszone, sigfigs, snaplen, LINKTYPE_RAW
-        w.write_all(&0xa1b2c3d4u32.to_be_bytes())?;
-        w.write_all(&2u16.to_be_bytes())?;
-        w.write_all(&4u16.to_be_bytes())?;
-        w.write_all(&0u32.to_be_bytes())?;
-        w.write_all(&0u32.to_be_bytes())?;
-        w.write_all(&0xffffu32.to_be_bytes())?;
-        w.write_all(&101u32.to_be_bytes())?;
-        for pkt in self.snapshot() {
+        w.write_all(&0xa1b2c3d4u32.to_le_bytes())?;
+        w.write_all(&2u16.to_le_bytes())?;
+        w.write_all(&4u16.to_le_bytes())?;
+        w.write_all(&0u32.to_le_bytes())?;
+        w.write_all(&0u32.to_le_bytes())?;
+        w.write_all(&0xffffu32.to_le_bytes())?;
+        w.write_all(&101u32.to_le_bytes())?;
+        for pkt in packets {
             if pkt.decrypted {
                 continue;
             }
@@ -105,7 +116,7 @@ fn ipv4_udp_frame(src: SocketAddr, dst: SocketAddr, payload: &[u8]) -> Vec<u8> {
     let udp_len = 8 + payload.len();
     let ip_len = 20 + udp_len;
     let mut out = Vec::with_capacity(ip_len);
-    out.extend_from_slice(&[0x45, 0, 0, 0]);
+    out.extend_from_slice(&[0x45, 0]);
     out.extend_from_slice(&(u16::try_from(ip_len).unwrap_or(u16::MAX)).to_be_bytes());
     out.extend_from_slice(&[0, 0, 0, 0, 64, 17, 0, 0]);
     out.extend_from_slice(&saddr.octets());
@@ -218,4 +229,79 @@ pub fn bind_loopback() -> std::io::Result<(UdpSocket, SocketAddr)> {
     let _ = sock.set_read_timeout(Some(std::time::Duration::from_millis(5)));
     let addr = sock.local_addr()?;
     Ok((sock, addr))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pcap_refuses_ipv6_and_oversize_instead_of_fabricating_ipv4_evidence() {
+        for (src, body) in [
+            ("[fe80::1%2]:5683", vec![0; 4]),
+            ("127.0.0.1:5683", vec![0; 65_508]),
+        ] {
+            let cap = Capture::new();
+            cap.push(
+                src.parse().unwrap(),
+                "127.0.0.1:5684".parse().unwrap(),
+                &body,
+                false,
+            );
+            let mut bytes = Vec::new();
+            assert_eq!(
+                cap.write_pcap(&mut bytes).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput
+            );
+            assert!(bytes.is_empty());
+        }
+    }
+
+    #[test]
+    fn pcap_records_have_consistent_endian_and_valid_ipv4_udp_layout() {
+        let cap = Capture::new();
+        let src = "192.0.2.1:12345".parse().unwrap();
+        let dst = "192.0.2.2:5683".parse().unwrap();
+        cap.push(src, dst, &[0x40, 1, 0, 42], false);
+        cap.push(dst, src, &[0x60, 0x45, 0, 42], false);
+        cap.push(dst, src, b"excluded decrypted data", true);
+        let mut bytes = Vec::new();
+        cap.write_pcap(&mut bytes).unwrap();
+        assert_eq!(&bytes[..4], &[0xd4, 0xc3, 0xb2, 0xa1]);
+        assert_eq!(u16::from_le_bytes(bytes[4..6].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(bytes[6..8].try_into().unwrap()), 4);
+        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 101);
+        let mut offset = 24;
+        for (from, to, payload) in [
+            (src, dst, [0x40, 1, 0, 42]),
+            (dst, src, [0x60, 0x45, 0, 42]),
+        ] {
+            let len =
+                u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as usize;
+            assert_eq!(len, 32);
+            assert_eq!(
+                &bytes[offset + 8..offset + 12],
+                &bytes[offset + 12..offset + 16]
+            );
+            let frame = &bytes[offset + 16..offset + 16 + len];
+            assert_eq!(frame[0], 0x45);
+            assert_eq!(u16::from_be_bytes(frame[2..4].try_into().unwrap()), 32);
+            assert_eq!(inet_checksum(&frame[..20]), 0);
+            assert_eq!(frame[9], 17);
+            assert_eq!(&frame[12..16], &v4_parts(from).0.octets());
+            assert_eq!(&frame[16..20], &v4_parts(to).0.octets());
+            assert_eq!(
+                u16::from_be_bytes(frame[20..22].try_into().unwrap()),
+                from.port()
+            );
+            assert_eq!(
+                u16::from_be_bytes(frame[22..24].try_into().unwrap()),
+                to.port()
+            );
+            assert_eq!(u16::from_be_bytes(frame[24..26].try_into().unwrap()), 12);
+            assert_eq!(&frame[28..], &payload);
+            offset += 16 + len;
+        }
+        assert_eq!(offset, bytes.len());
+    }
 }

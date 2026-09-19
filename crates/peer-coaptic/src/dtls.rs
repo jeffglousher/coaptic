@@ -1,4 +1,13 @@
 //! Modern DTLS socket adapter owned only by the Coaptic executable.
+macro_rules! conn_as_any {
+    () => {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    };
+}
+#[path = "../../../tools/interop/dtls_listener.rs"]
+pub(crate) mod listener;
 use coaptic::storage::{DatagramIo, Endpoint};
 use std::{
     collections::HashMap,
@@ -8,35 +17,33 @@ use std::{
 };
 use tokio::sync::mpsc as tmpsc;
 use webrtc_dtls::{cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn};
-use webrtc_util::conn::{Conn, Listener};
+use webrtc_util::conn::Conn;
 type Routes = Arc<Mutex<HashMap<SocketAddr, tmpsc::Sender<Vec<u8>>>>>;
 pub struct DtlsIo {
     incoming: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
     routes: Routes,
+    worker: Option<tokio::task::JoinHandle<Result<(), String>>>,
 }
 impl DtlsIo {
-    pub async fn listen_at(addr: SocketAddr, config: Config) -> Result<(SocketAddr, Self), String> {
-        let listener = webrtc_dtls::listener::listen(addr, config)
-            .await
-            .map_err(|e| e.to_string())?;
+    pub fn accepted(conn: Arc<dyn Conn + Send + Sync>, peer: SocketAddr) -> Self {
         let (tx, rx) = mpsc::sync_channel(64);
         let routes: Routes = Arc::default();
-        let map = routes.clone();
-        tokio::spawn(async move {
-            loop {
-                match tokio::time::timeout(Duration::from_secs(2), listener.accept()).await {
-                    Ok(Ok((conn, peer))) => attach(conn, peer, tx.clone(), map.clone()),
-                    _ => tokio::time::sleep(Duration::from_millis(10)).await,
-                }
-            }
-        });
-        Ok((
-            addr,
-            Self {
-                incoming: rx,
-                routes,
-            },
-        ))
+        let worker = attach(conn, peer, tx, routes.clone());
+        Self {
+            incoming: rx,
+            routes,
+            worker: Some(worker),
+        }
+    }
+    pub async fn close(&mut self) -> Result<(), String> {
+        self.routes.lock().expect("routes").clear();
+        if let Some(worker) = self.worker.take() {
+            tokio::time::timeout(Duration::from_secs(2), worker)
+                .await
+                .map_err(|_| "DTLS shutdown timeout".to_owned())?
+                .map_err(|e| e.to_string())??;
+        }
+        Ok(())
     }
     pub async fn connect(
         addr: SocketAddr,
@@ -54,10 +61,11 @@ impl DtlsIo {
                 .map_err(|e| e.to_string())?;
         let (tx, rx) = mpsc::sync_channel(64);
         let routes: Routes = Arc::default();
-        attach(Arc::new(conn), addr, tx, routes.clone());
+        let worker = attach(Arc::new(conn), addr, tx, routes.clone());
         Ok(Self {
             incoming: rx,
             routes,
+            worker: Some(worker),
         })
     }
 }
@@ -66,15 +74,17 @@ fn attach(
     peer: SocketAddr,
     tx: mpsc::SyncSender<(SocketAddr, Vec<u8>)>,
     routes: Routes,
-) {
+) -> tokio::task::JoinHandle<Result<(), String>> {
     let (out, mut rx) = tmpsc::channel::<Vec<u8>>(64);
     {
         let mut map = routes.lock().expect("routes");
-        if map.len() >= 128 {
-            return;
+        if map.len() >= 128 && !map.contains_key(&peer) {
+            return tokio::spawn(async move { conn.close().await.map_err(|e| e.to_string()) });
         }
-        map.insert(peer, out);
+        map.insert(peer, out.clone());
     }
+    let route = out.downgrade();
+    drop(out);
     tokio::spawn(async move {
         let mut buf = [0; 4096];
         loop {
@@ -85,9 +95,22 @@ fn attach(
                 outgoing=rx.recv()=>match outgoing {Some(bytes)=>{if conn.send(&bytes).await.is_err(){break;}},None=>break}
             }
         }
-        routes.lock().expect("routes").remove(&peer);
-        let _ = conn.close().await;
-    });
+        {
+            let mut map = routes.lock().expect("routes");
+            if route.upgrade().is_some_and(|old| {
+                map.get(&peer)
+                    .is_some_and(|current| current.same_channel(&old))
+            }) {
+                map.remove(&peer);
+            }
+        }
+        conn.close().await.map_err(|e| e.to_string())
+    })
+}
+impl Drop for DtlsIo {
+    fn drop(&mut self) {
+        self.routes.lock().expect("routes").clear();
+    }
 }
 impl DatagramIo for DtlsIo {
     type Error = std::io::Error;
@@ -123,5 +146,61 @@ pub fn psk_config(key: &[u8]) -> Config {
         psk_identity_hint: Some(b"password".to_vec()),
         cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct ClosingConn {
+        closed: AtomicBool,
+        fail: bool,
+    }
+    #[async_trait::async_trait]
+    impl Conn for ClosingConn {
+        async fn connect(&self, _: SocketAddr) -> webrtc_util::Result<()> {
+            Ok(())
+        }
+        async fn recv(&self, _: &mut [u8]) -> webrtc_util::Result<usize> {
+            std::future::pending().await
+        }
+        async fn recv_from(&self, _: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
+            std::future::pending().await
+        }
+        async fn send(&self, b: &[u8]) -> webrtc_util::Result<usize> {
+            Ok(b.len())
+        }
+        async fn send_to(&self, b: &[u8], _: SocketAddr) -> webrtc_util::Result<usize> {
+            Ok(b.len())
+        }
+        fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
+            Ok("127.0.0.1:5684".parse().unwrap())
+        }
+        fn remote_addr(&self) -> Option<SocketAddr> {
+            Some("127.0.0.1:5685".parse().unwrap())
+        }
+        async fn close(&self) -> webrtc_util::Result<()> {
+            tokio::task::yield_now().await;
+            self.closed.store(true, Ordering::SeqCst);
+            if self.fail {
+                Err(std::io::Error::other("injected close failure").into())
+            } else {
+                Ok(())
+            }
+        }
+        conn_as_any!();
+    }
+    #[tokio::test]
+    async fn explicit_shutdown_awaits_close_and_propagates_failure() {
+        for fail in [false, true] {
+            let conn = Arc::new(ClosingConn {
+                closed: AtomicBool::new(false),
+                fail,
+            });
+            let mut io = DtlsIo::accepted(conn.clone(), conn.remote_addr().unwrap());
+            assert_eq!(io.close().await.is_err(), fail);
+            assert!(conn.closed.load(Ordering::SeqCst));
+        }
     }
 }

@@ -30,3 +30,22 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 - Pcap writer + golden JSON grader (`expectations/catalog.json`). CORE goldens assert type, token echo, and CON↔ACK MID, and omit `allow_extra`. OBS / BLOCK / LINK / DTLS keep `allow_extra` (notifications, block trains, mixed-peer extras). Ports / time are wildcards.
 - DTLS: feature `dtls` uses webrtc-dtls (same stack as coap-rs) as a **harness** `DatagramIo` adapter. The `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
 - `TD_6LoWPAN_*` stay skipped (`future/backlog` — contributor opportunity).
+
+### Qualification boundary
+
+The App TD runner reports known incomplete scenarios as `SKIP: coverage gap #199`.
+These are unfinished work, not conformance passes: CORE separate responses and
+loss scenarios; full BLOCK and OBS scenarios; LINK_04 and LINK_09; DTLS loss, authenticated
+failure evidence and raw-public-key scenarios. The X.509 fixture does not prove
+raw-public-key support. The Engine tests, dogfood and process tests retain their
+separate, narrower coverage. See [#199](https://github.com/jeffglousher/coaptic/issues/199).
+The DTLS grader requires captured decrypted responses for success and visible
+plaintext fatal alerts for its alert expectation. It does not interpret encrypted
+alerts or reassemble fragmented handshakes; unavailable evidence fails grading.
+
+LINK_01/02/03/05/06/07/08 now compare complete assembled discovery results
+against explicit expected membership, including exclusion of nonmatching links,
+and require Content-Format 40. They run in both mixed peer directions and the
+Coaptic self-pair. Refusal tests cover missing, extra, duplicate and truncated
+links and missing/incorrect Content-Format. This fixture comparison is not a
+general-purpose RFC 6690 parser qualification.

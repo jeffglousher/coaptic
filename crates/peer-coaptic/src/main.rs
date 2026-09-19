@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use support::{Args, Error};
+use webrtc_util::conn::Listener;
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn count(_: Request<'_>) -> Response<'static> {
     Response::content_copy(COUNTER.load(Ordering::SeqCst).to_string().as_bytes())
@@ -41,18 +42,38 @@ impl DatagramIo for Io {
 async fn run() -> Result<(), Error> {
     let a = Args::parse()?;
     let start = Instant::now();
-    let io = if a.dtls {
-        let config = dtls::psk_config(a.key.as_bytes());
-        if a.server {
-            // Explicit port: the parent reserves a unique port and probes readiness on wire.
-            let (_, io) = dtls::DtlsIo::listen_at(a.address(), config).await?;
-            Io::Dtls(io)
-        } else {
-            Io::Dtls(
-                dtls::DtlsIo::connect(a.address(), config, Duration::from_millis(a.timeout))
-                    .await?,
-            )
+    if a.server && a.dtls {
+        let listener =
+            dtls::listener::BoundedListener::bind(a.address(), dtls::psk_config(a.key.as_bytes()))
+                .await?;
+        support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, true);
+        loop {
+            let (conn, peer) = listener.accept().await?;
+            tokio::spawn(async move {
+                // CoAP exchange/dedup/Observe state belongs to this authenticated
+                // association. Resource contents (COUNTER) remain shared.
+                let Ok(mut app) = fixture(Io::Dtls(dtls::DtlsIo::accepted(conn, peer))) else {
+                    return;
+                };
+                let start = Instant::now();
+                loop {
+                    if app.poll(start.elapsed().as_millis() as u64 + 1).is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
         }
+    }
+    let io = if a.dtls {
+        Io::Dtls(
+            dtls::DtlsIo::connect(
+                a.address(),
+                dtls::psk_config(a.key.as_bytes()),
+                Duration::from_millis(a.timeout),
+            )
+            .await?,
+        )
     } else {
         let socket = UdpSocket::bind(if a.server {
             a.address()
@@ -62,20 +83,7 @@ async fn run() -> Result<(), Error> {
         socket.set_nonblocking(true)?;
         Io::Udp(socket)
     };
-    let mut app = App::profile::<profiles::Default>()
-        .block_wise::<true>()
-        .routes::<3>()
-        .route(
-            "/test",
-            get(|_: Request<'_>| Response::content(support::BODY)),
-        )
-        .route(
-            "/large",
-            get(|_: Request<'_>| Response::content(&support::LARGE)),
-        )
-        .route("/counter", get(count).post(increment))
-        .bind(io)
-        .map_err(|e| format!("bind: {e:?}"))?;
+    let mut app = fixture(io)?;
     if a.server {
         support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, a.dtls);
         loop {
@@ -98,13 +106,41 @@ async fn run() -> Result<(), Error> {
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
-        if let Some(r) = app.take_response(call) {
-            support::response(r.code().as_raw(), r.body().unwrap_or(r.payload()), start);
+        let response = app.take_response(call).map(|r| {
+            (
+                r.code().as_raw(),
+                r.body().unwrap_or(r.payload()).to_vec(),
+                start.elapsed(),
+            )
+        });
+        if let Some((code, body, elapsed)) = response {
+            // Flush CloseNotify before the runtime exits. Response timing ends
+            // at assembly; host timing includes this bounded session shutdown.
+            if let Io::Dtls(io) = app.transport_mut() {
+                io.close().await?;
+            }
+            support::response(code, &body, elapsed);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(1));
     }
     Err("request timed out".into())
+}
+fn fixture(io: Io) -> Result<App<profiles::Default, Io, 3, true>, Error> {
+    App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .routes::<3>()
+        .route(
+            "/test",
+            get(|_: Request<'_>| Response::content(support::BODY)),
+        )
+        .route(
+            "/large",
+            get(|_: Request<'_>| Response::content(&support::LARGE)),
+        )
+        .route("/counter", get(count).post(increment))
+        .bind(io)
+        .map_err(|e| format!("bind: {e:?}").into())
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> std::process::ExitCode {

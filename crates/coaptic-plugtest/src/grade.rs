@@ -164,9 +164,6 @@ pub fn grade_td(td: &str, expect: &ExpectTd, capture: &Capture) -> Result<(), St
         .filter_map(|(i, p)| {
             if expect.dtls.is_some() && !p.decrypted {
                 // Prefer decrypted CoAP when DTLS is in play; skip handshake records.
-                if let Some(v) = ParsedView::decode(&p.bytes) {
-                    return Some((i, v));
-                }
                 return None;
             }
             ParsedView::decode(&p.bytes).map(|v| (i, v))
@@ -245,7 +242,7 @@ fn match_packet(
         match mid.as_str() {
             "*" => {}
             "echo" => {
-                if echo_mid.is_some_and(|m| m != view.mid) {
+                if echo_mid != Some(view.mid) {
                     return false;
                 }
             }
@@ -256,7 +253,7 @@ fn match_packet(
         match tok.as_str() {
             "*" => {}
             "echo" => {
-                if echo_tok.is_some_and(|t| t != view.token) {
+                if echo_tok != Some(view.token.as_slice()) {
                     return false;
                 }
             }
@@ -363,24 +360,28 @@ fn payload_matches(got: &[u8], want: &ExpectPayload) -> bool {
         ExpectPayload::Word(w) if w == "nonempty" => !got.is_empty(),
         ExpectPayload::Word(w) => got == w.as_bytes(),
         ExpectPayload::Obj { contains, hex } => {
-            if let Some(s) = contains {
-                std::str::from_utf8(got).is_ok_and(|t| t.contains(s))
-            } else if let Some(h) = hex {
-                hex_decode(h).is_some_and(|b| b == got)
-            } else {
-                true
-            }
+            (contains.is_some() || hex.is_some())
+                && contains
+                    .as_ref()
+                    .is_none_or(|s| std::str::from_utf8(got).is_ok_and(|t| t.contains(s)))
+                && hex
+                    .as_ref()
+                    .is_none_or(|h| hex_decode(h).is_some_and(|b| b == got))
         }
     }
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.is_ascii() || s.len() % 2 != 0 {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+    s.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = (pair[0] as char).to_digit(16)?;
+            let low = (pair[1] as char).to_digit(16)?;
+            Some(((high << 4) | low) as u8)
+        })
         .collect()
 }
 
@@ -408,16 +409,25 @@ fn grade_dtls(td: &str, exp: &ExpectDtls, packets: &[Packet]) -> Result<(), Stri
             ));
         }
     }
-    let decrypted = packets.iter().any(|p| p.decrypted);
     match exp.handshake.as_deref() {
-        Some("success") if !decrypted && exp.client_hello_contains.is_none() => {
-            // Handshake success is also accepted when the client exchange returned 2.xx
-            // (the runner records that via a synthetic decrypted packet).
+        Some("success") => {
+            // A decrypted request alone does not prove a completed exchange.
+            if !packets.iter().any(|p| {
+                p.decrypted && ParsedView::decode(&p.bytes).is_some_and(|v| v.code.is_response())
+            }) {
+                return Err(format!("{td}: no captured decrypted CoAP response"));
+            }
         }
-        Some("alert") => {}
-        _ => {}
+        Some("alert") => {
+            // Only plaintext fatal alerts can be interpreted from this tap.
+            // Encrypted alert contents require authenticated backend evidence.
+            if !wire.iter().any(|b| plaintext_fatal_alert(b)) {
+                return Err(format!("{td}: no captured plaintext fatal DTLS alert"));
+            }
+        }
+        None => {}
+        Some(value) => return Err(format!("{td}: unknown handshake expectation {value}")),
     }
-    let _ = td;
     Ok(())
 }
 
@@ -451,8 +461,13 @@ fn client_hello_has_suite(record: &[u8], suite: u16) -> bool {
     }
     let cs_len = usize::from(u16::from_be_bytes([body[i], body[i + 1]]));
     i += 2;
-    let end = i.saturating_add(cs_len).min(body.len());
-    body[i..end]
+    if cs_len == 0 || cs_len % 2 != 0 {
+        return false;
+    }
+    let Some(ciphers) = body.get(i..i + cs_len) else {
+        return false;
+    };
+    ciphers
         .chunks_exact(2)
         .any(|c| u16::from_be_bytes([c[0], c[1]]) == suite)
 }
@@ -471,15 +486,33 @@ fn server_hello_suite(record: &[u8]) -> Option<u16> {
     Some(u16::from_be_bytes([body[i], body[i + 1]]))
 }
 
-fn dtls_handshake_body(record: &[u8], msg_type: u8) -> Option<&[u8]> {
-    // content_type(1)=22 version(2) epoch(2) seq(6) length(2)
-    if record.len() < 13 || record[0] != 22 {
+// RFC 6347 sections 4.1 and 4.2.2. This grader deliberately accepts only
+// complete, unfragmented epoch-zero handshake messages. It does not claim
+// reassembly or encrypted-alert authentication.
+fn plaintext_record(record: &[u8], content_type: u8) -> Option<&[u8]> {
+    if record.len() < 13
+        || record[0] != content_type
+        || record[1..3] != [0xfe, 0xfd]
+        || record[3..5] != [0, 0]
+    {
         return None;
     }
     let n = usize::from(u16::from_be_bytes([record[11], record[12]]));
-    let frag = record.get(13..13 + n)?;
-    // handshake: type(1) length(3) message_seq(2) frag_off(3) frag_len(3)
+    record.get(13..13 + n)
+}
+
+fn plaintext_fatal_alert(record: &[u8]) -> bool {
+    plaintext_record(record, 21).is_some_and(|body| body.len() == 2 && body[0] == 2 && body[1] != 0)
+}
+
+fn dtls_handshake_body(record: &[u8], msg_type: u8) -> Option<&[u8]> {
+    let frag = plaintext_record(record, 22)?;
     if frag.len() < 12 || frag[0] != msg_type {
+        return None;
+    }
+    let u24 = |b: &[u8]| usize::from(b[0]) << 16 | usize::from(b[1]) << 8 | usize::from(b[2]);
+    let n = u24(&frag[1..4]);
+    if frag[6..9] != [0, 0, 0] || u24(&frag[9..12]) != n || frag.len() != 12 + n {
         return None;
     }
     Some(&frag[12..])
@@ -566,6 +599,141 @@ mod tests {
     use super::*;
     use coaptic::message::{Ids, Message, Opt, OptionsBuilder, Token, Type, encode};
     use coaptic::{Code, ContentFormat};
+
+    #[test]
+    fn payload_constraints_are_conjunctive_and_malformed_hex_is_refused() {
+        let mut want = ExpectPayload::Obj {
+            contains: Some("hi".into()),
+            hex: Some("6869".into()),
+        };
+        assert!(payload_matches(b"hi", &want));
+        assert!(!payload_matches(b"hi there", &want));
+        want = ExpectPayload::Obj {
+            contains: None,
+            hex: None,
+        };
+        assert!(!payload_matches(b"anything", &want));
+        for bad in ["h0", "123", "a\u{20ac}", "\u{e9}"] {
+            assert_eq!(hex_decode(bad), None);
+        }
+    }
+
+    fn record(kind: u8, body: &[u8]) -> Vec<u8> {
+        let mut r = vec![kind, 0xfe, 0xfd, 0, 0, 0, 0, 0, 0, 0, 0];
+        r.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        r.extend_from_slice(body);
+        r
+    }
+
+    fn capture(bytes: &[u8], decrypted: bool) -> Capture {
+        let cap = Capture::new();
+        cap.push(
+            "127.0.0.1:1".parse().unwrap(),
+            "127.0.0.1:2".parse().unwrap(),
+            bytes,
+            decrypted,
+        );
+        cap
+    }
+
+    #[test]
+    fn dtls_success_requires_decrypted_response() {
+        let exp = ExpectTd {
+            dtls: Some(ExpectDtls {
+                handshake: Some("success".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(grade_td("success", &exp, &Capture::new()).is_err());
+        let response = [0x60, 0x45, 0, 1];
+        assert!(grade_td("success", &exp, &capture(&response, false)).is_err());
+        assert!(grade_td("success", &exp, &capture(&[0x40, 1, 0, 1], true)).is_err());
+        assert!(grade_td("success", &exp, &capture(&[0xff], true)).is_err());
+        grade_td("success", &exp, &capture(&response, true)).unwrap();
+    }
+
+    #[test]
+    fn dtls_alert_requires_visible_fatal_alert() {
+        let exp = ExpectTd {
+            dtls: Some(ExpectDtls {
+                handshake: Some("alert".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(grade_td("alert", &exp, &Capture::new()).is_err());
+        for body in [&[1, 40][..], &[2, 0], &[2], &[2, 40, 0]] {
+            assert!(grade_td("alert", &exp, &capture(&record(21, body), false)).is_err());
+        }
+        let valid = record(21, &[2, 40]);
+        grade_td("alert", &exp, &capture(&valid, false)).unwrap();
+        for len in 0..valid.len() {
+            assert!(grade_td("alert", &exp, &capture(&valid[..len], false)).is_err());
+        }
+        let mut encrypted = valid.clone();
+        encrypted[4] = 1;
+        assert!(grade_td("alert", &exp, &capture(&encrypted, false)).is_err());
+        assert!(grade_td("alert", &exp, &capture(&valid, true)).is_err());
+    }
+
+    #[test]
+    fn dtls_coap_expectations_reject_plaintext_injection() {
+        let exp: ExpectTd =
+            serde_json::from_str(r#"{"dtls":{},"coap":[{"code":"2.05"}]}"#).unwrap();
+        let bytes = [0x60, 0x45, 0, 1];
+        assert!(grade_td("protected", &exp, &capture(&bytes, false)).is_err());
+        grade_td("protected", &exp, &capture(&bytes, true)).unwrap();
+    }
+
+    #[test]
+    fn echo_requires_an_observed_request() {
+        let exp: ExpectTd =
+            serde_json::from_str(r#"{"coap":[{"code":"2.05","mid":"echo","token":"echo"}]}"#)
+                .unwrap();
+        assert!(
+            grade_td(
+                "missing request",
+                &exp,
+                &capture(&[0x60, 0x45, 0, 1], false)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn hello_scan_refuses_truncation_fragmentation_and_encrypted_records() {
+        let mut body = vec![0; 34];
+        body.extend_from_slice(&[0, 0, 0, 2, 0xc0, 0xa8, 1, 0]);
+        let mut handshake = vec![
+            1,
+            0,
+            0,
+            body.len() as u8,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            body.len() as u8,
+        ];
+        handshake.extend_from_slice(&body);
+        let valid = record(22, &handshake);
+        assert!(client_hello_has_suite(&valid, 0xc0a8));
+        for len in 0..valid.len() {
+            assert!(!client_hello_has_suite(&valid[..len], 0xc0a8));
+        }
+        for (index, value) in [(4, 1), (19, 1), (24, 1), (16, 1), (2, 0), (62, 3)] {
+            let mut invalid = valid.clone();
+            invalid[index] = value;
+            assert!(
+                !client_hello_has_suite(&invalid, 0xc0a8),
+                "mutation {index}"
+            );
+        }
+    }
 
     #[test]
     fn grades_core_01_shape() {

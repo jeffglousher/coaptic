@@ -4161,3 +4161,107 @@ fn block2_outside_representation_refuses_without_retaining_body() {
             .is_none()
     );
 }
+
+#[test]
+fn block2_continuations_preserve_ordered_queries_and_accept() {
+    #[derive(Default)]
+    struct CheckedPipe {
+        pipe: Pipe,
+        requests: usize,
+    }
+    impl DatagramIo for CheckedPipe {
+        type Error = &'static str;
+        fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.pipe.recv(buf)
+        }
+        fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            let parsed = decode(bytes).unwrap();
+            if parsed.code() == Code::GET {
+                let mut queries = parsed.uri_query();
+                assert_eq!(queries.next(), Some(Ok("rt=Type1")));
+                assert_eq!(queries.next(), Some(Ok("if=If1")));
+                assert_eq!(queries.next(), None);
+                assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                self.requests += 1;
+            }
+            self.pipe.send(dest, bytes)
+        }
+    }
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("large", get(get_large))
+        .bind(CheckedPipe::default())
+        .unwrap();
+    let call = app
+        .get("large")
+        .to(Endpoint::v4([192, 0, 2, 2], 5683))
+        .query("rt=Type1")
+        .query("if=If1")
+        .accept(ContentFormat::OCTET_STREAM)
+        .block2(BlockValue::from_size(0, false, 64).unwrap())
+        .send(0)
+        .unwrap();
+    let mut complete = false;
+    for now in 0..200 {
+        app.poll(now).unwrap();
+        if let Some(response) = app.take_response(call) {
+            assert_eq!(response.body(), Some(&LARGE[..]));
+            complete = true;
+            break;
+        }
+    }
+    assert!(complete);
+    assert!(app.transport().requests > 1);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn query_retention_bounds_refuse_before_sending_or_occupying_slots() {
+    let bytes = [b'a'; 257];
+    let text = core::str::from_utf8(&bytes).unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for (first, second, accepted) in [(255, 1, true), (255, 2, false), (256, 0, false)] {
+        let mut app = pipe_app();
+        let result = app
+            .get("large")
+            .to(peer)
+            .query(&text[..first])
+            .query(&text[..second])
+            .send(0);
+        if accepted {
+            assert!(result.is_ok());
+            assert_eq!(app.transport().len, 1);
+        } else {
+            assert_eq!(
+                result,
+                Err(Error::Message(SlotMessageError::Encode(
+                    EncodeError::OptionValueTooLong
+                )))
+            );
+            assert_eq!(app.transport().len, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            assert!(
+                app.get("large").to(peer).send(1).is_ok(),
+                "refusal must not consume a live call"
+            );
+        }
+    }
+}
+
+#[test]
+fn excess_query_count_is_refused_instead_of_silently_dropped() {
+    let mut app = pipe_app();
+    let mut outgoing = app.get("large").to(Endpoint::v4([192, 0, 2, 2], 5683));
+    for _ in 0..9 {
+        outgoing = outgoing.query("rt=x");
+    }
+    assert_eq!(
+        outgoing.send(0),
+        Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::OptionValueTooLong
+        )))
+    );
+    assert_eq!(app.transport().len, 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}

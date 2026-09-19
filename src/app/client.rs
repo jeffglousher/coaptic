@@ -15,6 +15,9 @@
 //! App holds at most four live client requests, including Observe
 //! subscriptions and replies waiting for `take_response`. Resource-specific
 //! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! Each live call retains up to 256 URI-query bytes plus lengths for Block2
+//! continuation identity. This bounded state adds about 1.1 KiB per App on
+//! 64-bit hosts; it is separate from the optional assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
 //! unknown elective options are ignored. A matching ACK still stops retries.
 //!
@@ -62,7 +65,7 @@ const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
-/// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+/// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
 ///     .block_wise::<false>()
@@ -247,9 +250,52 @@ impl ClientInbox {
     }
 }
 
+/// Owned query values retained across Block2 requests, in original order.
+#[derive(Clone, Copy, Debug)]
+struct RetainedQueries {
+    bytes: [u8; 256],
+    lengths: [u16; MAX_PATH_SEGMENTS],
+    count: usize,
+}
+
+impl RetainedQueries {
+    fn new(queries: &[&str]) -> Result<Self, EncodeError> {
+        let mut retained = Self {
+            bytes: [0; 256],
+            lengths: [0; MAX_PATH_SEGMENTS],
+            count: queries.len(),
+        };
+        if queries.len() > MAX_PATH_SEGMENTS {
+            return Err(EncodeError::OptionValueTooLong);
+        }
+        let mut offset = 0;
+        for (i, query) in queries.iter().enumerate() {
+            if query.len() > 255 || query.len() > retained.bytes.len() - offset {
+                return Err(EncodeError::OptionValueTooLong);
+            }
+            retained.bytes[offset..offset + query.len()].copy_from_slice(query.as_bytes());
+            retained.lengths[i] = query.len() as u16;
+            offset += query.len();
+        }
+        Ok(retained)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &str> {
+        let mut offset = 0;
+        self.lengths[..self.count].iter().map(move |len| {
+            let end = offset + usize::from(*len);
+            let value = core::str::from_utf8(&self.bytes[offset..end]).expect("copied UTF-8 query");
+            offset = end;
+            value
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveCall {
     call: Call,
+    queries: RetainedQueries,
+    accept: Option<ContentFormat>,
     path: Path<'static>,
     code: Code,
     ty: Type,
@@ -344,7 +390,7 @@ enum OutgoingObserve {
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
-/// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+/// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
 ///     .block_wise::<false>()
@@ -570,8 +616,9 @@ where
         self
     }
 
-    /// Append a Uri-Query value. Empty values and values past
-    /// [`super::MAX_PATH_SEGMENTS`] are ignored.
+    /// Append a Uri-Query value. Total query bytes are bounded to 256 at send;
+    /// each value is bounded to 255 bytes. Empty values are ignored. More than
+    /// [`super::MAX_PATH_SEGMENTS`] values are rejected at send.
     #[must_use]
     pub fn query(mut self, value: &'a str) -> Self {
         if value.is_empty() {
@@ -581,6 +628,8 @@ where
         if n < MAX_PATH_SEGMENTS {
             self.queries[n] = value;
             self.query_n += 1;
+        } else {
+            self.query_n = (MAX_PATH_SEGMENTS + 1) as u8;
         }
         self
     }
@@ -662,6 +711,13 @@ where
         }
         let queries = self.queries;
         let query_n = usize::from(self.query_n);
+        if query_n > MAX_PATH_SEGMENTS {
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::OptionValueTooLong,
+            )));
+        }
+        let retained_queries = RetainedQueries::new(&queries[..query_n])
+            .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
         let spec = ClientSend {
             dest,
             ty: self.ty,
@@ -690,6 +746,8 @@ where
         )?;
         self.app.lives.insert(LiveCall {
             call,
+            queries: retained_queries,
+            accept: self.accept,
             path,
             code: self.code,
             ty: self.ty,
@@ -1277,16 +1335,25 @@ where
     let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
     let b2 = block2.map(BlockValue::encode);
     let q2 = q_block2.map(BlockValue::encode);
     let filled = (|| -> Result<(), EncodeError> {
-        if let Some(live) = live {
+        if let Some(live) = live.as_ref() {
             if live.observe == OutgoingObserve::Register {
                 push_opt(&mut opts, Opt::observe_register())?;
             }
             for segment in live.path.segments() {
                 push_opt(&mut opts, Opt::uri_path(segment))?;
             }
+        }
+        if let Some(live) = live.as_ref() {
+            for query in live.queries.values() {
+                push_opt(&mut opts, Opt::uri_query(query))?;
+            }
+        }
+        if let Some(ref encoded) = accept {
+            push_opt(&mut opts, Opt::accept(encoded))?;
         }
         if let Some(ref encoded) = b2 {
             push_opt(&mut opts, Opt::block2(encoded))?;

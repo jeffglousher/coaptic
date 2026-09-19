@@ -1,19 +1,75 @@
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
 /* Independent libcoap fixture. No Coaptic codecs or library code. */
 #include <coap3/coap.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 static unsigned counter;
 static uint8_t large_body[2000];
 static const uint8_t small_body[] = "core-test-payload";
 static int complete;
-static coap_tick_t started;
+static uint64_t started;
+static uint64_t clock_resolution_ns;
+#ifdef _WIN32
+static uint64_t clock_frequency;
+#define CLOCK_NAME "QueryPerformanceCounter"
+#else
+#define CLOCK_NAME "CLOCK_MONOTONIC"
+#endif
+
 
 static void failure(const char *message) {
   /* Only fixed diagnostics are passed, never unescaped external strings. */
-  printf("{\"schema\":\"coaptic-peer/1\",\"event\":\"error\",\"message\":\"%s\"}\n", message);
+  printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"error\",\"message\":\"%s\"}\n", message);
+}
+/* Measure intervals with the OS monotonic clock, independently of libcoap's
+ * protocol tick granularity. Capture before payload-to-JSON formatting. */
+static void clock_failure(void) {
+  failure("monotonic clock unavailable");
+  exit(1);
+}
+static void clock_init(void) {
+#ifdef _WIN32
+  LARGE_INTEGER frequency;
+  if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) clock_failure();
+  clock_frequency = (uint64_t)frequency.QuadPart;
+  clock_resolution_ns = 1000000000ULL / clock_frequency + (1000000000ULL % clock_frequency != 0);
+#else
+  struct timespec resolution;
+  if (clock_getres(CLOCK_MONOTONIC, &resolution) != 0) clock_failure();
+  clock_resolution_ns = (uint64_t)resolution.tv_sec * 1000000000ULL + (uint64_t)resolution.tv_nsec;
+#endif
+}
+static uint64_t clock_stamp(void) {
+#ifdef _WIN32
+  LARGE_INTEGER value;
+  if (!QueryPerformanceCounter(&value)) clock_failure();
+  return (uint64_t)value.QuadPart;
+#else
+  struct timespec value;
+  if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) clock_failure();
+  return (uint64_t)value.tv_sec * 1000000000ULL + (uint64_t)value.tv_nsec;
+#endif
+}
+static uint64_t elapsed_ns(void) {
+  uint64_t now = clock_stamp();
+  if (now < started) clock_failure();
+  uint64_t delta = now - started;
+#ifdef _WIN32
+  return (delta / clock_frequency) * 1000000000ULL +
+      (uint64_t)((long double)(delta % clock_frequency) * 1000000000.0L / clock_frequency);
+#else
+  return delta;
+#endif
 }
 static void get_fixture(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
@@ -45,12 +101,14 @@ static coap_response_t response_handler(coap_session_t *session,
     const coap_pdu_t *sent,const coap_pdu_t *received,const coap_mid_t mid) {
   (void)session;(void)sent;(void)mid;
   const uint8_t *data=NULL;size_t len=0,offset=0,total=0;
-  coap_tick_t now;coap_ticks(&now);
   coap_get_data_large(received,&len,&data,&offset,&total);
   if (offset || total>len) return COAP_RESPONSE_FAIL;
-  printf("{\"schema\":\"coaptic-peer/1\",\"event\":\"response\",\"code\":%u,\"payload_hex\":\"",(unsigned)coap_pdu_get_code(received));
+  uint64_t elapsed = elapsed_ns();
+  printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"response\",\"code\":%u,\"payload_hex\":\"",(unsigned)coap_pdu_get_code(received));
   for(size_t i=0;i<len;i++)printf("%02x",data[i]);
-  printf("\",\"elapsed_us\":%llu}\n",(unsigned long long)((now-started)*1000000/COAP_TICKS_PER_SECOND));
+  printf("\",\"elapsed_ns\":%llu,\"elapsed_us\":%.3f,\"clock\":{\"name\":\"%s\",\"resolution_ns\":%llu}}\n",
+      (unsigned long long)elapsed, (double)elapsed / 1000.0, CLOCK_NAME,
+      (unsigned long long)clock_resolution_ns);
   complete=1;return COAP_RESPONSE_OK;
 }
 int main(int argc,char **argv) {
@@ -65,9 +123,9 @@ int main(int argc,char **argv) {
   if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing")){failure("unsupported path");return 2;}
   if(strcmp(argv[6],"GET") && strcmp(argv[6],"POST")){failure("unsupported method");return 2;}
   if(strlen(argv[4])<1 || strlen(argv[4])>64){failure("invalid PSK length");return 2;}
+  clock_init();started=clock_stamp();
   coap_startup();coap_set_log_level(COAP_LOG_EMERG);
   if(dtls && !coap_dtls_is_supported()){failure("DTLS unavailable in libcoap build");coap_cleanup();return 2;}
-  coap_ticks(&started);
   for(size_t i=0;i<sizeof(large_body);i++)large_body[i]=(uint8_t)(i%251);
   coap_context_t *ctx=coap_new_context(NULL);
   if(!ctx){failure("context failed");coap_cleanup();return 1;}
@@ -86,7 +144,7 @@ int main(int argc,char **argv) {
       if(i==2)coap_register_handler(r,COAP_REQUEST_POST,post_counter);
       coap_add_resource(ctx,r);
     }
-    printf("{\"schema\":\"coaptic-peer/1\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,dtls?"dtls":"udp");
+    printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,dtls?"dtls":"udp");
     while(coap_io_process(ctx,100)>=0) {}
     status=1;
   } else {
@@ -98,7 +156,7 @@ int main(int argc,char **argv) {
     uint8_t token[8];size_t token_len=sizeof(token);coap_session_new_token(session,&token_len,token);
     if(!coap_add_token(pdu,token_len,token)||!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
     if(coap_send(session,pdu)==COAP_INVALID_MID){failure("send failed");status=1;} else {
-      while(!complete) {coap_tick_t now;coap_ticks(&now);if((now-started)*1000/COAP_TICKS_PER_SECOND>=(unsigned long)timeout)break;if(coap_io_process(ctx,10)<0)break;}
+      while(!complete) {if(elapsed_ns()>=(uint64_t)timeout*1000000ULL)break;if(coap_io_process(ctx,10)<0)break;}
       if(!complete){failure("request timed out");status=1;}
     }
     coap_session_release(session);

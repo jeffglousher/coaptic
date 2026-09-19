@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-SCHEMA = "coaptic-peer/1"
+SCHEMA = "coaptic-peer/2"
 BODY = b"core-test-payload"
 LARGE = bytes(i % 251 for i in range(2000))
 
@@ -47,6 +47,7 @@ class Server:
     def __init__(self, exe, transport, number=None):
         self.number = number or port()
         self.stderr = tempfile.TemporaryFile()
+        start = time.perf_counter_ns()
         self.proc = subprocess.Popen(command(exe, "server", transport, self.number),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=self.stderr)
@@ -57,7 +58,6 @@ class Server:
             except Exception as error:
                 events.put(error)
         self.reader = threading.Thread(target=read_ready, daemon=True)
-        start = time.perf_counter()
         self.reader.start()
         try:
             line = events.get(timeout=8)
@@ -68,7 +68,7 @@ class Server:
                 raise RuntimeError(f"server did not become ready: {self.ready}")
             if self.proc.poll() is not None:
                 raise RuntimeError("server exited during readiness")
-            self.startup_ms = (time.perf_counter() - start) * 1000
+            self.startup_ms = (time.perf_counter_ns() - start) / 1_000_000
         except Exception:
             self.close()
             raise
@@ -100,23 +100,39 @@ def request(exe, transport, number, **kwargs):
                                 capture_output=True, timeout=timeout / 1000 + 4)
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("peer exceeded process deadline (not a valid protocol timeout)") from error
-    host_us = (time.perf_counter_ns() - start) / 1000
+    host_ns = time.perf_counter_ns() - start
     if len(result.stdout) > 65536:
         raise RuntimeError("oversize peer output")
     lines = result.stdout.splitlines()
     if len(lines) != 1:
         raise RuntimeError(f"expected one peer event, exit={result.returncode}, stderr={result.stderr[-2000:]!r}, stdout={result.stdout[:1000]!r}")
     event = decode(lines[0])
-    event["host_total_us"] = host_us
+    event["host_total_ns"] = host_ns
+    event["host_total_us"] = host_ns / 1000
     if result.returncode == 0:
         if event.get("event") != "response":
             raise RuntimeError("successful process without response")
-        if not isinstance(event.get("elapsed_us"), (int, float)) or event["elapsed_us"] < 0:
-            raise RuntimeError("invalid request timing")
+        validate_timing(event)
     elif event.get("event") != "error":
         raise RuntimeError(f"peer crashed or contradicted response: {event}")
     event["exit_code"] = result.returncode
     return event
+
+
+def validate_timing(event):
+    # Reject bools, NaN, fractions, missing/old timing and malformed clock data.
+    elapsed = event.get("elapsed_ns")
+    clock = event.get("clock")
+    if type(elapsed) is not int or not 0 <= elapsed <= 60_000_000_000:
+        raise RuntimeError("invalid request nanosecond timing")
+    if not isinstance(clock, dict) or not isinstance(clock.get("name"), str) or not clock["name"]:
+        raise RuntimeError("missing request clock metadata")
+    if "resolution_ns" not in clock:
+        raise RuntimeError("missing clock resolution (null means unknown)")
+    resolution = clock["resolution_ns"]
+    if resolution is not None and (type(resolution) is not int or resolution <= 0):
+        raise RuntimeError("invalid clock resolution")
+    return elapsed
 
 
 def expect(event, code=69, payload=BODY):
@@ -152,7 +168,7 @@ class Proxy:
                     except ConnectionResetError:
                         # Windows reports late ICMP port-unreachable when a
                         # one-shot client exits after the first duplicate reply.
-                        if self.mode == "duplicate-request" and sock is self.front:
+                        if self.mode in ("duplicate-request", "dtls-reconnect") and sock is self.front:
                             continue
                         raise
                     incoming = sock is self.front
@@ -160,7 +176,7 @@ class Proxy:
                         raise RuntimeError("unexpected proxy upstream")
                     action = "forward"
                     if incoming:
-                        if client is not None and source != client:
+                        if client is not None and source != client and self.mode != "dtls-reconnect":
                             raise RuntimeError("multiple clients in single-request fault proxy")
                         client = source
                     if self.mode == "blackhole":
@@ -169,7 +185,7 @@ class Proxy:
                         action, dropped = "drop", True
                     elif self.mode == "duplicate-request" and incoming and not duplicated:
                         action, duplicated = "duplicate", True
-                    if len(self.trace) >= 256:
+                    if len(self.trace) >= (8192 if self.mode == "dtls-reconnect" else 256):
                         raise RuntimeError("proxy trace limit exceeded")
                     self.trace.append({"direction": "request" if incoming else "response",
                                        "action": action, "hex": data.hex()})
@@ -202,25 +218,58 @@ def summary(samples):
             "p99": ordered[math.ceil(.99 * len(samples)) - 1], "max": max(samples)}
 
 
+def measure_requests(iterations, request_fn):
+    samples, host, failures = [], [], []
+    clock = None
+    started = time.perf_counter_ns()
+    for index in range(iterations):
+        try:
+            event = request_fn()
+            expect(event)
+            validate_timing(event)
+            if type(event.get("host_total_ns")) is not int or event["host_total_ns"] < 0:
+                raise RuntimeError("invalid host timing")
+            if clock is not None and event["clock"] != clock:
+                raise RuntimeError("request clock changed within benchmark")
+            clock = event["clock"]
+            samples.append(event["elapsed_ns"])
+            host.append(event["host_total_ns"])
+        except Exception as error:
+            failures.append({"sample_index": index, "error": str(error)})
+            break  # No retries or successful-sample substitution.
+    wall_ns = time.perf_counter_ns() - started
+    result = {"clock": clock, "requested_samples": iterations,
+              "samples_ns": {"request": samples, "host_total": host},
+              "failures": len(failures), "sample_failures": failures}
+    if samples:
+        result.update({"request_ns": summary(samples), "host_total_ns": summary(host),
+                       "request_us": summary([n / 1000 for n in samples]),
+                       "host_total_us": summary([n / 1000 for n in host])})
+    if not failures:
+        result["serial_host_requests_per_second"] = iterations * 1e9 / wall_ns
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coaptic", required=True, type=Path)
     parser.add_argument("--coap-rs", required=True, type=Path)
     parser.add_argument("--libcoap", required=True, type=Path)
     parser.add_argument("--libcoap-udp-only", action="store_true", help="Explicit local build limitation, recorded in results; CI requires DTLS")
-    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--build-note", default="Unspecified build profiles; do not compare timings across peers")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if not 1 <= args.iterations <= 10000:
         parser.error("iterations must be 1..10000")
     peers = {"coaptic": args.coaptic.resolve(), "coap-rs": args.coap_rs.resolve(), "libcoap": args.libcoap.resolve()}
-    report = {"schema": "coaptic-process-interop/1", "platform": platform.platform(),
+    report = {"schema": "coaptic-process-interop/2", "platform": platform.platform(),
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
+              "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
-              "limitations": ["PSK DTLS only; OSCORE/Observe/certificate scenarios remain in the existing harness; no claim of full ETSI coverage"],
+              "limitations": ["PSK DTLS only; this suite does not qualify OSCORE, Observe or certificates; no claim of full ETSI coverage"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "cases": [], "benchmarks": []}
     if args.libcoap_udp_only:
@@ -247,18 +296,12 @@ def main():
                     expect(request(peers[client], transport, service.number))
                     expect(request(peers[client], transport, service.number, path="missing"), 132, None)
                     expect(request(peers[client], transport, service.number, path="large"), 69, LARGE)
-                    samples, host = [], []
-                    wall = time.perf_counter()
-                    for _ in range(args.iterations):
-                        event = request(peers[client], transport, service.number)
-                        expect(event)
-                        samples.append(event["elapsed_us"])
-                        host.append(event["host_total_us"])
-                    elapsed = time.perf_counter() - wall
+                    measured = measure_requests(args.iterations,
+                        lambda: request(peers[client], transport, service.number))
                     report["benchmarks"].append({"pair": label, "server": service.ready,
-                        "startup_ms": service.startup_ms, "request_us": summary(samples),
-                        "host_total_us": summary(host), "serial_host_requests_per_second": args.iterations / elapsed,
-                        "failures": 0})
+                        "startup_ms": service.startup_ms, **measured})
+                    if measured["failures"]:
+                        raise AssertionError(f"request measurement failed: {measured['sample_failures']}")
                     if transport == "dtls":
                         refused = request(peers[client], transport, service.number, key="incorrect", timeout=1500)
                         if refused["exit_code"] == 0 or not any(s in refused.get("message", "").lower() for s in ("timeout", "timed out", "deadline", "handshake", "decrypt", "alert", "elapsed")):
@@ -267,6 +310,50 @@ def main():
                         expect(request(peers[client], transport, service.number))
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
             case(label, matrix)
+
+    # The relay preserves one server-visible UDP endpoint across fresh clients.
+    for server in ("coaptic", "coap-rs"):
+        for client in peers:
+            if client == "libcoap" and args.libcoap_udp_only:
+                continue
+            def reconnect(server=server, client=client):
+                with Server(peers[server], "dtls") as service:
+                    with Proxy(service.number, "dtls-reconnect") as relay:
+                        for _ in range(3):
+                            expect(request(peers[client], "dtls", relay.number))
+                        refused = request(peers[client], "dtls", relay.number, key="incorrect", timeout=1500)
+                        if refused["exit_code"] == 0:
+                            raise AssertionError("wrong-key reconnect unexpectedly succeeded")
+                        expect(request(peers[client], "dtls", relay.number))
+                        endpoint = relay.back.getsockname()
+                return {"server_endpoint": endpoint, "successful_connections": 4,
+                        "wrong_key_result": refused, "trace": relay.trace}
+            case(f"dtls-reconnect:{client}->{server}", reconnect)
+        def churn(server=server):
+            with Server(peers[server], "dtls") as service:
+                with Proxy(service.number, "dtls-reconnect") as relay:
+                    for _ in range(140):
+                        expect(request(peers["coaptic"], "dtls", relay.number, path="counter", method="POST"), 68, b"")
+                    expect(request(peers["coaptic"], "dtls", relay.number, path="counter"), 69, b"140")
+                    endpoint = relay.back.getsockname()
+            return {"server_endpoint": endpoint, "connections": 141,
+                    "verified": "140 distinct authenticated POST effects across reused endpoint", "trace": relay.trace}
+        case(f"dtls-churn:coaptic->{server}", churn)
+
+    if not args.libcoap_udp_only:
+        def c_server_reconnect():
+            with Server(peers["libcoap"], "dtls") as service:
+                with Proxy(service.number, "dtls-reconnect") as relay:
+                    for _ in range(140):
+                        expect(request(peers["coaptic"], "dtls", relay.number, path="counter", method="POST"), 68, b"")
+                    expect(request(peers["coaptic"], "dtls", relay.number, path="counter"), 69, b"140")
+                    endpoint = relay.back.getsockname()
+                    alerts = sum(row["direction"] == "request" and row["hex"].startswith("15") for row in relay.trace)
+                    if alerts < 141:
+                        raise AssertionError(f"missing terminal client records: {alerts}")
+            return {"server_endpoint": endpoint, "connections": 141, "client_alert_records": alerts,
+                    "verified": "Coaptic explicit shutdown and 140 independent POST effects", "trace": relay.trace}
+        case("dtls-clean-reconnect:coaptic->libcoap", c_server_reconnect)
 
     # Fault tests target Coaptic's guarantees; alternative clients remain independent.
     for client in peers:

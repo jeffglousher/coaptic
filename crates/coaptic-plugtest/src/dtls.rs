@@ -246,6 +246,14 @@ pub fn run_dtls_pairs(id: &str, pairs: &[Pair]) -> Vec<TdResult> {
 
 fn run_one(id: &str, pair: Pair) -> TdResult {
     let _guard = crate::runner::harness_lock();
+    if let Some(reason) = crate::catalog::skip_reason(id) {
+        return TdResult {
+            id: id.to_owned(),
+            pair,
+            error: Some(format!("SKIP: {reason}")),
+            capture: Capture::new(),
+        };
+    }
     let err = match id {
         "TD_COAP_DTLS_01" => dtls_psk(pair, PSK_KEY, true),
         "TD_COAP_DTLS_02" => dtls_psk(pair, PSK_WRONG, false),

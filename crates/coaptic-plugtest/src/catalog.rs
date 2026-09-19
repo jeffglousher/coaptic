@@ -132,7 +132,8 @@ pub fn assert_ids_match_yaml() {
 
 /// Skip reason. `None` means this harness implements the TD.
 ///
-/// DTLS runs when the `dtls` feature is on. 6LoWPAN is future / backlog.
+/// The App harness reports unimplemented scenario steps explicitly (#199).
+/// Engine tests and process smoke tests have separate coverage contracts.
 #[must_use]
 pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_6LoWPAN_") {
@@ -141,7 +142,34 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_COAP_DTLS_") && !cfg!(feature = "dtls") {
         return Some("enable crate feature dtls (harness webrtc-dtls adapter)");
     }
-    None
+    match id {
+        "TD_COAP_CORE_09" | "TD_COAP_CORE_11" | "TD_COAP_CORE_17" => {
+            Some("coverage gap #199: separate-response sequence not qualified on every peer")
+        }
+        "TD_COAP_CORE_15" | "TD_COAP_CORE_16" => {
+            Some("coverage gap #199: required loss injection is not implemented")
+        }
+        "TD_COAP_DTLS_02" => Some(
+            "coverage gap #199: dtls authentication failure lacks authenticated alert evidence",
+        ),
+        "TD_COAP_DTLS_03" => {
+            Some("coverage gap #199: dtls handshake loss injection is not implemented")
+        }
+        "TD_COAP_DTLS_04" | "TD_COAP_DTLS_05" | "TD_COAP_DTLS_06" | "TD_COAP_DTLS_07" => {
+            Some("coverage gap #199: dtls backend uses X.509, not required raw public keys")
+        }
+        _ if BLOCK.contains(&id) => {
+            Some("coverage gap #199: full block sequence and exact-body assertions incomplete")
+        }
+        _ if OBS.contains(&id) => {
+            Some("coverage gap #199: Observe scenario steps and notification assertions incomplete")
+        }
+        "TD_COAP_LINK_04" => Some("coverage gap #199: fixture lacks the required empty rt group"),
+        "TD_COAP_LINK_09" => {
+            Some("coverage gap #199: full hierarchical discovery assertions incomplete")
+        }
+        _ => None,
+    }
 }
 
 /// Vendored `TD_6LoWPAN_*` keys.

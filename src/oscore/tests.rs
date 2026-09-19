@@ -182,7 +182,7 @@ fn c3_key_derivation_with_id_context() {
 #[test]
 fn c4_protected_request() {
     let mut client = client_c1();
-    client.set_sender_seq(20);
+    client.set_sender_seq(20).unwrap();
     let mut host_path = OptionsBuilder::<2>::new();
     host_path.push(Opt::uri_host("localhost")).unwrap();
     host_path.push(Opt::uri_path("tv1")).unwrap();
@@ -207,7 +207,7 @@ fn c5_protected_request_nonzero_kid() {
         id_context: &[],
     })
     .unwrap();
-    client.set_sender_seq(20);
+    client.set_sender_seq(20).unwrap();
     let mut host_path = OptionsBuilder::<2>::new();
     host_path.push(Opt::uri_host("localhost")).unwrap();
     host_path.push(Opt::uri_path("tv1")).unwrap();
@@ -233,7 +233,7 @@ fn c6_protected_request_kid_context() {
         id_context: &id_context,
     })
     .unwrap();
-    client.set_sender_seq(20);
+    client.set_sender_seq(20).unwrap();
     let mut host_path = OptionsBuilder::<2>::new();
     host_path.push(Opt::uri_host("localhost")).unwrap();
     host_path.push(Opt::uri_path("tv1")).unwrap();
@@ -252,7 +252,7 @@ fn c6_protected_request_kid_context() {
 #[test]
 fn c7_protected_response() {
     let mut client = client_c1();
-    client.set_sender_seq(20);
+    client.set_sender_seq(20).unwrap();
     let mut server = server_c1();
 
     let mut host_path = OptionsBuilder::<2>::new();
@@ -1600,7 +1600,7 @@ fn exhausted_sender_seq_is_oscore_error_not_block1() {
         .bind(Loopback::default())
         .unwrap();
     let mut ctx = client_c1();
-    ctx.set_sender_seq(1 << 40);
+    ctx.set_sender_seq(1 << 40).unwrap();
     client.set_oscore(ctx);
 
     let err = client
@@ -1650,7 +1650,11 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
     server.poll(0).unwrap();
     assert!(server.transport().last_send.is_some(), "register ACK");
 
-    server.oscore_mut().expect("oscore").set_sender_seq(1 << 40);
+    server
+        .oscore_mut()
+        .expect("oscore")
+        .set_sender_seq(1 << 40)
+        .unwrap();
     server.transport_mut().last_send = None;
     let err = server
         .notify(10, &["obs"], Response::content(b"obs-1"))
@@ -1714,4 +1718,38 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
         assert!(app.transport().last_send.is_none(), "no plaintext recovery");
         assert_eq!(app.engine_mut().tx_occupied(), 0, "no leaked TX slot");
     }
+}
+
+#[test]
+fn context_debug_redacts_key_material() {
+    let params = DeriveParams {
+        master_secret: &[0x42; 16],
+        master_salt: &[0x63; 8],
+        sender_id: &[1],
+        recipient_id: &[2],
+        id_context: &[],
+    };
+    assert_eq!(
+        std::format!("{params:?}"),
+        r#"DeriveParams { master_secret: "[REDACTED]", master_salt: "[REDACTED]", .. }"#
+    );
+    let context = SecurityContext::derive(params).unwrap();
+    assert_eq!(
+        std::format!("{context:?}"),
+        r#"SecurityContext { key_material: "[REDACTED]", sender_seq: 0, .. }"#
+    );
+}
+
+#[test]
+fn sender_sequence_advances_but_cannot_roll_back_or_exceed_exhaustion() {
+    let mut ctx = client_c1();
+    ctx.set_sender_seq(20).unwrap();
+    assert_eq!(ctx.set_sender_seq(19), Err(Error::SequenceRollback));
+    assert_eq!(ctx.sender_seq(), 20);
+    ctx.set_sender_seq(20).unwrap();
+    assert_eq!(ctx.set_sender_seq(u64::MAX), Err(Error::SequenceExhausted));
+    assert_eq!(ctx.sender_seq(), 20);
+    ctx.set_sender_seq(1 << 40).unwrap();
+    assert_eq!(ctx.set_sender_seq(0), Err(Error::SequenceRollback));
+    assert_eq!(ctx.sender_seq(), 1 << 40);
 }

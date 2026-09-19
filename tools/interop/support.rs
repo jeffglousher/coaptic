@@ -1,5 +1,5 @@
 //! Small process protocol. stdout is JSON Lines; diagnostics use stderr.
-use std::time::Instant;
+use std::time::Duration;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub const BODY: &[u8] = b"core-test-payload";
 pub const LARGE: [u8; 2000] = {
@@ -65,14 +65,15 @@ impl Args {
 pub fn ready(peer: &str, stack: &str, port: u16, dtls: bool) {
     println!(
         "{}",
-        serde_json::json!({"schema":"coaptic-peer/1","event":"ready","peer":peer,"stack":stack,"port":port,"transport":if dtls {"dtls"} else {"udp"}})
+        serde_json::json!({"schema":"coaptic-peer/2","event":"ready","peer":peer,"stack":stack,"port":port,"transport":if dtls {"dtls"} else {"udp"}})
     );
 }
-pub fn response(code: u8, body: &[u8], start: Instant) {
+pub fn response(code: u8, body: &[u8], elapsed: Duration) {
+    let elapsed_ns = elapsed.as_nanos();
     let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
     println!(
         "{}",
-        serde_json::json!({"schema":"coaptic-peer/1","event":"response","code":code,"payload_hex":hex,"elapsed_us":start.elapsed().as_micros()})
+        serde_json::json!({"schema":"coaptic-peer/2","event":"response","code":code,"payload_hex":hex,"elapsed_ns":elapsed_ns,"elapsed_us":elapsed_ns as f64 / 1000.0,"clock":{"name":"std::time::Duration","resolution_ns":null}})
     );
 }
 pub fn finish(result: Result<(), Error>) -> std::process::ExitCode {
@@ -81,7 +82,7 @@ pub fn finish(result: Result<(), Error>) -> std::process::ExitCode {
         Err(e) => {
             println!(
                 "{}",
-                serde_json::json!({"schema":"coaptic-peer/1","event":"error","message":e.to_string()})
+                serde_json::json!({"schema":"coaptic-peer/2","event":"error","message":e.to_string()})
             );
             std::process::ExitCode::FAILURE
         }
