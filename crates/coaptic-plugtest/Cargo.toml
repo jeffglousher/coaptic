@@ -10,7 +10,9 @@ repository = "https://github.com/jeffglousher/coaptic"
 
 [features]
 default = []
-# Real DTLS (same webrtc-dtls 0.8 stack as coap 0.28). Harness-only.
+# Real DTLS: coap 0.28.1 exposes these dependency types in its public API.
+# Keep dtls 0.8 / util 0.8 / rustls 0.21 aligned until coap migrates (#185).
+# Harness-only; the library has no DTLS dependency.
 dtls = ["coap/dtls", "dep:webrtc-dtls", "dep:webrtc-util", "dep:rustls"]
 # Pairwise OSCORE dogfood (`--oscore`). Library feature; no extra harness deps.
 oscore = ["coaptic/oscore"]
