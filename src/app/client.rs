@@ -596,6 +596,8 @@ where
     }
 
     /// ETag option (conditional GET / validation).
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`]; conditional upload retention is not implemented.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
@@ -603,6 +605,8 @@ where
     }
 
     /// If-Match option.
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
     #[must_use]
     pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
         self.if_match = Some(tag);
@@ -610,6 +614,8 @@ where
     }
 
     /// If-None-Match option.
+    /// A payload requiring Block1/Q-Block1 fragmentation returns
+    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -877,6 +883,14 @@ where
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+            // These conditions cannot be dropped while changing to Block1.
+            // Until the App retains their transfer-specific semantics, refuse
+            // fragmentation instead of turning a conditional write into an
+            // unconditional one (RFC 7959 section 2.10).
+            if spec.if_match.is_some() || spec.if_none_match || spec.etag.is_some() {
+                let _ = engine.release_tx(tx);
+                return Err(Error::ConditionalUploadUnsupported);
+            }
             // Inner Block-wise: fragment first, then protect each
             // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
             // Protocol protect failures are `Error::Oscore`, not this arm.
