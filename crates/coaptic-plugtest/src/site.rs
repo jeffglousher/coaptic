@@ -199,8 +199,23 @@ fn well_known(req: Request<'_>) -> Response<'static> {
         .uri_query()
         .filter_map(|s| s.ok().map(str::to_owned))
         .collect();
+    static FULL_CATALOG: OnceLock<String> = OnceLock::new();
+    if queries.is_empty() {
+        return Response::content(
+            FULL_CATALOG
+                .get_or_init(|| LINK_CATALOG.join(","))
+                .as_bytes(),
+        )
+        .content_format(ContentFormat::LINK_FORMAT);
+    }
     let payload = filter_catalog(&queries);
-    Response::content_copy(payload.as_bytes()).content_format(ContentFormat::LINK_FORMAT)
+    let response =
+        Response::content_copy(payload.as_bytes()).content_format(ContentFormat::LINK_FORMAT);
+    assert!(
+        !response.payload_truncated(),
+        "discovery fixture must not silently truncate"
+    );
+    response
 }
 
 /// Filter [`LINK_CATALOG`] by RFC 6690 query keys (`rt`, `if`, `sz`, `href`).
