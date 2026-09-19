@@ -4396,3 +4396,63 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
         }
     }
 }
+
+#[test]
+fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        for condition in 0..3 {
+            let mut app = pipe_app();
+            let mut request = app.put("upload").to(peer).payload(&LARGE);
+            if qblock {
+                request = request.q_block1();
+            }
+            request = match condition {
+                0 => request.if_match(b"version"),
+                1 => request.if_none_match(),
+                _ => request.etag(b"version"),
+            };
+            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+            assert_eq!(
+                app.transport().len,
+                0,
+                "no unconditional fragment may escape"
+            );
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        }
+    }
+}
+
+#[test]
+fn single_datagram_conditional_upload_preserves_conditions() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for condition in 0..3 {
+        let mut app = pipe_app();
+        let request = app.put("upload").to(peer).payload(b"small");
+        let request = match condition {
+            0 => request.if_match(b"version"),
+            1 => request.if_none_match(),
+            _ => request.etag(b"version"),
+        };
+        request.send(0).unwrap();
+        let (_, bytes, n) = app.transport().slots[0].as_ref().unwrap();
+        let message = decode(&bytes[..*n]).unwrap();
+        assert_eq!(message.payload(), b"small");
+        assert!(message.block1().is_none());
+        let option = match condition {
+            0 => OptionNumber::IF_MATCH,
+            1 => OptionNumber::IF_NONE_MATCH,
+            _ => OptionNumber::ETAG,
+        };
+        assert_eq!(
+            message.get_option(option).map(Opt::value),
+            Some(if condition == 1 {
+                &b""[..]
+            } else {
+                &b"version"[..]
+            })
+        );
+    }
+}
