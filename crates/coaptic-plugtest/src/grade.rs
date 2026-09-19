@@ -360,24 +360,28 @@ fn payload_matches(got: &[u8], want: &ExpectPayload) -> bool {
         ExpectPayload::Word(w) if w == "nonempty" => !got.is_empty(),
         ExpectPayload::Word(w) => got == w.as_bytes(),
         ExpectPayload::Obj { contains, hex } => {
-            if let Some(s) = contains {
-                std::str::from_utf8(got).is_ok_and(|t| t.contains(s))
-            } else if let Some(h) = hex {
-                hex_decode(h).is_some_and(|b| b == got)
-            } else {
-                true
-            }
+            (contains.is_some() || hex.is_some())
+                && contains
+                    .as_ref()
+                    .is_none_or(|s| std::str::from_utf8(got).is_ok_and(|t| t.contains(s)))
+                && hex
+                    .as_ref()
+                    .is_none_or(|h| hex_decode(h).is_some_and(|b| b == got))
         }
     }
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.is_ascii() || s.len() % 2 != 0 {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+    s.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = (pair[0] as char).to_digit(16)?;
+            let low = (pair[1] as char).to_digit(16)?;
+            Some(((high << 4) | low) as u8)
+        })
         .collect()
 }
 
@@ -595,6 +599,24 @@ mod tests {
     use super::*;
     use coaptic::message::{Ids, Message, Opt, OptionsBuilder, Token, Type, encode};
     use coaptic::{Code, ContentFormat};
+
+    #[test]
+    fn payload_constraints_are_conjunctive_and_malformed_hex_is_refused() {
+        let mut want = ExpectPayload::Obj {
+            contains: Some("hi".into()),
+            hex: Some("6869".into()),
+        };
+        assert!(payload_matches(b"hi", &want));
+        assert!(!payload_matches(b"hi there", &want));
+        want = ExpectPayload::Obj {
+            contains: None,
+            hex: None,
+        };
+        assert!(!payload_matches(b"anything", &want));
+        for bad in ["h0", "123", "a\u{20ac}", "\u{e9}"] {
+            assert_eq!(hex_decode(bad), None);
+        }
+    }
 
     fn record(kind: u8, body: &[u8]) -> Vec<u8> {
         let mut r = vec![kind, 0xfe, 0xfd, 0, 0, 0, 0, 0, 0, 0, 0];
