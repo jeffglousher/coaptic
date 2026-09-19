@@ -90,9 +90,10 @@ impl Echo {
     }
 
     /// Age of a [`Self::mint`] value at caller `now_ms`.
+    /// Returns `None` for future timestamps or a clock rollback.
     #[must_use]
     pub fn age_ms(self, now_ms: u64) -> Option<u64> {
-        Some(now_ms.saturating_sub(self.issued_at()?))
+        now_ms.checked_sub(self.issued_at()?)
     }
 
     /// Whether a [`Self::mint`] value still satisfies `(now_ms - t0) < fresh_ms`.
@@ -175,6 +176,15 @@ mod unit_tests {
         let echo = Echo::mint(9, b"pad!").expect("mint");
         assert_eq!(echo.issued_at(), Some(9));
         assert_eq!(echo.age_ms(10), Some(1));
+        assert_eq!(echo.age_ms(8), None);
+        assert!(!echo.is_time_fresh(8, u64::MAX));
+        assert!(
+            !Echo::mint(u64::MAX, &[])
+                .unwrap()
+                .is_time_fresh(0, u64::MAX)
+        );
+        assert!(echo.is_time_fresh(9, 1));
+        assert!(!echo.is_time_fresh(9, 0));
         assert!(echo.is_time_fresh(10, 5));
         assert!(!echo.is_time_fresh(14, 5));
         assert!(!echo.is_time_fresh(15, 5));

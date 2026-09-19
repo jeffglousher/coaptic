@@ -38,6 +38,8 @@ pub enum Error {
     PartialIv,
     /// Sender Sequence Number is exhausted (5-byte Partial IV).
     SequenceExhausted,
+    /// Attempt to move the sender sequence below its current value.
+    SequenceRollback,
     /// Partial IV is a replay (or left of the window).
     Replay,
     /// AEAD open failed (wrong key, nonce, AAD, or ciphertext).
@@ -72,6 +74,7 @@ impl core::fmt::Display for Error {
             Self::Saturated => f.write_str("OSCORE request-binding table is saturated"),
             Self::PartialIv => f.write_str("Partial IV is missing or invalid"),
             Self::SequenceExhausted => f.write_str("sender sequence number is exhausted"),
+            Self::SequenceRollback => f.write_str("sender sequence number cannot move backwards"),
             Self::Replay => f.write_str("OSCORE replay"),
             Self::Decrypt => f.write_str("OSCORE decryption failed"),
             Self::Encrypt => f.write_str("OSCORE encryption failed"),
