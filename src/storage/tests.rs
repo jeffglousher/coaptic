@@ -537,6 +537,9 @@ fn progress_retransmit_due() {
     let mut engine = build_default();
     let ep = Endpoint::v4([192, 0, 2, 81], 5683);
     let tx = record_pending_at(&mut engine, ep, 21, 0, 0);
+    assert!(engine.pending_con(tx).is_some());
+    assert!(!engine.storage_mut().tx_datagram().is_empty());
+    assert_eq!(engine.storage_mut().tx_datagram().occupied_count(), 1);
     let timeout = Transmission::ACK_TIMEOUT_MS;
     let idle = engine.progress(u64::from(timeout) - 1);
     assert_eq!(idle.retransmit(), None);
@@ -552,6 +555,8 @@ fn progress_retransmit_due() {
     assert!(outcome.rx_ready().is_none());
     assert!(engine.pending_con(tx).is_some());
     engine.release_tx(tx).expect("caller still owns tx");
+    assert!(engine.pending_con(tx).is_none());
+    assert!(engine.storage_mut().tx_datagram().is_empty());
 }
 
 #[test]
@@ -615,6 +620,7 @@ fn progress_observe_notify_due() {
     let row = engine.observe_interest(id).expect("pending row");
     assert!(row.is_pending());
     assert_eq!(row.seq(), 0);
+    assert!(!engine.storage_mut().observe().is_empty());
     let outcome = engine.progress(0);
     assert_eq!(outcome.observe_notify(), Some(id));
     let row = engine.observe_interest(id).expect("surfaced");
@@ -1044,6 +1050,13 @@ fn progress_qblock_recover_gap_then_fill() {
         .apply_q_block2(key, b2, &body[32..], Some(40))
         .expect("2");
     assert!(engine.progress(0).qblock_recover().is_none());
+    assert!(
+        !engine
+            .storage_mut()
+            .rx_body()
+            .expect("body pool")
+            .is_empty()
+    );
     let outcome = engine.progress(q_nrt());
     let recover = outcome.qblock_recover().expect("gap");
     assert_eq!(recover.key(), key);

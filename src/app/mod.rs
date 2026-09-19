@@ -270,6 +270,12 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
 impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, N, PREV> {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
+    /// Shipped profiles use 4096 bytes per body slot, even
+    /// [`crate::profiles::Constrained`]. Enabling this adds RX and TX body pools
+    /// (8 KiB total for Constrained; 16 KiB for Default), a 4 KiB client
+    /// assembled-body hold, and bookkeeping. Datagram sizes do not shrink
+    /// that body quantum; size the complete `App` for your target.
+    ///
     /// The flag is a const generic so [`App`] RAM matches Storage:
     /// `.block_wise::<false>()` does not reserve RX/TX body arrays or the
     /// client Block2 assembled hold. A piggybacked payload larger than
@@ -400,6 +406,13 @@ impl<
     }
 
     /// Attach a caller-owned pairwise OSCORE context.
+    ///
+    /// There is exactly one context per App, with four live request bindings
+    /// shared by in-flight requests and Observe registrations. Replacing it
+    /// does not migrate live exchanges, tokens, replay state, or subscriptions;
+    /// drain them first or use separate Apps for separate peers/key epochs.
+    /// Timed Q-Block gap recovery returns [`crate::oscore::Error::Unsupported`]
+    /// without sending plaintext while a context is attached.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
@@ -693,7 +706,7 @@ where
     }
 
     if let Some(recover) = progress.qblock_recover() {
-        send_qblock_recover(engine, io, ids, now_ms, recover, dedup_closed)?;
+        send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
     }
     if recv_saturated {
         return Err(Error::Saturated);
@@ -786,6 +799,7 @@ fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut Ids,
+    oscore: &oscore::Field,
     now_ms: u64,
     recover: QBlockRecover,
     dedup_closed: &mut Option<DedupClosed>,
@@ -794,6 +808,12 @@ where
     Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    // Recovery has no retained OSCORE request binding. Never fall back
+    // to plaintext in either direction on a protected association.
+    #[cfg(feature = "oscore")]
+    if oscore::is_active(oscore) {
+        return Err(Error::Oscore(crate::oscore::Error::Unsupported));
+    }
     match recover.role() {
         BlockRole::IncomingQBlock2 => {
             let Some(tx) = engine.acquire_tx() else {
@@ -835,7 +855,7 @@ where
                 meta,
                 &Response::missing_blocks(nums.into_iter().take(n)),
                 now_ms,
-                &oscore::empty_field(),
+                oscore,
                 dedup_closed,
             )
         }

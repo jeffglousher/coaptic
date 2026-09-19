@@ -291,7 +291,7 @@ fn c7_protected_response() {
 #[test]
 fn c8_protected_response_with_piv() {
     let mut server = server_c1();
-    let request = super::RequestRef::from_kid(&[], PartialIv::from_seq(20)).unwrap();
+    let request = super::RequestRef::from_kid(&[], PartialIv::from_seq(20).unwrap()).unwrap();
     let resp = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(0x5d1f))
         .with_token(Token::from_checked(&[0x00, 0x00, 0x39, 0x74]))
         .with_payload(b"Hello World!");
@@ -549,7 +549,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
 #[test]
 fn live_request_table_is_four_and_saturates() {
     let mut ctx = client_c1();
-    let request = RequestRef::from_kid(&[], PartialIv::from_seq(1)).unwrap();
+    let request = RequestRef::from_kid(&[], PartialIv::from_seq(1).unwrap()).unwrap();
     for i in 0..LIVE_REQUESTS {
         let token = Token::from_checked(&[i as u8 + 1]);
         ctx.remember(token, request).unwrap();
@@ -564,7 +564,7 @@ fn live_request_table_is_four_and_saturates() {
 fn accept_notification_duplicate_piv_is_replay() {
     let mut ctx = client_c1();
     let token = Token::from_checked(&[1]);
-    let request = RequestRef::from_kid(&[], PartialIv::from_seq(1)).unwrap();
+    let request = RequestRef::from_kid(&[], PartialIv::from_seq(1).unwrap()).unwrap();
     ctx.remember_live(token, request, true).unwrap();
 
     ctx.accept_notification(token, None).unwrap();
@@ -574,7 +574,7 @@ fn accept_notification_duplicate_piv_is_replay() {
         "at most one notification without Partial IV"
     );
 
-    let piv = PartialIv::from_seq(5);
+    let piv = PartialIv::from_seq(5).unwrap();
     ctx.accept_notification(token, Some(piv)).unwrap();
     assert_eq!(
         ctx.accept_notification(token, Some(piv)),
@@ -582,11 +582,11 @@ fn accept_notification_duplicate_piv_is_replay() {
         "duplicate notify PIV is Replay (RFC 8613 §7.4.1)"
     );
     assert_eq!(
-        ctx.accept_notification(token, Some(PartialIv::from_seq(4))),
+        ctx.accept_notification(token, Some(PartialIv::from_seq(4).unwrap())),
         Err(Error::Replay),
         "Notification Number must strictly increase"
     );
-    ctx.accept_notification(token, Some(PartialIv::from_seq(6)))
+    ctx.accept_notification(token, Some(PartialIv::from_seq(6).unwrap()))
         .unwrap();
 }
 
@@ -1664,4 +1664,54 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
         server.transport().last_send.is_none(),
         "exhausted notify PIV must not emit a datagram"
     );
+}
+
+#[test]
+fn partial_iv_sequence_boundaries_reject_overlong_values() {
+    for seq in [0, 1, 255, 256, (1u64 << 40) - 1] {
+        let piv = PartialIv::from_seq(seq).unwrap();
+        assert_eq!(piv.seq(), seq);
+        assert_eq!(PartialIv::from_bytes(piv.as_bytes()).unwrap(), piv);
+    }
+    assert_eq!(PartialIv::from_seq(0).unwrap().as_bytes(), &[0]);
+    assert_eq!(PartialIv::from_seq(1u64 << 40), Err(Error::PartialIv));
+    assert_eq!(PartialIv::from_seq(u64::MAX), Err(Error::PartialIv));
+}
+
+#[test]
+fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
+    use crate::message::QBlockTransmission;
+    use crate::storage::BlockKey;
+    use crate::{App, profiles};
+
+    for incoming_request in [true, false] {
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<true>()
+            .bind(Loopback::default())
+            .unwrap();
+        app.set_oscore(server_c1());
+        // Seed the same incomplete body state produced by authenticated
+        // ingress; exercise timed App recovery, including its wire boundary.
+        for (num, payload) in [(0, &b"0123456789abcdef"[..]), (2, &b"01234567"[..])] {
+            let block = BlockValue::from_size(num, num == 0, 16).unwrap();
+            if incoming_request {
+                app.engine_mut()
+                    .apply_q_block1(key, block, payload, Some(40))
+                    .unwrap();
+            } else {
+                app.engine_mut()
+                    .apply_q_block2(key, block, payload, Some(40))
+                    .unwrap();
+            }
+        }
+        app.poll(0).unwrap();
+        assert_eq!(
+            app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS)),
+            Err(crate::app::Error::Oscore(Error::Unsupported))
+        );
+        assert!(app.transport().last_send.is_none(), "no plaintext recovery");
+        assert_eq!(app.engine_mut().tx_occupied(), 0, "no leaked TX slot");
+    }
 }

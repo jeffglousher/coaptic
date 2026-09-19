@@ -12,6 +12,12 @@
 //! [`Response::payload_truncated`]. The full assembled representation is
 //! [`Response::body`], not a 4KiB field on [`Response`].
 //!
+//! App holds at most four live client requests, including Observe
+//! subscriptions and replies waiting for `take_response`. Resource-specific
+//! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! Unknown critical response options reject the response (RST for CON);
+//! unknown elective options are ignored. A matching ACK still stops retries.
+//!
 //! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId).
 //! [`App::poll`](super::App::poll) advances this alongside site routing on
 //! the same socket. Continues reuse the path recorded at
@@ -945,6 +951,24 @@ where
     if via_exchange.is_none() && !via_observe {
         let _ = engine.release_rx(rx);
         return Ok(());
+    }
+    // RFC 7252 sections 5.4.1 and 4.2: reject the response, not an
+    // otherwise matching ACK. No inbox/body/Observe state may accept it.
+    if parsed.unknown_critical().is_some() {
+        if parsed.ty() == Type::Acknowledgement {
+            if let Some(entry) = via_exchange {
+                if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
+                    let _ = engine.release_tx(tx);
+                }
+            }
+        }
+        let outcome = if parsed.ty() == Type::Confirmable {
+            super::send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
+        let _ = engine.release_rx(rx);
+        return outcome;
     }
     if parsed.ty() == Type::Confirmable {
         if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {

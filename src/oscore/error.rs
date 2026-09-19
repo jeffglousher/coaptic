@@ -52,6 +52,7 @@ pub enum Error {
     Options,
     /// Outer Block-wise over OSCORE (proxy hop-by-hop) is not in this slice.
     /// Inner Block-wise (fragment then protect) is supported on the App path.
+    /// Timed Q-Block gap recovery with an attached context is also unsupported.
     Unsupported,
 }
 
@@ -77,7 +78,7 @@ impl core::fmt::Display for Error {
             Self::Encode(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
             Self::Options => f.write_str("OSCORE option list is full"),
-            Self::Unsupported => f.write_str("OSCORE outer Block-wise is not in this slice"),
+            Self::Unsupported => f.write_str("OSCORE operation is not supported in this slice"),
         }
     }
 }

@@ -4031,3 +4031,69 @@ fn options_full_500_oscore_without_request_is_not_plaintext() {
         "must not emit unprotected 5.00 when RequestRef is missing"
     );
 }
+
+#[test]
+fn response_unknown_option_policy_precedes_completion_and_ack() {
+    for ty in [
+        Type::Confirmable,
+        Type::NonConfirmable,
+        Type::Acknowledgement,
+    ] {
+        for critical in [true, false] {
+            let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+            let mut app = App::profile::<profiles::Default>()
+                .block_wise::<false>()
+                .bind(RecordIo::default())
+                .unwrap();
+            let call = app.get("value").to(peer).send(0).unwrap();
+            let (_, req, rn) = app.transport().sent[0].unwrap();
+            let request_mid = decode(&req[..rn]).unwrap().message_id();
+            let mid = if ty == Type::Acknowledgement {
+                request_mid
+            } else {
+                MessageId::new(400)
+            };
+            let extras = [Opt::new(
+                OptionNumber::new(if critical { 65001 } else { 65000 }),
+                &[],
+            )];
+            let msg = Message::new(ty, Code::CONTENT, mid)
+                .with_token(call.token())
+                .with_options(&extras)
+                .with_payload(b"answer");
+            let mut wire = [0u8; 256];
+            let n = encode(&msg, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(1).unwrap();
+            assert_eq!(app.take_response(call).is_some(), !critical);
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            if ty == Type::Confirmable {
+                let (_, reply, rn) = app.transport().sent[1].unwrap();
+                let response = decode(&reply[..rn]).unwrap();
+                assert_eq!(
+                    response.ty(),
+                    if critical {
+                        Type::Reset
+                    } else {
+                        Type::Acknowledgement
+                    }
+                );
+                assert_eq!(response.message_id(), mid);
+                assert!(response.is_empty());
+            } else {
+                assert_eq!(app.transport().sent_n, 1, "no ACK or RST to ACK/NON");
+            }
+            if critical && ty == Type::Acknowledgement {
+                assert_eq!(app.engine_mut().tx_occupied(), 0, "matching ACK stops RTO");
+                app.poll(u64::from(Transmission::ACK_TIMEOUT_MS) * 2)
+                    .unwrap();
+                assert_eq!(
+                    app.transport().sent_n,
+                    1,
+                    "rejected ACK body is not a lost ACK"
+                );
+                assert!(app.take_response(call).is_none());
+            }
+        }
+    }
+}
