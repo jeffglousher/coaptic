@@ -10,7 +10,7 @@ use super::{Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WI
 ///
 /// `master_salt` and `id_context` may be empty. Sender and Recipient IDs
 /// must differ. Length limits are those of AES-CCM-16-64-128.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct DeriveParams<'a> {
     /// Shared Master Secret (IKM).
     pub master_secret: &'a [u8],
@@ -22,6 +22,15 @@ pub struct DeriveParams<'a> {
     pub recipient_id: &'a [u8],
     /// Optional ID Context (empty if unused).
     pub id_context: &'a [u8],
+}
+
+impl core::fmt::Debug for DeriveParams<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DeriveParams")
+            .field("master_secret", &"[REDACTED]")
+            .field("master_salt", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Binding of a request Partial IV (and `kid`) to a Token.
@@ -84,7 +93,7 @@ impl Id {
 ///
 /// You own this value. [`crate::App`] stores it only after
 /// [`crate::App::set_oscore`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SecurityContext {
     sender_id: Id,
     recipient_id: Id,
@@ -108,6 +117,15 @@ struct LiveRequest {
     observe: bool,
     notify_no_piv: bool,
     notify_number: Option<u64>,
+}
+
+impl core::fmt::Debug for SecurityContext {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SecurityContext")
+            .field("key_material", &"[REDACTED]")
+            .field("sender_seq", &self.sender_seq)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SecurityContext {

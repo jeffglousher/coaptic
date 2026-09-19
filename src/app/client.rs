@@ -62,7 +62,7 @@ const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
-/// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+/// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
 ///     .block_wise::<false>()
@@ -344,7 +344,7 @@ enum OutgoingObserve {
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
-/// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+/// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
 ///     .block_wise::<false>()

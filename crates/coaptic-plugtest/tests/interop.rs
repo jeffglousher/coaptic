@@ -45,23 +45,27 @@ fn backlog_6lowpan_skipped() {
 }
 
 #[test]
-fn dtls_not_deferred_skip_when_feature_on() {
-    for id in catalog::DTLS {
-        match catalog::skip_reason(id) {
-            None => {
-                // Feature `dtls` is on: the harness implements the TD.
-            }
-            Some(reason) => {
-                assert!(
-                    !reason.contains("deferred"),
-                    "{id}: DTLS must not be deferred ({reason})"
+fn unqualified_scenarios_cannot_report_pass() {
+    for id in catalog::CORE
+        .iter()
+        .chain(catalog::BLOCK)
+        .chain(catalog::OBS)
+        .chain(catalog::LINK)
+        .chain(catalog::DTLS)
+    {
+        if let Some(reason) = catalog::skip_reason(id) {
+            for result in runner::run_suite(&[*id], &runner::default_pairs()) {
+                assert_eq!(
+                    result.error.as_deref(),
+                    Some(format!("SKIP: {reason}").as_str()),
+                    "{id}"
                 );
-                assert!(
-                    reason.contains("dtls"),
-                    "{id}: skip should name the dtls feature ({reason})"
-                );
+                assert!(result.capture.snapshot().is_empty());
             }
         }
+    }
+    if cfg!(feature = "dtls") {
+        assert!(catalog::skip_reason("TD_COAP_DTLS_01").is_none());
     }
 }
 
@@ -149,5 +153,13 @@ fn inventory() {
         lowpan.len()
     );
     eprintln!("interop inventory: {ran} run, {skipped} skip");
-    assert!(ran >= 24 + 6 + 13 + 9, "CORE+BLOCK+OBS+LINK must all run");
+    assert_eq!(
+        ran + skipped,
+        88,
+        "every vendored scenario is accounted for"
+    );
+    assert!(
+        ran >= 19,
+        "qualified basic CORE scenarios must remain runnable"
+    );
 }

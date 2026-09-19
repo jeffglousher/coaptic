@@ -46,7 +46,7 @@
 //! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 //! #         Ok(None)
 //! #     }
-//! #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+//! #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 //! # }
 //! let mut app = App::profile::<profiles::Default>()
 //!     .block_wise::<true>()
@@ -464,7 +464,7 @@ impl<
     /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
     /// #         Ok(None)
     /// #     }
-    /// #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+    /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
     /// # }
     /// let mut app = App::profile::<profiles::Default>()
     ///     .block_wise::<false>()
