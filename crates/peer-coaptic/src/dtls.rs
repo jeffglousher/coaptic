@@ -38,18 +38,20 @@ impl DtlsIo {
             },
         ))
     }
-    pub async fn connect(addr: SocketAddr, config: Config) -> Result<Self, String> {
+    pub async fn connect(
+        addr: SocketAddr,
+        config: Config,
+        timeout: Duration,
+    ) -> Result<Self, String> {
         let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .map_err(|e| e.to_string())?;
         socket.connect(addr).await.map_err(|e| e.to_string())?;
-        let conn = tokio::time::timeout(
-            Duration::from_secs(3),
-            DTLSConn::new(Arc::new(socket), config, true, None),
-        )
-        .await
-        .map_err(|_| "DTLS handshake timeout")?
-        .map_err(|e| e.to_string())?;
+        let conn =
+            tokio::time::timeout(timeout, DTLSConn::new(Arc::new(socket), config, true, None))
+                .await
+                .map_err(|_| "DTLS handshake timeout")?
+                .map_err(|e| e.to_string())?;
         let (tx, rx) = mpsc::sync_channel(64);
         let routes: Routes = Arc::default();
         attach(Arc::new(conn), addr, tx, routes.clone());

@@ -26,6 +26,9 @@ updates:
     # Those versions remain in the legacy peer; peer-coaptic is independently
     # on DTLS 0.12 / util 0.11. Qualify future majors with the process matrix (#191).
     ignore:
+      # aes 0.9.3 raises MSRV above the library Rust 1.85 contract.
+      - dependency-name: aes
+        versions: ["0.9.3"]
       - dependency-name: webrtc-dtls
         update-types: [version-update:semver-major]
       - dependency-name: webrtc-util

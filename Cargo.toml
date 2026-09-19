@@ -26,7 +26,7 @@ include = [
     "tests/**",
     "LICENSE-APACHE",
     "LICENSE-MIT",
-    "README.md",
+    "/README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "rust-toolchain.toml",

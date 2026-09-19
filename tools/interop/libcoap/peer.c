@@ -64,6 +64,7 @@ int main(int argc,char **argv) {
   if(*end || timeout<100 || timeout>30000){failure("invalid timeout");return 2;}
   if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing")){failure("unsupported path");return 2;}
   if(strcmp(argv[6],"GET") && strcmp(argv[6],"POST")){failure("unsupported method");return 2;}
+  if(strlen(argv[4])<1 || strlen(argv[4])>64){failure("invalid PSK length");return 2;}
   coap_startup();coap_set_log_level(COAP_LOG_EMERG);
   if(dtls && !coap_dtls_is_supported()){failure("DTLS unavailable in libcoap build");coap_cleanup();return 2;}
   coap_ticks(&started);

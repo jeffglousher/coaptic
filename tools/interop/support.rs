@@ -37,6 +37,13 @@ impl Args {
         if !matches!(a[4].as_str(), "test" | "large" | "counter" | "missing") {
             return Err("unsupported fixture path".into());
         }
+        let port = a[2].parse()?;
+        if port == 0 {
+            return Err("port must be nonzero".into());
+        }
+        if a[3].is_empty() || a[3].len() > 64 {
+            return Err("PSK must be 1..64 bytes".into());
+        }
         let timeout = a[6].parse()?;
         if !(100..=30000).contains(&timeout) {
             return Err("timeout must be 100..30000 ms".into());
@@ -44,7 +51,7 @@ impl Args {
         Ok(Self {
             server: a[0] == "server",
             dtls: a[1] == "dtls",
-            port: a[2].parse()?,
+            port,
             key: a[3].clone(),
             path: a[4].clone(),
             post: a[5] == "POST",

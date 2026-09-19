@@ -98,7 +98,7 @@ Licensed MIT OR Apache-2.0.
 
 ### Independent peers and measurements
 
-[Process interoperability](tools/interop/README.md) runs separately built Coaptic,
+[Process interoperability](https://github.com/jeffglousher/coaptic/blob/main/tools/interop/README.md) runs separately built Coaptic,
 coap-rs and pinned libcoap C executables over UDP/DTLS. It verifies both directions,
 block-wise responses, authentication refusal, deterministic packet loss/duplication,
 timeouts and process restart, and writes provenance-bearing JSON timing results.

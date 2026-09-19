@@ -209,6 +209,7 @@ def main():
     parser.add_argument("--libcoap", required=True, type=Path)
     parser.add_argument("--libcoap-udp-only", action="store_true", help="Explicit local build limitation, recorded in results; CI requires DTLS")
     parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--build-note", default="Unspecified build profiles; do not compare timings across peers")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if not 1 <= args.iterations <= 10000:
@@ -217,7 +218,7 @@ def main():
     report = {"schema": "coaptic-process-interop/1", "platform": platform.platform(),
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
-              "iterations": args.iterations, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
+              "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
               "limitations": ["PSK DTLS only; OSCORE/Observe/certificate scenarios remain in the existing harness; no claim of full ETSI coverage"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},

@@ -48,7 +48,10 @@ async fn run() -> Result<(), Error> {
             let (_, io) = dtls::DtlsIo::listen_at(a.address(), config).await?;
             Io::Dtls(io)
         } else {
-            Io::Dtls(dtls::DtlsIo::connect(a.address(), config).await?)
+            Io::Dtls(
+                dtls::DtlsIo::connect(a.address(), config, Duration::from_millis(a.timeout))
+                    .await?,
+            )
         }
     } else {
         let socket = UdpSocket::bind(if a.server {
