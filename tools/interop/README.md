@@ -67,3 +67,8 @@ comparing `benchmarks`. Report request and host timings separately, retain failu
 counts, and accompany numbers with the scenario scope above. Checked-in dogfood
 baselines belong to a different harness and are coverage floors, not current
 process measurements.
+
+Failed timed requests stop that pairing without retry or replacement. The report
+retains successful raw samples, the requested sample count and the zero-based
+failed sample index/error. Partial summaries cover successes only; a failed
+measurement has no throughput value and the suite exits unsuccessfully.
