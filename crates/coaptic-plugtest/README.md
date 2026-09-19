@@ -1,6 +1,6 @@
 # coaptic-plugtest
 
-Workspace test crate. Not published. The `coaptic` library stays `no_std` with zero runtime Cargo dependencies.
+Workspace test crate. Not published. The `coaptic` library stays `no_std`; its default feature set has zero runtime Cargo dependencies.
 
 ```bash
 cargo test -p coaptic-plugtest
@@ -15,7 +15,7 @@ Timed mixed-stack dogfood (coap-rs client → coaptic server and the swap): GET/
 
 **Covered (coap-rs, both directions):** GET/PUT/POST `/test`, Observe register/deregister `/obs`, Block2 GET `/large`, Block1 PUT `/large-update`.
 
-**Still coaptic-only:** Observe notify collect; OSCORE (`--oscore`). **Skip:** DTLS dogfood, coap-rs OSCORE, full ETSI plugtest matrix.
+**Still coaptic-only:** Observe notify collect; OSCORE (`--oscore`). **Not covered by dogfood:** DTLS, coap-rs OSCORE, full ETSI plugtest matrix. Separate [process tests](../../tools/interop/README.md) exercise PSK DTLS with independent Rust and C stacks.
 
 `--json PATH` writes schema `coaptic-dogfood/1` (Metrics + series timings). `--compare PATH` diffs this run against that file: **fail** if path-proving counters drop (`observe_notify`, `block1_assemble`, `block2_assemble`, mixed-pair `sum(block1_assemble)` / `sum(block2_assemble)`, …) or error counters rise; **print** wall-timing deltas (host/load specific, not a fail). Pair-local Block assemble of 0 on one mixed direction is expected (server Block1 vs client Block2); the cross-pair sums are the name-independent floor so a silent swap cannot hide a cold assemble type. `progress` stays informational. CI compares the `--iterations 2` smokes to [`baselines/dogfood.json`](baselines/dogfood.json) and [`baselines/dogfood-oscore.json`](baselines/dogfood-oscore.json) (a lock, not a perf SLA). Refresh those files with the same flags after an intentional Metrics change:
 
@@ -24,13 +24,9 @@ cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --json crates/coap
 cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --json crates/coaptic-plugtest/baselines/dogfood-oscore.json
 ```
 
-Tracking: [#154](https://github.com/jeffglousher/coaptic/issues/154) / [#152](https://github.com/jeffglousher/coaptic/issues/152) / [#150](https://github.com/jeffglousher/coaptic/issues/150) / [#131](https://github.com/jeffglousher/coaptic/issues/131) / [#140](https://github.com/jeffglousher/coaptic/issues/140) / [#142](https://github.com/jeffglousher/coaptic/issues/142) / [#144](https://github.com/jeffglousher/coaptic/issues/144).
-
 This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness is Engine↔Engine only (no sockets).
 
 - [`Peer`](src/peer.rs) — start/stop server, client request, local UDP addr. Backends: `coaptic`, `coap-rs`. Add a library by implementing the trait.
 - Pcap writer + golden JSON grader (`expectations/catalog.json`). CORE goldens assert type, token echo, and CON↔ACK MID, and omit `allow_extra`. OBS / BLOCK / LINK / DTLS keep `allow_extra` (notifications, block trains, mixed-peer extras). Ports / time are wildcards.
 - DTLS: feature `dtls` uses webrtc-dtls (same stack as coap-rs) as a **harness** `DatagramIo` adapter. The `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
 - `TD_6LoWPAN_*` stay skipped (`future/backlog` — contributor opportunity).
-
-Tracking: [#56](https://github.com/jeffglousher/coaptic/issues/56).

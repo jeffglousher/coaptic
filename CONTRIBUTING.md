@@ -1,9 +1,39 @@
 # Contributing
 
-Humans and agents are the same kind of contributor. Follow [AGENTS.md](AGENTS.md).
+Humans and agents follow [AGENTS.md](AGENTS.md). Architecture planning lives in
+[GitHub project 2](https://github.com/users/jeffglousher/projects/2); protocol source
+copies live in `knowledge/rfcs/`. Public API documentation belongs in rustdoc.
 
-Architecture planning: [GitHub project](https://github.com/users/jeffglousher/projects/2). Protocol copies: [knowledge/rfcs/](knowledge/rfcs/).
+Use the stable toolchain in `rust-toolchain.toml`. The library uses edition 2024
+and supports Rust 1.85; test peers have independent dependency requirements.
+Merges to `main` are squash-only and must pass the repository CI checks.
 
-The repository is public. Merges to `main` are squash-only. Pull requests must pass CI (`fmt`, `clippy`, `test`, `doc`, `package`); those jobs run on pull requests to `main` (and `workflow_dispatch`). Version tags (`v*`) publish rustdoc to GitHub Pages and, when `CARGO_REGISTRY_TOKEN` is set, `coaptic` to crates.io. `coaptic-plugtest` is `publish = false`.
+## Local validation
 
-Toolchain is `stable` (`rust-toolchain.toml`). Edition is 2024 (MSRV 1.85).
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
+cargo test --no-default-features
+cargo test --all-features
+cargo test -p coaptic-plugtest --features dtls,oscore
+cargo doc --no-deps --all-features
+cargo package -p coaptic --locked
+cargo +1.85.0 check --locked -p coaptic --no-default-features
+cargo +1.85.0 check --locked -p coaptic --all-features
+```
+
+Run the [dogfood baseline checks](crates/coaptic-plugtest/README.md) and
+[independent process suite](tools/interop/README.md) for transport/harness changes.
+The [CI workflow](.github/workflows/ci.yml) is authoritative for job flags and
+platforms. It runs on pull requests and manual dispatch; process timing JSON is
+retained as the `process-interop` artifact. CI smoke timings are not a performance SLA.
+
+## Packaging and release
+
+Only `coaptic` is published; harnesses and peers are test-only. Packaging checks
+exclude vendored knowledge, tools and workspace test crates from the tarball.
+Publishing remains parked ([#132](https://github.com/jeffglousher/coaptic/issues/132)).
+Version tags can trigger rustdoc and crates.io release workflows; do not create
+release tags as part of ordinary development.
