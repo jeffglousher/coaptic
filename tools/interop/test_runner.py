@@ -1,7 +1,7 @@
 """Exercise wire fault injection and fail-closed result validation."""
 import socket
 import unittest
-from run import Proxy, decode, expect, summary
+from run import Proxy, decode, expect, summary, validate_timing
 
 
 class RunnerTests(unittest.TestCase):
@@ -18,6 +18,24 @@ class RunnerTests(unittest.TestCase):
     def test_nearest_rank_percentiles(self):
         self.assertEqual(summary([4,1,3,2])["p50"], 2)
         self.assertEqual(summary([4,1,3,2])["p99"], 4)
+
+    def test_nanosecond_evidence_preserves_sub_microsecond_samples(self):
+        event = {"elapsed_ns": 1234567, "clock": {"name": "CLOCK_MONOTONIC", "resolution_ns": 1}}
+        self.assertEqual(validate_timing(event), 1234567)
+        self.assertEqual(summary([1234567,1234568])["mean"], 1234567.5)
+        event["clock"]["resolution_ns"] = None
+        self.assertEqual(validate_timing(event), 1234567)
+
+    def test_invalid_timing_cannot_pass(self):
+        for elapsed in (None, True, -1, 1.5, float("nan"), float("inf"), 60_000_000_001):
+            with self.subTest(elapsed=elapsed), self.assertRaises(RuntimeError):
+                validate_timing({"elapsed_ns": elapsed, "clock": {"name":"test", "resolution_ns":1}})
+        for clock in (None, {}, {"name":"test"}, {"name":"test", "resolution_ns":0},
+                      {"name":"test", "resolution_ns":True}):
+            with self.subTest(clock=clock), self.assertRaises(RuntimeError):
+                validate_timing({"elapsed_ns": 123, "clock": clock})
+        with self.assertRaises(RuntimeError):
+            decode('{"schema":"coaptic-peer/1","event":"response","elapsed_us":1000}')
 
     def test_duplicate_and_drop_are_real_datagrams(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:

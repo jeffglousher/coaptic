@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-SCHEMA = "coaptic-peer/1"
+SCHEMA = "coaptic-peer/2"
 BODY = b"core-test-payload"
 LARGE = bytes(i % 251 for i in range(2000))
 
@@ -47,6 +47,7 @@ class Server:
     def __init__(self, exe, transport, number=None):
         self.number = number or port()
         self.stderr = tempfile.TemporaryFile()
+        start = time.perf_counter_ns()
         self.proc = subprocess.Popen(command(exe, "server", transport, self.number),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=self.stderr)
@@ -57,7 +58,6 @@ class Server:
             except Exception as error:
                 events.put(error)
         self.reader = threading.Thread(target=read_ready, daemon=True)
-        start = time.perf_counter()
         self.reader.start()
         try:
             line = events.get(timeout=8)
@@ -68,7 +68,7 @@ class Server:
                 raise RuntimeError(f"server did not become ready: {self.ready}")
             if self.proc.poll() is not None:
                 raise RuntimeError("server exited during readiness")
-            self.startup_ms = (time.perf_counter() - start) * 1000
+            self.startup_ms = (time.perf_counter_ns() - start) / 1_000_000
         except Exception:
             self.close()
             raise
@@ -100,23 +100,39 @@ def request(exe, transport, number, **kwargs):
                                 capture_output=True, timeout=timeout / 1000 + 4)
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("peer exceeded process deadline (not a valid protocol timeout)") from error
-    host_us = (time.perf_counter_ns() - start) / 1000
+    host_ns = time.perf_counter_ns() - start
     if len(result.stdout) > 65536:
         raise RuntimeError("oversize peer output")
     lines = result.stdout.splitlines()
     if len(lines) != 1:
         raise RuntimeError(f"expected one peer event, exit={result.returncode}, stderr={result.stderr[-2000:]!r}, stdout={result.stdout[:1000]!r}")
     event = decode(lines[0])
-    event["host_total_us"] = host_us
+    event["host_total_ns"] = host_ns
+    event["host_total_us"] = host_ns / 1000
     if result.returncode == 0:
         if event.get("event") != "response":
             raise RuntimeError("successful process without response")
-        if not isinstance(event.get("elapsed_us"), (int, float)) or event["elapsed_us"] < 0:
-            raise RuntimeError("invalid request timing")
+        validate_timing(event)
     elif event.get("event") != "error":
         raise RuntimeError(f"peer crashed or contradicted response: {event}")
     event["exit_code"] = result.returncode
     return event
+
+
+def validate_timing(event):
+    # Reject bools, NaN, fractions, missing/old timing and malformed clock data.
+    elapsed = event.get("elapsed_ns")
+    clock = event.get("clock")
+    if type(elapsed) is not int or not 0 <= elapsed <= 60_000_000_000:
+        raise RuntimeError("invalid request nanosecond timing")
+    if not isinstance(clock, dict) or not isinstance(clock.get("name"), str) or not clock["name"]:
+        raise RuntimeError("missing request clock metadata")
+    if "resolution_ns" not in clock:
+        raise RuntimeError("missing clock resolution (null means unknown)")
+    resolution = clock["resolution_ns"]
+    if resolution is not None and (type(resolution) is not int or resolution <= 0):
+        raise RuntimeError("invalid clock resolution")
+    return elapsed
 
 
 def expect(event, code=69, payload=BODY):
@@ -208,17 +224,18 @@ def main():
     parser.add_argument("--coap-rs", required=True, type=Path)
     parser.add_argument("--libcoap", required=True, type=Path)
     parser.add_argument("--libcoap-udp-only", action="store_true", help="Explicit local build limitation, recorded in results; CI requires DTLS")
-    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--build-note", default="Unspecified build profiles; do not compare timings across peers")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if not 1 <= args.iterations <= 10000:
         parser.error("iterations must be 1..10000")
     peers = {"coaptic": args.coaptic.resolve(), "coap-rs": args.coap_rs.resolve(), "libcoap": args.libcoap.resolve()}
-    report = {"schema": "coaptic-process-interop/1", "platform": platform.platform(),
+    report = {"schema": "coaptic-process-interop/2", "platform": platform.platform(),
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
+              "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
               "limitations": ["PSK DTLS only; OSCORE/Observe/certificate scenarios remain in the existing harness; no claim of full ETSI coverage"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
@@ -248,16 +265,23 @@ def main():
                     expect(request(peers[client], transport, service.number, path="missing"), 132, None)
                     expect(request(peers[client], transport, service.number, path="large"), 69, LARGE)
                     samples, host = [], []
+                    clock = None
                     wall = time.perf_counter()
                     for _ in range(args.iterations):
                         event = request(peers[client], transport, service.number)
                         expect(event)
-                        samples.append(event["elapsed_us"])
-                        host.append(event["host_total_us"])
+                        if clock is not None and event["clock"] != clock:
+                            raise RuntimeError("request clock changed within benchmark")
+                        clock = event["clock"]
+                        samples.append(event["elapsed_ns"])
+                        host.append(event["host_total_ns"])
                     elapsed = time.perf_counter() - wall
                     report["benchmarks"].append({"pair": label, "server": service.ready,
-                        "startup_ms": service.startup_ms, "request_us": summary(samples),
-                        "host_total_us": summary(host), "serial_host_requests_per_second": args.iterations / elapsed,
+                        "startup_ms": service.startup_ms, "clock": clock,
+                        "samples_ns": {"request": samples, "host_total": host},
+                        "request_ns": summary(samples), "host_total_ns": summary(host),
+                        "request_us": summary([n / 1000 for n in samples]),
+                        "host_total_us": summary([n / 1000 for n in host]), "serial_host_requests_per_second": args.iterations / elapsed,
                         "failures": 0})
                     if transport == "dtls":
                         refused = request(peers[client], transport, service.number, key="incorrect", timeout=1500)

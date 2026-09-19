@@ -129,7 +129,7 @@ jobs:
       - name: Supervisor and fault-injection tests
         run: python3 -m unittest discover -s tools/interop -p 'test_*.py'
       - name: Wire interoperability, reliability and timing
-        run: python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 10 --build-note "all peers Release; Ubuntu hosted runner" --output target/process-interop.json
+        run: python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --build-note "all peers Release; Ubuntu hosted runner" --output target/process-interop.json
       - name: Retain measurements and fault evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
