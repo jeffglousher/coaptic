@@ -28,7 +28,7 @@ pub trait DatagramIo {
     /// names the remote peer. `n` must not exceed `buf.len()`.
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error>;
 
-    /// Send one datagram to `dest`.
+    /// Send one complete datagram to `dest`; success must report `bytes.len()`.
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error>;
 }
 
@@ -39,6 +39,13 @@ pub enum DatagramIoError<E> {
     Saturated,
     /// Slot addressing or fill-length failure.
     Slot(SlotError),
+    /// Transport reported a byte count different from the complete datagram.
+    SendLength {
+        /// Datagram length requested.
+        expected: usize,
+        /// Byte count reported by the transport.
+        actual: usize,
+    },
     /// Error from [`DatagramIo::Error`].
     Io(E),
 }
@@ -57,6 +64,10 @@ where
         match self {
             Self::Saturated => f.write_str("incoming datagram pool is saturated"),
             Self::Slot(e) => write!(f, "{e}"),
+            Self::SendLength { expected, actual } => write!(
+                f,
+                "datagram send reported {actual} bytes; expected {expected}"
+            ),
             Self::Io(e) => write!(f, "{e}"),
         }
     }
@@ -69,7 +80,7 @@ where
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Saturated => None,
+            Self::Saturated | Self::SendLength { .. } => None,
             Self::Slot(e) => Some(e),
             Self::Io(e) => Some(e),
         }
@@ -139,9 +150,21 @@ impl<S: Storage + DatagramSlots> Engine<S> {
             }
         };
         let outcome = match self.access_tx(id) {
-            Ok(access) => io
-                .send(dest, access.as_bytes())
-                .map_err(DatagramIoError::Io),
+            Ok(access) => {
+                let bytes = access.as_bytes();
+                io.send(dest, bytes)
+                    .map_err(DatagramIoError::Io)
+                    .and_then(|actual| {
+                        if actual == bytes.len() {
+                            Ok(actual)
+                        } else {
+                            Err(DatagramIoError::SendLength {
+                                expected: bytes.len(),
+                                actual,
+                            })
+                        }
+                    })
+            }
             Err(e) => Err(DatagramIoError::Slot(e)),
         };
         match outcome {
@@ -297,6 +320,45 @@ mod tests {
         assert_eq!(engine.recv_from(&mut io), Err(DatagramIoError::Saturated));
         assert_eq!(engine.metrics().saturated, 1);
         assert!(io.inbox.is_some());
+    }
+
+    #[test]
+    fn send_length_failure_retains_datagram_for_complete_retry() {
+        struct Count(usize);
+        impl DatagramIo for Count {
+            type Error = &'static str;
+            fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+                Ok(None)
+            }
+            fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> {
+                Ok(self.0)
+            }
+        }
+        let mut engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .unwrap();
+        let (wire, n) = encode_empty_ack();
+        let tx = engine.acquire_tx().unwrap();
+        let dest = Endpoint::v4([192, 0, 2, 9], 5683);
+        engine.write_tx(tx, &wire[..n], dest).unwrap();
+        for actual in [0, n - 1, n + 1, usize::MAX] {
+            assert_eq!(
+                engine.send_tx(&mut Count(actual), tx),
+                Err(DatagramIoError::SendLength {
+                    expected: n,
+                    actual
+                })
+            );
+            assert_eq!(engine.access_tx(tx).unwrap().as_bytes(), &wire[..n]);
+            assert_eq!(engine.tx_endpoint(tx), Some(dest));
+        }
+        assert_eq!(engine.metrics().tx_ok, 0);
+        assert_eq!(engine.metrics().tx_fail, 4);
+        assert_eq!(engine.send_tx(&mut Count(n), tx), Ok(n));
+        assert_eq!(engine.metrics().tx_ok, 1);
+        engine.release_tx(tx).unwrap();
     }
 
     #[test]

@@ -32,7 +32,7 @@
 //! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 //! #         Ok(None)
 //! #     }
-//! #     fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, Self::Error> { Ok(0) }
+//! #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 //! # }
 //!
 //! fn get_temp(_req: Request<'_>) -> Response<'static> {
@@ -106,8 +106,9 @@
 //!
 //! # Future / backlog
 //!
-//! Ready for future. Focused fully. Core CoAP for the accepted set is
-//! complete. Engine BERT (SZX 7) codecs exist; App does not expose them.
+//! Protocol support and qualification are tracked separately in the
+//! repository issues. Passing individual scenarios does not establish full RFC
+//! conformance. Engine BERT (SZX 7) codecs exist; App does not expose them.
 //! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
 //! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
 //! window). `App::set_oscore` attaches it; Engine does not store keys.

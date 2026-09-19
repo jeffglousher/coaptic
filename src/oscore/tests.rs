@@ -1715,3 +1715,23 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
         assert_eq!(app.engine_mut().tx_occupied(), 0, "no leaked TX slot");
     }
 }
+
+#[test]
+fn context_debug_redacts_key_material() {
+    let params = DeriveParams {
+        master_secret: &[0x42; 16],
+        master_salt: &[0x63; 8],
+        sender_id: &[1],
+        recipient_id: &[2],
+        id_context: &[],
+    };
+    assert_eq!(
+        std::format!("{params:?}"),
+        r#"DeriveParams { master_secret: "[REDACTED]", master_salt: "[REDACTED]", .. }"#
+    );
+    let context = SecurityContext::derive(params).unwrap();
+    assert_eq!(
+        std::format!("{context:?}"),
+        r#"SecurityContext { key_material: "[REDACTED]", sender_seq: 0, .. }"#
+    );
+}
