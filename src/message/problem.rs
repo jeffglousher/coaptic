@@ -388,6 +388,7 @@ fn skip_item(bytes: &[u8], at: &mut usize) -> Result<(), ProblemError> {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::{ProblemDetails, ProblemError};
     use crate::message::Code;
 
