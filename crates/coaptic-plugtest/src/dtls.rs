@@ -499,6 +499,13 @@ mod qualification_tests {
         for pair in crate::runner::default_pairs() {
             let capture = dtls_psk(pair).unwrap();
             assert!(capture.snapshot().iter().any(|packet| packet.decrypted));
+            assert!(
+                crate::grade::Catalog::load()
+                    .unwrap()
+                    .grade("TD_COAP_DTLS_01", &capture)
+                    .is_err(),
+                "decrypted GET success cannot replace missing cipher captures"
+            );
         }
     }
 
