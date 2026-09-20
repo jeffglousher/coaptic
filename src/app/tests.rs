@@ -7087,7 +7087,7 @@ fn observe_cancellation_matches_every_retained_option_and_fetch_payload() {
 }
 
 #[test]
-fn observe_cancellation_selects_exact_queries_and_requires_call_for_ambiguity() {
+fn observe_aggregation_preserves_exact_query_order_and_cancellation() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = record_client();
     let a = app
@@ -7117,16 +7117,7 @@ fn observe_cancellation_selects_exact_queries_and_requires_call_for_ambiguity() 
         .to(peer)
         .send(0)
         .unwrap();
-    assert_eq!(
-        app.get("sensors/temp")
-            .non()
-            .deregister()
-            .query("a")
-            .query("")
-            .to(peer)
-            .send(1),
-        Err(Error::ObserveCancellationAmbiguous)
-    );
+    assert_eq!(duplicate, a);
     assert_eq!(
         app.get("sensors/temp")
             .non()
@@ -7137,7 +7128,7 @@ fn observe_cancellation_selects_exact_queries_and_requires_call_for_ambiguity() 
             .send(1),
         Err(Error::ObserveCancellationMismatch)
     );
-    assert_eq!(app.transport().sent_n, 3);
+    assert_eq!(app.transport().sent_n, 2);
     assert_eq!(
         app.get("sensors/temp")
             .non()
@@ -7167,9 +7158,8 @@ fn observe_cancellation_selects_exact_queries_and_requires_call_for_ambiguity() 
             .query("a")
             .query("")
             .to(peer)
-            .send(1)
-            .unwrap(),
-        a
+            .send(1),
+        Err(Error::ObserveCancellationMismatch)
     );
     assert_eq!(
         app.get("missing").non().deregister().to(peer).send(1),
@@ -10351,4 +10341,158 @@ fn client_observe_format_change_is_terminal_without_delivering_wrong_representat
             }
         }
     }
+}
+
+#[test]
+fn observe_aggregation_uses_cache_key_without_spending_capacity_or_extending_deadline() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for is_fetch in [false, true] {
+        let mut app = record_client();
+        let request = if is_fetch {
+            app.fetch("obs")
+        } else {
+            app.get("obs")
+        };
+        let original = request
+            .observe()
+            .non()
+            .query("a")
+            .query("")
+            .payload(b"selection")
+            .content_format(ContentFormat::OCTET_STREAM)
+            .accept(ContentFormat::TEXT_PLAIN)
+            .deadline(1000)
+            .to(peer)
+            .send(0)
+            .unwrap();
+        for _ in 0..20 {
+            let request = if is_fetch {
+                app.fetch("obs")
+            } else {
+                app.get("obs")
+            };
+            let repeated = request
+                .observe()
+                .query("a")
+                .query("")
+                .payload(if is_fetch {
+                    b"selection"
+                } else {
+                    b"ignored GET payload"
+                })
+                .content_format(ContentFormat::OCTET_STREAM)
+                .accept(ContentFormat::TEXT_PLAIN)
+                .etag(b"new")
+                .echo(EchoOpt::mint(0, b"new").unwrap())
+                .block2(BlockValue::from_size(0, false, 16).unwrap())
+                .deadline(2000)
+                .to(peer)
+                .send(1)
+                .unwrap();
+            assert_eq!(repeated, original);
+            assert_eq!(app.transport().sent_n, 1);
+        }
+        let mut others = [None; 3];
+        for (difference, slot) in others.iter_mut().enumerate() {
+            let request = if is_fetch {
+                app.fetch("obs")
+            } else {
+                app.get("obs")
+            };
+            let other = request
+                .observe()
+                .non()
+                .query(if difference == 0 { "b" } else { "a" })
+                .query("")
+                .payload(if difference == 2 {
+                    b"different"
+                } else {
+                    b"selection"
+                })
+                .content_format(if difference == 2 && !is_fetch {
+                    ContentFormat::TEXT_PLAIN
+                } else {
+                    ContentFormat::OCTET_STREAM
+                })
+                .accept(if difference == 1 {
+                    ContentFormat::OCTET_STREAM
+                } else {
+                    ContentFormat::TEXT_PLAIN
+                })
+                .to(peer)
+                .send(2)
+                .unwrap();
+            assert_ne!(other, original);
+            *slot = Some(other);
+        }
+        let request = if is_fetch {
+            app.fetch("obs")
+        } else {
+            app.get("obs")
+        };
+        assert_eq!(
+            request
+                .observe()
+                .non()
+                .query("a")
+                .query("")
+                .payload(b"selection")
+                .content_format(ContentFormat::OCTET_STREAM)
+                .accept(ContentFormat::TEXT_PLAIN)
+                .to(peer)
+                .send(3)
+                .unwrap(),
+            original
+        );
+        assert!(matches!(
+            app.get("fifth").observe().non().to(peer).send(3),
+            Err(Error::Saturated)
+        ));
+        assert_eq!(app.transport().sent_n, 4);
+        app.poll(1000).unwrap();
+        assert_eq!(
+            app.take_response(original).unwrap().unwrap_err(),
+            crate::CallFailure::DeadlineExceeded
+        );
+        for other in others.into_iter().flatten() {
+            assert!(app.cancel(other));
+            app.take_response(other).unwrap().unwrap_err();
+        }
+        let replacement = app.get("obs").observe().non().to(peer).send(1001).unwrap();
+        assert_ne!(replacement, original);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn observe_non_read_methods_are_refused_before_io_or_capacity_consumption() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    for _ in 0..8 {
+        for cancel in [false, true] {
+            for method in 0..5 {
+                let request = match method {
+                    0 => app.post("x"),
+                    1 => app.put("x"),
+                    2 => app.delete("x"),
+                    3 => app.patch("x"),
+                    _ => app.ipatch("x"),
+                };
+                let request = if cancel {
+                    request.deregister()
+                } else {
+                    request.observe()
+                };
+                assert!(matches!(
+                    request.to(peer).send(0),
+                    Err(Error::ObserveMethodUnsupported)
+                ));
+                assert_eq!(app.transport().sent_n, 0);
+            }
+        }
+    }
+    for path in ["a", "b", "c", "d"] {
+        app.get(path).observe().non().to(peer).send(1).unwrap();
+    }
+    assert_eq!(app.transport().sent_n, 4);
 }
