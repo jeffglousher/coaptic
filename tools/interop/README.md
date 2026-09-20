@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 64 scenario results (55 with local C-peer DTLS excluded):
+The full run contains 69 scenario results (58 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -66,7 +66,7 @@ The full run contains 64 scenario results (55 with local C-peer DTLS excluded):
   whose two sockets require AF_INET6 and IPV6_V6ONLY, retaining actual datagram
   traces. These checks do not establish cipher/Finished captures, scoped addresses
   or IPv6 DTLS loss recovery.
-- Fifteen method workflows across IPv4 UDP, PSK DTLS and IPv6 UDP use the same
+- Twenty method workflows across IPv4/IPv6 UDP and PSK DTLS use the same
   pairings and execute 29 ordered
   steps each: PUT creation/replacement, GET readback, POST append, PATCH changes,
   repeated idempotent iPATCH, FETCH selection and DELETE. Invalid selection/patch
@@ -74,11 +74,12 @@ The full run contains 64 scenario results (55 with local C-peer DTLS excluded):
   exact prior bytes. Content-Format is application/octet-stream; the fixture's
   private PATCH syntax is `+suffix`, iPATCH is `=replacement`, and FETCH selects
   `value`. This proves wire method dispatch, body transport and those application
-  state effects, not JSON Patch, arbitrary patch formats, conditions, IPv6 DTLS
+  state effects, not JSON Patch, arbitrary patch formats, conditions
   or complete RFC 8132 conformance.
   DTLS rejects a wrong-key replacement PUT and checks the original state afterward.
-  IPv6 workflows require an independent AF_INET6 socket probe before any method
-  steps. Rust fixtures share application
+  IPv6 UDP workflows require an independent AF_INET6 socket probe before any
+  method steps; IPv6 DTLS workflows route every step through an IPv6-only relay
+  and retain its datagrams. Rust fixtures share application
   state logic but use independent CoAP codecs; C implements the fixture separately.
 - Twenty UDP reliability scenarios: each of the three clients against a Coaptic
   server, plus Coaptic against each independent server, with dropped reply,
