@@ -6,6 +6,10 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// App requires an explicit entropy source or test-only deterministic mode.
+    RandomnessRequired,
+    /// App's entropy source failed during initial Message ID selection.
+    RandomnessUnavailable,
     /// Builder sizes do not match the [`Storage`](crate::storage::Storage) being moved in.
     SizeMismatch,
     /// Enabled body slot bytes are not a multiple of 1024 (max Block/Q-Block SZX).
@@ -25,6 +29,8 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::RandomnessRequired => f.write_str("App randomness must be configured"),
+            Self::RandomnessUnavailable => f.write_str("App randomness unavailable"),
             Self::SizeMismatch => f.write_str("storage sizes do not match the builder"),
             Self::BodyBytesNotMultipleOf1024 => {
                 f.write_str("body slot bytes must be a multiple of 1024")
