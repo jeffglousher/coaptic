@@ -44,6 +44,17 @@ It does not link a firmware image, execute on a device, measure stack high-water
 or qualify platform allocators, entropy or networking. Those remain tracked in #202.
 The library MSRV remains 1.85; ordinary host CI also checks current stable.
 
+## Seeded qualification
+
+`python tools/qualification/seeded.py --output PATH` uses Rust 1.97.1 and the
+committed lockfile to retain source-bound outcomes for four finite campaigns:
+50,000 datagram mutations, 50,000 CBOR mutations, 100,000 replay-window model
+steps and 512 authenticated corruption/original/replay sequences. Seeds and
+hand-written corpus bytes live beside their oracles in the tests. CI archives
+the commands, compiler identity, counters and results and refuses missing tests.
+These campaigns establish their named invariants; coverage-guided fuzzing,
+line/branch coverage and compound network/lifecycle soak remain open in #202.
+
 ## Packaging and release
 
 Only `coaptic` is published; harnesses and peers are test-only. Packaging checks
