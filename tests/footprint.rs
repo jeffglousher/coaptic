@@ -27,6 +27,10 @@ const RETAINED_QUERY_BUDGET: usize = 4 * (256 + 16 + 16);
 // retains an inline payload and endpoint; no assembled-body buffer is hidden here.
 const RETAINED_RESPONSE_BUDGET: usize = 5 * coaptic::app::RESPONSE_OPTION_BYTES + 192;
 
+// Exact cancellation retains a canonical request for each of the four Calls.
+// Includes length/Option alignment; this is protocol metadata, not body pools.
+const OBSERVE_REQUEST_BUDGET: usize = 4 * (coaptic::app::OBSERVE_REQUEST_BYTES + 16);
+
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
     block_wise_app: usize,
@@ -38,13 +42,17 @@ fn assert_datagram_omits_assembled(
         "Memory body pools must add RAM ({datagram_mem} !< {block_wise_mem})"
     );
     assert!(
-        datagram_app < block_wise_mem,
-        "datagram App ({datagram_app}) must not include WithBodies Memory ({block_wise_mem})"
+        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET) < block_wise_mem,
+        "datagram App ({datagram_app}), excluding explicit cancellation metadata, must not include WithBodies Memory ({block_wise_mem})"
     );
     let overhead = datagram_app.saturating_sub(datagram_mem);
     assert!(
-        overhead < RESPONSE_BODY + RETAINED_QUERY_BUDGET + RETAINED_RESPONSE_BUDGET,
-        "datagram App must not carry an assembled body beyond its bounded query/response metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
+        overhead
+            < RESPONSE_BODY
+                + RETAINED_QUERY_BUDGET
+                + RETAINED_RESPONSE_BUDGET
+                + OBSERVE_REQUEST_BUDGET,
+        "datagram App must not carry an assembled body beyond its bounded query/response/cancellation metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
     let app_delta = block_wise_app - datagram_app;

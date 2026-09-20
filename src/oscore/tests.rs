@@ -2050,6 +2050,33 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
             );
             assert_eq!(app.oscore().unwrap().sender_seq(), 13);
             assert_eq!(app.engine_mut().tx_occupied(), 0);
+            for cycle in 0..12 {
+                let call = app
+                    .get("value")
+                    .observe()
+                    .to(peer)
+                    .send(20 + cycle)
+                    .unwrap();
+                assert!(app.oscore().unwrap().lookup(call.token()).is_some());
+                app.transport_mut().fail = !short;
+                app.transport_mut().short = short;
+                assert!(
+                    app.get("value")
+                        .deregister_call(call)
+                        .to(peer)
+                        .send(20 + cycle)
+                        .is_err()
+                );
+                assert!(app.oscore().unwrap().lookup(call.token()).is_none());
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+                assert_eq!(
+                    app.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::CancellationFailed
+                );
+                assert_eq!(app.oscore().unwrap().sender_seq(), 15 + 2 * cycle);
+                app.transport_mut().fail = false;
+                app.transport_mut().short = false;
+            }
         }
     }
 }
@@ -2188,4 +2215,107 @@ fn outer_observe_cannot_replace_protected_registration_or_notification() {
         assert_eq!(opened.observe().and_then(Result::ok), Some(0));
         assert_eq!(opened.payload(), b"data");
     }
+}
+
+#[test]
+fn protected_observe_cancellation_selects_one_subscription_and_releases_binding() {
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"value").observe(0)
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let mut calls = [None; 2];
+    for (i, query) in ["a", "b"].into_iter().enumerate() {
+        let call = client
+            .get("obs")
+            .observe()
+            .query(query)
+            .to(server_ep)
+            .send(i as u64)
+            .unwrap();
+        let (_, bytes, n) = client.transport().last_send.unwrap();
+        server.transport_mut().inbox = Some((client_ep, bytes, n));
+        server.poll(i as u64).unwrap();
+        let (_, bytes, n) = server.transport().last_send.unwrap();
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(i as u64).unwrap();
+        assert!(
+            client
+                .take_response(call)
+                .unwrap()
+                .unwrap()
+                .observe_seq()
+                .is_some()
+        );
+        calls[i] = Some(call);
+    }
+    let a = calls[0].unwrap();
+    let b = calls[1].unwrap();
+    assert_eq!(
+        client
+            .get("obs")
+            .deregister_call(a)
+            .query("b")
+            .to(server_ep)
+            .send(2),
+        Err(crate::app::Error::ObserveCancellationMismatch)
+    );
+    assert!(client.oscore().unwrap().lookup(a.token()).is_some());
+    assert_eq!(
+        client
+            .get("obs")
+            .deregister_call(a)
+            .query("a")
+            .to(server_ep)
+            .send(2)
+            .unwrap(),
+        a
+    );
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(2).unwrap();
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(2).unwrap();
+    assert!(
+        client
+            .take_response(a)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_none()
+    );
+    assert!(client.oscore().unwrap().lookup(a.token()).is_none());
+    assert!(client.oscore().unwrap().lookup(b.token()).is_some());
+    assert_eq!(
+        server
+            .notify(10, &["obs"], Response::content(b"only b"))
+            .unwrap(),
+        1
+    );
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    assert_eq!(decode(&bytes[..n]).unwrap().token(), b.token());
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(10).unwrap();
+    assert_eq!(
+        client.take_response(b).unwrap().unwrap().payload(),
+        b"only b"
+    );
+    assert!(client.take_response(a).is_none());
 }

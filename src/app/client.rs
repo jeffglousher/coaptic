@@ -117,6 +117,8 @@ impl Call {
 pub enum CallFailure {
     /// Caller cancelled this call locally (no deregistration is sent).
     Cancelled,
+    /// Explicit cancellation could not be sent; local subscription is retired.
+    CancellationFailed,
     /// Caller-supplied absolute deadline was reached.
     DeadlineExceeded,
     /// Retransmissions or the response lifetime were exhausted.
@@ -132,6 +134,7 @@ impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Cancelled => f.write_str("call cancelled"),
+            Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
             Self::Reset => f.write_str("peer reset the request"),
@@ -154,6 +157,12 @@ pub(crate) const RESPONSE_INBOX: usize = 4;
 pub const RESPONSE_OPTION_COUNT: usize = 24;
 /// Maximum encoded header, Token and options retained per client response (no payload).
 pub const RESPONSE_OPTION_BYTES: usize = 512;
+
+/// Maximum canonical Observe request bytes retained per live Call for exact
+/// cancellation matching, including a fixed four-byte header and payload.
+/// Four App Call slots each reserve this space plus bounded length metadata.
+/// Observe and ETag options are excluded; no hash replaces exact comparison.
+pub const OBSERVE_REQUEST_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
 struct ReplyMeta {
@@ -313,6 +322,14 @@ impl ClientInbox {
         Err(())
     }
 
+    fn discard(&mut self, call: Call) {
+        for row in &mut self.rows {
+            if row.as_ref().is_some_and(|row| row.call == call) {
+                *row = None;
+            }
+        }
+    }
+
     fn contains(&self, call: Call) -> bool {
         self.rows
             .iter()
@@ -406,6 +423,14 @@ impl RetainedQueries {
     }
 }
 
+/// Exact canonical request identity for explicit Observe cancellation.
+/// Fixed header/Token; Observe and ETag are omitted. Includes the FETCH body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ObserveRequest {
+    bytes: [u8; OBSERVE_REQUEST_BYTES],
+    len: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveCall {
     call: Call,
@@ -420,6 +445,7 @@ struct LiveCall {
     no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
     observed: Option<(u32, u64)>,
+    observe_request: Option<ObserveRequest>,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
@@ -506,16 +532,29 @@ impl ClientLives {
         }
     }
 
-    fn token_for(&self, path: Path<'static>, peer: Endpoint) -> Option<Token> {
-        self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| {
-                row.call.peer == peer
-                    && row.path == path
-                    && row.observe == OutgoingObserve::Register
-                    && row.due_ms != 0
-            })
-            .map(|row| row.call.token)
-        })
+    fn observe_call<E>(
+        &self,
+        peer: Endpoint,
+        identity: ObserveRequest,
+        target: Option<Call>,
+        is_live: impl Fn(Call) -> bool,
+    ) -> Result<Call, Error<E>> {
+        let mut matches = self.rows.iter().flatten().filter(|live| {
+            live.call.peer == peer
+                && live.observe == OutgoingObserve::Register
+                && live.due_ms != 0
+                && is_live(live.call)
+                && live.observe_request == Some(identity)
+                && target.is_none_or(|call| live.call == call)
+        });
+        let call = matches
+            .next()
+            .ok_or(Error::ObserveCancellationMismatch)?
+            .call;
+        if matches.next().is_some() {
+            return Err(Error::ObserveCancellationAmbiguous);
+        }
+        Ok(call)
     }
 }
 
@@ -598,6 +637,7 @@ where
     q_block2: bool,
     block2: Option<BlockValue>,
     observe: OutgoingObserve,
+    observe_target: Option<Call>,
     deadline_ms: Option<u64>,
     _dest: core::marker::PhantomData<Dest>,
 }
@@ -679,6 +719,7 @@ where
             q_block2: false,
             block2: None,
             observe: OutgoingObserve::Off,
+            observe_target: None,
             deadline_ms: None,
             _dest: core::marker::PhantomData,
         }
@@ -791,6 +832,7 @@ where
             q_block2: self.q_block2,
             block2: self.block2,
             observe: self.observe,
+            observe_target: self.observe_target,
             deadline_ms: self.deadline_ms,
             _dest: core::marker::PhantomData,
         }
@@ -945,17 +987,36 @@ where
 
     /// GET/FETCH Observe=0 (register). Later notifications use the same
     /// [`Call`] / [`App::take_response`](App::take_response).
+    /// App retains up to 512 encoded bytes of canonical request identity
+    /// (excluding ETag and Observe) for exact cancellation matching. Larger
+    /// requests are refused before I/O; use Engine for caller-owned retention.
     #[must_use]
     pub const fn observe(mut self) -> Self {
         self.observe = OutgoingObserve::Register;
         self
     }
 
-    /// GET/FETCH Observe=1 (deregister). Reuses the Token of an existing
-    /// subscribe to the same path and peer when one is live.
+    /// GET/FETCH Observe=1 (deregister). Reuses the uniquely matching live Call.
+    /// Repeat the registration request's method, path, options and payload;
+    /// ETags may differ. A mismatch or ambiguous match is refused before I/O.
+    /// Use [`Self::deregister_call`] to select among identical subscriptions.
+    /// After validation, cancellation retires the old local subscription,
+    /// queued notifications and pending transmissions. If sending fails,
+    /// `take_response` reports [`CallFailure::CancellationFailed`]; remote
+    /// cancellation is uncertain and must not be assumed successful.
     #[must_use]
     pub const fn deregister(mut self) -> Self {
         self.observe = OutgoingObserve::Deregister;
+        self.observe_target = None;
+        self
+    }
+
+    /// Cancel a specific subscription, with the same request checks as
+    /// [`Self::deregister`]. The Call must still be live at the selected peer.
+    #[must_use]
+    pub const fn deregister_call(mut self, call: Call) -> Self {
+        self.observe = OutgoingObserve::Deregister;
+        self.observe_target = Some(call);
         self
     }
 }
@@ -997,30 +1058,6 @@ where
         {
             return Err(Error::NoResponseObserveUnsupported);
         }
-        let token = match observe {
-            OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest)?,
-            OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token()?,
-        };
-        if observe == OutgoingObserve::Deregister {
-            take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
-        }
-        if !self.app.lives.can_admit(token, dest) {
-            return Err(Error::Saturated);
-        }
-        if self.q_block1 && self.request_tag.is_absent() {
-            return Err(Error::RequestTagRequired);
-        }
-        if !self.request_tag.is_absent()
-            && self
-                .app
-                .lives
-                .rows
-                .iter()
-                .flatten()
-                .any(|live| live.call.peer == dest && live.request_tag == self.request_tag)
-        {
-            return Err(Error::RequestTagInUse);
-        }
         let queries = self.queries;
         let query_n = usize::from(self.query_n);
         if query_n > MAX_PATH_SEGMENTS {
@@ -1030,11 +1067,11 @@ where
         }
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
-        let spec = ClientSend {
+        let mut spec = ClientSend {
             dest,
             ty: self.ty,
             code: self.code,
-            token,
+            token: Token::EMPTY,
             path: path.segments(),
             payload: self.payload,
             content_format: self.content_format,
@@ -1051,6 +1088,62 @@ where
             block2: self.block2,
             observe,
         };
+        let observe_request = if observe == OutgoingObserve::Off {
+            None
+        } else {
+            Some(
+                observe_request_identity(&spec).map_err(|error| match error {
+                    EncodeError::BufferTooSmall => Error::ObserveRequestTooLarge,
+                    other => Error::Message(SlotMessageError::Encode(other)),
+                })?,
+            )
+        };
+        let token = if observe == OutgoingObserve::Deregister {
+            self.app
+                .lives
+                .observe_call::<T::Error>(
+                    dest,
+                    observe_request.expect("Observe identity"),
+                    self.observe_target,
+                    |call| {
+                        !self.app.inbox.contains(call)
+                            || client_observe_live(&self.app.engine, call)
+                    },
+                )?
+                .token()
+        } else {
+            self.app.next_token()?
+        };
+        if !self.app.lives.can_admit(token, dest) {
+            return Err(Error::Saturated);
+        }
+        if self.q_block1 && self.request_tag.is_absent() {
+            return Err(Error::RequestTagRequired);
+        }
+        if !self.request_tag.is_absent()
+            && self.app.lives.rows.iter().flatten().any(|live| {
+                live.call.peer == dest
+                    && live.request_tag == self.request_tag
+                    && live.call.token != token
+            })
+        {
+            return Err(Error::RequestTagInUse);
+        }
+        spec.token = token;
+        if observe == OutgoingObserve::Deregister {
+            // A new request reuses this Token. Do not retain old CONs, body
+            // fragments or authenticated request bindings under that identity.
+            abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
+            fail_call(
+                &mut self.app.engine,
+                &mut self.app.inbox,
+                &mut self.app.lives,
+                &mut self.app.oscore,
+                Call::new(token, dest),
+                CallFailure::CancellationFailed,
+                true,
+            );
+        }
         let call = send_client(
             &mut self.app.engine,
             &mut self.app.io,
@@ -1066,6 +1159,9 @@ where
                 return Err(error);
             }
         };
+        if observe == OutgoingObserve::Deregister {
+            self.app.inbox.discard(call);
+        }
         self.app.lives.insert(LiveCall {
             call,
             queries: retained_queries,
@@ -1079,6 +1175,7 @@ where
             no_response: self.no_response,
             observe,
             observed: None,
+            observe_request,
             deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
@@ -1136,22 +1233,12 @@ struct ClientSend<'a> {
     observe: OutgoingObserve,
 }
 
-fn send_client<Mem, T>(
-    engine: &mut Engine<Mem>,
-    io: &mut T,
-    ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
-    now_ms: u64,
-    spec: ClientSend<'_>,
-) -> Result<Call, Error<T::Error>>
-where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
-    T: DatagramIo,
-{
-    if spec.path.len() > MAX_PATH_SEGMENTS {
-        return Err(Error::Path);
-    }
-    let mid = ids.next_for(engine, now_ms)?;
+// One option builder feeds both wire encoding and exact cancellation identity.
+fn with_client_options<R>(
+    spec: &ClientSend<'_>,
+    identity_only: bool,
+    use_options: impl FnOnce(&[Opt<'_>]) -> R,
+) -> Result<R, EncodeError> {
     let cf = spec.content_format.map(ContentFormat::encode);
     let no_response = spec.no_response.map(crate::message::NoResponse::encode);
     let acc = spec.accept.map(ContentFormat::encode);
@@ -1166,20 +1253,24 @@ where
         if let Some(tag) = spec.if_match {
             push_opt(&mut opts, Opt::if_match(tag))?;
         }
-        if let Some(tag) = spec.etag {
-            push_opt(&mut opts, Opt::etag(tag))?;
+        if !identity_only {
+            if let Some(tag) = spec.etag {
+                push_opt(&mut opts, Opt::etag(tag))?;
+            }
         }
         if spec.if_none_match {
             push_opt(&mut opts, Opt::if_none_match())?;
         }
-        match spec.observe {
-            OutgoingObserve::Register => {
-                push_opt(&mut opts, Opt::observe_register())?;
+        if !identity_only {
+            match spec.observe {
+                OutgoingObserve::Register => {
+                    push_opt(&mut opts, Opt::observe_register())?;
+                }
+                OutgoingObserve::Deregister => {
+                    push_opt(&mut opts, Opt::observe_deregister())?;
+                }
+                OutgoingObserve::Off => {}
             }
-            OutgoingObserve::Deregister => {
-                push_opt(&mut opts, Opt::observe_deregister())?;
-            }
-            OutgoingObserve::Off => {}
         }
         for segment in spec.path {
             push_opt(&mut opts, Opt::uri_path(segment))?;
@@ -1210,17 +1301,58 @@ where
         }
         Ok(())
     })();
-    if let Err(e) = filled {
-        return Err(Error::Message(SlotMessageError::Encode(e)));
+    filled?;
+    Ok(use_options(opts.as_slice()))
+}
+
+fn observe_request_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
+    with_client_options(spec, true, |options| {
+        let mut identity = ObserveRequest {
+            bytes: [0; OBSERVE_REQUEST_BYTES],
+            len: 0,
+        };
+        let message = Message::new(Type::Confirmable, spec.code, MessageId::new(0))
+            .with_options(options)
+            .with_payload(spec.payload);
+        identity.len = crate::message::encode(&message, &mut identity.bytes)?;
+        Ok(identity)
+    })?
+}
+
+fn send_client<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field,
+    now_ms: u64,
+    spec: ClientSend<'_>,
+) -> Result<Call, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    if spec.path.len() > MAX_PATH_SEGMENTS {
+        return Err(Error::Path);
     }
+    let mid = ids.next_for(engine, now_ms)?;
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    let msg = Message::new(spec.ty, spec.code, mid)
-        .with_token(spec.token)
-        .with_options(opts.as_slice())
-        .with_payload(spec.payload);
-    match super::oscore::encode_request(oscore, engine, tx, &msg) {
+    let encoded = with_client_options(&spec, false, |options| {
+        let msg = Message::new(spec.ty, spec.code, mid)
+            .with_token(spec.token)
+            .with_options(options)
+            .with_payload(spec.payload);
+        super::oscore::encode_request(oscore, engine, tx, &msg)
+    });
+    let encoded = match encoded {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Message(SlotMessageError::Encode(error)));
+        }
+    };
+    match encoded {
         Ok(_) => finish_client_send(
             engine,
             io,
@@ -2299,47 +2431,6 @@ fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotI
 fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
     let key = ObserveKey::new(call.token(), call.peer());
     engine.lookup_observe(key).is_some()
-}
-
-fn take_client_observe<Mem: Storage + ObserveSlots>(engine: &mut Engine<Mem>, key: ObserveKey) {
-    let _ = engine.take_observe(key);
-}
-
-fn reuse_observe_token<P, T, const N: usize, const BLOCK_WISE: bool>(
-    app: &mut App<P, T, N, BLOCK_WISE>,
-    path: Path<'static>,
-    dest: Endpoint,
-) -> Result<Token, Error<T::Error>>
-where
-    T: DatagramIo,
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-{
-    if let Some(token) = app.lives.token_for(path, dest) {
-        return Ok(token);
-    }
-    let resource = ObserveResource::from_path(path.segments());
-    match observe_token_on(&app.engine, resource, dest) {
-        Some(token) => Ok(token),
-        None => app.next_token(),
-    }
-}
-
-fn observe_token_on<Mem>(
-    engine: &Engine<Mem>,
-    resource: ObserveResource,
-    dest: Endpoint,
-) -> Option<Token>
-where
-    Mem: Storage + ObserveSlots,
-{
-    let n = engine.capacities().observe_entries;
-    (0..n).find_map(|i| {
-        engine
-            .observe_interest(SlotId::from_index(i))
-            .and_then(|row| {
-                (row.endpoint() == dest && row.resource() == resource).then_some(row.token())
-            })
-    })
 }
 
 fn accept_client_observe<Mem>(
