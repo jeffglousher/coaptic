@@ -3293,13 +3293,13 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
 fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
     engine: &mut Engine<S>,
 ) -> Option<SlotId> {
-    if let Some(id) = engine.acquire_tx() {
-        return Some(id);
+    // This actor owns the pool. Reclaim an evictable reply before attempting
+    // admission so a successful cache eviction is not counted as saturation.
+    // A genuinely full pool still makes exactly one failing acquisition.
+    if engine.tx_occupied() == engine.capacities().tx_datagram_slots {
+        let _ = evict_one_dedup_pin(engine);
     }
-    if evict_one_dedup_pin(engine) {
-        return engine.acquire_tx();
-    }
-    None
+    engine.acquire_tx()
 }
 
 fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
