@@ -377,7 +377,10 @@ fn app_protected_get_round_trip() {
 
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(0).unwrap();
-    let response = client.take_response(call).expect("unprotected response");
+    let response = client
+        .take_response(call)
+        .expect("unprotected response")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"Hello World!");
 }
@@ -424,7 +427,8 @@ fn app_five_sequential_oscore_gets() {
         client.poll(u64::from(i as u32)).unwrap();
         let response = client
             .take_response(call)
-            .unwrap_or_else(|| panic!("call {i} incomplete"));
+            .unwrap_or_else(|| panic!("call {i} incomplete"))
+            .expect("remote response");
         assert_eq!(response.code(), Code::CONTENT);
         assert_eq!(response.payload(), b"ok");
     }
@@ -708,7 +712,10 @@ fn app_oscore_observe_register_notify() {
 
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(0).unwrap();
-    let initial = client.take_response(call).expect("register");
+    let initial = client
+        .take_response(call)
+        .expect("register")
+        .expect("remote response");
     assert_eq!(initial.code(), Code::CONTENT);
     assert_eq!(initial.payload(), b"obs-0");
     assert!(initial.observe_seq().is_some());
@@ -726,7 +733,10 @@ fn app_oscore_observe_register_notify() {
 
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(10).unwrap();
-    let got = client.take_response(call).expect("protected notification");
+    let got = client
+        .take_response(call)
+        .expect("protected notification")
+        .expect("remote response");
     assert_eq!(got.payload(), b"obs-1");
     assert!(got.observe_seq().is_some());
 }
@@ -774,7 +784,10 @@ fn first_notify_without_piv_after_register_is_accepted() {
 
     client.transport_mut().inbox = Some((server_ep, ack_bytes, ack_n));
     client.poll(0).unwrap();
-    let _ = client.take_response(call).expect("register");
+    let _ = client
+        .take_response(call)
+        .expect("register")
+        .expect("remote response");
 
     // Third-party first notify may omit Partial IV (RFC 8613 §4.1.3.5.2).
     // Register ACK must not have spent the §7.4.1 no-PIV budget.
@@ -802,7 +815,8 @@ fn first_notify_without_piv_after_register_is_accepted() {
     client.poll(10).unwrap();
     let got = client
         .take_response(call)
-        .expect("first no-PIV notify after register");
+        .expect("first no-PIV notify after register")
+        .expect("remote response");
     assert_eq!(got.payload(), b"obs-1");
 
     let n2 = helper
@@ -847,7 +861,10 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
     let (_, bytes, n) = server.transport().last_send.expect("ACK");
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(0).unwrap();
-    let _ = client.take_response(call).expect("initial");
+    let _ = client
+        .take_response(call)
+        .expect("initial")
+        .expect("remote response");
 
     let seq = crate::message::encode_uint(1);
     let opts = [Opt::observe(&seq)];
@@ -1273,6 +1290,7 @@ fn app_oscore_block2_get_assembles() {
     for t in 0u64..8 {
         pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
         if let Some(got) = client.take_response(call) {
+            let got = got.expect("remote response");
             assert_eq!(got.code(), Code::CONTENT);
             assert_eq!(got.body().expect("assembled"), &LARGE[..]);
             assert!(
@@ -1329,6 +1347,7 @@ fn app_oscore_block1_put_assembles() {
     for t in 0u64..8 {
         pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
         if let Some(got) = client.take_response(call) {
+            let got = got.expect("remote response");
             assert_eq!(got.code(), Code::CHANGED);
             assert!(
                 server.metrics().block1_assemble >= 1,
@@ -1398,6 +1417,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
     for t in 2u64..10 {
         pump_oscore_block(&mut client, &mut server, client_ep, server_ep, t);
         if let Some(got) = client.take_response(call) {
+            let got = got.expect("remote response");
             assert_eq!(got.body().expect("assembled"), &LARGE[..]);
             return;
         }
@@ -1445,7 +1465,10 @@ fn app_oscore_max_age_etag_stay_inner() {
 
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(0).unwrap();
-    let response = client.take_response(call).expect("unprotected response");
+    let response = client
+        .take_response(call)
+        .expect("unprotected response")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"Hello World!");
     assert_eq!(response.etag_bytes(), Some(&b"v1"[..]));
@@ -1752,4 +1775,27 @@ fn sender_sequence_advances_but_cannot_roll_back_or_exceed_exhaustion() {
     ctx.set_sender_seq(1 << 40).unwrap();
     assert_eq!(ctx.set_sender_seq(0), Err(Error::SequenceRollback));
     assert_eq!(ctx.sender_seq(), 1 << 40);
+}
+
+#[test]
+fn cancelled_calls_reclaim_oscore_bindings_without_reusing_sender_sequence() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    app.set_oscore(client_c1());
+    for i in 0..12 {
+        let call = app.get("value").to(peer).send(i).unwrap();
+        assert!(app.oscore().unwrap().lookup(call.token()).is_some());
+        assert!(app.cancel(call));
+        assert!(app.oscore().unwrap().lookup(call.token()).is_none());
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::Cancelled
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert_eq!(app.oscore().unwrap().sender_seq(), i + 1);
+    }
 }

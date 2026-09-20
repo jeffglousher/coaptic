@@ -106,7 +106,7 @@ async fn run() -> Result<(), Error> {
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
-        let response = app.take_response(call).map(|r| {
+        let response = app.take_response(call).transpose()?.map(|r| {
             (
                 r.code().as_raw(),
                 r.body().unwrap_or(r.payload()).to_vec(),
