@@ -444,12 +444,16 @@ impl<
     /// shared by in-flight requests and Observe registrations. Replacing it
     /// does not migrate live exchanges, tokens, replay state, or subscriptions;
     /// drain them first or use separate Apps for separate peers/key epochs.
-    /// Timed Q-Block gap recovery returns [`crate::oscore::Error::Unsupported`]
+    /// Timed Q-Block2 recovery for a live client GET uses a fresh protected
+    /// request and retains its path, queries and selection options. Only the
+    /// latest request binding is retained; late responses to earlier requests
+    /// are not qualified. Server Q-Block1 recovery and advanced receive bodies
+    /// without a live client call return [`crate::oscore::Error::Unsupported`]
     /// without sending plaintext while a context is attached.
     /// Ordinary Q-Block2 response batches use fresh response Partial IVs and
     /// retain the request binding through assembly until response collection
     /// or cancellation. Recipient replay checks use the context's bounded
-    /// 32-sequence window; this does not qualify timed recovery or Q Observe.
+    /// 32-sequence window; this does not qualify Q Observe or FETCH body retention.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
@@ -787,7 +791,17 @@ where
         client::qblock_give_up(engine, inbox, lives, oscore, key);
     }
     if let Some(recover) = recover {
-        send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
+        send_qblock_recover(
+            engine,
+            io,
+            inbox,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            recover,
+            dedup_closed,
+        )?;
     }
     if recv_saturated {
         return Err(Error::Saturated);
@@ -910,9 +924,12 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
+    inbox: &mut client::ClientInbox,
+    lives: &mut client::ClientLives,
     ids: &mut AppIds,
     oscore: &mut oscore::Field,
     now_ms: u64,
@@ -920,11 +937,16 @@ fn send_qblock_recover<Mem, T>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + Exchanges + ObserveSlots,
     T: DatagramIo,
 {
-    // Recovery has no retained OSCORE request binding. Never fall back
-    // to plaintext in either direction on a protected association.
+    if recover.role() == BlockRole::IncomingQBlock2
+        && client::recover_qblock2(engine, io, inbox, lives, ids, oscore, now_ms, recover)?
+    {
+        return Ok(());
+    }
+    // Server Q-Block1 recovery and advanced body state without a live Call
+    // have no retained request binding. Never fall back to plaintext.
     #[cfg(feature = "oscore")]
     if oscore::is_active(oscore) {
         return Err(Error::Oscore(crate::oscore::Error::Unsupported));

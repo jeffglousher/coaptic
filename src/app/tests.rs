@@ -9092,3 +9092,190 @@ fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_othe
         }
     }
 }
+
+#[test]
+fn qblock2_timed_recovery_preserves_request_identity_and_selects_only_holes() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for non in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(WideLoopback::default())
+            .unwrap();
+        let request = app
+            .get("large/part")
+            .q_block2()
+            .query("x=1")
+            .query("")
+            .accept(ContentFormat::OCTET_STREAM)
+            .echo(EchoOpt::new(b"challenge").unwrap())
+            .to(peer);
+        let call = if non { request.non() } else { request }.send(0).unwrap();
+        for num in [0, 3] {
+            let block = BlockValue::from_size(num, num != 3, 16).unwrap().encode();
+            let size = encode_uint(64);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let response = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(100 + num as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = encode(&response, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(0).unwrap();
+        }
+        app.transport_mut().send_n = 0;
+        app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+            .unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        let recovery = last_wide(&app);
+        assert_eq!(recovery.ty(), Type::NonConfirmable);
+        assert_eq!(recovery.code(), Code::GET);
+        assert_eq!(recovery.token(), call.token());
+        let mut path = recovery.uri_path();
+        assert_eq!(path.next(), Some(Ok("large")));
+        assert_eq!(path.next(), Some(Ok("part")));
+        assert!(path.next().is_none());
+        let mut query = recovery.uri_query();
+        assert_eq!(query.next(), Some(Ok("x=1")));
+        assert_eq!(query.next(), Some(Ok("")));
+        assert!(query.next().is_none());
+        assert_eq!(recovery.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+        assert_eq!(recovery.echo(), Some(&b"challenge"[..]));
+        let mut blocks = recovery.q_block2();
+        for num in [1, 2] {
+            let block = blocks.next().unwrap().unwrap();
+            assert_eq!(block, BlockValue::from_size(num, false, 16).unwrap());
+        }
+        assert!(blocks.next().is_none());
+        assert!(app.take_response(call).is_none());
+        for num in [2, 1] {
+            let block = BlockValue::from_size(num, true, 16).unwrap().encode();
+            let size = encode_uint(64);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(200 + num as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(4001).unwrap();
+        }
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap().body(),
+            Some(&[b'A'; 64][..])
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[test]
+fn qblock2_timed_recovery_send_failure_retires_call_without_harming_other_call() {
+    struct FaultIo {
+        pipe: WideLoopback,
+        fail: bool,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.pipe.recv(out)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("recovery failure")
+                }
+            } else {
+                self.pipe.send(peer, bytes)
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for short in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(FaultIo {
+                pipe: WideLoopback::default(),
+                fail: false,
+                short,
+            })
+            .unwrap();
+        let other = app
+            .get("other")
+            .non()
+            .to(Endpoint::v4([192, 0, 2, 9], 5683))
+            .send(0)
+            .unwrap();
+        for iteration in 0..12 {
+            let now = iteration * 5000;
+            app.transport_mut().fail = false;
+            app.transport_mut().pipe.send_n = 0;
+            let call = app
+                .get("large")
+                .q_block2()
+                .non()
+                .to(peer)
+                .send(now)
+                .unwrap();
+            let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+            let size = encode_uint(48);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(100 + iteration as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().pipe.inbox = Some((peer, wire, n));
+            app.poll(now).unwrap();
+            let block = BlockValue::from_size(2, false, 16).unwrap().encode();
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(200 + iteration as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().pipe.inbox = Some((peer, wire, n));
+            app.poll(now).unwrap();
+            app.transport_mut().fail = true;
+            assert!(app.poll(now + 4000).is_err());
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap_err(),
+                crate::CallFailure::ContinuationFailed
+            );
+            assert!(app.take_response(other).is_none());
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            for index in 0..app.engine().capacities().rx_body_slots.unwrap() {
+                assert!(
+                    app.engine()
+                        .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+        assert!(app.cancel(other));
+    }
+}
