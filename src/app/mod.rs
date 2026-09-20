@@ -556,7 +556,9 @@ where
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
     /// (RFC 7252 ping). Incomplete Q-Block1 gets an empty ACK for CON;
     /// NON payloads get 2.31 only after a complete payload set, with the
-    /// acknowledged Q-Block1 NUM. Incomplete classic Block1 is 2.31 (handler not
+    /// acknowledged Q-Block1 NUM. Q recovery and partial-body expiry run after
+    /// ingress; exhausted client Q downloads complete with [`CallFailure::TimedOut`].
+    /// Incomplete classic Block1 is 2.31 (handler not
     /// run); a complete body is [`Request::body`]. Unrecognized critical
     /// options (not in the implemented set) and an OSCORE option with no
     /// attached context are 4.02 before the handler. A large response ships
@@ -706,14 +708,6 @@ where
         Err(e) => return Err(e.into()),
     };
     let progress = engine.progress_before_dispatch(now_ms);
-    // RX dispatch and retransmission give-up may change or release this body.
-    // Retain only the small timer identity, not a second body-transfer copy.
-    let recovery_wait = progress.qblock_recover().and_then(|recover| {
-        engine
-            .rx_body_transfer(recover.id())
-            .and_then(|transfer| transfer.q_receive())
-    });
-
     if let Some(retransmit) = progress.retransmit() {
         match retransmit {
             Retransmit::Due(pending) => {
@@ -784,20 +778,14 @@ where
         }
     }
 
-    if let Some(recover) = progress.qblock_recover() {
-        let still_due = engine
-            .rx_body_transfer(recover.id())
-            .is_some_and(|transfer| {
-                transfer.key() == recover.key()
-                    && transfer.role() == recover.role()
-                    && transfer.szx() == recover.szx()
-                    && transfer.window_base() == recover.window_base()
-                    && transfer.q_receive() == recovery_wait
-                    && transfer.q_holes() == Some((recover.missing_num(), recover.hole_mask()))
-            });
-        if still_due {
-            send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
-        }
+    // Process received payloads before advancing recovery or reclaiming an
+    // exhausted partial body. No stale pre-dispatch opportunity is retained.
+    let (recover, expired) = engine.next_qblock_recovery(now_ms);
+    if let Some(key) = expired {
+        client::qblock_give_up(engine, inbox, lives, oscore, key);
+    }
+    if let Some(recover) = recover {
+        send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
     }
     if recv_saturated {
         return Err(Error::Saturated);

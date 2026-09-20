@@ -154,6 +154,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     // App reserves a pending candidate without consuming its signal. Ingress
     // may cancel or replace the relation before App claims that candidate.
     // A newly registered row is never pending, even if it reuses this slot.
+    // Q recovery/expiry also waits until ingress can fill its missing blocks.
     pub(crate) fn progress_before_dispatch(&mut self, now_ms: u64) -> Progress {
         self.progress_inner(now_ms, false)
     }
@@ -172,7 +173,16 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         Some(id)
     }
 
-    fn progress_inner(&mut self, now_ms: u64, select_notification: bool) -> Progress {
+    pub(crate) fn next_qblock_recovery(
+        &mut self,
+        now_ms: u64,
+    ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
+        let mut expired = None;
+        let recover = progress_qblock(self, now_ms, &mut expired);
+        (recover, expired)
+    }
+
+    fn progress_inner(&mut self, now_ms: u64, immediate_later_work: bool) -> Progress {
         Metrics::inc(&mut self.metrics_mut().progress);
         let rx_busy = !self.storage_mut().rx_datagram().is_empty();
         let tx_busy = !self.storage_mut().tx_datagram().is_empty();
@@ -206,13 +216,13 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             retransmit,
             rx_ready,
             observe_notify: if observe_busy {
-                progress_observe(self, now_ms, select_notification)
+                progress_observe(self, now_ms, immediate_later_work)
             } else {
                 None
             },
             observe_expired,
-            qblock_recover: if qblock_busy {
-                progress_qblock(self, now_ms)
+            qblock_recover: if qblock_busy && immediate_later_work {
+                progress_qblock(self, now_ms, &mut None)
             } else {
                 None
             },
@@ -287,6 +297,7 @@ fn progress_observe<S: Storage + ObserveSlots>(
 fn progress_qblock<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
+    client_expired: &mut Option<super::ExchangeKey>,
 ) -> Option<QBlockRecover> {
     if engine
         .storage_mut()
@@ -319,7 +330,10 @@ fn progress_qblock<S: Storage + BodySlots>(
             continue;
         }
         if transfer.note_q_recover(now_ms).is_none() {
-            give_up = Some((id, offset));
+            let client = (transfer.role() == super::BlockRole::IncomingQBlock2).then_some(
+                super::ExchangeKey::new(transfer.key().token(), transfer.endpoint()),
+            );
+            give_up = Some((id, offset, client));
             break;
         }
         if engine
@@ -343,7 +357,8 @@ fn progress_qblock<S: Storage + BodySlots>(
         ));
         break;
     }
-    if let Some((id, offset)) = give_up {
+    if let Some((id, offset, client)) = give_up {
+        *client_expired = client;
         let _ = engine.release_rx_body(id);
         engine.advance_rx_body(offset + 1);
         return None;

@@ -3417,3 +3417,97 @@ fn app_oscore_qblock1_ack_continue_and_complete_follow_payload_set() {
         }
     }
 }
+
+#[test]
+fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion() {
+    use crate::message::QBlockTransmission;
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for arrival in [false, true] {
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        let call = client
+            .get("large")
+            .q_block2()
+            .non()
+            .to(peer)
+            .send(0)
+            .unwrap();
+        let wire = client.transport_mut().sent.remove(0);
+        let request = decode(&wire).unwrap();
+        let mut server = server_c1();
+        let mut opened = [0; WIRE];
+        let (_, request_ref) = server.unprotect_request(&request, &mut opened).unwrap();
+        let mut replies = std::vec::Vec::new();
+        for num in 0..3 {
+            let block = BlockValue::from_size(num, num != 2, 16).unwrap().encode();
+            let size = encode_uint(48);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(100 + num as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let mut protected = [0; WIRE];
+            let n = server
+                .protect_response_with_piv(&message, request_ref, &mut protected)
+                .unwrap();
+            replies.push(protected[..n].to_vec());
+        }
+        for index in [0, 2] {
+            client.transport_mut().inbox = Some((peer, replies[index].clone()));
+            client.poll(0).unwrap();
+        }
+        let id = (0..client.engine().capacities().rx_body_slots.unwrap())
+            .map(crate::storage::SlotId::from_index)
+            .find(|id| client.engine().rx_body_transfer(*id).is_some())
+            .unwrap();
+        for _ in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+            let due = client
+                .engine()
+                .rx_body_transfer(id)
+                .unwrap()
+                .q_receive()
+                .unwrap()
+                .next_timeout_ms();
+            // Protected timed recovery is still an explicit unsupported boundary.
+            assert_eq!(
+                client.poll(due),
+                Err(crate::Error::Oscore(Error::Unsupported))
+            );
+            assert!(client.transport().sent.is_empty());
+            assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        }
+        let due = client
+            .engine()
+            .rx_body_transfer(id)
+            .unwrap()
+            .q_receive()
+            .unwrap()
+            .next_timeout_ms();
+        if arrival {
+            client.transport_mut().inbox = Some((peer, replies[1].clone()));
+        }
+        client.poll(due).unwrap();
+        assert!(client.transport().sent.is_empty());
+        let outcome = client.take_response(call).unwrap();
+        if arrival {
+            assert_eq!(outcome.unwrap().body(), Some(&[b'A'; 48][..]));
+        } else {
+            assert_eq!(outcome.unwrap_err(), crate::CallFailure::TimedOut);
+        }
+        assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+        assert!(client.take_response(call).is_none());
+        client.transport_mut().inbox = Some((peer, replies[1].clone()));
+        client.poll(due + 1).unwrap();
+        assert!(client.take_response(call).is_none());
+        assert!(client.transport().sent.is_empty());
+    }
+}
