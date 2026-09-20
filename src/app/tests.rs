@@ -4238,6 +4238,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
                 assert_eq!(queries.next(), Some(Ok("if=If1")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(parsed.request_tag().next(), Some(&b"response"[..]));
                 self.requests += 1;
             }
@@ -4256,6 +4257,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .query("")
         .query("if=If1")
         .accept(ContentFormat::OCTET_STREAM)
+        .echo(EchoOpt::new(b"challenge").unwrap())
         .request_tag(crate::storage::BodyTag::new(b"response").unwrap())
         .block2(BlockValue::from_size(0, false, 64).unwrap())
         .send(0)
@@ -4358,6 +4360,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                 assert_eq!(queries.next(), Some(Ok("version=2")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(
                     parsed.content_format(),
                     Some(Ok(ContentFormat::OCTET_STREAM))
@@ -4399,6 +4402,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .query("")
             .query("version=2")
             .accept(ContentFormat::OCTET_STREAM)
+            .echo(EchoOpt::new(b"challenge").unwrap())
             .content_format(ContentFormat::OCTET_STREAM)
             .payload(&LARGE);
         if qblock {
@@ -5527,4 +5531,54 @@ fn malformed_elective_response_values_remain_raw_without_creating_observe() {
     assert!(response.location_paths().is_empty());
     assert!(response.received_options().eq(options));
     assert!(!observe_live(&app, peer, call.token()));
+}
+
+#[test]
+fn explicit_echo_retry_uses_received_challenge_and_preserves_request() {
+    fn handler(req: Request<'_>) -> Response<'static> {
+        assert_eq!(req.payload(), b"set-value");
+        assert_eq!(req.uri_query().next(), Some(Ok("version=1")));
+        if req.echo() == Some(&b"opaque-challenge"[..]) {
+            Response::changed()
+        } else {
+            Response::new(Code::UNAUTHORIZED).echo(EchoOpt::new(b"opaque-challenge").unwrap())
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route("value", put(handler))
+        .bind(Pipe::default())
+        .unwrap();
+    let first = app
+        .put("value")
+        .to(peer)
+        .query("version=1")
+        .payload(b"set-value")
+        .send(0)
+        .unwrap();
+    app.poll(0).unwrap();
+    app.poll(1).unwrap();
+    let challenge = {
+        let response = app.take_response(first).unwrap().unwrap();
+        assert_eq!(response.code(), Code::UNAUTHORIZED);
+        assert_eq!(response.peer(), Some(peer));
+        response.echo_option().unwrap()
+    };
+    assert_eq!(app.transport().len, 0, "retry is explicit");
+    let retry = app
+        .put("value")
+        .to(peer)
+        .query("version=1")
+        .payload(b"set-value")
+        .echo(challenge)
+        .send(2)
+        .unwrap();
+    assert_ne!(retry.token(), first.token());
+    app.poll(2).unwrap();
+    app.poll(3).unwrap();
+    assert_eq!(
+        app.take_response(retry).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
 }
