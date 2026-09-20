@@ -5790,25 +5790,15 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
     );
     assert_eq!(app.transport().len, 0);
     assert_eq!(app.engine.tx_occupied(), 0);
-    let call = app
-        .get("value")
-        .to(peer)
-        .deregister()
-        .no_response(NoResponse::new(NoResponse::SUPPRESS_ALL))
-        .send(1)
-        .unwrap();
-    let (_, wire, n) = app.transport().slots[app.transport().head].unwrap();
-    let parsed = decode(&wire[..n]).unwrap();
-    assert_eq!(parsed.observe(), Some(Ok(1)));
-    assert_eq!(parsed.no_response(), Some(Ok(NoResponse::new(26))));
-    assert!(
-        app.cancel(call),
-        "caller can cease listening without inventing remote success"
-    );
     assert_eq!(
-        app.take_response(call).unwrap().unwrap_err(),
-        crate::CallFailure::Cancelled
+        app.get("value")
+            .to(peer)
+            .deregister()
+            .no_response(NoResponse::new(NoResponse::SUPPRESS_ALL))
+            .send(1),
+        Err(Error::ObserveCancellationMismatch)
     );
+    assert_eq!(app.transport().len, 0);
 }
 
 #[test]
@@ -6691,4 +6681,319 @@ fn mid_reuse_wait_also_requires_pending_transmissions_to_finish() {
     let (_, bytes, n) = app.transport().sent[1].unwrap();
     assert_eq!(decode(&bytes[..n]).unwrap().message_id().get(), 1);
     assert!(app.cancel(next));
+}
+
+#[test]
+fn observe_cancellation_matches_every_retained_option_and_fetch_payload() {
+    // RFC 7641 3.6: all options except ETags repeat the registration.
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for change in 0..12 {
+        let mut app = record_client();
+        let original = app
+            .get("sensors/temp")
+            .non()
+            .observe()
+            .to(peer)
+            .send(0)
+            .unwrap();
+        let mut stop = app.get("sensors/temp").non().deregister().to(peer);
+        stop = match change {
+            0 => stop.query("x=1"),
+            1 => stop.query(""),
+            2 => stop.accept(ContentFormat::TEXT_PLAIN),
+            3 => stop.content_format(ContentFormat::TEXT_PLAIN),
+            4 => stop.if_match(b"m"),
+            5 => stop.if_none_match(),
+            6 => stop.echo(crate::message::Echo::new(b"issued").unwrap()),
+            7 => stop.no_response(crate::message::NoResponse::new(0)),
+            8 => stop.request_tag(crate::storage::BodyTag::EMPTY),
+            9 => stop.block2(BlockValue::new(0, false, 0).unwrap()),
+            10 => stop.q_block2(),
+            _ => stop.payload(b"different"),
+        };
+        assert_eq!(
+            stop.send(1),
+            Err(Error::ObserveCancellationMismatch),
+            "change {change}"
+        );
+        assert_eq!(app.transport().sent_n, 1);
+        // Refusal must leave the original selectable. A different ETag is legal.
+        let stop = app
+            .get("sensors/temp")
+            .deregister_call(original)
+            .etag(b"new")
+            .to(peer)
+            .send(2)
+            .unwrap();
+        assert_eq!(stop, original);
+        let (_, bytes, n) = app.transport().sent[1].unwrap();
+        let wire = decode(&bytes[..n]).unwrap();
+        assert_eq!(wire.token(), original.token());
+        assert_eq!(wire.observe(), Some(Ok(1)));
+        assert_eq!(wire.etag().next(), Some(b"new".as_slice()));
+    }
+    let mut app = record_client();
+    let first = app
+        .fetch("sensors/temp")
+        .non()
+        .observe()
+        .payload(b"a")
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister()
+            .payload(b"a")
+            .to(peer)
+            .send(1),
+        Err(Error::ObserveCancellationMismatch)
+    );
+    assert_eq!(
+        app.fetch("sensors/temp")
+            .non()
+            .deregister()
+            .payload(b"b")
+            .to(peer)
+            .send(1),
+        Err(Error::ObserveCancellationMismatch)
+    );
+    assert_eq!(
+        app.fetch("sensors/temp")
+            .non()
+            .deregister()
+            .payload(b"a")
+            .to(peer)
+            .send(1)
+            .unwrap(),
+        first
+    );
+}
+
+#[test]
+fn observe_cancellation_selects_exact_queries_and_requires_call_for_ambiguity() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let a = app
+        .get("sensors/temp")
+        .non()
+        .observe()
+        .query("a")
+        .query("")
+        .to(peer)
+        .send(0)
+        .unwrap();
+    let b = app
+        .get("sensors/temp")
+        .non()
+        .observe()
+        .query("")
+        .query("a")
+        .to(peer)
+        .send(0)
+        .unwrap();
+    let duplicate = app
+        .get("sensors/temp")
+        .non()
+        .observe()
+        .query("a")
+        .query("")
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister()
+            .query("a")
+            .query("")
+            .to(peer)
+            .send(1),
+        Err(Error::ObserveCancellationAmbiguous)
+    );
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister_call(b)
+            .query("a")
+            .query("")
+            .to(peer)
+            .send(1),
+        Err(Error::ObserveCancellationMismatch)
+    );
+    assert_eq!(app.transport().sent_n, 3);
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister_call(duplicate)
+            .query("a")
+            .query("")
+            .to(peer)
+            .send(1)
+            .unwrap(),
+        duplicate
+    );
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister()
+            .query("")
+            .query("a")
+            .to(peer)
+            .send(1)
+            .unwrap(),
+        b
+    );
+    assert_eq!(
+        app.get("sensors/temp")
+            .non()
+            .deregister()
+            .query("a")
+            .query("")
+            .to(peer)
+            .send(1)
+            .unwrap(),
+        a
+    );
+    assert_eq!(
+        app.get("missing").non().deregister().to(peer).send(1),
+        Err(Error::ObserveCancellationMismatch)
+    );
+}
+
+#[test]
+fn observe_cancellation_identity_bound_refuses_before_io_without_consuming_capacity() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    // Four header bytes plus Uri-Path encoding plus payload marker = seven.
+    let at_bound = [b'x'; 505];
+    let over_bound = [b'x'; 506];
+    for _ in 0..12 {
+        assert_eq!(
+            app.fetch("x")
+                .observe()
+                .payload(&over_bound)
+                .to(peer)
+                .send(0),
+            Err(Error::ObserveRequestTooLarge)
+        );
+    }
+    assert_eq!(app.transport().send_n, 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    let call = app
+        .fetch("x")
+        .observe()
+        .payload(&at_bound)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert!(app.cancel(call));
+}
+
+#[test]
+fn observe_cancellation_replaces_unread_notification_and_old_pending_request() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_obs_app();
+    let call = app.get("sensors/temp").observe().to(peer).send(0).unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    // Leave the initial notification unread. It must not masquerade as the
+    // result of the new cancellation request sharing the same Token.
+    assert_eq!(
+        app.get("sensors/temp")
+            .deregister_call(call)
+            .to(peer)
+            .send(1)
+            .unwrap(),
+        call
+    );
+    assert!(app.take_response(call).is_none());
+    app.poll(1).unwrap();
+    app.poll(1).unwrap();
+    assert!(
+        app.take_response(call)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_none()
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+
+    let mut app = record_client();
+    let call = app.get("x").observe().to(peer).send(0).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert_eq!(
+        app.get("x").deregister_call(call).to(peer).send(1).unwrap(),
+        call
+    );
+    assert_eq!(
+        app.engine_mut().tx_occupied(),
+        1,
+        "old registration CON retired"
+    );
+    app.poll(2000).unwrap();
+    assert_eq!(
+        app.transport().sent_n,
+        2,
+        "old registration must not retransmit"
+    );
+    app.poll(2001).unwrap();
+    let (_, bytes, n) = app.transport().sent[2].unwrap();
+    assert_eq!(decode(&bytes[..n]).unwrap().observe(), Some(Ok(1)));
+}
+
+#[test]
+fn failed_observe_cancellation_retires_local_state_and_reports_uncertainty() {
+    struct CancelIo {
+        inner: RecordIo,
+        fail: bool,
+    }
+    impl DatagramIo for CancelIo {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.inner.recv(bytes)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                Err("injected cancellation failure")
+            } else {
+                self.inner.send(peer, bytes)
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(CancelIo {
+            inner: RecordIo::default(),
+            fail: false,
+        })
+        .unwrap();
+    for _ in 0..12 {
+        app.transport_mut().inner.sent_n = 0;
+        let call = app.get("x").observe().to(peer).send(0).unwrap();
+        app.transport_mut().fail = true;
+        assert!(matches!(
+            app.get("x").deregister_call(call).to(peer).send(1),
+            Err(Error::Io(_))
+        ));
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert_eq!(
+            app.get("x").deregister_call(call).to(peer).send(2),
+            Err(Error::ObserveCancellationMismatch)
+        );
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::CancellationFailed
+        );
+        assert!(app.take_response(call).is_none());
+        app.transport_mut().fail = false;
+    }
 }

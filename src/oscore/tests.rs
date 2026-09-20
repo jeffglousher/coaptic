@@ -2050,6 +2050,33 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
             );
             assert_eq!(app.oscore().unwrap().sender_seq(), 13);
             assert_eq!(app.engine_mut().tx_occupied(), 0);
+            for cycle in 0..12 {
+                let call = app
+                    .get("value")
+                    .observe()
+                    .to(peer)
+                    .send(20 + cycle)
+                    .unwrap();
+                assert!(app.oscore().unwrap().lookup(call.token()).is_some());
+                app.transport_mut().fail = !short;
+                app.transport_mut().short = short;
+                assert!(
+                    app.get("value")
+                        .deregister_call(call)
+                        .to(peer)
+                        .send(20 + cycle)
+                        .is_err()
+                );
+                assert!(app.oscore().unwrap().lookup(call.token()).is_none());
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+                assert_eq!(
+                    app.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::CancellationFailed
+                );
+                assert_eq!(app.oscore().unwrap().sender_seq(), 15 + 2 * cycle);
+                app.transport_mut().fail = false;
+                app.transport_mut().short = false;
+            }
         }
     }
 }

@@ -2839,6 +2839,12 @@ pub enum Error<E> {
     NoResponseUploadUnsupported,
     /// App requires a response when registering Observe. Deregistration is allowed.
     NoResponseObserveUnsupported,
+    /// No live subscription matches the cancellation's request identity/Call.
+    ObserveCancellationMismatch,
+    /// Multiple subscriptions match; select one with `deregister_call`.
+    ObserveCancellationAmbiguous,
+    /// Observe request identity exceeds the App's 512 encoded-byte bound.
+    ObserveRequestTooLarge,
     /// RFC 9177 requires a present Request-Tag for Q-Block1.
     RequestTagRequired,
     /// Another live operation at this peer already owns this Request-Tag.
@@ -2887,6 +2893,15 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            Self::ObserveCancellationMismatch => {
+                f.write_str("Observe cancellation does not match a live request")
+            }
+            Self::ObserveCancellationAmbiguous => {
+                f.write_str("Observe cancellation requires an explicit Call")
+            }
+            Self::ObserveRequestTooLarge => {
+                f.write_str("Observe request identity exceeds 512 bytes")
+            }
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
             Self::NoResponseUploadUnsupported => {
@@ -2922,6 +2937,9 @@ where
             | Self::ConditionalUploadUnsupported
             | Self::NoResponseUploadUnsupported
             | Self::NoResponseObserveUnsupported
+            | Self::ObserveCancellationMismatch
+            | Self::ObserveCancellationAmbiguous
+            | Self::ObserveRequestTooLarge
             | Self::RequestTagRequired
             | Self::RequestTagInUse => None,
             #[cfg(feature = "oscore")]
