@@ -110,6 +110,7 @@ pub use client::{Call, CallFailure, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
 pub use response::{
     AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,
+    ResponseError,
 };
 pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
@@ -1153,6 +1154,13 @@ where
             ),
         }
     };
+    if let Err(error) = response.validate() {
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
+        }
+        let _ = engine.release_rx(rx);
+        return Err(Error::Response(error));
+    }
     let response = apply_observe(engine, now_ms, peer, response, plan, oscore_req);
 
     let outcome = if response.is_separate() {
@@ -1259,6 +1267,7 @@ where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
     T: DatagramIo,
 {
+    response.validate().map_err(Error::Response)?;
     if resource.is_none() {
         return Ok(0);
     }
@@ -1392,6 +1401,7 @@ where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
     T: DatagramIo,
 {
+    response.validate().map_err(Error::Response)?;
     let ty = if interest.must_confirm(now_ms) {
         Type::Confirmable
     } else {
@@ -1512,6 +1522,7 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    response.validate().map_err(Error::Response)?;
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = response_body_for(engine, key) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
@@ -1598,6 +1609,7 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    response.validate().map_err(Error::Response)?;
     if meta.no_response.suppresses(response.code()) {
         return match meta.ty {
             Type::Confirmable => {
@@ -1965,6 +1977,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
     oscore_ctx: &oscore::Field,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
     let observe = response
@@ -2041,6 +2054,7 @@ fn encode_notification<S: Storage + DatagramSlots, E>(
     oscore_ctx: &mut oscore::Field,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
     let observe = response
@@ -2100,6 +2114,7 @@ pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E>(
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     let response = Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
+    response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
     let mut opts = OptionsBuilder::<4>::new();
     if let Some(ref encoded) = cf {
@@ -2701,6 +2716,8 @@ where
 /// Failure of [`App::poll`] or [`Outgoing::send`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error<E> {
+    /// Handler/notification response contains an invalid bounded option.
+    Response(ResponseError),
     /// Absolute caller deadline has already elapsed; no request was sent.
     DeadlineElapsed,
     /// [`Engine::recv_from`] / [`Engine::send_tx`].
@@ -2761,6 +2778,7 @@ where
             Self::Io(e) => write!(f, "{e}"),
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
+            Self::Response(error) => write!(f, "{error}"),
             Self::DeadlineElapsed => f.write_str("call deadline already elapsed"),
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
@@ -2788,6 +2806,7 @@ where
             Self::Message(e) => Some(e),
             Self::Saturated | Self::DeadlineElapsed => None,
             Self::Block(e) => Some(e),
+            Self::Response(e) => Some(e),
             Self::Path
             | Self::ConditionalUploadUnsupported
             | Self::RequestTagRequired

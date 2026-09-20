@@ -29,8 +29,34 @@ pub const RESPONSE_BODY: usize = 4096;
 /// Maximum Location-Path or Location-Query values a [`Response`] can carry.
 ///
 /// Same bound as [`super::MAX_PATH_SEGMENTS`]. Extra values passed to
-/// [`Response::location_path`] / [`Response::location_query`] are ignored.
+/// [`Response::location_path`] / [`Response::location_query`] invalidate the response.
+/// [`Response::validate`] reports the error before App sends it.
 pub const LOCATION_MAX: usize = 8;
+
+/// A handler response exceeds an option bound or contains an invalid option value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponseError {
+    /// ETag must contain 1 through 8 bytes.
+    EtagLength,
+    /// Location-Path exceeds eight segments or a segment exceeds 255 bytes.
+    LocationPathBounds,
+    /// Location-Query exceeds eight values or a value exceeds 255 bytes.
+    LocationQueryBounds,
+    /// RFC 7252 forbids `.` and `..` Location-Path segments.
+    LocationDotSegment,
+}
+impl core::fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::EtagLength => "ETag must contain 1 through 8 bytes",
+            Self::LocationPathBounds => "Location-Path exceeds its count or byte bound",
+            Self::LocationQueryBounds => "Location-Query exceeds its count or byte bound",
+            Self::LocationDotSegment => "Location-Path cannot contain dot segments",
+        })
+    }
+}
+#[cfg(feature = "std")]
+impl std::error::Error for ResponseError {}
 
 #[derive(Clone, Copy, Debug)]
 enum Payload<'a> {
@@ -105,6 +131,7 @@ impl IntoResponse for Response<'static> {
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Response<'a> {
+    invalid: Option<ResponseError>,
     code: Code,
     payload: Payload<'a>,
     content_format: Option<ContentFormat>,
@@ -133,6 +160,7 @@ impl<'a> Response<'a> {
     #[must_use]
     pub const fn new(code: Code) -> Self {
         Self {
+            invalid: None,
             code,
             payload: Payload::Empty,
             content_format: None,
@@ -153,6 +181,25 @@ impl<'a> Response<'a> {
             separate: false,
             payload_src_len: 0,
         }
+    }
+
+    /// Check bounded option setters before returning or sending this response.
+    ///
+    /// Invalid setters retain the first error. Later valid setters do not clear
+    /// it; construct a new response to recover. App refuses the invalid intent
+    /// before sending any bytes or registering an Observe subscription.
+    pub const fn validate(&self) -> Result<(), ResponseError> {
+        match self.invalid {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    const fn invalid(mut self, error: ResponseError) -> Self {
+        if self.invalid.is_none() {
+            self.invalid = Some(error);
+        }
+        self
     }
 
     /// 2.05 Content with a `'static` payload.
@@ -378,7 +425,8 @@ impl<'a> Response<'a> {
         self
     }
 
-    /// Set ETag (1–8 bytes; longer values are truncated).
+    /// Set ETag (1–8 bytes). Other lengths invalidate the response; no truncation.
+    /// Inspect [`Self::validate`] for the typed error.
     ///
     /// Q-Block2 responses require a nonempty ETag. The caller must use a
     /// different ETag for every different representation of a resource,
@@ -386,8 +434,11 @@ impl<'a> Response<'a> {
     /// a changed ETag or body before advancing the retained transfer.
     #[must_use]
     pub fn etag(mut self, etag: &[u8]) -> Self {
-        let n = etag.len().min(8);
-        self.etag[..n].copy_from_slice(&etag[..n]);
+        let n = etag.len();
+        if !(1..=8).contains(&n) {
+            return self.invalid(ResponseError::EtagLength);
+        }
+        self.etag[..n].copy_from_slice(etag);
         self.etag_len = n as u8;
         self
     }
@@ -416,7 +467,8 @@ impl<'a> Response<'a> {
 
     /// Append a Location-Path segment.
     ///
-    /// Empty segments and values past [`LOCATION_MAX`] are ignored.
+    /// Empty segments are retained. More than [`LOCATION_MAX`] segments, a
+    /// segment over 255 bytes, or `.` / `..` invalidates the response.
     /// [`App::poll`](super::App::poll) writes these on the wire.
     ///
     /// ```
@@ -429,20 +481,25 @@ impl<'a> Response<'a> {
     /// ```
     #[must_use]
     pub const fn location_path(mut self, segment: &'static str) -> Self {
-        if segment.is_empty() {
-            return self;
-        }
         let n = self.location_path_len as usize;
-        if n < LOCATION_MAX {
-            self.location_path[n] = segment;
-            self.location_path_len += 1;
+        if n >= LOCATION_MAX || segment.len() > 255 {
+            return self.invalid(ResponseError::LocationPathBounds);
         }
+        let bytes = segment.as_bytes();
+        if (bytes.len() == 1 && bytes[0] == b'.')
+            || (bytes.len() == 2 && bytes[0] == b'.' && bytes[1] == b'.')
+        {
+            return self.invalid(ResponseError::LocationDotSegment);
+        }
+        self.location_path[n] = segment;
+        self.location_path_len += 1;
         self
     }
 
     /// Append a Location-Query value.
     ///
-    /// Empty values and values past [`LOCATION_MAX`] are ignored.
+    /// Empty values are retained. More than [`LOCATION_MAX`] values or a
+    /// value over 255 bytes invalidates the response.
     ///
     /// ```
     /// use coaptic::Response;
@@ -454,14 +511,12 @@ impl<'a> Response<'a> {
     /// ```
     #[must_use]
     pub const fn location_query(mut self, query: &'static str) -> Self {
-        if query.is_empty() {
-            return self;
-        }
         let n = self.location_query_len as usize;
-        if n < LOCATION_MAX {
-            self.location_query[n] = query;
-            self.location_query_len += 1;
+        if n >= LOCATION_MAX || query.len() > 255 {
+            return self.invalid(ResponseError::LocationQueryBounds);
         }
+        self.location_query[n] = query;
+        self.location_query_len += 1;
         self
     }
 
