@@ -2727,3 +2727,100 @@ fn protected_continuation_failures_release_bindings_without_sequence_reuse() {
         }
     }
 }
+
+#[test]
+fn seeded_replay_window_matches_set_model() {
+    use std::collections::BTreeSet;
+    const SEED: u64 = 0x8613_0007_0004_0032;
+    let mut random = SEED;
+    let mut context = server_c1();
+    let mut received = BTreeSet::<u64>::new();
+    let mut highest = 0u64;
+    let mut accepted = 0;
+    let mut refused = 0;
+    for case in 0..100_000 {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let seq = match random % 5 {
+            0 => highest,
+            1 => highest.saturating_sub((random >> 8) % 64),
+            2 => highest + 1,
+            3 => highest + ((random >> 8) % 128),
+            _ => (random >> 8) % (highest + 1),
+        };
+        let floor = highest.saturating_sub(31);
+        let fresh = seq >= floor && !received.contains(&seq);
+        assert_eq!(
+            context.replay_fresh(seq),
+            fresh,
+            "seed={SEED:x} case={case} seq={seq}"
+        );
+        // A failed authentication does not commit replay state.
+        if fresh && random & 0x10000 != 0 {
+            accepted += 1;
+            context.replay_accept(seq);
+            highest = highest.max(seq);
+            received.insert(seq);
+            received.retain(|value| *value >= highest.saturating_sub(31));
+        } else {
+            refused += 1;
+        }
+        for query in [
+            0,
+            highest.saturating_sub(32),
+            highest.saturating_sub(31),
+            highest,
+            highest + 1,
+        ] {
+            assert_eq!(
+                context.replay_fresh(query),
+                query >= highest.saturating_sub(31) && !received.contains(&query)
+            );
+        }
+    }
+    assert!(accepted > 1000 && refused > 1000);
+    // Five-byte Partial IV edge, with reordering at both window boundaries.
+    let max = (1u64 << 40) - 1;
+    context.replay_accept(max);
+    assert!(!context.replay_fresh(max));
+    assert!(!context.replay_fresh(max - 32));
+    assert!(context.replay_fresh(max - 31));
+    context.replay_accept(max - 31);
+    assert!(!context.replay_fresh(max - 31));
+    std::println!("replay seed={SEED:x} cases=100000 accepted={accepted} uncommitted={refused}");
+}
+
+#[test]
+fn corrupted_requests_do_not_poison_replay_acceptance_campaign() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut wire = [0u8; 128];
+    let mut inner = [0u8; 128];
+    for seq in 0..512u16 {
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(seq));
+        let n = client.protect_request(&request, &mut wire).unwrap();
+        let mut corrupted = wire;
+        corrupted[n - 1] ^= 1 << (seq % 8);
+        assert!(
+            server
+                .unprotect_request(&decode(&corrupted[..n]).unwrap(), &mut inner)
+                .is_err()
+        );
+        assert!(server.replay_fresh(u64::from(seq)));
+        let (opened, _) = server
+            .unprotect_request(&decode(&wire[..n]).unwrap(), &mut inner)
+            .unwrap();
+        assert_eq!(opened.code(), Code::GET);
+        assert!(!server.replay_fresh(u64::from(seq)));
+        assert_eq!(
+            server
+                .unprotect_request(&decode(&wire[..n]).unwrap(), &mut inner)
+                .unwrap_err(),
+            Error::Replay
+        );
+    }
+    std::println!(
+        "authenticated replay campaign: 512 corrupt refusals, 512 originals accepted, 512 duplicates refused"
+    );
+}

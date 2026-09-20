@@ -50,6 +50,22 @@ jobs:
           path: ${{ runner.temp }}/cross-build.json
           if-no-files-found: error
 
+  seeded-qualification:
+    name: seeded qualification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.97.1
+      - run: python3 tools/qualification/seeded.py --output ${{ runner.temp }}/seeded.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: seeded-qualification
+          path: ${{ runner.temp }}/seeded.json
+          if-no-files-found: error
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
