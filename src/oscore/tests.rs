@@ -1,5 +1,7 @@
 //! RFC 8613 Appendix C vectors and a pairwise request/response.
 
+extern crate std;
+
 use super::{
     DeriveParams, Error, LIVE_REQUESTS, OscoreContext, RequestRef, SecurityContext, cbor,
     header::{self, OptionClass, PartialIv},
