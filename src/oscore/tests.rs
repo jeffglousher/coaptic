@@ -5505,3 +5505,75 @@ fn protected_large_server_notifications_assemble_and_recover_from_send_failure()
         }
     }
 }
+
+#[test]
+fn protected_observe_aggregation_preserves_binding_sequence_and_queued_reply() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let call = client.get("obs").observe().non().to(peer).send(0).unwrap();
+    client.transport_mut().sent.clear();
+    let reference = client.oscore().unwrap().lookup(call.token()).unwrap();
+    let mut server = server_c1();
+    let seq = encode_uint(0);
+    let opts = [Opt::observe(&seq)];
+    let response = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(100))
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(b"queued");
+    let mut wire = [0; WIRE];
+    let n = server
+        .protect_response_with_piv(&response, reference, &mut wire)
+        .unwrap();
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(1).unwrap();
+    let sender_seq = client.oscore().unwrap().sender_seq();
+    for _ in 0..32 {
+        assert_eq!(
+            client
+                .get("obs")
+                .observe()
+                .etag(b"new")
+                .to(peer)
+                .send(2)
+                .unwrap(),
+            call
+        );
+        assert_eq!(
+            client.oscore().unwrap().lookup(call.token()),
+            Some(reference)
+        );
+        assert_eq!(client.oscore().unwrap().sender_seq(), sender_seq);
+        assert!(client.transport().sent.is_empty());
+    }
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().payload(),
+        b"queued"
+    );
+    assert!(client.take_response(call).is_none());
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(3).unwrap();
+    assert!(
+        client.take_response(call).is_none(),
+        "aggregation must not reopen replay admission"
+    );
+    let terminal = Message::new(Type::NonConfirmable, Code::NOT_FOUND, MessageId::new(101))
+        .with_token(call.token());
+    let n = server
+        .protect_response_with_piv(&terminal, reference, &mut wire)
+        .unwrap();
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(4).unwrap();
+    let next = client.get("obs").observe().non().to(peer).send(5).unwrap();
+    assert_ne!(next, call, "a terminal subscription cannot be aggregated");
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().code(),
+        Code::NOT_FOUND
+    );
+    assert!(client.cancel(next));
+}
