@@ -275,6 +275,10 @@ fn encode_req_echo(
     for segment in path {
         opts.push(Opt::uri_path(segment)).expect("path");
     }
+    let cf = ContentFormat::TEXT_PLAIN.encode();
+    if code == Code::FETCH {
+        opts.push(Opt::content_format(&cf)).unwrap();
+    }
     let nr = no_response.map(EncodedUint::new);
     if let Some(ref encoded) = nr {
         opts.push(Opt::no_response(encoded)).expect("nr");
@@ -6968,6 +6972,7 @@ fn observe_cancellation_matches_every_retained_option_and_fetch_payload() {
     let mut app = record_client();
     let first = app
         .fetch("sensors/temp")
+        .content_format(ContentFormat::TEXT_PLAIN)
         .non()
         .observe()
         .payload(b"a")
@@ -6985,6 +6990,7 @@ fn observe_cancellation_matches_every_retained_option_and_fetch_payload() {
     );
     assert_eq!(
         app.fetch("sensors/temp")
+            .content_format(ContentFormat::TEXT_PLAIN)
             .non()
             .deregister()
             .payload(b"b")
@@ -6994,6 +7000,7 @@ fn observe_cancellation_matches_every_retained_option_and_fetch_payload() {
     );
     assert_eq!(
         app.fetch("sensors/temp")
+            .content_format(ContentFormat::TEXT_PLAIN)
             .non()
             .deregister()
             .payload(b"a")
@@ -7103,12 +7110,13 @@ fn observe_cancellation_identity_bound_refuses_before_io_without_consuming_capac
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
-    // Four header bytes plus Uri-Path encoding plus payload marker = seven.
-    let at_bound = [b'x'; 505];
-    let over_bound = [b'x'; 506];
+    // Four header bytes, Uri-Path, zero-valued Content-Format and payload marker = eight.
+    let at_bound = [b'x'; 504];
+    let over_bound = [b'x'; 505];
     for _ in 0..12 {
         assert_eq!(
             app.fetch("x")
+                .content_format(ContentFormat::TEXT_PLAIN)
                 .observe()
                 .payload(&over_bound)
                 .to(peer)
@@ -7120,6 +7128,7 @@ fn observe_cancellation_identity_bound_refuses_before_io_without_consuming_capac
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     let call = app
         .fetch("x")
+        .content_format(ContentFormat::TEXT_PLAIN)
         .observe()
         .payload(&at_bound)
         .to(peer)
@@ -9452,5 +9461,109 @@ fn retained_conditional_tags_refuse_overflow_before_sending() {
         .unwrap();
     assert_eq!(last_wide(&app).if_match().next(), Some(&[][..]));
     assert_eq!(last_wide(&app).etag().next(), Some(&[7; 8][..]));
+    assert!(app.cancel(call));
+}
+
+#[test]
+fn fetch_requires_one_valid_content_format_before_handler_or_body_admission() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.store(0, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for case in 0..5 {
+        let cf = ContentFormat::TEXT_PLAIN.encode();
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let mut opts = OptionsBuilder::<5>::new();
+        opts.push(Opt::uri_path("search")).unwrap();
+        match case {
+            0 => {}
+            1 => {
+                opts.push(Opt::opaque(OptionNumber::CONTENT_FORMAT, &[1, 0, 0]))
+                    .unwrap();
+            }
+            2 => {
+                opts.push(Opt::content_format(&cf)).unwrap();
+                opts.push(Opt::content_format(&cf)).unwrap();
+            }
+            _ => {
+                opts.push(Opt::content_format(&cf)).unwrap();
+            }
+        }
+        if case < 3 {
+            opts.push(Opt::block1(&block)).unwrap();
+        }
+        let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(50 + case))
+            .with_token(Token::new(&[7]).unwrap())
+            .with_options(opts.as_slice())
+            .with_payload(if case == 4 { &[] } else { &[b'A'; 16] });
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "search",
+                fetch(|req| {
+                    CALLS.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(req.content_format(), Some(Ok(ContentFormat::TEXT_PLAIN)));
+                    Response::content(b"ok")
+                }),
+            )
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        assert_eq!(
+            last_wide(&app).code(),
+            match case {
+                0 => Code::BAD_REQUEST,
+                1 | 2 => Code::BAD_OPTION,
+                _ => Code::CONTENT,
+            }
+        );
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            usize::from(case.saturating_sub(2))
+        );
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        for index in 0..app.engine().capacities().rx_body_slots.unwrap() {
+            assert!(
+                app.engine()
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn client_fetch_requires_format_without_consuming_call_capacity() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for _ in 0..12 {
+        for body in [&[][..], &b"selection"[..]] {
+            assert_eq!(
+                app.fetch("search").payload(body).to(peer).send(0),
+                Err(Error::FetchContentFormatRequired)
+            );
+            assert_eq!(app.transport().send_n, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+        }
+    }
+    let call = app
+        .fetch("search")
+        .content_format(ContentFormat::TEXT_PLAIN)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(
+        last_wide(&app).content_format(),
+        Some(Ok(ContentFormat::TEXT_PLAIN))
+    );
     assert!(app.cancel(call));
 }

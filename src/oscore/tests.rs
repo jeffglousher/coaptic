@@ -3864,3 +3864,89 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
         );
     }
 }
+
+#[test]
+fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
+    use crate::{App, fetch, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for case in 0..3 {
+        let mut sender = client_c1();
+        let cf = ContentFormat::TEXT_PLAIN.encode();
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<5>::new();
+        options.push(Opt::uri_path("search")).unwrap();
+        match case {
+            0 => {}
+            1 => {
+                options
+                    .push(Opt::opaque(
+                        crate::message::OptionNumber::CONTENT_FORMAT,
+                        &[1, 0, 0],
+                    ))
+                    .unwrap();
+            }
+            _ => {
+                options.push(Opt::content_format(&cf)).unwrap();
+                options.push(Opt::content_format(&cf)).unwrap();
+            }
+        }
+        options.push(Opt::block1(&block)).unwrap();
+        let token = Token::new(&[7]).unwrap();
+        let request = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(1))
+            .with_token(token)
+            .with_options(options.as_slice())
+            .with_payload(&[b'A'; 16]);
+        let mut wire = [0; WIRE];
+        let n = sender.protect_request(&request, &mut wire).unwrap();
+        let reference = sender.lookup(token).unwrap();
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "search",
+                fetch(|_| panic!("invalid format reached handler")),
+            )
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+        server.poll(0).unwrap();
+        assert_eq!(server.transport().sent.len(), 1);
+        let outer = decode(&server.transport().sent[0]).unwrap();
+        assert!(outer.oscore().is_some());
+        let mut plain = [0; WIRE];
+        let inner = sender
+            .unprotect_response(&outer, reference, &mut plain)
+            .unwrap();
+        assert_eq!(
+            inner.code(),
+            if case == 0 {
+                Code::BAD_REQUEST
+            } else {
+                Code::BAD_OPTION
+            }
+        );
+        assert_eq!(server.engine_mut().rx_occupied(), 0);
+        for index in 0..server.engine().capacities().rx_body_slots.unwrap() {
+            assert!(
+                server
+                    .engine()
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let seq = client.oscore().unwrap().sender_seq();
+    assert_eq!(
+        client.fetch("search").to(peer).send(0),
+        Err(crate::Error::FetchContentFormatRequired)
+    );
+    assert_eq!(client.oscore().unwrap().sender_seq(), seq);
+    assert!(client.transport().sent.is_empty());
+}

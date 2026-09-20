@@ -1006,6 +1006,12 @@ fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> boo
     let first = tags.next();
     let bad_tag = first.is_some_and(|tag| tag.len() > 8) || tags.next().is_some();
     bad_tag
+        || (parsed.code() == Code::FETCH
+            && (matches!(parsed.content_format(), Some(Err(_)))
+                || parsed
+                    .get_options(crate::message::OptionNumber::CONTENT_FORMAT)
+                    .nth(1)
+                    .is_some()))
         || parsed.unknown_critical().is_some()
         || (parsed.oscore().is_some() && !oscore::is_active(oscore))
         || matches!(parsed.block2(), Some(Err(_)))
@@ -1261,7 +1267,10 @@ where
     // Reject before admission/dispatch, preserving any existing partial body.
     let missing_q1_metadata = parsed.q_block1().is_some()
         && (parsed.request_tag().next().is_none() || !matches!(parsed.size1(), Some(Ok(_))));
-    if missing_q1_metadata || !valid_q_selections(&parsed) {
+    // RFC 8132 section 2.3.1 requires FETCH Content-Format, even for an
+    // empty selection. Do not allocate partial bodies or call a handler.
+    let missing_fetch_format = parsed.code() == Code::FETCH && parsed.content_format().is_none();
+    if missing_q1_metadata || missing_fetch_format || !valid_q_selections(&parsed) {
         let outcome = send_response(
             engine,
             io,
@@ -3360,6 +3369,9 @@ pub enum Error<E> {
     /// FETCH selection identity exceeds 512 encoded bytes. Nothing was sent;
     /// use a smaller selection or retain the request with the advanced Engine.
     FetchRequestTooLarge,
+    /// RFC 8132 requires Content-Format on FETCH, even with an empty payload.
+    /// Nothing was sent; select the format that describes the selection body.
+    FetchContentFormatRequired,
     /// RFC 9177 requires a present Request-Tag for Q-Block1.
     RequestTagRequired,
     /// Another live operation at this peer already owns this Request-Tag.
@@ -3417,6 +3429,7 @@ where
             Self::ObserveRequestTooLarge => {
                 f.write_str("Observe request identity exceeds 512 bytes")
             }
+            Self::FetchContentFormatRequired => f.write_str("FETCH requires Content-Format"),
             Self::FetchRequestTooLarge => f.write_str("FETCH request identity exceeds 512 bytes"),
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
@@ -3455,6 +3468,7 @@ where
             | Self::NoResponseObserveUnsupported
             | Self::ObserveCancellationMismatch
             | Self::ObserveCancellationAmbiguous
+            | Self::FetchContentFormatRequired
             | Self::FetchRequestTooLarge
             | Self::ObserveRequestTooLarge
             | Self::RequestTagRequired
