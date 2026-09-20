@@ -37,6 +37,11 @@
 //! FETCH retains its encoded selection request (at most 512 bytes excluding
 //! Token, Observe and ETag) in the existing per-call identity buffer. Block2
 //! and Q-Block2 follow-ups preserve its body, Content-Format and conditions.
+//! Download follow-ups retain If-Match, If-None-Match and Content-Format.
+//! Classic Block2 also retains request ETag; Q-Block2 omits it to request
+//! payloads instead of cache-validation responses. Two retained 8-byte tags
+//! and their presence/condition flags cost at most 96 bytes across four Calls
+//! including host alignment.
 //! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
 //! use caller-managed Engine transfers for larger selection bodies.
 
@@ -446,6 +451,9 @@ struct LiveCall {
     queries: RetainedQueries,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
+    if_match: BodyTag,
+    if_none_match: bool,
+    etag: BodyTag,
     path: Path<'static>,
     code: Code,
     ty: Type,
@@ -1082,6 +1090,12 @@ where
                 EncodeError::OptionValueTooLong,
             )));
         }
+        let if_match = BodyTag::from_first(self.if_match).map_err(|_| {
+            Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
+        })?;
+        let etag = BodyTag::from_first(self.etag).map_err(|_| {
+            Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
+        })?;
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
         let mut spec = ClientSend {
@@ -1187,6 +1201,9 @@ where
             queries: retained_queries,
             accept: self.accept,
             request_tag: self.request_tag,
+            if_match,
+            if_none_match: self.if_none_match,
+            etag,
             path,
             code: self.code,
             ty: self.ty,
@@ -2114,18 +2131,23 @@ where
             crate::message::decode(&identity.bytes[..identity.len])
                 .expect("encoded request identity")
         });
-    let cf = fetch
-        .as_ref()
-        .and_then(|request| request.content_format())
-        .and_then(Result::ok)
+    let cf = live
+        .and_then(|live| live.content_format)
         .map(ContentFormat::encode);
     let filled = (|| -> Result<(), EncodeError> {
-        if let Some(request) = fetch.as_ref() {
-            for tag in request.if_match() {
+        if let Some(live) = live.as_ref() {
+            if let Some(tag) = live.if_match.as_slice() {
                 push_opt(&mut opts, Opt::if_match(tag))?;
             }
-            if request.if_none_match() {
+            if live.if_none_match {
                 push_opt(&mut opts, Opt::if_none_match())?;
+            }
+            // RFC 9177 section 4.4: Q missing requests avoid ETag validation
+            // replies (2.03) without payload. Classic Block2 retains it.
+            if q_block2.is_empty() {
+                if let Some(tag) = live.etag.as_slice() {
+                    push_opt(&mut opts, Opt::etag(tag))?;
+                }
             }
         }
         if let Some(ref encoded) = cf {
