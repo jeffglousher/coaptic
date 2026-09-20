@@ -60,6 +60,8 @@ The full run contains 75 scenario results (60 with local C-peer DTLS excluded):
   persistent key/sequence storage or production credential management.
 - Three OSCORE fault scenarios replay accepted counter POST ciphertext from a
   new endpoint with a changed outer MID/Token, then require the counter to remain one.
+  If Echo was required, the replay uses the final accepted request, and fresh
+  clients reserve sequence spacing for that bounded retry.
   A real relay corrupts the authentication tag of a future-sequence POST; valid
   low-sequence readback and a subsequent valid high-sequence POST must still work,
   ending at counter two. This is a sequential bounded fixture, not concurrent,
