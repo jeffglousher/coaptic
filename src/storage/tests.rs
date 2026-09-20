@@ -4120,3 +4120,148 @@ mod alloc_backend {
         assert_eq!(err, BuildError::ZeroBodyCapacity);
     }
 }
+
+#[test]
+fn wire_block_requests_bind_exact_operation_and_preserve_body_on_mismatch() {
+    use crate::message::{OptionNumber, OptionsBuilder};
+    for q in [false, true] {
+        // Path, query, method, format, second tag and unknown cache-key value
+        // must remain equal. uint padding and NoCacheKey changes are permitted.
+        for change in 0..8 {
+            let mut engine = build_default_bodies();
+            let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+            let key =
+                BlockKey::new(sample_token(&[1]), peer).with_identity(BodyTag::new(b"id").unwrap());
+            for phase in 0..3 {
+                if phase == 2 && change >= 6 {
+                    break;
+                }
+                let mutate = phase == 1;
+                let code = if mutate && change == 2 {
+                    Code::POST
+                } else {
+                    Code::PUT
+                };
+                let path = if mutate && change == 0 {
+                    "other"
+                } else {
+                    "upload"
+                };
+                let query = if mutate && change == 1 {
+                    "part=b"
+                } else {
+                    "part=a"
+                };
+                let cf: &[u8] = if mutate && change == 3 {
+                    &[41]
+                } else if mutate && change == 6 {
+                    &[0, 42]
+                } else {
+                    &[42]
+                };
+                let second_tag: &[u8] = if mutate && change == 4 { b"y" } else { b"x" };
+                let other: &[u8] = if mutate && change == 5 {
+                    b"changed"
+                } else {
+                    b"original"
+                };
+                let no_cache: &[u8] = if mutate && change == 7 {
+                    b"changed"
+                } else {
+                    b"original"
+                };
+                let num = if phase == 0 { 0 } else { 1 };
+                let block = BlockValue::from_size(num, phase == 0, 16).unwrap().encode();
+                let mut options = OptionsBuilder::<12>::new();
+                options.push(Opt::uri_path(path)).unwrap();
+                options
+                    .push(Opt::new(OptionNumber::CONTENT_FORMAT, cf))
+                    .unwrap();
+                options.push(Opt::uri_query(query)).unwrap();
+                options
+                    .push(if q {
+                        Opt::q_block1(&block)
+                    } else {
+                        Opt::block1(&block)
+                    })
+                    .unwrap();
+                options
+                    .push(Opt::new(OptionNumber::new(280), other))
+                    .unwrap();
+                options
+                    .push(Opt::new(OptionNumber::new(284), no_cache))
+                    .unwrap();
+                options.push(Opt::request_tag(b"id")).unwrap();
+                options.push(Opt::request_tag(second_tag)).unwrap();
+                let payload: &[u8] = if phase == 0 { &[0x11; 16] } else { &[0x22; 8] };
+                let message = Message::new(Type::Confirmable, code, MessageId::new(10 + phase))
+                    .with_token(sample_token(&[if phase == 0 { 1 } else { 2 }]))
+                    .with_options(options.as_slice())
+                    .with_payload(payload);
+                let mut bytes = [0; 512];
+                let n = encode(&message, &mut bytes).unwrap();
+                let rx = engine.acquire_rx().unwrap();
+                engine.write_rx(rx, &bytes[..n], peer).unwrap();
+                let result = if q {
+                    engine.apply_q_block1_rx(rx)
+                } else {
+                    engine.apply_block1_rx(rx)
+                };
+                engine.release_rx(rx).unwrap();
+                if mutate && change < 6 {
+                    assert_eq!(
+                        result,
+                        Err(BlockTransferError::IdentityMismatch),
+                        "q={q} change={change}"
+                    );
+                    let body = engine.lookup_rx_body(key).unwrap();
+                    assert_eq!(engine.rx_body_payload(body), Some(&[0x11; 16][..]));
+                } else {
+                    let progress = result.unwrap();
+                    assert_eq!(progress.complete(), phase != 0);
+                    if progress.complete() {
+                        let expected = [
+                            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+                            0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+                        ];
+                        assert_eq!(engine.rx_body_payload(progress.id()), Some(&expected[..]));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn request_binding_boundary_refuses_before_allocating_body() {
+    for last_len in [252, 253] {
+        let mut engine = build_default_bodies();
+        let first = [b'a'; 251];
+        let last = [b'b'; 253];
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let options = [
+            Opt::uri_query(core::str::from_utf8(&first).unwrap()),
+            Opt::uri_query(core::str::from_utf8(&last[..last_len]).unwrap()),
+            Opt::block1(&block),
+        ];
+        let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+            .with_options(&options)
+            .with_payload(&[0x11; 16]);
+        let mut bytes = [0; 1024];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        engine.write_rx(rx, &bytes[..n], peer).unwrap();
+        let result = engine.apply_block1_rx(rx);
+        if last_len == 252 {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result, Err(BlockTransferError::Overflow));
+            assert!(
+                engine
+                    .lookup_rx_body(BlockKey::new(Token::EMPTY, peer))
+                    .is_none()
+            );
+        }
+    }
+}

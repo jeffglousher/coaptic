@@ -490,6 +490,55 @@ struct QWindow {
     final_payload_len: u16,
 }
 
+/// Exact bounded request matchability context, not a hash. Token/MID and block
+/// control options may change, but method and cache-key options may not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RequestBinding {
+    bytes: [u8; BlockTransfer::REQUEST_IDENTITY_BYTES],
+    len: u16,
+}
+impl RequestBinding {
+    pub(crate) fn from_message(
+        message: &crate::message::ParsedMessage<'_>,
+    ) -> Result<Self, BlockTransferError> {
+        use crate::message::{OptionNumber as N, OptionValueFormat};
+        let mut binding = Self {
+            bytes: [0; BlockTransfer::REQUEST_IDENTITY_BYTES],
+            len: 1,
+        };
+        binding.bytes[0] = message.code().as_raw();
+        for option in message.options() {
+            let number = option.number();
+            if number.is_no_cache_key()
+                || matches!(number, N::BLOCK1 | N::BLOCK2 | N::Q_BLOCK1 | N::Q_BLOCK2)
+            {
+                continue;
+            }
+            let mut value = option.value();
+            if option.value_format() == Some(OptionValueFormat::Uint) {
+                // RFC 7252 uint encodings with leading zeros have equal values.
+                while value.first() == Some(&0) {
+                    value = &value[1..];
+                }
+            }
+            let start = usize::from(binding.len);
+            let end = start
+                .checked_add(4)
+                .and_then(|n| n.checked_add(value.len()))
+                .ok_or(BlockTransferError::Overflow)?;
+            if end > binding.bytes.len() {
+                return Err(BlockTransferError::Overflow);
+            }
+            binding.bytes[start..start + 2].copy_from_slice(&number.get().to_be_bytes());
+            binding.bytes[start + 2..start + 4]
+                .copy_from_slice(&(value.len() as u16).to_be_bytes());
+            binding.bytes[start + 4..end].copy_from_slice(value);
+            binding.len = end as u16;
+        }
+        Ok(binding)
+    }
+}
+
 /// Block transfer sidecar stored next to one body-slot buffer.
 ///
 /// Classic Block is in-order: the next NUM must be [`Self::next_num`]. Incoming
@@ -512,11 +561,18 @@ pub struct BlockTransfer {
     expected_len: Option<u32>,
     q: Option<QWindow>,
     q_receive: Option<QBlockReceiveWait>,
+    pub(crate) request_binding: Option<RequestBinding>,
 }
 
 impl BlockTransfer {
     /// RFC 9177 §7.2 default `MAX_PAYLOADS`; this crate's Q-Block window size.
     pub const MAX_PAYLOADS: u8 = 10;
+
+    /// Maximum retained method/cache-key bytes for datagram request assembly.
+    /// Each option uses four framing bytes plus its value. Larger identities
+    /// are refused before body mutation. Direct range APIs leave matching to
+    /// their caller; RX-datagram APIs retain this context in the body sidecar.
+    pub const REQUEST_IDENTITY_BYTES: usize = 512;
 
     /// Incoming sidecar after the first accepted block.
     ///
@@ -548,6 +604,7 @@ impl BlockTransfer {
             expected_len,
             q: None,
             q_receive: None,
+            request_binding: None,
         };
         transfer.accept_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -625,6 +682,7 @@ impl BlockTransfer {
                 final_payload_len: 0,
             }),
             q_receive: None,
+            request_binding: None,
         };
         transfer.accept_q_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -742,6 +800,7 @@ impl BlockTransfer {
                 expected_len: Some(len),
                 q,
                 q_receive: None,
+                request_binding: None,
             })
         } else {
             Err(BlockTransferError::Overflow)

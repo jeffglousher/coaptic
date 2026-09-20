@@ -33,9 +33,9 @@ use crate::message::{
     Token, Transmission, Type, encode_uint,
 };
 use crate::storage::{
-    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramSlots, Endpoint, Engine, ExchangeEntry,
-    ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey, ObserveResource,
-    ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
+    ExchangeEntry, ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey,
+    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
@@ -296,6 +296,7 @@ struct LiveCall {
     call: Call,
     queries: RetainedQueries,
     accept: Option<ContentFormat>,
+    request_tag: BodyTag,
     path: Path<'static>,
     code: Code,
     ty: Type,
@@ -343,6 +344,14 @@ impl ClientLives {
         self.rows.iter().copied().find_map(|row| {
             row.filter(|row| row.call.token == call.token && row.call.peer == call.peer)
         })
+    }
+
+    fn upload_key(&self, call: Call) -> BlockKey {
+        BlockKey::new(call.token, call.peer).with_identity(
+            self.get(call)
+                .map(|live| live.request_tag)
+                .unwrap_or(BodyTag::ABSENT),
+        )
     }
 
     fn remove(&mut self, call: Call) {
@@ -413,6 +422,7 @@ where
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
     accept: Option<ContentFormat>,
+    request_tag: BodyTag,
     etag: Option<&'a [u8]>,
     if_match: Option<&'a [u8]>,
     if_none_match: bool,
@@ -490,6 +500,7 @@ where
             payload: &[],
             content_format: None,
             accept: None,
+            request_tag: BodyTag::ABSENT,
             etag: None,
             if_match: None,
             if_none_match: false,
@@ -559,6 +570,7 @@ where
             payload: self.payload,
             content_format: self.content_format,
             accept: self.accept,
+            request_tag: self.request_tag,
             etag: self.etag,
             if_match: self.if_match,
             if_none_match: self.if_none_match,
@@ -592,6 +604,20 @@ where
     #[must_use]
     pub const fn accept(mut self, format: ContentFormat) -> Self {
         self.accept = Some(format);
+        self
+    }
+
+    /// Request-Tag for this operation (RFC 9175 sections 3.3/3.4).
+    ///
+    /// The caller supplies a unique value for each distinct Q-Block1 body and
+    /// owns uniqueness across App instances/restarts. Active reuse at the same
+    /// peer is refused. A present empty tag is distinct from absence. App emits
+    /// one tag, retaining it for upload fragments and Block2 follow-ups.
+    /// The App receive path also supports one tag and explicitly rejects longer
+    /// values or multiple tags rather than silently ignoring identity components.
+    #[must_use]
+    pub const fn request_tag(mut self, tag: BodyTag) -> Self {
+        self.request_tag = tag;
         self
     }
 
@@ -656,6 +682,7 @@ where
     }
 
     /// Send a large body with Q-Block1 (windowed) instead of classic Block1.
+    /// Requires [`Self::request_tag`]; absent tags are refused before I/O.
     #[must_use]
     pub const fn q_block1(mut self) -> Self {
         self.q_block1 = true;
@@ -716,6 +743,20 @@ where
         if !self.app.lives.can_admit(token, dest) {
             return Err(Error::Saturated);
         }
+        if self.q_block1 && self.request_tag.is_absent() {
+            return Err(Error::RequestTagRequired);
+        }
+        if !self.request_tag.is_absent()
+            && self
+                .app
+                .lives
+                .rows
+                .iter()
+                .flatten()
+                .any(|live| live.call.peer == dest && live.request_tag == self.request_tag)
+        {
+            return Err(Error::RequestTagInUse);
+        }
         let queries = self.queries;
         let query_n = usize::from(self.query_n);
         if query_n > MAX_PATH_SEGMENTS {
@@ -734,6 +775,7 @@ where
             payload: self.payload,
             content_format: self.content_format,
             accept: self.accept,
+            request_tag: self.request_tag,
             etag: self.etag,
             if_match: self.if_match,
             if_none_match: self.if_none_match,
@@ -755,6 +797,7 @@ where
             call,
             queries: retained_queries,
             accept: self.accept,
+            request_tag: self.request_tag,
             path,
             code: self.code,
             ty: self.ty,
@@ -795,6 +838,7 @@ struct ClientSend<'a> {
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
     accept: Option<ContentFormat>,
+    request_tag: BodyTag,
     etag: Option<&'a [u8]>,
     if_match: Option<&'a [u8]>,
     if_none_match: bool,
@@ -867,6 +911,9 @@ where
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
+        if let Some(tag) = spec.request_tag.as_slice() {
+            push_opt(&mut opts, Opt::request_tag(tag))?;
+        }
         Ok(())
     })();
     if let Err(e) = filled {
@@ -908,6 +955,7 @@ where
                 spec.queries,
                 spec.accept,
                 spec.payload,
+                spec.request_tag,
                 spec.content_format,
                 spec.q_block1,
                 tx,
@@ -935,6 +983,7 @@ fn send_client_block1<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     payload: &[u8],
+    request_tag: BodyTag,
     content_format: Option<ContentFormat>,
     q_block1: bool,
     tx: SlotId,
@@ -943,7 +992,7 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
-    let key = BlockKey::new(token, dest);
+    let key = BlockKey::new(token, dest).with_identity(request_tag);
     let started = if q_block1 {
         engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
     } else {
@@ -1068,7 +1117,7 @@ where
         let _ = engine.release_tx(tx);
     }
 
-    if let Some(body) = engine.lookup_tx_body(BlockKey::new(parsed.token(), peer)) {
+    if let Some(body) = engine.lookup_tx_body(lives.upload_key(Call::new(parsed.token(), peer))) {
         if let Some(transfer) = engine.tx_body_transfer(body) {
             if matches!(
                 transfer.role(),
@@ -1247,7 +1296,7 @@ fn drop_client<Mem>(
     if let Some(id) = engine.lookup_rx_body(key) {
         let _ = engine.release_rx_body(id);
     }
-    if let Some(id) = engine.lookup_tx_body(key) {
+    if let Some(id) = engine.lookup_tx_body(lives.upload_key(Call::new(parsed.token(), peer))) {
         let _ = engine.release_tx_body(id);
     }
     lives.remove(Call::new(parsed.token(), peer));
@@ -1383,6 +1432,9 @@ where
         }
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
+        }
+        if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
+            push_opt(&mut opts, Opt::request_tag(tag))?;
         }
         Ok(())
     })();
@@ -1637,6 +1689,10 @@ where
 {
     let mut chunk = [0u8; 1024];
     let n = copy_tx_range(engine, issued, &mut chunk).map_err(Error::Block)?;
+    let tag = engine
+        .tx_body_transfer(issued.id())
+        .map(|t| t.identity())
+        .unwrap_or(BodyTag::ABSENT);
     let size1 = engine
         .tx_body_transfer(issued.id())
         .map(|t| t.filled())
@@ -1671,6 +1727,9 @@ where
         }
         if let Some(ref encoded) = size {
             push_opt(&mut opts, Opt::size1(encoded))?;
+        }
+        if let Some(tag) = tag.as_slice() {
+            push_opt(&mut opts, Opt::request_tag(tag))?;
         }
         Ok(())
     })();
@@ -1859,7 +1918,9 @@ where
         if let Some(body) = engine.lookup_rx_body(block) {
             let _ = engine.release_rx_body(body);
         }
-        if let Some(body) = engine.lookup_tx_body(block) {
+        if let Some(body) =
+            engine.lookup_tx_body(lives.upload_key(Call::new(key.token(), key.endpoint())))
+        {
             let _ = engine.release_tx_body(body);
         }
         lives.remove(Call::new(key.token(), key.endpoint()));

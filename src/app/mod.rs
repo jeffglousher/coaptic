@@ -718,7 +718,7 @@ where
 enum InboundBody {
     None,
     Continue,
-    IncompleteEntity,
+    Refused(Code),
     Complete(SlotId),
 }
 
@@ -741,10 +741,12 @@ where
             Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
                 InboundBody::Continue
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
-                InboundBody::None
+            Err(BlockTransferError::MissingBlock) => InboundBody::None,
+            Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
+            Err(BlockTransferError::Overflow) => {
+                InboundBody::Refused(Code::REQUEST_ENTITY_TOO_LARGE)
             }
-            Err(_) => InboundBody::IncompleteEntity,
+            Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
     if parsed.q_block1().is_some() {
@@ -757,10 +759,12 @@ where
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 InboundBody::Continue
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
-                InboundBody::None
+            Err(BlockTransferError::MissingBlock) => InboundBody::None,
+            Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
+            Err(BlockTransferError::Overflow) => {
+                InboundBody::Refused(Code::REQUEST_ENTITY_TOO_LARGE)
             }
-            Err(_) => InboundBody::IncompleteEntity,
+            Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
     InboundBody::None
@@ -866,7 +870,13 @@ where
 /// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
 /// attached context, or a malformed Block / Q-Block2 value.
 fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> bool {
-    parsed.unknown_critical().is_some()
+    let mut tags = parsed.request_tag();
+    let first = tags.next();
+    let bad_tag = first.is_some_and(|tag| tag.len() > 8)
+        || tags.next().is_some()
+        || (parsed.q_block1().is_some() && first.is_none());
+    bad_tag
+        || parsed.unknown_critical().is_some()
         || (parsed.oscore().is_some() && !oscore::is_active(oscore))
         || matches!(parsed.block2(), Some(Err(_)))
         || matches!(parsed.q_block2().next(), Some(Err(_)))
@@ -1098,7 +1108,7 @@ where
             let _ = engine.release_rx(rx);
             return outcome;
         }
-        InboundBody::IncompleteEntity => {
+        InboundBody::Refused(code) => {
             // Apply errors (gap, SZX mismatch, overflow, Q-Block duplicate, …).
             // Classic Overlap / AlreadyComplete replay 2.31 above.
             // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
@@ -1106,8 +1116,11 @@ where
                 engine,
                 io,
                 meta,
-                &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
-                    .title("Request Entity Incomplete"),
+                &Response::problem(code).title(match code {
+                    Code::REQUEST_ENTITY_INCOMPLETE => "Request Entity Incomplete",
+                    Code::REQUEST_ENTITY_TOO_LARGE => "Request Entity Too Large",
+                    _ => "Block Transfer Rejected",
+                }),
                 now_ms,
                 oscore,
                 dedup_closed,
@@ -1122,7 +1135,7 @@ where
     let (response, plan) = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
-            InboundBody::None | InboundBody::Continue | InboundBody::IncompleteEntity => None,
+            InboundBody::None | InboundBody::Continue | InboundBody::Refused(_) => None,
         };
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
@@ -2671,6 +2684,10 @@ pub enum Error<E> {
     /// If-Match or If-None-Match semantics. Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,
+    /// RFC 9177 requires a present Request-Tag for Q-Block1.
+    RequestTagRequired,
+    /// Another live operation at this peer already owns this Request-Tag.
+    RequestTagInUse,
     /// OSCORE protect / unprotect failed (feature `oscore`).
     #[cfg(feature = "oscore")]
     Oscore(crate::oscore::Error),
@@ -2712,6 +2729,8 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
+            Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
             Self::ConditionalUploadUnsupported => {
                 f.write_str("conditional fragmented uploads are unsupported")
             }
@@ -2733,7 +2752,10 @@ where
             Self::Message(e) => Some(e),
             Self::Saturated => None,
             Self::Block(e) => Some(e),
-            Self::Path | Self::ConditionalUploadUnsupported => None,
+            Self::Path
+            | Self::ConditionalUploadUnsupported
+            | Self::RequestTagRequired
+            | Self::RequestTagInUse => None,
             #[cfg(feature = "oscore")]
             Self::Oscore(e) => Some(e),
         }
