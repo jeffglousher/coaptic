@@ -17,6 +17,10 @@ cargo clippy --all-targets --no-default-features -- -D warnings
 cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 cargo test --no-default-features
 cargo test --all-features
+cargo test --no-default-features --features alloc
+cargo test --no-default-features --features oscore
+cargo test --no-default-features --features alloc,oscore
+cargo test --no-default-features --features std
 cargo test -p coaptic-plugtest --features dtls,oscore
 cargo doc --no-deps --all-features
 cargo package -p coaptic --locked
