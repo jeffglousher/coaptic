@@ -8419,12 +8419,13 @@ fn observe_reregistration_does_not_inherit_a_replaced_rows_due_notification() {
             1,
             "old scheduled slot notified the replacement row"
         );
-        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        let refreshed = u32::from(replacement == "first");
+        assert_eq!(last_wide(&app).observe(), Some(Ok(refreshed)));
         assert_eq!(app.signal(&[replacement]), 1);
         app.transport_mut().send_n = 0;
         app.poll(11).unwrap();
         assert_eq!(app.transport().send_n, 1);
-        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+        assert_eq!(last_wide(&app).observe(), Some(Ok(refreshed + 1)));
     }
 }
 
@@ -10023,6 +10024,79 @@ fn outgoing_upload_lookup_and_cleanup_preserve_same_key_server_body() {
                 assert_eq!(app.engine.rx_occupied(), 0);
                 assert_eq!(app.engine.tx_occupied(), 0);
             }
+        }
+    }
+}
+
+#[test]
+fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
+    use crate::storage::{ObserveInterest, ObserveResource};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xa1]).unwrap();
+    for prior_seq in [0, 1, 0x7f_ffff, 0xff_fffe, 0xff_ffff] {
+        for same_resource in [false, true] {
+            let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<false>()
+                .route("obs", get(get_obs))
+                .bind(WideLoopback::default())
+                .unwrap();
+            let key = ObserveKey::new(token, peer);
+            let resource = app.site.observe_resource(&["obs"]);
+            let old_resource = if same_resource {
+                resource
+            } else {
+                ObserveResource::NONE
+            };
+            let interest = ObserveInterest::new(token, peer)
+                .with_resource(old_resource)
+                .with_seq(prior_seq);
+            app.engine_mut().insert_observe(interest).unwrap();
+            app.engine_mut().signal_observe(key).unwrap();
+            // A client subscription with the same Token and peer is a separate row.
+            let client_id = app
+                .engine_mut()
+                .insert_observe(ObserveInterest::new_client(token, peer).with_seq(123))
+                .unwrap();
+            let expected = if same_resource {
+                (prior_seq + 1) & 0xff_ffff
+            } else {
+                0
+            };
+            let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 100);
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(10).unwrap();
+            assert_eq!(app.transport().send_n, 1);
+            assert_eq!(last_wide(&app).observe(), Some(Ok(expected)));
+            let id = app.engine().lookup_observe(key).unwrap();
+            let row = app.engine().observe_interest(id).unwrap();
+            assert_eq!(row.seq(), expected);
+            assert!(!row.is_pending());
+            assert_eq!(row.resource(), resource);
+            assert_eq!(app.engine().observe_interest(client_id).unwrap().seq(), 123);
+            // An exact duplicate request replays the original response, without
+            // replacing the new row or incrementing the sequence again.
+            app.transport_mut().send_n = 0;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(11).unwrap();
+            assert_eq!(last_wide(&app).observe(), Some(Ok(expected)));
+            assert_eq!(app.engine().observe_interest(id).unwrap().seq(), expected);
+            app.transport_mut().send_n = 0;
+            assert_eq!(
+                app.notify(
+                    12,
+                    &["obs"],
+                    Response::content(b"new").content_format(ContentFormat::TEXT_PLAIN)
+                )
+                .unwrap(),
+                1
+            );
+            assert_eq!(
+                last_wide(&app).observe(),
+                Some(Ok((expected + 1) & 0xff_ffff))
+            );
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
         }
     }
 }

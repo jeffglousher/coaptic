@@ -4828,3 +4828,99 @@ fn protected_qblock1_report_sequence_exhaustion_never_sends_plaintext() {
     assert!(server.engine().rx_body_transfer(id).is_none());
     assert_eq!(server.oscore().unwrap().sender_seq(), 1u64 << 40);
 }
+
+#[test]
+fn protected_observe_reregistration_continues_sequence_and_replaces_request_binding() {
+    use crate::storage::ObserveKey;
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0x51]).unwrap();
+    for fail_response in [false, true] {
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route("obs", get(value))
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        let mut client = client_c1();
+        let options = [Opt::observe_register(), Opt::uri_path("obs")];
+        let mut wire = [0; 256];
+        let mut opened = [0; 256];
+        for round in 0..3u16 {
+            let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(100 + round))
+                .with_token(token)
+                .with_options(&options);
+            let n = client.protect_request(&request, &mut wire).unwrap();
+            let reference = client.lookup(token).unwrap();
+            let bytes = wire[..n].to_vec();
+            let key = ObserveKey::new(token, peer);
+            if round > 0 {
+                let id = server.engine().lookup_observe(key).unwrap();
+                let previous = server.engine().observe_interest(id).unwrap();
+                // An unauthenticated refresh must not replace sequence or AAD.
+                let mut corrupted = bytes.clone();
+                *corrupted.last_mut().unwrap() ^= 1;
+                server.transport_mut().inbox = Some((peer, corrupted));
+                server.poll(u64::from(round) * 10_000).unwrap();
+                assert_eq!(
+                    server.engine().observe_interest(id).unwrap().seq(),
+                    previous.seq()
+                );
+                assert_eq!(
+                    server.engine().observe_interest(id).unwrap().oscore(),
+                    previous.oscore()
+                );
+                assert!(server.transport().sent.is_empty());
+            }
+            server.transport_mut().fail_send = fail_response && round == 1;
+            server.transport_mut().inbox = Some((peer, bytes));
+            let result = server.poll(u64::from(round) * 10_000 + 1);
+            if fail_response && round == 1 {
+                assert!(matches!(result, Err(crate::app::Error::Io(_))));
+                assert!(server.transport().sent.is_empty());
+            } else {
+                result.unwrap();
+                let response = server.transport_mut().sent.remove(0);
+                let outer = decode(&response).unwrap();
+                assert_eq!(outer.observe(), Some(Ok(u32::from(round) * 2)));
+                assert_eq!(
+                    client
+                        .unprotect_response(&outer, reference, &mut opened)
+                        .unwrap()
+                        .payload(),
+                    b"initial"
+                );
+            }
+            let id = server.engine().lookup_observe(key).unwrap();
+            let row = server.engine().observe_interest(id).unwrap();
+            assert_eq!(row.seq(), u32::from(round) * 2);
+            assert_eq!(row.oscore(), Some(reference));
+            assert_eq!(
+                server
+                    .notify(
+                        u64::from(round) * 10_000 + 2,
+                        &["obs"],
+                        Response::content(b"next")
+                    )
+                    .unwrap(),
+                1
+            );
+            let response = server.transport_mut().sent.remove(0);
+            let outer = decode(&response).unwrap();
+            assert_eq!(outer.observe(), Some(Ok(u32::from(round) * 2 + 1)));
+            assert_eq!(
+                client
+                    .unprotect_response(&outer, reference, &mut opened)
+                    .unwrap()
+                    .payload(),
+                b"next"
+            );
+            assert_eq!(server.engine_mut().tx_occupied(), 0);
+            assert_eq!(server.engine_mut().rx_occupied(), 0);
+        }
+    }
+}
