@@ -1,6 +1,7 @@
 """Pinned host library execution evidence; no transport or device qualification."""
 import argparse
 import json
+import hashlib
 import os
 from pathlib import Path
 import platform
@@ -25,8 +26,60 @@ def text(value):
     return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else (value or "")
 
 
-def run_case(name, flags, execute=subprocess.run):
+TARGETS = {"i686-pc-windows-msvc": ("pe", 32, 0x14c),
+           "i686-unknown-linux-gnu": ("elf", 32, 3)}
+
+
+def binary_identity(data):
+    """Read native image headers, not the host Python/OS architecture."""
+    if len(data) >= 64 and data[:4] == b"\x7fELF":
+        if data[4] not in (1, 2) or data[5] not in (1, 2):
+            raise ValueError("invalid ELF class or byte order")
+        endian = "little" if data[5] == 1 else "big"
+        return ("elf", 32 if data[4] == 1 else 64, int.from_bytes(data[18:20], endian))
+    if len(data) >= 64 and data[:2] == b"MZ":
+        offset = int.from_bytes(data[60:64], "little")
+        if offset > len(data) - 26 or data[offset:offset + 4] != b"PE\0\0":
+            raise ValueError("invalid PE header offset/signature")
+        magic = int.from_bytes(data[offset + 24:offset + 26], "little")
+        if magic not in (0x10b, 0x20b):
+            raise ValueError("invalid PE optional header")
+        return ("pe", 32 if magic == 0x10b else 64,
+                int.from_bytes(data[offset + 4:offset + 6], "little"))
+    raise ValueError("unrecognized native executable")
+
+
+def executable_evidence(stdout, target):
+    paths = set()
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(event, dict) or event.get("reason") != "compiler-artifact":
+            continue
+        profile, executable = event.get("profile"), event.get("executable")
+        if isinstance(profile, dict) and profile.get("test") and isinstance(executable, str) and executable:
+            paths.add(executable)
+    if not paths:
+        raise ValueError("no compiled test executables reported")
+    artifacts = []
+    for name in sorted(paths):
+        data = Path(name).read_bytes()
+        identity = binary_identity(data)
+        if identity != TARGETS[target]:
+            raise ValueError(f"wrong executable architecture for {target}: {name}: {identity}")
+        artifacts.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(),
+                          "format": identity[0], "bits": identity[1], "machine": identity[2]})
+    return artifacts
+
+
+def run_case(name, flags, execute=subprocess.run, *, target=None):
     command = ["cargo", "+" + TOOLCHAIN, "test", "--locked", "-p", "coaptic", *flags]
+    if target is not None:
+        if target not in TARGETS:
+            raise ValueError("unsupported execution target")
+        command += ["--target", target, "--message-format=json"]
     timed_out = False
     try:
         result = execute(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
@@ -38,15 +91,24 @@ def run_case(name, flags, execute=subprocess.run):
     summaries = [(int(passed), int(ignored)) for passed, ignored in SUMMARY.findall(stdout)]
     executed = sum(passed for passed, _ in summaries)
     passed = code == 0 and executed > 0 and "test result: FAILED" not in stdout
-    return {"features": name, "command": command, "passed": passed, "exit_code": code,
+    artifacts, artifact_error = [], None
+    if target is not None:
+        try:
+            artifacts = executable_evidence(stdout, target)
+        except (OSError, ValueError) as error:
+            artifact_error = str(error)
+            passed = False
+    return {"features": name, "command": command, "target": target,
+            "executables": artifacts, "executable_error": artifact_error,
+            "passed": passed, "exit_code": code,
             "timed_out": timed_out, "executed": executed, "ignored": sum(ignored for _, ignored in summaries),
             "stdout": stdout, "stderr": stderr}
 
 
-def run_matrix(execute=subprocess.run):
+def run_matrix(execute=subprocess.run, *, target=None):
     cases = []
     for name, flags in CASES:
-        result = run_case(name, flags, execute)
+        result = run_case(name, flags, execute, target=target)
         cases.append(result)
         print(("PASS" if result["passed"] else "FAIL") + " " + name, flush=True)
     return cases
@@ -55,6 +117,7 @@ def run_matrix(execute=subprocess.run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--target", choices=tuple(TARGETS))
     args = parser.parse_args()
     os.chdir(ROOT)
     report = {"schema": "coaptic-host-qualification/1",
@@ -62,9 +125,10 @@ def main():
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "compiler": subprocess.check_output(["rustc", "+" + TOOLCHAIN, "--version", "--verbose"], text=True),
               "platform": platform.platform(), "machine": platform.machine(), "python": sys.version,
-              "scope": "Library unit, integration and rustdoc execution in six feature configurations on this host",
+              "target": args.target,
+              "scope": "Library test execution in six feature configurations; explicit 32-bit targets require matching native test-image headers and nonzero executed tests" if args.target else "Library unit, integration and rustdoc execution in six feature configurations on this host",
               "unqualified": ["independent process/DTLS adapters on this host", "MSRV on this host", "device execution", "target stack high-water", "full RFC or branch coverage"],
-              "cases": run_matrix()}
+              "cases": run_matrix(target=args.target)}
     report["passed"] = len(report["cases"]) == len(CASES) and all(case["passed"] for case in report["cases"])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

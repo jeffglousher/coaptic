@@ -76,6 +76,21 @@ These jobs qualify their library test surface on the recorded host architecture.
 They do not run the independent process/DTLS adapter matrix, establish host MSRV,
 or replace MCU execution, target stack or complete requirements coverage in #202.
 
+## Native 32-bit library execution
+
+The same six-feature host runner accepts `--target i686-pc-windows-msvc` or
+`--target i686-unknown-linux-gnu`. Install that target for Rust 1.97.1 and a
+matching native linker/runtime (MSVC x86 tools or Linux gcc-multilib). CI runs
+both targets. Reports retain executed/ignored test counts and failures, Cargo
+artifact paths, SHA-256 hashes and verified PE/ELF 32-bit x86 image headers.
+Missing test artifacts, a 64-bit image, zero executed tests or a failed command
+cannot pass qualification.
+
+This executes the library's tests with 32-bit pointers on x86 hosts. It does
+not qualify ARM/RISC-V MCU execution, big-endian targets, device stack high-water,
+entropy, networking or platform allocators. Compiler target selection and image
+headers complement actual test execution; none replaces the other.
+
 ## Source coverage evidence
 
 Install `llvm-tools` for Rust 1.97.1, then run
