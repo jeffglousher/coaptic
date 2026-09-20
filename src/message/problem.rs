@@ -151,6 +151,9 @@ impl<'a> ProblemDetails<'a> {
     }
 
     /// Decode a concise problem-details CBOR map. Unknown keys are skipped.
+    /// Definite nested extension values use constant auxiliary memory and work
+    /// bounded by the input length. Malformed UTF-8 text and simple values are
+    /// refused even inside an unknown extension. Indefinite CBOR is unsupported.
     ///
     /// # Errors
     ///
@@ -344,31 +347,43 @@ fn read_text<'a>(bytes: &'a [u8], at: &mut usize) -> Result<&'a str, ProblemErro
 }
 
 fn skip_item(bytes: &[u8], at: &mut usize) -> Result<(), ProblemError> {
-    let (major, n) = read_head(bytes, at)?;
-    match major {
-        MAJOR_UINT | MAJOR_NINT | MAJOR_SIMPLE => Ok(()),
-        MAJOR_BYTES | MAJOR_TEXT => {
-            let len = usize::try_from(n).map_err(|_| ProblemError::Invalid)?;
-            need(bytes, *at, len)?;
-            *at += len;
-            Ok(())
-        }
-        MAJOR_ARRAY => {
-            for _ in 0..n {
-                skip_item(bytes, at)?;
+    // Definite CBOR is a preorder stream. Count remaining child items instead
+    // of recursing through container/tag depth. Each item consumes at least
+    // one input byte; impossible counts fail before iterating over them.
+    let mut pending = 1u64;
+    while pending != 0 {
+        pending -= 1;
+        let head_at = *at;
+        let (major, n) = read_head(bytes, at)?;
+        let children = match major {
+            MAJOR_UINT | MAJOR_NINT => 0,
+            MAJOR_SIMPLE => {
+                if bytes[head_at] == 0xf8 && n < 32 {
+                    return Err(ProblemError::Invalid);
+                }
+                0
             }
-            Ok(())
-        }
-        MAJOR_MAP => {
-            for _ in 0..n {
-                skip_item(bytes, at)?;
-                skip_item(bytes, at)?;
+            MAJOR_BYTES | MAJOR_TEXT => {
+                let len = usize::try_from(n).map_err(|_| ProblemError::Invalid)?;
+                need(bytes, *at, len)?;
+                if major == MAJOR_TEXT {
+                    core::str::from_utf8(&bytes[*at..*at + len])
+                        .map_err(|_| ProblemError::Invalid)?;
+                }
+                *at += len;
+                0
             }
-            Ok(())
+            MAJOR_ARRAY => n,
+            MAJOR_MAP => n.checked_mul(2).ok_or(ProblemError::Invalid)?,
+            MAJOR_TAG => 1,
+            _ => return Err(ProblemError::Invalid),
+        };
+        pending = pending.checked_add(children).ok_or(ProblemError::Invalid)?;
+        if pending > bytes.len().saturating_sub(*at) as u64 {
+            return Err(ProblemError::Invalid);
         }
-        MAJOR_TAG => skip_item(bytes, at),
-        _ => Err(ProblemError::Invalid),
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -489,5 +504,59 @@ mod tests {
         );
         assert_eq!(parsed.title_text(), Some(title));
         assert_eq!(Code::REQUEST_ENTITY_INCOMPLETE.as_raw(), 136);
+    }
+    #[test]
+    fn deeply_nested_extensions_use_iterative_input_bounded_scanning() {
+        let mut bytes = std::vec![0xa2, 0x20, 0x61, b'a', 0x28];
+        for _ in 0..100_000 {
+            // One-entry map, integer key, one-element array, unknown tag 60000.
+            bytes.extend_from_slice(&[0xa1, 0, 0x81, 0xd9, 0xea, 0x60]);
+        }
+        bytes.push(0);
+        let parsed = ProblemDetails::decode(&bytes).unwrap();
+        assert_eq!(parsed.title_text(), Some("a"));
+        assert_eq!(
+            ProblemDetails::decode(&bytes[..bytes.len() - 1]),
+            Err(ProblemError::Invalid)
+        );
+    }
+
+    #[test]
+    fn unknown_extensions_refuse_impossible_counts_and_malformed_values() {
+        let invalid: &[&[u8]] = &[
+            &[0x9b, 255, 255, 255, 255, 255, 255, 255, 255],
+            &[0xbb, 255, 255, 255, 255, 255, 255, 255, 255],
+            &[0x82, 0],
+            &[0xa1, 0],
+            &[0xd9, 0xea, 0x60],
+            &[0x62, 0xc3, 0x28],
+            &[0xf8, 0],
+            &[0xf8, 31],
+            &[0x9f, 0, 0xff],
+        ];
+        for value in invalid {
+            let mut bytes = std::vec![0xa2, 0x20, 0x61, b'a', 0x28];
+            bytes.extend_from_slice(value);
+            assert_eq!(
+                ProblemDetails::decode(&bytes),
+                Err(ProblemError::Invalid),
+                "{value:x?}"
+            );
+        }
+        for value in [
+            &[0x42, 0xc3, 0x28][..],
+            &[0xf8, 32],
+            &[0xf8, 255],
+            &[0xf9, 0, 0],
+            &[0x80],
+            &[0xa0],
+        ] {
+            let mut bytes = std::vec![0xa2, 0x20, 0x61, b'a', 0x28];
+            bytes.extend_from_slice(value);
+            assert_eq!(
+                ProblemDetails::decode(&bytes).unwrap().title_text(),
+                Some("a")
+            );
+        }
     }
 }
