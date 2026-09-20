@@ -104,3 +104,24 @@ Failed timed requests stop that pairing without retry or replacement. The report
 retains successful raw samples, the requested sample count and the zero-based
 failed sample index/error. Partial summaries cover successes only; a failed
 measurement has no throughput value and the suite exits unsuccessfully.
+
+## Executable capability inventory
+
+[`capabilities.json`](capabilities.json) maps each process case to client/server
+roles, transport/security, platform, positive and failure assertions, and its
+runner function. The manifest also records unqualified or fixture-unsupported
+surfaces and their tracking issues. It is an execution contract, not a stored
+conformance score. The separate ETSI and App test harnesses have narrower,
+distinct evidence and do not acquire process coverage from this inventory.
+
+Each report records the manifest SHA-256 and a `coverage` result. Every enabled
+case must appear exactly once, pass and retain evidence. Missing, duplicate,
+unknown, disabled-but-executed and failed cases fail the run. An empty run cannot
+pass. `--libcoap-udp-only` explicitly marks five cases `build-excluded`; it does
+not mark them passed or remove them from the report. `complete` means all enabled
+listed assertions passed, while the unqualified surface inventory remains open.
+Linux and Windows are the declared execution platforms; other platforms require
+an explicit qualification update. Wrong-key/blackhole cases require the peer's
+normal error exit and a protocol refusal/timeout indication; crashes and setup
+errors cannot satisfy them. Timeout alone does not establish an authenticated
+DTLS alert or qualify the literal ETSI failure scenario.

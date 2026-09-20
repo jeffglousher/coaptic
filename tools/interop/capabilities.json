@@ -1,0 +1,1017 @@
+{
+  "schema": "coaptic-capabilities/1",
+  "scope": "Independent process suite only. A passed case proves its listed assertions, not complete feature or RFC conformance.",
+  "policy": "A report is complete only when every enabled case appears exactly once and passes. Explicit build exclusions and unqualified surfaces remain visible.",
+  "required_capabilities": [
+    "libcoap-dtls"
+  ],
+  "cases": [
+    {
+      "id": "udp:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "udp:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "udp:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "udp:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "udp:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource",
+        "wrong PSK refusal followed by valid service"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource",
+        "wrong PSK refusal followed by valid service"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource",
+        "wrong PSK refusal followed by valid service"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource",
+        "wrong PSK refusal followed by valid service"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "fresh-client-timing"
+      ],
+      "positive_proof": [
+        "exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "fresh-session repeated GET"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource",
+        "wrong PSK refusal followed by valid service"
+      ],
+      "executable": "tools/interop/run.py:main.matrix"
+    },
+    {
+      "id": "dtls-reconnect:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-reconnect:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-reconnect:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-churn:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-session-churn",
+        "post-counter"
+      ],
+      "positive_proof": [
+        "140 POST effects and final GET counter 140 across 141 connections"
+      ],
+      "failure_proof": [
+        "missing or duplicate effects fail exact counter assertion"
+      ],
+      "executable": "tools/interop/run.py:main.churn"
+    },
+    {
+      "id": "dtls-reconnect:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-reconnect:coap-rs->coap-rs",
+      "client": "coap-rs",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-reconnect:libcoap->coap-rs",
+      "client": "libcoap",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "dtls-endpoint-reuse"
+      ],
+      "positive_proof": [
+        "four successful authenticated GETs at one server-visible endpoint"
+      ],
+      "failure_proof": [
+        "wrong-key connection fails between valid connections"
+      ],
+      "executable": "tools/interop/run.py:main.reconnect"
+    },
+    {
+      "id": "dtls-churn:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "dtls-session-churn",
+        "post-counter"
+      ],
+      "positive_proof": [
+        "140 POST effects and final GET counter 140 across 141 connections"
+      ],
+      "failure_proof": [
+        "missing or duplicate effects fail exact counter assertion"
+      ],
+      "executable": "tools/interop/run.py:main.churn"
+    },
+    {
+      "id": "dtls-clean-reconnect:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "dtls-explicit-shutdown",
+        "post-counter"
+      ],
+      "positive_proof": [
+        "140 POST effects, final counter 140 and terminal client records"
+      ],
+      "failure_proof": [
+        "missing terminal records or wrong effect count fails"
+      ],
+      "executable": "tools/interop/run.py:main.c_server_reconnect"
+    },
+    {
+      "id": "reliability:coaptic->drop-reply",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "drop-reply"
+      ],
+      "positive_proof": [
+        "observable retransmission; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing retransmission or extra handler effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->duplicate-request",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "injected duplicate; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing injected duplicate or extra effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->blackhole",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "blackhole"
+      ],
+      "positive_proof": [
+        "captured relay trace proves injected drop"
+      ],
+      "failure_proof": [
+        "bounded protocol timeout; crash/supervisor kill is not success"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->restart",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "restart"
+      ],
+      "positive_proof": [
+        "same port serves requests after restart; new in-memory counter is zero"
+      ],
+      "failure_proof": [
+        "stale counter or unavailable service fails; no durability guarantee"
+      ],
+      "executable": "tools/interop/run.py:main.restart"
+    },
+    {
+      "id": "reliability:coap-rs->drop-reply",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "drop-reply"
+      ],
+      "positive_proof": [
+        "observable retransmission; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing retransmission or extra handler effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coap-rs->duplicate-request",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "injected duplicate; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing injected duplicate or extra effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coap-rs->blackhole",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "blackhole"
+      ],
+      "positive_proof": [
+        "captured relay trace proves injected drop"
+      ],
+      "failure_proof": [
+        "bounded protocol timeout; crash/supervisor kill is not success"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coap-rs->restart",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "restart"
+      ],
+      "positive_proof": [
+        "same port serves requests after restart; new in-memory counter is zero"
+      ],
+      "failure_proof": [
+        "stale counter or unavailable service fails; no durability guarantee"
+      ],
+      "executable": "tools/interop/run.py:main.restart"
+    },
+    {
+      "id": "reliability:libcoap->drop-reply",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "drop-reply"
+      ],
+      "positive_proof": [
+        "observable retransmission; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing retransmission or extra handler effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:libcoap->duplicate-request",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "injected duplicate; final counter exactly one"
+      ],
+      "failure_proof": [
+        "missing injected duplicate or extra effects fail"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:libcoap->blackhole",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "blackhole"
+      ],
+      "positive_proof": [
+        "captured relay trace proves injected drop"
+      ],
+      "failure_proof": [
+        "bounded protocol timeout; crash/supervisor kill is not success"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:libcoap->restart",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "restart"
+      ],
+      "positive_proof": [
+        "same port serves requests after restart; new in-memory counter is zero"
+      ],
+      "failure_proof": [
+        "stale counter or unavailable service fails; no durability guarantee"
+      ],
+      "executable": "tools/interop/run.py:main.restart"
+    }
+  ],
+  "gaps": [
+    {
+      "feature": "full-method-and-option-matrix",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Process fixtures only exercise GET and counter POST; full PUT/POST/DELETE/FETCH/PATCH/iPATCH and conditional transitions are not qualified.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "block1-and-block2-refusal-matrix",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Exact 2000-byte Block2 is qualified only by listed cases; uploads, malformed/missing/duplicate blocks, negotiation and limits need independent cases.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "observe",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "No process notification collector; App tests and same-stack dogfood do not establish independent ordering, cancellation, re-registration or large notifications.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "pairwise-oscore",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "oscore",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Libcoap OSCORE build support is not exercised by this runner; independent wrong-key/replay/ciphertext/Observe/inner-block cases are absent.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "q-block",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Full independent Q recovery and continuation cases are absent.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "echo-request-tag-no-response-problem-details",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Local tests are not a complete independent option/refusal matrix.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "separate-responses-and-discovery",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Harness discovery tests are separate evidence; this process runner has no discovery or delayed application completion cases.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "independent-x509",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "x509-dtls",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Mutual certificate and trust-refusal tests use the same Rust DTLS backend; no process X.509 cases against libcoap.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "raw-public-key",
+      "status": "fixture-unsupported",
+      "role": "both",
+      "transport_security": "rpk-dtls",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Current Rust DTLS fixtures do not support RFC 7250 RPK; certificate tests are not substitutes.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "literal-dtls-tds",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "dtls",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "ETSI cipher offer/selection, Finished and authenticated alert evidence, full loss schedule and actual RPK are not qualified by generic GET success.",
+      "issue": 199,
+      "executable_cases": []
+    },
+    {
+      "feature": "ipv6-and-compound-network-faults",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Process runner binds IPv4 loopback; IPv6, alternative server fault directions, DTLS faults, reordering/delay/MTU and combined schedules are absent.",
+      "issue": 200,
+      "executable_cases": []
+    },
+    {
+      "feature": "concurrency-saturation-and-soak",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Serial fresh sessions and 140-session churn are not concurrent capacity or long-soak qualification.",
+      "issue": 202,
+      "executable_cases": []
+    },
+    {
+      "feature": "embedded-and-platform-qualification",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "Host runs do not establish MCU runtime, stack high-water, endianness, macOS or Windows continuous CI support.",
+      "issue": 202,
+      "executable_cases": []
+    },
+    {
+      "feature": "property-fuzz-and-requirement-coverage",
+      "status": "unqualified",
+      "role": "both",
+      "transport_security": "all",
+      "peers": "all",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "embedded"
+      ],
+      "reason": "No source-bound full requirements/branch-coverage or seeded campaign evidence in this process suite.",
+      "issue": 202,
+      "executable_cases": []
+    }
+  ]
+}
