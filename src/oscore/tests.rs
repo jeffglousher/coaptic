@@ -2319,3 +2319,88 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
     );
     assert!(client.take_response(a).is_none());
 }
+
+#[test]
+fn dual_role_protected_observe_uses_independent_same_token_relations() {
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    type Peer = App<profiles::Default, Loopback>;
+    fn transfer(from: &Peer, to: &mut Peer, source: Endpoint, now: u64) {
+        let (_, bytes, n) = from.transport().last_send.unwrap();
+        assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+        to.transport_mut().inbox = Some((source, bytes, n));
+        to.poll(now).unwrap();
+    }
+    let ae = Endpoint::v4([192, 0, 2, 1], 5683);
+    let be = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut a = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value))
+        .bind(Loopback::default())
+        .unwrap();
+    a.set_oscore(client_c1());
+    let mut b = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value))
+        .bind(Loopback::default())
+        .unwrap();
+    b.set_oscore(server_c1());
+    let ac = a.get("obs").observe().to(be).send(0).unwrap();
+    transfer(&a, &mut b, ae, 0);
+    transfer(&b, &mut a, be, 0);
+    assert!(
+        a.take_response(ac)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_some()
+    );
+    let bc = b.get("obs").observe().to(ae).send(1).unwrap();
+    assert_eq!(
+        ac.token(),
+        bc.token(),
+        "independent requesters may use the same Token"
+    );
+    transfer(&b, &mut a, be, 1);
+    transfer(&a, &mut b, ae, 1);
+    assert!(
+        b.take_response(bc)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_some()
+    );
+    assert_eq!(
+        a.notify(10, &["obs"], Response::content(b"from a"))
+            .unwrap(),
+        1
+    );
+    transfer(&a, &mut b, ae, 10);
+    assert_eq!(b.take_response(bc).unwrap().unwrap().payload(), b"from a");
+    assert_eq!(
+        b.notify(20, &["obs"], Response::content(b"from b"))
+            .unwrap(),
+        1
+    );
+    transfer(&b, &mut a, be, 20);
+    assert_eq!(a.take_response(ac).unwrap().unwrap().payload(), b"from b");
+    assert!(a.cancel(ac));
+    assert_eq!(
+        a.take_response(ac).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    assert_eq!(
+        a.notify(10_000, &["obs"], Response::content(b"still serving"))
+            .unwrap(),
+        1
+    );
+    transfer(&a, &mut b, ae, 10_000);
+    assert_eq!(
+        b.take_response(bc).unwrap().unwrap().payload(),
+        b"still serving"
+    );
+}
