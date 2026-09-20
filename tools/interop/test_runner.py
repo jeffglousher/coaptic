@@ -29,6 +29,32 @@ class RunnerTests(unittest.TestCase):
                 method_workflow("client", "server")
             self.assertEqual(request.call_count, 3)
 
+    def test_method_workflow_requires_ipv6_probe_before_mutations(self):
+        with patch("run.Server") as server, patch("run.request") as request, patch("run.ipv6_probe") as probe:
+            server.return_value.__enter__.return_value.number = 1234
+            probe.side_effect = AssertionError("IPv6 unavailable")
+            with self.assertRaises(AssertionError):
+                method_workflow("client", "server", "udp", "ipv6")
+            server.assert_called_once_with("server", "udp", family="ipv6")
+            probe.assert_called_once_with(1234)
+            request.assert_not_called()
+
+    def test_method_workflow_rejects_wrong_key_success(self):
+        with patch("run.Server") as server, patch("run.request") as request:
+            server.return_value.__enter__.return_value.number = 1234
+            request.side_effect = [
+                {"exit_code": 0, "code": 132, "payload_hex": ""},
+                {"exit_code": 0, "code": 65, "payload_hex": ""},
+                {"exit_code": 0, "code": 68, "payload_hex": ""},
+            ]
+            with self.assertRaises(AssertionError):
+                method_workflow("client", "server", "dtls")
+            server.assert_called_once_with("server", "dtls", family="ipv4")
+            self.assertEqual(request.call_args.args, ("client", "dtls", 1234))
+            self.assertEqual(request.call_args.kwargs["key"], "incorrect")
+            self.assertEqual(request.call_args.kwargs["method"], "PUT")
+            self.assertEqual(request.call_count, 3)
+
     def test_nearest_rank_percentiles(self):
         self.assertEqual(summary([4,1,3,2])["p50"], 2)
         self.assertEqual(summary([4,1,3,2])["p99"], 4)

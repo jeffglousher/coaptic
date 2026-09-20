@@ -274,7 +274,7 @@ def measure_requests(iterations, request_fn):
     return result
 
 
-def method_workflow(client, server):
+def method_workflow(client, server, transport="udp", family="ipv4"):
     """Literal byte/state oracles; private binary patch syntax, no JSON Patch claim."""
     steps = [
         ("GET", b"", 132, b""),
@@ -295,13 +295,21 @@ def method_workflow(client, server):
         ("DELETE", b"", 132, None),
     ]
     evidence = []
-    with Server(server, "udp") as service:
-        for method, payload, code, body in steps:
-            result = request(client, "udp", service.number, path="methods", method=method, payload=payload)
+    with Server(server, transport, family=family) as service:
+        probe = ipv6_probe(service.number) if family == "ipv6" else None
+        refusal = None
+        for index, (method, payload, code, body) in enumerate(steps):
+            if transport == "dtls" and index == 2:
+                # A refused replacement must leave the accepted PUT intact.
+                refusal = request(client, transport, service.number, family=family, path="methods",
+                                  method="PUT", payload=b"poison", key="incorrect", timeout=1500)
+                expect_refusal(refusal, handshake=True)
+            result = request(client, transport, service.number, family=family, path="methods", method=method, payload=payload)
             expect(result, code, body)
             evidence.append({"method": method, "request_hex": payload.hex(), "expected_code": code,
                              "expected_payload_hex": None if body is None else body.hex(), "response": result})
-    return {"steps": evidence, "state_limit_bytes": 64, "patch_format": "fixture octet-stream: PATCH +suffix; IPATCH =replacement"}
+    return {"steps": evidence, "transport": transport, "address_family": family,
+            "ipv6_socket_probe": probe, "wrong_key_result": refusal, "state_limit_bytes": 64, "patch_format": "fixture octet-stream: PATCH +suffix; IPATCH =replacement"}
 
 
 def main():
@@ -366,8 +374,15 @@ def main():
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
             case(label, matrix)
 
-    for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
-        case(f"methods-udp:{client}->{server}", lambda client=client, server=server: method_workflow(peers[client], peers[server]))
+    for transport, family, label in (("udp", "ipv4", "methods-udp"),
+                                     ("dtls", "ipv4", "methods-dtls"),
+                                     ("udp", "ipv6", "methods-ipv6-udp")):
+        for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+            if transport == "dtls" and args.libcoap_udp_only and "libcoap" in (client, server):
+                continue
+            case(f"{label}:{client}->{server}",
+                 lambda client=client, server=server, transport=transport, family=family:
+                 method_workflow(peers[client], peers[server], transport, family))
 
     for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         def ipv6_matrix(client=client, server=server):

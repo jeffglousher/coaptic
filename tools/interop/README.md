@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 41 scenario results (36 with local C-peer DTLS excluded):
+The full run contains 51 scenario results (44 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -61,15 +61,19 @@ The full run contains 41 scenario results (36 with local C-peer DTLS excluded):
   probe records actual request/response bytes from `::1`, preventing silent IPv4
   fallback from passing. These are loopback checks, not scoped/link-local, DTLS
   or IPv6 fault-injection qualification.
-- Five IPv4 UDP method workflows use the same pairings and execute 29 ordered
+- Fifteen method workflows across IPv4 UDP, PSK DTLS and IPv6 UDP use the same
+  pairings and execute 29 ordered
   steps each: PUT creation/replacement, GET readback, POST append, PATCH changes,
   repeated idempotent iPATCH, FETCH selection and DELETE. Invalid selection/patch
   instructions and individual/aggregate 64-byte state overflow must preserve
   exact prior bytes. Content-Format is application/octet-stream; the fixture's
   private PATCH syntax is `+suffix`, iPATCH is `=replacement`, and FETCH selects
   `value`. This proves wire method dispatch, body transport and those application
-  state effects, not JSON Patch, arbitrary patch formats, conditions, DTLS method
-  workflows or complete RFC 8132 conformance. Rust fixtures share application
+  state effects, not JSON Patch, arbitrary patch formats, conditions, IPv6 DTLS
+  or complete RFC 8132 conformance.
+  DTLS rejects a wrong-key replacement PUT and checks the original state afterward.
+  IPv6 workflows require an independent AF_INET6 socket probe before any method
+  steps. Rust fixtures share application
   state logic but use independent CoAP codecs; C implements the fixture separately.
 - Twelve UDP reliability scenarios: each of the three clients against a Coaptic
   server, with dropped reply, duplicated request, blackhole and server restart.
