@@ -979,6 +979,9 @@ where
     /// Requires [`Self::request_tag`]; absent tags are refused before I/O.
     /// CON uploads keep one payload outstanding and advance on its matching
     /// empty ACK. [`Self::non`] keeps each payload NON and sends bounded sets.
+    /// Valid 4.08 missing-block reports for NON uploads reissue at most one
+    /// payload set, preserving the original ranges and request options.
+    /// Malformed, oversized or unsent-range reports are silently discarded.
     /// This per-upload limit does not establish endpoint-wide congestion control.
     #[must_use]
     pub const fn q_block1(mut self) -> Self {
@@ -1589,6 +1592,31 @@ where
                 transfer.role(),
                 BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
             ) {
+                if transfer.role() == BlockRole::OutgoingQBlock1
+                    && parsed.code() == Code::REQUEST_ENTITY_INCOMPLETE
+                    && parsed.content_format() == Some(Ok(ContentFormat::MISSING_BLOCKS))
+                    && lives
+                        .get(Call::new(parsed.token(), peer))
+                        .is_some_and(|live| live.ty == Type::NonConfirmable)
+                {
+                    let outcome = reissue_qblock1_missing(
+                        engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
+                    );
+                    if outcome.is_err() {
+                        abandon_send(engine, oscore, parsed.token(), peer);
+                        fail_call(
+                            engine,
+                            inbox,
+                            lives,
+                            oscore,
+                            Call::new(parsed.token(), peer),
+                            CallFailure::ContinuationFailed,
+                            true,
+                        );
+                    }
+                    let _ = engine.release_rx(rx);
+                    return outcome;
+                }
                 if parsed.code() == Code::CONTINUE {
                     let outcome = continue_block1_tx(
                         engine,
@@ -2062,6 +2090,70 @@ where
     }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
     super::finish_send(engine, io, tx, peer, pending)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reissue_qblock1_missing<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    lives: &ClientLives,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field,
+    now_ms: u64,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+    body: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let mut nums = [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let Ok(count) = crate::message::MissingBlocks::decode(parsed.payload(), &mut nums) else {
+        return Ok(()); // RFC 9177 section 5: silently drop malformed ordering.
+    };
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return Ok(());
+    };
+    // Preflight the entire report, including only previously issued payloads.
+    // A valid first NUM cannot cause output before an invalid later NUM.
+    for &num in &nums[..count] {
+        if num >= transfer.next_num() || engine.reissue_q_block1(body, num).is_err() {
+            return Ok(());
+        }
+    }
+    let Some(live) = lives.get(Call::new(parsed.token(), peer)) else {
+        return Ok(());
+    };
+    let mut queries = [""; MAX_PATH_SEGMENTS];
+    let mut query_n = 0;
+    for query in live.queries.values() {
+        queries[query_n] = query;
+        query_n += 1;
+    }
+    for &num in &nums[..count] {
+        let issued = engine.reissue_q_block1(body, num).map_err(Error::Block)?;
+        send_block1_issued(
+            engine,
+            io,
+            ids,
+            oscore,
+            now_ms,
+            peer,
+            Type::NonConfirmable,
+            live.code,
+            parsed.token(),
+            live.path.segments(),
+            &queries[..query_n],
+            live.accept,
+            live.content_format,
+            live.echo,
+            issued,
+            true,
+            None,
+        )?;
+    }
     Ok(())
 }
 
