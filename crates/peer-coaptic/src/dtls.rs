@@ -50,7 +50,12 @@ impl DtlsIo {
         config: Config,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        let local = if addr.is_ipv6() {
+            "[::1]:0"
+        } else {
+            "127.0.0.1:0"
+        };
+        let socket = tokio::net::UdpSocket::bind(local)
             .await
             .map_err(|e| e.to_string())?;
         socket.connect(addr).await.map_err(|e| e.to_string())?;
