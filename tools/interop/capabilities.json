@@ -1106,6 +1106,380 @@
         "missing resource and repeated DELETE return 4.04"
       ],
       "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-dtls:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-dtls:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-dtls:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-dtls:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-dtls:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-udp:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "independent AF_INET6 socket probe verifies ::1 service before workflow"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-udp:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "independent AF_INET6 socket probe verifies ::1 service before workflow"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-udp:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "independent AF_INET6 socket probe verifies ::1 service before workflow"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-udp:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "independent AF_INET6 socket probe verifies ::1 service before workflow"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-udp:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "independent AF_INET6 socket probe verifies ::1 service before workflow"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
     }
   ],
   "gaps": [
@@ -1121,7 +1495,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Five IPv4 UDP workflows exercise all seven methods with bounded octet-stream fixture state and specific malformed/overflow refusals. Conditional options, standardized patch formats, DTLS/IPv6 method workflows and complete option/representation negotiation remain unqualified.",
+      "reason": "Fifteen workflows across IPv4 UDP, PSK DTLS and IPv6 UDP exercise all seven methods with bounded octet-stream fixture state and specific malformed/overflow refusals. Conditional options, standardized patch formats, IPv6 DTLS and complete option/representation negotiation remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },
