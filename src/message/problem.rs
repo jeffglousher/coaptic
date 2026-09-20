@@ -42,12 +42,75 @@ impl core::fmt::Display for ProblemError {
 #[cfg(feature = "std")]
 impl std::error::Error for ProblemError {}
 
+/// Explicit RFC 9290 writing direction. Absence differs from explicit Auto:
+/// absent direction may inherit presentation context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WritingDirection {
+    /// Left-to-right presentation.
+    LeftToRight,
+    /// Right-to-left presentation.
+    RightToLeft,
+    /// Let the presentation layer determine direction.
+    Auto,
+}
+
+/// Borrowed plain or language-tagged text (RFC 9290 Appendix A).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProblemText<'a> {
+    text: &'a str,
+    language: Option<&'a str>,
+    direction: Option<WritingDirection>,
+}
+impl<'a> ProblemText<'a> {
+    /// Plain text inheriting language and direction from context.
+    #[must_use]
+    pub const fn plain(text: &'a str) -> Self {
+        Self {
+            text,
+            language: None,
+            direction: None,
+        }
+    }
+    /// Tagged text with optional explicit direction. Validates Appendix A CDDL
+    /// language syntax, not registry membership or BCP 47 canonicalization.
+    ///
+    /// # Errors
+    /// [`ProblemError::Invalid`] for a language tag outside that syntax.
+    pub fn tagged(
+        language: &'a str,
+        text: &'a str,
+        direction: Option<WritingDirection>,
+    ) -> Result<Self, ProblemError> {
+        validate_language(language)?;
+        Ok(Self {
+            text,
+            language: Some(language),
+            direction,
+        })
+    }
+    /// Human-readable text without its presentation metadata.
+    #[must_use]
+    pub const fn text(self) -> &'a str {
+        self.text
+    }
+    /// Explicit language, or `None` for plain text.
+    #[must_use]
+    pub const fn language(self) -> Option<&'a str> {
+        self.language
+    }
+    /// Explicit direction; `None` can inherit surrounding context.
+    #[must_use]
+    pub const fn direction(self) -> Option<WritingDirection> {
+        self.direction
+    }
+}
+
 /// RFC 9290 concise problem details: `response-code` plus optional title/detail.
 ///
 /// Encodes as a CBOR map with Standard Problem Detail keys. The map is
 /// non-empty: [`Self::new`] always includes `response-code` (−4), matching
 /// the CoAP code on the message. Title (−1) and detail (−2) are optional
-/// unadorned text. Default Content-Format is
+/// text with optional language/direction metadata. Default Content-Format is
 /// [`ContentFormat::PROBLEM_DETAILS`]. Decoded maps additionally borrow and
 /// preserve their original entries, including fields not exposed by this API.
 /// On the App face, build these with
@@ -68,8 +131,12 @@ impl std::error::Error for ProblemError {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProblemDetails<'a> {
     code: Option<Code>,
-    title: Option<&'a str>,
-    detail: Option<&'a str>,
+    title: Option<ProblemText<'a>>,
+    detail: Option<ProblemText<'a>>,
+    instance: Option<&'a str>,
+    base_uri: Option<&'a str>,
+    base_language: Option<&'a str>,
+    base_direction: Option<WritingDirection>,
     original: Option<&'a [u8]>,
     edited: u8,
 }
@@ -83,6 +150,10 @@ impl ProblemDetails<'static> {
             code: Some(code),
             title: None,
             detail: None,
+            instance: None,
+            base_uri: None,
+            base_language: None,
+            base_direction: None,
             original: None,
             edited: 0,
         }
@@ -96,7 +167,7 @@ impl<'a> ProblemDetails<'a> {
     /// Set the short title (key −1).
     #[must_use]
     pub const fn title(mut self, title: &'a str) -> Self {
-        self.title = Some(title);
+        self.title = Some(ProblemText::plain(title));
         self.edited |= 1;
         self
     }
@@ -104,7 +175,7 @@ impl<'a> ProblemDetails<'a> {
     /// Set the occurrence-specific detail (key −2).
     #[must_use]
     pub const fn detail(mut self, detail: &'a str) -> Self {
-        self.detail = Some(detail);
+        self.detail = Some(ProblemText::plain(detail));
         self.edited |= 2;
         self
     }
@@ -118,13 +189,66 @@ impl<'a> ProblemDetails<'a> {
     /// Title (−1), if present.
     #[must_use]
     pub const fn title_text(self) -> Option<&'a str> {
-        self.title
+        match self.title {
+            Some(value) => Some(value.text),
+            None => None,
+        }
     }
 
     /// Detail (−2), if present.
     #[must_use]
     pub const fn detail_text(self) -> Option<&'a str> {
+        match self.detail {
+            Some(value) => Some(value.text),
+            None => None,
+        }
+    }
+
+    /// Title with its explicit language and direction metadata.
+    #[must_use]
+    pub const fn title_value(self) -> Option<ProblemText<'a>> {
+        self.title
+    }
+    /// Detail with its explicit language and direction metadata.
+    #[must_use]
+    pub const fn detail_value(self) -> Option<ProblemText<'a>> {
         self.detail
+    }
+    /// Set title and its presentation metadata.
+    #[must_use]
+    pub const fn with_title(mut self, title: ProblemText<'a>) -> Self {
+        self.title = Some(title);
+        self.edited |= 1;
+        self
+    }
+    /// Set detail and its presentation metadata.
+    #[must_use]
+    pub const fn with_detail(mut self, detail: ProblemText<'a>) -> Self {
+        self.detail = Some(detail);
+        self.edited |= 2;
+        self
+    }
+    /// Occurrence URI reference; relative references are not resolved here.
+    #[must_use]
+    pub const fn instance(self) -> Option<&'a str> {
+        self.instance
+    }
+    /// Explicit base URI for resolving references in this item.
+    #[must_use]
+    pub const fn base_uri(self) -> Option<&'a str> {
+        self.base_uri
+    }
+    /// Explicit language context for plain text. Callers may have external
+    /// context; if neither exists, RFC 9290 specifies English.
+    #[must_use]
+    pub const fn base_language(self) -> Option<&'a str> {
+        self.base_language
+    }
+    /// Explicit direction context. Without any context the default is
+    /// left-to-right for plain text, automatic direction for tag-38 text.
+    #[must_use]
+    pub const fn base_direction(self) -> Option<WritingDirection> {
+        self.base_direction
     }
 
     /// Encode the CBOR map into `buf`. New maps use deterministic key order
@@ -151,11 +275,11 @@ impl<'a> ProblemDetails<'a> {
         put_head(buf, &mut at, MAJOR_MAP, pairs as u64)?;
         if let Some(title) = self.title {
             put_nint(buf, &mut at, KEY_TITLE)?;
-            put_text(buf, &mut at, title)?;
+            put_problem_text(buf, &mut at, title)?;
         }
         if let Some(detail) = self.detail {
             put_nint(buf, &mut at, KEY_DETAIL)?;
-            put_text(buf, &mut at, detail)?;
+            put_problem_text(buf, &mut at, detail)?;
         }
         if let Some(code) = self.code {
             put_nint(buf, &mut at, KEY_RESPONSE_CODE)?;
@@ -200,7 +324,7 @@ impl<'a> ProblemDetails<'a> {
             };
             if let Some(text) = replacement {
                 put_slice(buf, &mut at, &original[start..value])?;
-                put_text(buf, &mut at, text)?;
+                put_problem_text(buf, &mut at, text)?;
             } else {
                 put_slice(buf, &mut at, &original[start..read])?;
             }
@@ -208,7 +332,7 @@ impl<'a> ProblemDetails<'a> {
         for (bit, key, text) in [(1, KEY_TITLE, self.title), (2, KEY_DETAIL, self.detail)] {
             if self.edited & !found & bit != 0 {
                 put_nint(buf, &mut at, key)?;
-                put_text(buf, &mut at, text.ok_or(ProblemError::Invalid)?)?;
+                put_problem_text(buf, &mut at, text.ok_or(ProblemError::Invalid)?)?;
             }
         }
         Ok(at)
@@ -219,9 +343,11 @@ impl<'a> ProblemDetails<'a> {
     /// Integer keys cover the full CBOR integer range; URI-reference keys are
     /// UTF-8 text. Custom entries (unsigned integer or text keys) must contain
     /// a nonempty map. A map containing only extensions is valid.
-    /// Duplicate title/detail/response-code entries are refused. This decoder
-    /// does not validate URI syntax or extension-specific semantics, or expose
-    /// language-tagged title/detail values; those remain unsupported.
+    /// Duplicate standard fields -1 through -7 are refused. Title/detail accept
+    /// plain text or tag 38, including optional CBOR tags on its language/text
+    /// components. Instance/base URI and language/direction context are exposed.
+    /// Language validation follows Appendix A CDDL syntax, not registry
+    /// membership. URI syntax and extension-specific semantics are not validated.
     /// Definite nested extension values use constant auxiliary memory and work
     /// bounded by the input length. Malformed UTF-8 text and simple values are
     /// refused even inside an unknown extension. Indefinite CBOR is unsupported.
@@ -240,6 +366,10 @@ impl<'a> ProblemDetails<'a> {
             code: None,
             title: None,
             detail: None,
+            instance: None,
+            base_uri: None,
+            base_language: None,
+            base_direction: None,
             original: None,
             edited: 0,
         };
@@ -250,13 +380,13 @@ impl<'a> ProblemDetails<'a> {
                     if out.title.is_some() {
                         return Err(ProblemError::Invalid);
                     }
-                    out.title = Some(read_text(bytes, &mut at)?);
+                    out.title = Some(read_problem_text(bytes, &mut at)?);
                 }
                 Some(1) => {
                     if out.detail.is_some() {
                         return Err(ProblemError::Invalid);
                     }
-                    out.detail = Some(read_text(bytes, &mut at)?);
+                    out.detail = Some(read_problem_text(bytes, &mut at)?);
                 }
                 Some(3) => {
                     if out.code.is_some() {
@@ -267,6 +397,32 @@ impl<'a> ProblemDetails<'a> {
                         return Err(ProblemError::Invalid);
                     }
                     out.code = Some(Code::from_raw(raw as u8));
+                }
+                Some(2) => {
+                    if out.instance.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.instance = Some(read_text(bytes, &mut at)?);
+                }
+                Some(4) => {
+                    if out.base_uri.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.base_uri = Some(read_text(bytes, &mut at)?);
+                }
+                Some(5) => {
+                    if out.base_language.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    let language = read_text(bytes, &mut at)?;
+                    validate_language(language)?;
+                    out.base_language = Some(language);
+                }
+                Some(6) => {
+                    if out.base_direction.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.base_direction = Some(read_direction(bytes, &mut at)?);
                 }
                 None => {
                     let mut probe = at;
@@ -347,6 +503,93 @@ fn put_nint(buf: &mut [u8], at: &mut usize, n: i8) -> Result<(), ProblemError> {
 fn put_text(buf: &mut [u8], at: &mut usize, text: &str) -> Result<(), ProblemError> {
     put_head(buf, at, MAJOR_TEXT, text.len() as u64)?;
     put_slice(buf, at, text.as_bytes())
+}
+
+fn validate_language(language: &str) -> Result<(), ProblemError> {
+    let mut subtags = language.split('-');
+    let first = subtags.next().ok_or(ProblemError::Invalid)?;
+    if first.is_empty() || first.len() > 8 || !first.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return Err(ProblemError::Invalid);
+    }
+    if subtags.any(|part| {
+        part.is_empty() || part.len() > 8 || !part.bytes().all(|b| b.is_ascii_alphanumeric())
+    }) {
+        return Err(ProblemError::Invalid);
+    }
+    Ok(())
+}
+fn put_problem_text(
+    buf: &mut [u8],
+    at: &mut usize,
+    value: ProblemText<'_>,
+) -> Result<(), ProblemError> {
+    if let Some(language) = value.language {
+        put_head(buf, at, MAJOR_TAG, 38)?;
+        put_head(
+            buf,
+            at,
+            MAJOR_ARRAY,
+            if value.direction.is_some() { 3 } else { 2 },
+        )?;
+        put_text(buf, at, language)?;
+    }
+    put_text(buf, at, value.text)?;
+    if let Some(direction) = value.direction {
+        put(
+            buf,
+            at,
+            match direction {
+                WritingDirection::LeftToRight => 0xf4,
+                WritingDirection::RightToLeft => 0xf5,
+                WritingDirection::Auto => 0xf6,
+            },
+        )?;
+    }
+    Ok(())
+}
+fn read_direction(bytes: &[u8], at: &mut usize) -> Result<WritingDirection, ProblemError> {
+    need(bytes, *at, 1)?;
+    let direction = match bytes[*at] {
+        0xf4 => WritingDirection::LeftToRight,
+        0xf5 => WritingDirection::RightToLeft,
+        0xf6 => WritingDirection::Auto,
+        _ => return Err(ProblemError::Invalid),
+    };
+    *at += 1;
+    Ok(direction)
+}
+fn read_annotated_text<'a>(bytes: &'a [u8], at: &mut usize) -> Result<&'a str, ProblemError> {
+    loop {
+        let start = *at;
+        let (major, _) = read_head(bytes, at)?;
+        if major != MAJOR_TAG {
+            *at = start;
+            return read_text(bytes, at);
+        }
+    }
+}
+fn read_problem_text<'a>(bytes: &'a [u8], at: &mut usize) -> Result<ProblemText<'a>, ProblemError> {
+    let start = *at;
+    let (major, tag) = read_head(bytes, at)?;
+    if major == MAJOR_TEXT {
+        *at = start;
+        return Ok(ProblemText::plain(read_text(bytes, at)?));
+    }
+    if major != MAJOR_TAG || tag != 38 {
+        return Err(ProblemError::Invalid);
+    }
+    let (major, count) = read_head(bytes, at)?;
+    if major != MAJOR_ARRAY || !(2..=3).contains(&count) {
+        return Err(ProblemError::Invalid);
+    }
+    let language = read_annotated_text(bytes, at)?;
+    let text = read_annotated_text(bytes, at)?;
+    let direction = if count == 3 {
+        Some(read_direction(bytes, at)?)
+    } else {
+        None
+    };
+    ProblemText::tagged(language, text, direction)
 }
 
 fn need(bytes: &[u8], at: usize, n: usize) -> Result<(), ProblemError> {
@@ -489,7 +732,7 @@ fn skip_item(bytes: &[u8], at: &mut usize) -> Result<(), ProblemError> {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::{ProblemDetails, ProblemError};
+    use super::{ProblemDetails, ProblemError, ProblemText, WritingDirection};
     use crate::message::Code;
 
     /// `{ -4: 132 }` — 4.04 Not Found, response-code only (RFC 9290).
@@ -674,6 +917,202 @@ mod tests {
     }
 
     #[test]
+    fn rfc9290_language_examples_decode_encode_and_retain_metadata() {
+        // Literal Appendix A.3 tag-38 values wrapped in {-1: value}.
+        let examples: &[(&[u8], &str, &str, Option<WritingDirection>)] = &[
+            (
+                &[
+                    0xa1, 0x20, 0xd8, 0x26, 0x82, 0x62, b'e', b'n', 0x65, b'H', b'e', b'l', b'l',
+                    b'o',
+                ],
+                "en",
+                "Hello",
+                None,
+            ),
+            (
+                &[
+                    0xa1, 0x20, 0xd8, 0x26, 0x82, 0x62, b'f', b'r', 0x67, b'B', b'o', b'n', b'j',
+                    b'o', b'u', b'r',
+                ],
+                "fr",
+                "Bonjour",
+                None,
+            ),
+            (
+                &[
+                    0xa1, 0x20, 0xd8, 0x26, 0x83, 0x62, b'h', b'e', 0x68, 0xd7, 0xa9, 0xd7, 0x9c,
+                    0xd7, 0x95, 0xd7, 0x9d, 0xf5,
+                ],
+                "he",
+                "שלום",
+                Some(WritingDirection::RightToLeft),
+            ),
+        ];
+        for &(wire, language, text, direction) in examples {
+            let parsed = ProblemDetails::decode(wire).unwrap();
+            let title = parsed.title_value().unwrap();
+            assert_eq!(title.text(), text);
+            assert_eq!(title.language(), Some(language));
+            assert_eq!(title.direction(), direction);
+            assert_eq!(parsed.title_text(), Some(text));
+            let mut out = [0; 128];
+            let n = parsed.encode(&mut out).unwrap();
+            assert_eq!(&out[..n], wire);
+            // Re-encode the typed value, not just the retained input bytes.
+            let n = parsed
+                .with_title(ProblemText::tagged(language, text, direction).unwrap())
+                .encode(&mut out)
+                .unwrap();
+            assert_eq!(&out[..n], wire);
+            for capacity in 0..n {
+                assert_eq!(
+                    parsed.with_title(title).encode(&mut out[..capacity]),
+                    Err(ProblemError::BufferTooSmall)
+                );
+            }
+            for end in 0..wire.len() {
+                assert_eq!(
+                    ProblemDetails::decode(&wire[..end]),
+                    Err(ProblemError::Invalid)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn context_and_explicit_auto_remain_distinct_across_edits() {
+        // {-1: "a", -3: "/1", -5: "coap://h", -6: "fr", -7: true, -9: 0}.
+        let wire = [
+            0xa6, 0x20, 0x61, b'a', 0x22, 0x62, b'/', b'1', 0x24, 0x68, b'c', b'o', b'a', b'p',
+            b':', b'/', b'/', b'h', 0x25, 0x62, b'f', b'r', 0x26, 0xf5, 0x28, 0,
+        ];
+        let parsed = ProblemDetails::decode(&wire).unwrap();
+        assert_eq!(parsed.instance(), Some("/1"));
+        assert_eq!(parsed.base_uri(), Some("coap://h"));
+        assert_eq!(parsed.base_language(), Some("fr"));
+        assert_eq!(parsed.base_direction(), Some(WritingDirection::RightToLeft));
+        assert_eq!(parsed.title_value().unwrap(), ProblemText::plain("a"));
+        for direction in [
+            None,
+            Some(WritingDirection::Auto),
+            Some(WritingDirection::LeftToRight),
+            Some(WritingDirection::RightToLeft),
+        ] {
+            let title = ProblemText::tagged("EN-us", "hello", direction).unwrap();
+            let edited = parsed.with_title(title).with_detail(title);
+            let mut out = [0; 128];
+            let n = edited.encode(&mut out).unwrap();
+            let decoded = ProblemDetails::decode(&out[..n]).unwrap();
+            assert_eq!(decoded.title_value(), Some(title));
+            assert_eq!(decoded.detail_value(), Some(title));
+            assert_eq!(decoded.base_direction(), parsed.base_direction());
+            assert_eq!(decoded.base_language(), parsed.base_language());
+            assert_eq!(decoded.instance(), parsed.instance());
+            assert_eq!(decoded.base_uri(), parsed.base_uri());
+            // Original URI/context/unknown entries survive exactly.
+            assert!(
+                out[..n]
+                    .windows(wire.len() - 4)
+                    .any(|part| part == &wire[4..])
+            );
+            let n = decoded.title("plain").encode(&mut [0; 128]).unwrap();
+            assert!(n > 0);
+        }
+        let mut out = [0; 64];
+        let n = ProblemDetails::new(Code::BAD_REQUEST)
+            .with_title(ProblemText::tagged("en", "x", Some(WritingDirection::Auto)).unwrap())
+            .encode(&mut out)
+            .unwrap();
+        assert_eq!(
+            &out[..n],
+            &[
+                0xa2, 0x20, 0xd8, 0x26, 0x83, 0x62, b'e', b'n', 0x61, b'x', 0xf6, 0x23, 0x18, 0x80
+            ]
+        );
+    }
+
+    #[test]
+    fn tagged_components_are_iterative_and_annotations_survive_forwarding() {
+        let mut wire = std::vec![0xa1, 0x21, 0xd8, 0x26, 0x82];
+        for _ in 0..100_000 {
+            wire.extend_from_slice(&[0xd9, 0xea, 0x60]);
+        }
+        wire.extend_from_slice(&[0x62, b'e', b'n', 0xd9, 0xea, 0x60, 0x61, b'x']);
+        let parsed = ProblemDetails::decode(&wire).unwrap();
+        assert_eq!(parsed.detail_value().unwrap().language(), Some("en"));
+        let mut out = std::vec![0; wire.len()];
+        let n = parsed.encode(&mut out).unwrap();
+        assert_eq!(&out[..n], wire);
+        assert_eq!(
+            ProblemDetails::decode(&wire[..wire.len() - 1]),
+            Err(ProblemError::Invalid)
+        );
+    }
+
+    #[test]
+    fn malformed_language_direction_context_and_duplicates_are_refused() {
+        for language in [
+            "",
+            "1en",
+            "en-",
+            "-en",
+            "en--US",
+            "abcdefghi",
+            "en-123456789",
+            "en_US",
+            "é",
+            "en a",
+        ] {
+            assert_eq!(
+                ProblemText::tagged(language, "x", None),
+                Err(ProblemError::Invalid)
+            );
+            let mut wire = std::vec![0xa1, 0x20, 0xd8, 0x26, 0x82];
+            wire.push(0x60 + language.len() as u8);
+            wire.extend_from_slice(language.as_bytes());
+            wire.extend_from_slice(&[0x61, b'x']);
+            assert_eq!(ProblemDetails::decode(&wire), Err(ProblemError::Invalid));
+        }
+        for language in [
+            "en",
+            "EN-us",
+            "zh-Hant-TW",
+            "x-private",
+            "i-klingon",
+            "abcdefgh-12345678",
+        ] {
+            assert!(ProblemText::tagged(language, "x", None).is_ok());
+        }
+        let invalid: &[&[u8]] = &[
+            &[0xa1, 0x20, 0xd8, 0x25, 0x82, 0x62, b'e', b'n', 0x61, b'x'],
+            &[0xa1, 0x20, 0xd8, 0x26, 0x81, 0x62, b'e', b'n'],
+            &[
+                0xa1, 0x20, 0xd8, 0x26, 0x84, 0x62, b'e', b'n', 0x61, b'x', 0xf4, 0,
+            ],
+            &[
+                0xa1, 0x20, 0xd8, 0x26, 0x83, 0x62, b'e', b'n', 0x61, b'x', 0xf7,
+            ],
+            &[0xa1, 0x20, 0xd8, 0x26, 0x82, 0x62, b'e', b'n', 0x41, b'x'],
+            &[0xa1, 0x20, 0xd8, 0x26, 0x82, 0x62, b'e', b'n', 0x61, 255],
+            &[0xa1, 0x22, 0],
+            &[0xa1, 0x24, 0],
+            &[0xa1, 0x25, 0x60],
+            &[0xa1, 0x26, 0],
+            &[0xa2, 0x22, 0x60, 0x22, 0x60],
+            &[0xa2, 0x24, 0x60, 0x24, 0x60],
+            &[0xa2, 0x25, 0x62, b'e', b'n', 0x25, 0x62, b'f', b'r'],
+            &[0xa2, 0x26, 0xf6, 0x26, 0xf4],
+        ];
+        for wire in invalid {
+            assert_eq!(
+                ProblemDetails::decode(wire),
+                Err(ProblemError::Invalid),
+                "{wire:x?}"
+            );
+        }
+    }
+
+    #[test]
     fn decode_rejects_empty_or_non_map() {
         assert_eq!(ProblemDetails::decode(&[]), Err(ProblemError::Invalid));
         assert_eq!(ProblemDetails::decode(&[0xa0]), Err(ProblemError::Invalid));
@@ -686,6 +1125,10 @@ mod tests {
             code: None,
             title: None,
             detail: None,
+            instance: None,
+            base_uri: None,
+            base_language: None,
+            base_direction: None,
             original: None,
             edited: 0,
         };
