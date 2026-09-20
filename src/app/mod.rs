@@ -703,6 +703,13 @@ where
         Err(e) => return Err(e.into()),
     };
     let progress = engine.progress(now_ms);
+    // RX dispatch and retransmission give-up may change or release this body.
+    // Retain only the small timer identity, not a second body-transfer copy.
+    let recovery_wait = progress.qblock_recover().and_then(|recover| {
+        engine
+            .rx_body_transfer(recover.id())
+            .and_then(|transfer| transfer.q_receive())
+    });
 
     if let Some(retransmit) = progress.retransmit() {
         match retransmit {
@@ -770,7 +777,19 @@ where
     }
 
     if let Some(recover) = progress.qblock_recover() {
-        send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
+        let still_due = engine
+            .rx_body_transfer(recover.id())
+            .is_some_and(|transfer| {
+                transfer.key() == recover.key()
+                    && transfer.role() == recover.role()
+                    && transfer.szx() == recover.szx()
+                    && transfer.window_base() == recover.window_base()
+                    && transfer.q_receive() == recovery_wait
+                    && transfer.q_holes() == Some((recover.missing_num(), recover.hole_mask()))
+            });
+        if still_due {
+            send_qblock_recover(engine, io, ids, oscore, now_ms, recover, dedup_closed)?;
+        }
     }
     if recv_saturated {
         return Err(Error::Saturated);
