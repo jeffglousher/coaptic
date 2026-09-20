@@ -531,7 +531,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         self.occ.unpin(id)
     }
 
-    /// Occupied slot whose sidecar matches `key`, if any. O(n) in slot count.
+    /// First occupied slot whose sidecar matches `key`, across roles.
+    /// Use [`Self::lookup_role`] to distinguish request and response bodies.
+    /// O(n) in slot count.
     #[must_use]
     pub fn lookup(&self, key: BlockKey) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
@@ -540,6 +542,17 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
                 Some(t) if t.key() == key => Some(id),
                 _ => None,
             }
+        })
+    }
+
+    /// Occupied body with the exact key and transfer role.
+    #[must_use]
+    pub fn lookup_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..SLOTS).find_map(|i| {
+            let id = SlotId::from_index(i);
+            self.transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
         })
     }
 
@@ -656,7 +669,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        if let Some(id) = self.lookup(key).or_else(|| self.lookup_identity(key, role)) {
+        if let Some(id) = self
+            .lookup_role(key, role)
+            .or_else(|| self.lookup_identity(key, role))
+        {
             let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
             if role.is_q_block() && transfer.expected_len() != expected_len {
                 return Err(BlockTransferError::LengthInconsistent);
