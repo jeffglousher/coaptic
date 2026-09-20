@@ -1851,16 +1851,26 @@ fn cancelled_calls_reclaim_oscore_bindings_without_reusing_sender_sequence() {
 fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
     use crate::message::Echo;
     use crate::{App, Request, Response, get, profiles};
-    fn hello(req: Request<'_>) -> Response<'static> {
-        if req.echo() == Some(&b"server-challenge"[..]) {
-            Response::content(b"accepted")
+    fn policy(check: crate::EchoCheck) -> crate::EchoDecision {
+        assert!(
+            check.oscore_protected,
+            "policy runs after OSCORE verification"
+        );
+        let issued = Echo::new(b"server-challenge").unwrap();
+        if check.echo == Ok(Some(issued)) {
+            crate::EchoDecision::Accept
         } else {
-            Response::new(Code::UNAUTHORIZED).echo(Echo::new(b"server-challenge").unwrap())
+            crate::EchoDecision::Challenge(issued)
         }
+    }
+    fn hello(req: Request<'_>) -> Response<'static> {
+        assert_eq!(req.echo(), Some(&b"server-challenge"[..]));
+        Response::content(b"accepted")
     }
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut server = App::profile::<profiles::Default>()
+        .echo_policy(policy)
         .block_wise::<false>()
         .route("value", get(hello))
         .bind(Loopback::default())

@@ -49,8 +49,8 @@ use crate::message::{
 /// Observe notify (skips an endpoint at notification NSTART), at most one
 /// Observe expiry, at most one due Q-Block recover. The caller owns
 /// clock, socket ([`super::DatagramIo`]), and RST / remaining 4.xx
-/// policy. [`Self::echo_freshness`] classifies; App applies 4.01 when
-/// configured. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
+/// policy. [`Self::echo_freshness`] classifies timestamp age only; App uses
+/// caller-owned [`crate::app::EchoPolicy`] verification. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
 ///
 /// Wrapping [`Metrics`] sit on this type. Copy with [`Self::metrics`];
 /// [`crate::App::metrics`] is the same snapshot from the happy path.
@@ -113,6 +113,7 @@ impl<S: Storage> Engine<S> {
 
     /// Time-based freshness of a mint-shaped Echo on `parsed`.
     ///
+    /// This does not verify issuance, a MAC, or endpoint/security binding.
     /// Event-based freshness is equality against a caller-owned [`Echo`].
     /// Does not invent 4.01 / RST policy. See `knowledge/rfcs/rfc9175.txt`.
     #[must_use]

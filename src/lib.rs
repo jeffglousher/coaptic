@@ -66,7 +66,7 @@
 //! [`Response::problem`]
 //! (RFC 9290). Q-Block1 holes from `poll` use [`Response::missing_blocks`]
 //! (RFC 9177, Content-Format 272). Time-based Echo freshness is
-//! [`app::AppBuilder::echo_freshness`].
+//! [`app::AppBuilder::echo_policy`].
 //!
 //! # What you own
 //!
@@ -152,8 +152,8 @@ pub mod storage;
 pub use storage::profiles;
 
 pub use app::{
-    App, Call, CallFailure, Error, Method, Outgoing, Request, Response, ResponseError, delete,
-    fetch, get, ipatch, patch, post, put,
+    App, Call, CallFailure, EchoCheck, EchoDecision, EchoPolicy, Error, Method, Outgoing, Request,
+    Response, ResponseError, delete, fetch, get, ipatch, patch, post, put,
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};
