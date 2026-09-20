@@ -1634,6 +1634,210 @@
         "wrong PSK cannot establish authenticated exchange"
       ],
       "executable": "tools/interop/run.py:main.ipv6_dtls"
+    },
+    {
+      "id": "reliability:coaptic->coap-rs->drop-reply",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
+      ],
+      "positive_proof": [
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
+      ],
+      "failure_proof": [
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->libcoap->drop-reply",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
+      ],
+      "positive_proof": [
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
+      ],
+      "failure_proof": [
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->coap-rs->duplicate-request",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
+      ],
+      "positive_proof": [
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
+      ],
+      "failure_proof": [
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->libcoap->duplicate-request",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
+      ],
+      "positive_proof": [
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
+      ],
+      "failure_proof": [
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->coap-rs->blackhole",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "blackhole"
+      ],
+      "positive_proof": [
+        "captured relay trace proves injected drop"
+      ],
+      "failure_proof": [
+        "bounded protocol timeout; crash/supervisor kill is not success"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->libcoap->blackhole",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "blackhole"
+      ],
+      "positive_proof": [
+        "captured relay trace proves injected drop"
+      ],
+      "failure_proof": [
+        "bounded protocol timeout; crash/supervisor kill is not success"
+      ],
+      "executable": "tools/interop/run.py:main.fault"
+    },
+    {
+      "id": "reliability:coaptic->coap-rs->restart",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "restart"
+      ],
+      "positive_proof": [
+        "same port serves requests after restart; new in-memory counter is zero"
+      ],
+      "failure_proof": [
+        "stale counter or unavailable service fails; no durability guarantee"
+      ],
+      "executable": "tools/interop/run.py:main.restart"
+    },
+    {
+      "id": "reliability:coaptic->libcoap->restart",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "restart"
+      ],
+      "positive_proof": [
+        "same port serves requests after restart; new in-memory counter is zero"
+      ],
+      "failure_proof": [
+        "stale counter or unavailable service fails; no durability guarantee"
+      ],
+      "executable": "tools/interop/run.py:main.restart"
     }
   ],
   "gaps": [
@@ -1809,7 +2013,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "IPv6 UDP and PSK DTLS loopback GET/404/Block2 are exercised by five cases each. DTLS additionally checks wrong-key refusal and service afterward through IPv6-only relays. Scoped/link-local IPv6, alternative server fault directions, reordering/delay/MTU and combined schedules remain absent.",
+      "reason": "IPv6 UDP and PSK DTLS loopback GET/404/Block2 are exercised by five cases each. DTLS additionally checks wrong-key refusal and service afterward through IPv6-only relays. Scoped/link-local IPv6, reordering/delay/MTU and combined schedules remain absent. IPv4 UDP lost reply, duplicate request, blackhole and restart are exercised with Coaptic as client against each alternative server; DTLS/IPv6 faults and compound schedules remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },
@@ -1841,7 +2045,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Host runs do not establish MCU runtime, stack high-water, endianness, macOS or Windows continuous CI support.",
+      "reason": "Library host CI is separate from this process suite. Process host runs do not establish MCU runtime, stack high-water, endianness or macOS/Windows continuous adapter qualification.",
       "issue": 202,
       "executable_cases": []
     },
@@ -1859,6 +2063,20 @@
       ],
       "reason": "No source-bound full requirements/branch-coverage or seeded campaign evidence in this process suite.",
       "issue": 202,
+      "executable_cases": []
+    },
+    {
+      "feature": "alternative-server-non-idempotent-deduplication",
+      "status": "unqualified",
+      "role": "server",
+      "transport_security": "udp",
+      "peers": "coap-rs, libcoap",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "reason": "Exploratory dropped-reply and duplicated-request counter POSTs produced two effects in both alternative fixtures. Their passing fault cases qualify idempotent PUT state and Coaptic retransmission identity only; no fixture response cache was added to mask this result.",
+      "issue": 200,
       "executable_cases": []
     }
   ]
