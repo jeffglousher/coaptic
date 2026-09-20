@@ -3,6 +3,7 @@
 //! ```text
 //! Outgoing --encode--> TX slot
 //! poll matches Token + endpoint
+//! take_response returns Some(Ok(remote)) or Some(Err(local failure))
 //! RX --copy--> Response::payload  (non-Block: min(len, INLINE_PAYLOAD) = 128)
 //! Block2 / Q-Block2 --apply--> RX body --copy--> Response::body()  (RESPONSE_BODY)
 //! ```
@@ -47,7 +48,8 @@ const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 
 /// Outstanding client exchange (Token + destination).
 ///
-/// Identity for [`App::take_response`](super::App::take_response). Not a
+/// Identity for [`App::take_response`](super::App::take_response) and
+/// [`App::cancel`](super::App::cancel). Not a
 /// slot. After [`Outgoing::observe`], the same `Call` yields the initial
 /// representation and later notifications.
 ///
@@ -100,6 +102,34 @@ impl Call {
         self.peer
     }
 }
+
+/// Local terminal outcome of a client call, distinct from a remote CoAP response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CallFailure {
+    /// Caller cancelled this call locally (no deregistration is sent).
+    Cancelled,
+    /// Caller-supplied absolute deadline was reached.
+    DeadlineExceeded,
+    /// Retransmissions or the response lifetime were exhausted.
+    TimedOut,
+    /// Peer rejected the exchange with an empty Reset.
+    Reset,
+    /// Received blocks could not be assembled into the requested representation.
+    BlockTransfer(BlockTransferError),
+}
+impl core::fmt::Display for CallFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cancelled => f.write_str("call cancelled"),
+            Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
+            Self::TimedOut => f.write_str("request timed out"),
+            Self::Reset => f.write_str("peer reset the request"),
+            Self::BlockTransfer(error) => write!(f, "response block transfer failed: {error}"),
+        }
+    }
+}
+#[cfg(feature = "std")]
+impl std::error::Error for CallFailure {}
 
 /// How many outstanding client [`Call`]s [`App`](super::App) holds.
 ///
@@ -175,29 +205,12 @@ impl ReplyMeta {
             None => response,
         }
     }
-
-    fn gateway_timeout(call: Call, mid: MessageId) -> Self {
-        Self {
-            code: Code::GATEWAY_TIMEOUT,
-            ty: Type::Reset,
-            token: call.token(),
-            mid,
-            peer: call.peer(),
-            payload: [0u8; INLINE_PAYLOAD],
-            payload_len: 0,
-            payload_src_len: 0,
-            content_format: None,
-            observe: None,
-            etag: [0; 8],
-            etag_len: 0,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct InboxRow {
     call: Call,
-    meta: ReplyMeta,
+    meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
 }
 
@@ -221,7 +234,7 @@ impl ClientInbox {
     fn insert(
         &mut self,
         call: Call,
-        meta: ReplyMeta,
+        meta: Result<ReplyMeta, CallFailure>,
         body: Option<SlotId>,
     ) -> Result<Option<SlotId>, ()> {
         if let Some(slot) = self.rows.iter_mut().find(|row| {
@@ -239,14 +252,17 @@ impl ClientInbox {
         Err(())
     }
 
-    fn take(&mut self, call: Call) -> Option<(Response<'_>, Option<SlotId>)> {
+    fn contains(&self, call: Call) -> bool {
+        self.rows.iter().flatten().any(|row| row.call == call)
+    }
+    fn take(&mut self, call: Call) -> Option<(Result<Response<'_>, CallFailure>, Option<SlotId>)> {
         let i = self.rows.iter().position(|row| {
             row.as_ref()
                 .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
         })?;
         self.rows[i]
             .take()
-            .map(|row| (row.meta.into_response(), row.body))
+            .map(|row| (row.meta.map(ReplyMeta::into_response), row.body))
     }
 }
 
@@ -304,6 +320,7 @@ struct LiveCall {
     observe: OutgoingObserve,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
+    deadline_ms: Option<u64>,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
@@ -365,8 +382,13 @@ impl ClientLives {
 
     fn token_for(&self, path: Path<'static>, peer: Endpoint) -> Option<Token> {
         self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| row.call.peer == peer && row.path == path)
-                .map(|row| row.call.token)
+            row.filter(|row| {
+                row.call.peer == peer
+                    && row.path == path
+                    && row.observe == OutgoingObserve::Register
+                    && row.due_ms != 0
+            })
+            .map(|row| row.call.token)
         })
     }
 }
@@ -432,6 +454,7 @@ where
     q_block2: bool,
     block2: Option<BlockValue>,
     observe: OutgoingObserve,
+    deadline_ms: Option<u64>,
     _dest: core::marker::PhantomData<Dest>,
 }
 
@@ -510,6 +533,7 @@ where
             q_block2: false,
             block2: None,
             observe: OutgoingObserve::Off,
+            deadline_ms: None,
             _dest: core::marker::PhantomData,
         }
     }
@@ -536,7 +560,10 @@ where
     /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
     /// [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
-    pub fn take_response(&mut self, call: Call) -> Option<Response<'_>> {
+    /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
+    /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
+    /// terminal outcome; no synthetic CoAP response code is invented.
+    pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
@@ -547,10 +574,31 @@ where
             }
             release_rx_body(&mut self.engine, id);
             if let Some(bytes) = P::view(&self.assembled) {
-                return Some(response.with_assembled(bytes));
+                return Some(response.map(|response| response.with_assembled(bytes)));
             }
         }
         Some(response)
+    }
+    /// Cancel an active call and reclaim its exchange, body, Observe and OSCORE
+    /// state. The next `take_response` yields `Err(CallFailure::Cancelled)`.
+    /// No wire message is sent; use `Outgoing::deregister` for Observe signaling.
+    /// Returns false for unknown/already terminal ordinary calls.
+    pub fn cancel(&mut self, call: Call) -> bool {
+        if self.lives.get(call).is_none()
+            || (self.inbox.contains(call) && !client_observe_live(&self.engine, call))
+        {
+            return false;
+        }
+        fail_call(
+            &mut self.engine,
+            &mut self.inbox,
+            &mut self.lives,
+            &mut self.oscore,
+            call,
+            CallFailure::Cancelled,
+            true,
+        );
+        true
     }
 }
 
@@ -580,8 +628,19 @@ where
             q_block2: self.q_block2,
             block2: self.block2,
             observe: self.observe,
+            deadline_ms: self.deadline_ms,
             _dest: core::marker::PhantomData,
         }
+    }
+
+    /// Absolute deadline in the same monotonic millisecond clock as `send`/`poll`.
+    /// A deadline at/before `send` is refused before I/O. At `poll`, the deadline
+    /// wins over a response processed at that same time. Covers all fragments
+    /// and the entire Observe subscription until cancelled/deregistered.
+    #[must_use]
+    pub const fn deadline(mut self, deadline_ms: u64) -> Self {
+        self.deadline_ms = Some(deadline_ms);
+        self
     }
 
     /// Request body. A payload that does not fit one datagram is sent as
@@ -727,6 +786,9 @@ where
     /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
     /// lives cap) and this Token is not one of them.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
+        if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+            return Err(Error::DeadlineElapsed);
+        }
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
         let observe = self.observe;
@@ -800,6 +862,7 @@ where
             ty: self.ty,
             content_format: self.content_format,
             observe,
+            deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
@@ -1163,8 +1226,16 @@ where
             }
             Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
-                drop_client(engine, lives, parsed, peer, rx);
-                let _ = e;
+                fail_call(
+                    engine,
+                    inbox,
+                    lives,
+                    oscore,
+                    Call::new(parsed.token(), peer),
+                    CallFailure::BlockTransfer(e),
+                    true,
+                );
+                let _ = engine.release_rx(rx);
                 return Ok(());
             }
         }
@@ -1198,8 +1269,17 @@ where
                 return outcome;
             }
             Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
-            Err(_) => {
-                drop_client(engine, lives, parsed, peer, rx);
+            Err(e) => {
+                fail_call(
+                    engine,
+                    inbox,
+                    lives,
+                    oscore,
+                    Call::new(parsed.token(), peer),
+                    CallFailure::BlockTransfer(e),
+                    true,
+                );
+                let _ = engine.release_rx(rx);
                 return Ok(());
             }
         }
@@ -1246,7 +1326,7 @@ fn store_reply<Mem: Storage + BodySlots>(
     meta: ReplyMeta,
     body: Option<SlotId>,
 ) {
-    match inbox.insert(call, meta, body) {
+    match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
             if let Some(id) = prev {
                 let _ = engine.release_rx_body(id);
@@ -1276,28 +1356,6 @@ fn take_exchange<Mem: Storage + Exchanges>(
     peer: Endpoint,
 ) {
     let _ = engine.take_exchange(ExchangeKey::new(parsed.token(), peer));
-}
-
-fn drop_client<Mem>(
-    engine: &mut Engine<Mem>,
-    lives: &mut ClientLives,
-    parsed: &ParsedMessage<'_>,
-    peer: Endpoint,
-    rx: SlotId,
-) where
-    Mem: Storage + Exchanges + BodySlots + ObserveSlots,
-{
-    take_exchange(engine, parsed, peer);
-    let _ = engine.take_observe(ObserveKey::new(parsed.token(), peer));
-    let key = BlockKey::new(parsed.token(), peer);
-    if let Some(id) = engine.lookup_rx_body(key) {
-        let _ = engine.release_rx_body(id);
-    }
-    if let Some(id) = engine.lookup_tx_body(lives.upload_key(Call::new(parsed.token(), peer))) {
-        let _ = engine.release_tx_body(id);
-    }
-    lives.remove(Call::new(parsed.token(), peer));
-    let _ = engine.release_rx(rx);
 }
 
 fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) -> bool {
@@ -1895,33 +1953,26 @@ fn accept_client_observe<Mem>(
     }
 }
 
-pub(crate) fn forget_exchange_tx<Mem>(engine: &mut Engine<Mem>, lives: &mut ClientLives, tx: SlotId)
-where
-    Mem: Storage + Exchanges + BodySlots + ObserveSlots,
+/// Retransmission give-up completes the call rather than silently losing it.
+pub(crate) fn give_up_client<Mem>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    oscore: &mut super::oscore::Field,
+    tx: SlotId,
+) where
+    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
 {
-    let n = engine.capacities().tx_datagram_slots;
-    for i in 0..n {
-        let id = SlotId::from_index(i);
-        let Some(entry) = engine.exchange_entry(id) else {
-            continue;
-        };
-        if entry.tx_slot() != tx {
-            continue;
-        }
-        let key = entry.key();
-        let _ = engine.take_exchange(key);
-        let _ = engine.take_observe(ObserveKey::new(key.token(), key.endpoint()));
-        let block = BlockKey::new(key.token(), key.endpoint());
-        if let Some(body) = engine.lookup_rx_body(block) {
-            let _ = engine.release_rx_body(body);
-        }
-        if let Some(body) =
-            engine.lookup_tx_body(lives.upload_key(Call::new(key.token(), key.endpoint())))
-        {
-            let _ = engine.release_tx_body(body);
-        }
-        lives.remove(Call::new(key.token(), key.endpoint()));
-        return;
+    if let Some(entry) = exchange_for_tx(engine, tx) {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            Call::new(entry.token(), entry.endpoint()),
+            CallFailure::TimedOut,
+            false,
+        );
     }
 }
 
@@ -1948,79 +1999,120 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
     })
 }
 
-fn fail_outstanding<Mem>(
+#[allow(clippy::too_many_arguments)]
+fn fail_call<Mem>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
     lives: &mut ClientLives,
-    entry: ExchangeEntry,
-    release_tx: bool,
+    oscore: &mut super::oscore::Field,
+    call: Call,
+    failure: CallFailure,
+    release_pending: bool,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let call = Call::new(entry.token(), entry.endpoint());
-    store_reply(
-        engine,
-        inbox,
-        call,
-        ReplyMeta::gateway_timeout(call, entry.message_id()),
-        None,
-    );
-    forget_exchange_tx(engine, lives, entry.tx_slot());
-    if !release_tx {
-        return;
+    let key = ExchangeKey::new(call.token(), call.peer());
+    if let Some(entry) = engine.take_exchange(key) {
+        // NON/empty ACK may have released and reused the old TX slot. Only
+        // a matching pending CON still establishes ownership of that slot.
+        if release_pending {
+            if let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint()) {
+                let _ = engine.release_tx(tx);
+            }
+        }
     }
-    // Only free TX still owned by this request (pending CON). After empty ACK
-    // or NON, the slot is already released — do not release a reused TX.
-    if let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint()) {
-        let _ = engine.release_tx(tx);
+    let _ = engine.take_observe(ObserveKey::new(call.token(), call.peer()));
+    if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
+        let _ = engine.release_rx_body(body);
+    }
+    for i in 0..engine.capacities().rx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(i);
+        if engine.rx_body_transfer(id).is_some_and(|transfer| {
+            transfer.key().token() == call.token()
+                && transfer.key().endpoint() == call.peer()
+                && matches!(
+                    transfer.role(),
+                    BlockRole::IncomingBlock2 | BlockRole::IncomingQBlock2
+                )
+        }) {
+            let _ = engine.release_rx_body(id);
+        }
+    }
+    if let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) {
+        let _ = engine.release_tx_body(body);
+    }
+    super::oscore::cancel(oscore, call.token());
+    // Untaken failures occupy the same bounded completion budget as replies.
+    for live in lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .filter(|live| live.call == call)
+    {
+        live.due_ms = 0;
+        live.deadline_ms = None;
     }
 }
 
-/// Empty RST matching a client outstanding request: forget exchange / lives.
 pub(crate) fn complete_client_rst<Mem>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
     lives: &mut ClientLives,
+    oscore: &mut super::oscore::Field,
     message_id: MessageId,
     peer: Endpoint,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    if let Some(tx) = engine.lookup_pending_con(message_id, peer) {
-        if let Some(entry) = exchange_for_tx(engine, tx) {
-            fail_outstanding(engine, inbox, lives, entry, false);
-            return;
-        }
-    }
-    if let Some(entry) = exchange_for_mid(engine, message_id, peer) {
-        fail_outstanding(engine, inbox, lives, entry, false);
+    let entry = engine
+        .lookup_pending_con(message_id, peer)
+        .and_then(|tx| exchange_for_tx(engine, tx))
+        .or_else(|| exchange_for_mid(engine, message_id, peer));
+    if let Some(entry) = entry {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            Call::new(entry.token(), entry.endpoint()),
+            CallFailure::Reset,
+            false,
+        );
     }
 }
 
-/// Drop client exchanges whose lifetime has elapsed (empty ACK then silence, lost NON).
 pub(crate) fn expire_client_exchanges<Mem>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
     lives: &mut ClientLives,
+    oscore: &mut super::oscore::Field,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let mut due = [None; RESPONSE_INBOX];
-    for (i, row) in lives.rows.iter().enumerate() {
-        let Some(live) = *row else {
+    for (i, live) in lives.rows.iter().enumerate() {
+        let Some(live) = *live else {
             continue;
         };
-        if live.due_ms == 0 || now_ms < live.due_ms {
+        if inbox.contains(live.call) && !client_observe_live(engine, live.call) {
             continue;
         }
-        let key = ExchangeKey::new(live.call.token(), live.call.peer());
-        let Some(id) = engine.lookup_exchange(key) else {
-            continue;
+        let failure = if live.deadline_ms.is_some_and(|deadline| now_ms >= deadline) {
+            Some(CallFailure::DeadlineExceeded)
+        } else if live.due_ms != 0
+            && now_ms >= live.due_ms
+            && engine
+                .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer()))
+                .is_some()
+        {
+            Some(CallFailure::TimedOut)
+        } else {
+            None
         };
-        due[i] = engine.exchange_entry(id);
+        due[i] = failure.map(|failure| (live.call, failure));
     }
-    for entry in due.into_iter().flatten() {
-        fail_outstanding(engine, inbox, lives, entry, true);
+    for (call, failure) in due.into_iter().flatten() {
+        fail_call(engine, inbox, lives, oscore, call, failure, true);
     }
 }

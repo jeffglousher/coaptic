@@ -1937,6 +1937,7 @@ fn wait_call<T: DatagramIo<Error = std::io::Error>>(
         let now = elapsed_ms(origin).saturating_add(1);
         app.poll(now).map_err(|e| format!("poll: {e}"))?;
         if let Some(resp) = app.take_response(call) {
+            let resp = resp.map_err(|e| PeerError(e.to_string()))?;
             return Ok(Got {
                 code: resp.code(),
                 payload: resp.payload().to_vec(),
@@ -2335,6 +2336,7 @@ fn run_oscore_client(
             app.poll(now)
                 .map_err(|e| format!("poll after plain notify: {e}"))?;
             if let Some(got) = app.take_response(call) {
+                let got = got.map_err(|e| PeerError(e.to_string()))?;
                 if got.payload() == b"pwned" {
                     return Err(PeerError(
                         "OSCORE fail-closed: plaintext notify completed the Call".into(),

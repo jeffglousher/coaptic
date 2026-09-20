@@ -248,7 +248,7 @@ pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
             .saturating_add(1);
         app.poll(now).map_err(|e| format!("poll: {e}"))?;
         if let Some(resp) = app.take_response(call) {
-            return Ok(view_app(resp));
+            return Ok(view_app(resp.map_err(|e| PeerError(e.to_string()))?));
         }
         thread::sleep(Duration::from_millis(2));
     }

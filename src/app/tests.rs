@@ -2725,7 +2725,10 @@ fn client_get_round_trip_without_slot_id() {
     app.poll(0).expect("server handle");
     assert!(app.take_response(call).is_none());
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
     assert!(!response.payload_truncated());
@@ -2757,7 +2760,10 @@ fn client_take_response_truncates_non_block_payload_at_inline() {
     let payload = [b'x'; 200];
     inject_piggyback_ack(&mut app, peer, mid, token, &payload);
     app.poll(0).expect("match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload().len(), INLINE_PAYLOAD);
     assert_eq!(response.payload(), &payload[..INLINE_PAYLOAD]);
@@ -2786,7 +2792,10 @@ fn client_take_response_inline_payload_exact_is_not_truncated() {
     let payload = [b'y'; INLINE_PAYLOAD];
     inject_piggyback_ack(&mut app, peer, mid, token, &payload);
     app.poll(0).expect("match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.payload(), &payload);
     assert!(!response.payload_truncated());
     assert_eq!(response.payload_src_len(), INLINE_PAYLOAD);
@@ -2805,7 +2814,10 @@ fn client_put_round_trip_without_slot_id() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CHANGED);
     assert_eq!(response.payload(), b"on");
     assert_eq!(app.engine_mut().rx_occupied(), 0);
@@ -2832,7 +2844,10 @@ fn client_rfc8132_round_trip(
     let call = send(&mut app, peer);
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), expect_code);
     assert_eq!(response.payload(), expect_payload);
     assert_eq!(response.token(), Some(call.token()));
@@ -2900,7 +2915,10 @@ fn client_non_get_matches() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
     assert_eq!(response.ty(), Some(Type::NonConfirmable));
@@ -3023,7 +3041,10 @@ fn client_take_response_copies_etag() {
     let call = app.get("validate").to(peer).send(0).expect("send");
     app.poll(0).expect("server");
     app.poll(0).expect("client");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::VALID);
     assert_eq!(response.etag_bytes(), Some(&b"etag1"[..]));
 }
@@ -3035,7 +3056,10 @@ fn client_get_unknown_path_is_problem_details() {
     let call = app.get(&["nope"]).to(peer).send(0).expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::NOT_FOUND);
     let details = response.problem_details().expect("cbor");
     assert_eq!(details.response_code(), Some(Code::NOT_FOUND));
@@ -3124,6 +3148,7 @@ fn poll_until_response(
     for t in 0u64..16 {
         app.poll(t).expect("poll");
         if let Some(response) = app.take_response(call) {
+            let response = response.expect("remote response");
             let mut body = [0u8; RESPONSE_BODY];
             let (has_body, body_len) = match response.body() {
                 Some(src) => {
@@ -3226,7 +3251,10 @@ fn client_get_slash_path_round_trip() {
     let call = app.get("sensors/temp").to(peer).send(0).expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
 }
@@ -3274,7 +3302,10 @@ fn client_observe_register_notify_deregister() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let initial = app.take_response(call).expect("initial");
+    let initial = app
+        .take_response(call)
+        .expect("initial")
+        .expect("remote response");
     assert_eq!(initial.code(), Code::CONTENT);
     assert_eq!(initial.payload(), b"obs-0");
     assert_eq!(initial.observe_seq(), Some(0));
@@ -3290,7 +3321,10 @@ fn client_observe_register_notify_deregister() {
         .expect("notify");
     assert_eq!(sent, 1);
     app.poll(10).expect("client notify");
-    let note = app.take_response(call).expect("notification");
+    let note = app
+        .take_response(call)
+        .expect("notification")
+        .expect("remote response");
     assert_eq!(note.payload(), b"obs-1");
     assert_eq!(note.observe_seq(), Some(1));
     assert_eq!(note.token(), Some(call.token()));
@@ -3383,7 +3417,10 @@ fn client_separate_response_stops_con_retransmit() {
     assert_ne!(sep_mid, req_mid);
     inject_separate_con(&mut app, peer, sep_mid, token, b"later");
     app.poll(0).expect("match separate");
-    let response = app.take_response(call).expect("matched");
+    let response = app
+        .take_response(call)
+        .expect("matched")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"later");
     assert_eq!(
@@ -3463,7 +3500,10 @@ fn client_con_retransmit_after_dropped_first_send() {
 
     inject_piggyback_ack(&mut app, peer, mid, call.token(), b"21.5");
     app.poll(timeout).expect("client match");
-    let response = app.take_response(call).expect("matched after loss");
+    let response = app
+        .take_response(call)
+        .expect("matched after loss")
+        .expect("remote response");
     assert_eq!(response.code(), Code::CONTENT);
     assert_eq!(response.payload(), b"21.5");
     assert_eq!(response.token(), Some(call.token()));
@@ -3502,7 +3542,10 @@ fn client_con_give_up_releases_after_max_retransmit() {
         1 + usize::from(Transmission::MAX_RETRANSMIT),
         "GiveUp does not send"
     );
-    assert!(app.take_response(call).is_none());
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::TimedOut
+    );
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -3611,7 +3654,7 @@ fn client_empty_rst_forgets_outstanding_call() {
     inject_empty(&mut app, peer, Message::empty_rst(mid));
     app.poll(0).expect("rst");
     let response = app.take_response(call).expect("rst completes Call");
-    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert_eq!(response.unwrap_err(), crate::CallFailure::Reset);
     assert!(!client_exchange_live(&app, call));
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
@@ -3650,7 +3693,7 @@ fn client_empty_ack_then_silence_expires_exchange() {
 
     app.poll(life).expect("expire");
     let response = app.take_response(call).expect("lifetime snapshot");
-    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert_eq!(response.unwrap_err(), crate::CallFailure::TimedOut);
     assert!(!client_exchange_live(&app, call));
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -3675,7 +3718,7 @@ fn client_non_loss_expires_exchange() {
 
     app.poll(life).expect("expire NON");
     let response = app.take_response(call).expect("NON lifetime snapshot");
-    assert_eq!(response.code(), Code::GATEWAY_TIMEOUT);
+    assert_eq!(response.unwrap_err(), crate::CallFailure::TimedOut);
     assert!(!client_exchange_live(&app, call));
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -3715,7 +3758,8 @@ fn client_fifth_untaken_send_is_saturated() {
     for call in calls {
         let response = app
             .take_response(call.expect("call"))
-            .expect("untaken reply kept");
+            .expect("untaken reply kept")
+            .expect("remote response");
         assert_eq!(response.code(), Code::CONTENT);
         assert_eq!(response.payload(), b"21.5");
     }
@@ -3831,7 +3875,10 @@ fn metrics_client_retransmit_and_give_up() {
     now = now.saturating_add(u64::from(wait));
     app.poll(now).expect("give up");
     assert_eq!(app.metrics().give_up, 1);
-    assert!(app.take_response(call).is_none());
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::TimedOut
+    );
 }
 
 #[test]
@@ -4212,6 +4259,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
     for now in 0..200 {
         app.poll(now).unwrap();
         if let Some(response) = app.take_response(call) {
+            let response = response.expect("remote response");
             assert_eq!(response.body(), Some(&LARGE[..]));
             complete = true;
             break;
@@ -4358,6 +4406,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
         for now in 0..100 {
             app.poll(now).unwrap();
             if let Some(response) = app.take_response(call) {
+                let response = response.expect("remote response");
                 assert_eq!(response.code(), Code::CHANGED);
                 complete = true;
                 break;
@@ -4591,4 +4640,241 @@ fn empty_query_values_count_toward_the_option_bound() {
     assert_eq!(app.transport().len, 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     assert!(app.get("value").to(peer).query("").send(1).is_ok());
+}
+
+#[test]
+fn local_failures_are_not_remote_gateway_timeout_responses() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let (_, request, len) = app.transport().sent[0].unwrap();
+    let mid = decode(&request[..len]).unwrap().message_id();
+    let message =
+        Message::new(Type::Acknowledgement, Code::GATEWAY_TIMEOUT, mid).with_token(call.token());
+    let mut wire = [0; 256];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert!(
+        !app.cancel(call),
+        "completed response must not be replaced by cancellation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::GATEWAY_TIMEOUT
+    );
+    assert!(!app.cancel(call));
+}
+
+#[test]
+fn untaken_cancelled_calls_remain_bounded_and_release_after_take() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let mut calls = [None; 4];
+    for saved in &mut calls {
+        let call = app.get("value").to(peer).send(0).unwrap();
+        assert!(app.cancel(call));
+        assert!(!app.cancel(call));
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        *saved = Some(call);
+    }
+    assert_eq!(app.get("value").to(peer).send(1), Err(Error::Saturated));
+    assert_eq!(app.transport().sent_n, 4);
+    for call in calls.into_iter().flatten() {
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::Cancelled
+        );
+        assert!(app.take_response(call).is_none());
+    }
+    assert!(app.get("value").to(peer).send(2).is_ok());
+}
+
+#[test]
+fn deadline_refusal_boundary_and_reused_tx_ownership() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    for deadline in [0, 10] {
+        assert_eq!(
+            app.get("value").to(peer).deadline(deadline).send(10),
+            Err(Error::DeadlineElapsed)
+        );
+    }
+    assert_eq!(app.transport().sent_n, 0);
+    let first = app
+        .get("value")
+        .non()
+        .to(peer)
+        .deadline(20)
+        .send(10)
+        .unwrap();
+    let second = app.get("other").to(peer).send(11).unwrap();
+    app.poll(19).unwrap();
+    assert!(app.take_response(first).is_none());
+    app.poll(20).unwrap();
+    assert_eq!(
+        app.take_response(first).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    assert_eq!(
+        app.engine_mut().tx_occupied(),
+        1,
+        "expired NON must not free another call's reused TX"
+    );
+    assert!(client_exchange_live(&app, second));
+    assert!(app.cancel(second));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.transport().sent_n,
+        2,
+        "cancellation emits no extra message"
+    );
+}
+
+#[test]
+fn cancellation_reclaims_tagged_upload_and_download_bodies() {
+    use crate::storage::BodyTag;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let tag = BodyTag::new(b"upload").unwrap();
+    let call = app
+        .put("upload")
+        .to(peer)
+        .request_tag(tag)
+        .payload(&LARGE)
+        .send(0)
+        .unwrap();
+    let tx_key = BlockKey::new(call.token(), peer).with_identity(tag);
+    assert!(app.engine_mut().lookup_tx_body(tx_key).is_some());
+    let rx_key = BlockKey::new(call.token(), peer).with_identity(BodyTag::new(b"etag").unwrap());
+    let block = BlockValue::from_size(0, true, 16).unwrap();
+    app.engine_mut()
+        .apply_block2(rx_key, block, &[1; 16], Some(32))
+        .unwrap();
+    assert!(app.cancel(call));
+    assert!(app.engine_mut().lookup_rx_body(rx_key).is_none());
+    assert!(app.engine_mut().lookup_tx_body(tx_key).is_none());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    assert!(
+        app.put("upload")
+            .to(peer)
+            .request_tag(tag)
+            .payload(&LARGE)
+            .send(1)
+            .is_ok()
+    );
+}
+
+#[test]
+fn deadline_terminates_observe_after_the_initial_response() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_obs_app();
+    let call = app
+        .get("sensors/temp")
+        .observe()
+        .to(peer)
+        .deadline(20)
+        .send(0)
+        .unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    assert!(app.take_response(call).unwrap().is_ok());
+    assert!(client_observe_live(&app, call));
+    app.poll(19).unwrap();
+    assert!(app.take_response(call).is_none());
+    app.poll(20).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    assert!(!client_observe_live(&app, call));
+}
+
+#[test]
+fn deadline_progresses_when_receive_fails() {
+    struct BadReceive;
+    impl DatagramIo for BadReceive {
+        type Error = &'static str;
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Err("receive failure")
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            Ok(bytes.len())
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(BadReceive)
+        .unwrap();
+    let call = app.get("value").to(peer).deadline(1).send(0).unwrap();
+    assert!(app.poll(1).is_err());
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
+#[test]
+fn deadline_wins_at_exact_boundary_but_preserves_an_earlier_response() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for received_at in [9, 10] {
+        let mut app = record_client();
+        let call = app.get("value").to(peer).deadline(10).send(0).unwrap();
+        let (_, request, len) = app.transport().sent[0].unwrap();
+        let mid = decode(&request[..len]).unwrap().message_id();
+        let message = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+            .with_token(call.token())
+            .with_payload(b"value");
+        let mut wire = [0; 256];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(received_at).unwrap();
+        app.poll(11).unwrap();
+        let result = app.take_response(call).unwrap();
+        if received_at == 9 {
+            assert_eq!(result.unwrap().payload(), b"value");
+        } else {
+            assert_eq!(result.unwrap_err(), crate::CallFailure::DeadlineExceeded);
+        }
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn missing_initial_block_completes_with_typed_failure_and_reclaims_state() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("large").to(peer).send(0).unwrap();
+    let request = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = BlockValue::from_size(1, true, 16).unwrap().encode();
+    let options = [Opt::block2(&block)];
+    let message = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(&[1; 16]);
+    let mut wire = [0; WIRE];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::BlockTransfer(crate::error::BlockTransferError::Gap)
+    );
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert!(app.get("value").to(peer).send(2).is_ok());
 }
