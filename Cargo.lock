@@ -1253,6 +1253,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "qualification-no-std"
+version = "0.0.0"
+dependencies = [
+ "coaptic",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
