@@ -346,6 +346,33 @@ def oscore_fault_workflow(client, server):
                 "scope": "IPv4 UDP public C.1 context; sequential bounded counter fixture; not persistent or concurrent security qualification"}
 
 
+def oscore_block2_workflow(client, server):
+    evidence = []
+    for mode in ("dtls-reconnect", "drop-reply", "duplicate-request"):
+        with Server(server, "oscore") as service:
+            # Complete any B.1.2 Echo challenge before the faulted transfer.
+            expect(request(client, "oscore", service.number, sequence=0))
+            with Proxy(service.number, mode) as relay:
+                result = request(client, "oscore", relay.number, sequence=100,
+                                 path="large", timeout=6500)
+            expect(result, 69, LARGE)
+            requests = [row for row in relay.trace if row["direction"] == "request"]
+            if len(requests) < 2:
+                raise AssertionError("large transfer did not exercise follow-up datagrams")
+            if mode != "dtls-reconnect" and not any(row["action"] != "forward" for row in relay.trace):
+                raise AssertionError("requested transfer fault was not exercised")
+            refused = request(client, "oscore", service.number, sequence=1000,
+                              path="large", key="incorrect", timeout=500)
+            expect_refusal(refused)
+            recovered = request(client, "oscore", service.number, sequence=1100, path="large")
+            expect(recovered, 69, LARGE)
+            evidence.append({"mode": mode, "result": result, "trace": relay.trace,
+                             "wrong_key_refusal": refused, "recovered": recovered})
+    return {"transfers": evidence, "expected_length": len(LARGE),
+            "expected_sha256": hashlib.sha256(LARGE).hexdigest(),
+            "scope": "Exact 2000-byte protected Block2 GET on IPv4; first reply loss and request duplication after Echo warm-up. No Block1, Observe, Q-Block, arbitrary reordering or persistent-context claim."}
+
+
 def ipv6_dtls_request(client, number, traces, **kwargs):
     # Each session has a fresh server-visible endpoint; IPv6-only sockets
     # prevent a fixture silently falling back to IPv4 from satisfying the case.
@@ -475,6 +502,8 @@ def main():
             continue
         case(f"oscore-faults:{client}->{server}",
              lambda client=client, server=server: oscore_fault_workflow(peers[client], peers[server]))
+        case(f"oscore-block2:{client}->{server}",
+             lambda client=client, server=server: oscore_block2_workflow(peers[client], peers[server]))
 
     for transport in ("udp", "dtls"):
         pairs = [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]

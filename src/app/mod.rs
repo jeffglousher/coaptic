@@ -621,6 +621,9 @@ where
     /// for their concurrent request/notification history. This adds no body pool.
     /// An OSCORE CON retransmit is keyed on the *outer* Message ID so the
     /// cached protected ACK is replayed without a second unprotect.
+    /// Classic Block2 ACKs use the same bounded cache, including protected
+    /// fragments. Large replies can pin TX datagrams until expiry or pressure
+    /// eviction; callers must budget reply history as well as active work.
     /// Observe register / deregister and
     /// [`ObserveSource`] notify run here. Pending notification signals are
     /// claimed after ingress: cancellation/re-registration cannot transfer a
@@ -696,7 +699,7 @@ where
     /// body output or transfer advancement. Other retained snapshot metadata
     /// and final-block recovery are not guaranteed.
     /// The body snapshot survives incomplete same-Token follow-up blocks,
-    /// including send failure. Completion, cancellation, replacement registration,
+    /// including send failure. Final-reply caching/completion, cancellation, replacement registration,
     /// matching notification RST or CON give-up releases it.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
@@ -1668,7 +1671,7 @@ fn notify_engine<S, T>(
     response: &Response<'_>,
 ) -> Result<usize, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -1848,7 +1851,7 @@ fn send_notification<S, T>(
     seq: u32,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -1943,7 +1946,7 @@ fn start_notify_block2<S, T>(
     oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let key = response_block_key(meta.token, meta.dest, response)?;
@@ -1957,7 +1960,7 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let outcome = issue_classic(
-        engine, io, meta, response, ty, meta.mid, id, pending, true, oscore_ctx,
+        engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
     );
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -2356,6 +2359,7 @@ where
             id,
             None,
             response.observe_seq().is_some(),
+            Some((now_ms, dedup_closed)),
             oscore_ctx,
         )
     };
@@ -2468,7 +2472,17 @@ where
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
             issue_classic(
-                engine, io, meta, response, ty, meta.mid, id, None, true, oscore_ctx,
+                engine,
+                io,
+                meta,
+                response,
+                ty,
+                meta.mid,
+                id,
+                None,
+                true,
+                Some((now_ms, dedup_closed)),
+                oscore_ctx,
             )
         }
         _ => Ok(()),
@@ -2486,10 +2500,11 @@ fn issue_classic<S, T>(
     id: SlotId,
     pending: Option<(u64, MessageId, u32)>,
     retain_incomplete: bool,
+    replay: Option<(u64, &mut Option<DedupClosed>)>,
     oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let range = match meta.block2 {
@@ -2522,9 +2537,34 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    send_issued(
-        engine, io, meta, response, ty, mid, issued, false, pending, oscore_ctx,
-    )?;
+    let tx = encode_issued::<S, T>(engine, meta, response, ty, mid, issued, false, oscore_ctx)?;
+    let keep = if let Some((now_ms, closed)) = replay.filter(|_| ty == Type::Acknowledgement) {
+        remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            closed,
+        )
+    } else {
+        KeepTx::No
+    };
+    let cached = engine
+        .lookup_dedup(DedupKey::new(mid, meta.dest))
+        .and_then(|row| engine.dedup_entry(row))
+        .is_some_and(|row| row.tx_pin() == Some(tx) || row.replay().is_some());
+    // Once the final reply is retained, retry uses those exact wire bytes and
+    // bypasses this body path. Reclaim now even if the first send fails.
+    if issued.complete() && cached {
+        let _ = engine.release_tx_body(id);
+    }
+    match keep {
+        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
+        KeepTx::No => finish_send(engine, io, tx, meta.dest, pending),
+    }?;
     // Ordinary classic requests reconstruct independent snapshots. Observe
     // snapshots survive every incomplete follow-up, whose response correctly
     // omits Observe, until the last block is sent or lifecycle cleanup runs.
@@ -2680,7 +2720,26 @@ fn send_issued<S, T>(
     oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    let tx = encode_issued::<S, T>(engine, meta, response, ty, mid, issued, q_block, oscore_ctx)?;
+    finish_send(engine, io, tx, meta.dest, pending)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_issued<S, T>(
+    engine: &mut Engine<S>,
+    meta: SendResponse,
+    response: &Response<'_>,
+    ty: Type,
+    mid: MessageId,
+    issued: OutgoingBlock,
+    q_block: bool,
+    oscore_ctx: &mut oscore::Field,
+) -> Result<SlotId, Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let mut chunk = [0u8; 1024];
@@ -2690,7 +2749,7 @@ where
     } else {
         None
     };
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = acquire_tx_or_evict(engine) else {
         return Err(Error::Saturated);
     };
     let block = Some(BlockOpt {
@@ -2714,7 +2773,7 @@ where
         let _ = engine.release_tx(tx);
         return Err(e);
     }
-    finish_send(engine, io, tx, meta.dest, pending)
+    Ok(tx)
 }
 
 fn copy_issued<S: Storage + BodySlots>(
