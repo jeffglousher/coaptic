@@ -3439,7 +3439,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
     use crate::message::QBlockTransmission;
     use crate::{App, profiles};
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    for arrival in [false, true] {
+    'case: for (arrival, fail) in [(false, false), (true, false), (false, true)] {
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
@@ -3447,7 +3447,9 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
             .unwrap();
         client.set_oscore(client_c1());
         let call = client
-            .get("large")
+            .get("large/part")
+            .query("x=1")
+            .query("")
             .q_block2()
             .non()
             .to(peer)
@@ -3457,7 +3459,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
         let request = decode(&wire).unwrap();
         let mut server = server_c1();
         let mut opened = [0; WIRE];
-        let (_, request_ref) = server.unprotect_request(&request, &mut opened).unwrap();
+        let (_, mut request_ref) = server.unprotect_request(&request, &mut opened).unwrap();
         let mut replies = std::vec::Vec::new();
         for num in 0..3 {
             let block = BlockValue::from_size(num, num != 2, 16).unwrap().encode();
@@ -3493,12 +3495,43 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
                 .q_receive()
                 .unwrap()
                 .next_timeout_ms();
-            // Protected timed recovery is still an explicit unsupported boundary.
+            if fail {
+                let sequence = client.oscore().unwrap().sender_seq();
+                client.transport_mut().fail_send = true;
+                assert!(client.poll(due).is_err());
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::ContinuationFailed
+                );
+                assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+                assert!(client.oscore().unwrap().sender_seq() > sequence);
+                assert!(client.engine().rx_body_transfer(id).is_none());
+                assert_eq!(client.engine_mut().tx_occupied(), 0);
+                assert_eq!(client.engine_mut().rx_occupied(), 0);
+                assert!(client.transport().sent.is_empty());
+                continue 'case;
+            }
+            client.poll(due).unwrap();
+            assert_eq!(client.transport().sent.len(), 1);
+            let wire = client.transport_mut().sent.remove(0);
+            let outer = decode(&wire).unwrap();
+            assert!(outer.oscore().is_some());
+            assert_eq!(outer.ty(), Type::NonConfirmable);
+            let (inner, fresh_ref) = server.unprotect_request(&outer, &mut opened).unwrap();
+            assert_eq!(inner.code(), Code::GET);
             assert_eq!(
-                client.poll(due),
-                Err(crate::Error::Oscore(Error::Unsupported))
+                inner.uri_path().collect::<std::vec::Vec<_>>(),
+                [Ok("large"), Ok("part")]
             );
-            assert!(client.transport().sent.is_empty());
+            assert_eq!(
+                inner.uri_query().collect::<std::vec::Vec<_>>(),
+                [Ok("x=1"), Ok("")]
+            );
+            assert_eq!(
+                inner.q_block2().collect::<std::vec::Vec<_>>(),
+                [Ok(BlockValue::from_size(1, false, 16).unwrap())]
+            );
+            request_ref = fresh_ref;
             assert!(client.oscore().unwrap().lookup(call.token()).is_some());
         }
         let due = client
@@ -3509,7 +3542,18 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
             .unwrap()
             .next_timeout_ms();
         if arrival {
-            client.transport_mut().inbox = Some((peer, replies[1].clone()));
+            let block = BlockValue::from_size(1, true, 16).unwrap().encode();
+            let size = encode_uint(48);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+            let response = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(200))
+                .with_token(call.token())
+                .with_options(&opts)
+                .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = server
+                .protect_response_with_piv(&response, request_ref, &mut wire)
+                .unwrap();
+            client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
         }
         client.poll(due).unwrap();
         assert!(client.transport().sent.is_empty());
