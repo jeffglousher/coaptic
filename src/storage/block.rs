@@ -562,6 +562,9 @@ pub struct BlockTransfer {
     q: Option<QWindow>,
     q_receive: Option<QBlockReceiveWait>,
     pub(crate) request_binding: Option<RequestBinding>,
+    // Highest authenticated request PIV and its Token for timed Q-Block1 reports.
+    #[cfg(feature = "oscore")]
+    pub(crate) oscore_request: Option<(Token, crate::oscore::RequestRef)>,
 }
 
 impl BlockTransfer {
@@ -605,6 +608,8 @@ impl BlockTransfer {
             q: None,
             q_receive: None,
             request_binding: None,
+            #[cfg(feature = "oscore")]
+            oscore_request: None,
         };
         transfer.accept_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -683,6 +688,8 @@ impl BlockTransfer {
             }),
             q_receive: None,
             request_binding: None,
+            #[cfg(feature = "oscore")]
+            oscore_request: None,
         };
         transfer.accept_q_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -801,6 +808,8 @@ impl BlockTransfer {
                 q,
                 q_receive: None,
                 request_binding: None,
+                #[cfg(feature = "oscore")]
+                oscore_request: None,
             })
         } else {
             Err(BlockTransferError::Overflow)
