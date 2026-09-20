@@ -122,7 +122,9 @@ fn put_large(req: Request<'_>) -> Response<'static> {
 }
 
 fn get_large(_: Request<'_>) -> Response<'static> {
-    Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
+    Response::content(&LARGE)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .etag(b"large-v1")
 }
 
 fn get_obs(_req: Request<'_>) -> Response<'static> {
@@ -2188,6 +2190,7 @@ fn large_get_ships_block2_without_slot_id() {
     assert_eq!(block.num(), 1);
     assert!(!block.more());
     assert_eq!(second.payload(), &LARGE[1024..]);
+    assert_eq!(second.etag().next(), Some(&b"large-v1"[..]));
 }
 
 #[test]
@@ -2261,6 +2264,7 @@ fn large_get_q_block2_issues_a_window() {
     assert!(q0.more());
     assert_eq!(first.payload(), &LARGE[..1024]);
     assert_eq!(first.size2().and_then(Result::ok), Some(2000));
+    assert_eq!(first.etag().next(), Some(&b"large-v1"[..]));
 
     let second = decode(&app.transport().sends[1][..app.transport().send_lens[1]]).expect("second");
     assert_eq!(second.ty(), Type::NonConfirmable);
@@ -2268,6 +2272,7 @@ fn large_get_q_block2_issues_a_window() {
     assert_eq!(q1.num(), 1);
     assert!(!q1.more());
     assert_eq!(second.payload(), &LARGE[1024..]);
+    assert_eq!(second.etag().next(), Some(&b"large-v1"[..]));
 }
 
 fn observe_registered<const BLOCK_WISE: bool>(
@@ -4930,6 +4935,101 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
                 }
             }
             assert_eq!(CALLS.load(Ordering::SeqCst), usize::from(phase == 3));
+        }
+    }
+}
+
+#[test]
+fn qblock2_without_etag_is_refused_before_sending_or_retaining_body() {
+    use crate::error::BlockTransferError;
+    use crate::storage::SlotId;
+    fn no_tag(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE)
+    }
+    fn small_no_tag(_: Request<'_>) -> Response<'static> {
+        Response::content(b"small")
+    }
+    for handler in [no_tag as fn(Request<'_>) -> Response<'static>, small_no_tag] {
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let q = BlockValue::from_size(0, false, 1024).unwrap().encode();
+        let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::q_block2(&q)], 0x1200);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<true>()
+            .route(&["large"], get(handler))
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        assert_eq!(
+            app.poll(0),
+            Err(Error::Block(BlockTransferError::MissingIdentity))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .tx_body_transfer(SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
+    use crate::error::BlockTransferError;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static MODE: AtomicUsize = AtomicUsize::new(0);
+    static BODY: [u8; 168] = [b'A'; 168];
+    static OTHER: [u8; 168] = [b'B'; 168];
+    fn handler(_: Request<'_>) -> Response<'static> {
+        match MODE.load(Ordering::SeqCst) {
+            0 => Response::content(&BODY).etag(b"changed"),
+            1 => Response::content(&OTHER).etag(b"body"),
+            _ => Response::content(&BODY).etag(b"body"),
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(&["large"], get(handler))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let key = BlockKey::new(Token::new(&[0xA1]).unwrap(), peer)
+        .with_identity(crate::storage::BodyTag::new(b"body").unwrap());
+    let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
+    for _ in 0..crate::storage::BlockTransfer::MAX_PAYLOADS {
+        app.engine.next_q_block2(id).unwrap();
+    }
+    let before = app.engine.tx_body_transfer(id).unwrap();
+    for mode in 0..3 {
+        MODE.store(mode, Ordering::SeqCst);
+        let q = BlockValue::from_size(10, true, 16).unwrap().encode();
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["large"],
+            &[Opt::q_block2(&q)],
+            0x1300 + mode as u16,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        if mode < 2 {
+            assert_eq!(
+                app.poll(mode as u64),
+                Err(Error::Block(BlockTransferError::IdentityMismatch))
+            );
+            assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+            assert_eq!(app.engine.tx_body_payload(id), Some(BODY.as_slice()));
+            assert_eq!(app.transport().send_n, 0);
+        } else {
+            app.poll(2).unwrap();
+            assert_eq!(app.transport().send_n, 1);
+            let reply = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+            assert_eq!(reply.etag().next(), Some(&b"body"[..]));
+            assert_eq!(reply.payload(), &BODY[160..]);
+            assert_eq!(reply.size2(), Some(Ok(168)));
+            assert!(app.engine.tx_body_transfer(id).is_none());
         }
     }
 }

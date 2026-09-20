@@ -3208,7 +3208,11 @@ fn q_block1_apply_from_rx_datagram() {
     let payload = b"q-block";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
     let size1 = encode_uint(payload.len() as u32);
-    let opts = [Opt::q_block1(&blk), Opt::size1(&size1)];
+    let opts = [
+        Opt::q_block1(&blk),
+        Opt::size1(&size1),
+        Opt::request_tag(b"body"),
+    ];
     let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(11))
         .with_token(token)
         .with_options(&opts)
@@ -3224,7 +3228,8 @@ fn q_block1_apply_from_rx_datagram() {
         Some(payload.as_slice())
     );
     assert_eq!(
-        engine.lookup_rx_body(BlockKey::new(token, ep)),
+        engine
+            .lookup_rx_body(BlockKey::new(token, ep).with_identity(BodyTag::new(b"body").unwrap())),
         Some(progress.id())
     );
 }
@@ -3237,7 +3242,7 @@ fn q_block2_apply_from_rx_datagram() {
     let payload = b"q2-body";
     let blk = BlockValue::from_size(0, false, 16).expect("16").encode();
     let size2 = encode_uint(payload.len() as u32);
-    let opts = [Opt::size2(&size2), Opt::q_block2(&blk)];
+    let opts = [Opt::etag(b"body"), Opt::size2(&size2), Opt::q_block2(&blk)];
     let msg = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(12))
         .with_token(token)
         .with_options(&opts)
@@ -3257,7 +3262,7 @@ fn q_block2_apply_from_rx_datagram() {
 #[test]
 fn q_block1_outgoing_full_window_advance_and_encode() {
     let mut engine = build_default_bodies();
-    let key = block_key();
+    let key = block_key().with_identity(BodyTag::new(b"body").unwrap());
     let last = u32::from(BlockTransfer::MAX_PAYLOADS);
     let body_len = (last as usize) * 16 + 8;
     let body: [u8; 168] = core::array::from_fn(|i| (i % 251) as u8);
@@ -3324,7 +3329,8 @@ fn q_block1_outgoing_full_window_advance_and_encode() {
 #[test]
 fn q_block2_outgoing_window_advance_and_complete() {
     let mut engine = build_default_bodies();
-    let key = BlockKey::new(sample_token(&[0x42]), Endpoint::v4([192, 0, 2, 42], 5683));
+    let key = BlockKey::new(sample_token(&[0x42]), Endpoint::v4([192, 0, 2, 42], 5683))
+        .with_identity(BodyTag::new(b"body").unwrap());
     let last = u32::from(BlockTransfer::MAX_PAYLOADS);
     let body_len = (last as usize) * 16 + 8;
     let body: [u8; 168] = core::array::from_fn(|i| (i + 7) as u8);
@@ -3497,7 +3503,7 @@ fn q_block1_recover_is_structured_not_encoded() {
 #[test]
 fn q_block2_outgoing_reissue_encodes_same_range() {
     let mut engine = build_default_bodies();
-    let key = block_key();
+    let key = block_key().with_identity(BodyTag::new(b"body").unwrap());
     let body: [u8; 40] = core::array::from_fn(|i| (i + 9) as u8);
     let id = engine.start_q_block2(key, &body, 0).expect("start");
     let first = engine.next_q_block2(id).expect("0");
@@ -4416,6 +4422,141 @@ fn q_wire_size_is_mandatory_stable_and_refusal_preserves_body() {
                         assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
                     }
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn q_wire_output_requires_identity_before_advancing_or_writing() {
+    for upload in [false, true] {
+        for identity in [
+            BodyTag::ABSENT,
+            BodyTag::EMPTY,
+            BodyTag::new(b"body").unwrap(),
+        ] {
+            let mut engine = build_default_bodies();
+            let key = block_key().with_identity(identity);
+            let body = if upload {
+                engine.start_q_block1(key, &[1; 24], 0)
+            } else {
+                engine.start_q_block2(key, &[1; 24], 0)
+            }
+            .unwrap();
+            let tx = engine.acquire_tx().unwrap();
+            let before = engine.tx_body_transfer(body).unwrap();
+            for reissue in [false, true] {
+                let result = match (upload, reissue) {
+                    (true, false) => engine.encode_q_block1_tx(
+                        body,
+                        tx,
+                        Type::NonConfirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    (false, false) => engine.encode_q_block2_tx(
+                        body,
+                        tx,
+                        Type::NonConfirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                    (true, true) => engine.encode_q_block1_reissue_tx(
+                        body,
+                        tx,
+                        Type::NonConfirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                        0,
+                    ),
+                    (false, true) => engine.encode_q_block2_reissue_tx(
+                        body,
+                        tx,
+                        Type::NonConfirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        0,
+                    ),
+                };
+                if identity.is_absent() || (!upload && identity == BodyTag::EMPTY) {
+                    assert_eq!(result, Err(BlockTransferError::MissingIdentity));
+                    assert_eq!(engine.tx_body_transfer(body), Some(before));
+                    assert_eq!(engine.storage().tx_payload(tx), Some(&[][..]));
+                } else {
+                    result.unwrap();
+                    let parsed = engine.decode_tx(tx).unwrap();
+                    assert_eq!(
+                        if upload {
+                            parsed.request_tag().next()
+                        } else {
+                            parsed.etag().next()
+                        },
+                        identity.as_slice()
+                    );
+                    assert_eq!(parsed.payload(), &[1; 16]);
+                    assert_eq!(
+                        if upload {
+                            parsed.size1()
+                        } else {
+                            parsed.size2()
+                        },
+                        Some(Ok(24))
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn q_wire_receive_requires_identity_without_allocating_on_refusal() {
+    use crate::message::OptionsBuilder;
+    for upload in [false, true] {
+        for tag in [None, Some(&b""[..]), Some(&b"body"[..])] {
+            let mut engine = build_default_bodies();
+            let key = block_key();
+            let blk = BlockValue::from_size(0, false, 16).unwrap().encode();
+            let size = encode_uint(8);
+            let mut options = OptionsBuilder::<3>::new();
+            if upload {
+                options.push(Opt::q_block1(&blk)).unwrap();
+                options.push(Opt::size1(&size)).unwrap();
+                if let Some(tag) = tag {
+                    options.push(Opt::request_tag(tag)).unwrap();
+                }
+            } else {
+                if let Some(tag) = tag {
+                    options.push(Opt::etag(tag)).unwrap();
+                }
+                options.push(Opt::size2(&size)).unwrap();
+                options.push(Opt::q_block2(&blk)).unwrap();
+            }
+            let msg = Message::new(
+                Type::NonConfirmable,
+                if upload { Code::PUT } else { Code::CONTENT },
+                MessageId::new(1),
+            )
+            .with_token(key.token())
+            .with_options(options.as_slice())
+            .with_payload(&[1; 8]);
+            let mut bytes = [0; 80];
+            let n = encode(&msg, &mut bytes).unwrap();
+            let rx = engine.acquire_rx().unwrap();
+            engine.write_rx(rx, &bytes[..n], key.endpoint()).unwrap();
+            let result = if upload {
+                engine.apply_q_block1_rx(rx)
+            } else {
+                engine.apply_q_block2_rx(rx)
+            };
+            if tag.is_none() || (!upload && tag == Some(&[][..])) {
+                assert_eq!(result, Err(BlockTransferError::MissingIdentity));
+                for index in 0..engine.capacities().rx_body_slots.unwrap() {
+                    assert!(engine.rx_body_transfer(SlotId::from_index(index)).is_none());
+                }
+            } else {
+                let progress = result.unwrap();
+                assert!(progress.complete());
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&[1; 8][..]));
             }
         }
     }
