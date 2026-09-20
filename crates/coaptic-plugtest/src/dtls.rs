@@ -1,6 +1,6 @@
 //! DTLS harness: webrtc-dtls (same stack as coap-rs) as a test-only dependency.
 //!
-//! The `coaptic` library crate does not terminate DTLS and stays zero-dep.
+//! The `coaptic` library crate does not terminate DTLS; its default is zero-dep.
 //! This module wraps UDP + webrtc-dtls as a sync [`DatagramIo`] so
 //! [`crate::coaptic::CoapticPeer`]'s `App::poll` (and the App client) see
 //! plaintext CoAP. Mixed role pairs (`coap-rs→coaptic`, `coaptic→coap-rs`,
@@ -9,8 +9,9 @@
 //! PSK TDs use identity `password` / key `sesame` and
 //! `TLS_PSK_WITH_AES_128_CCM_8` (ETSI CoAP#4).
 //!
-//! RPK TDs (`TD_COAP_DTLS_04`–`07`) use mutually-authenticated ECDSA
-//! certificates: webrtc-dtls has no RFC 7250 raw-public-key certificate type.
+//! Literal DTLS TDs remain skipped pending complete handshake evidence.
+//! Separate qualification tests exercise PSK and mutually authenticated X.509.
+//! X.509 is not RFC 7250 raw-public-key coverage; RPK TDs remain skipped.
 
 #[path = "../../../tools/interop/coap_dtls.rs"]
 mod coap_dtls;
@@ -42,8 +43,6 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 pub const PSK_IDENTITY: &[u8] = b"password";
 /// ETSI PSK key (ASCII).
 pub const PSK_KEY: &[u8] = b"sesame";
-/// Wrong PSK for TD_COAP_DTLS_02.
-pub const PSK_WRONG: &[u8] = b"wrong";
 
 /// Sync [`DatagramIo`] over a webrtc-dtls `Conn`.
 ///
@@ -206,7 +205,7 @@ pub fn psk_config(key: &[u8]) -> Config {
     }
 }
 
-/// Ephemeral ECDSA cert pair for RPK-stand-in TDs.
+/// Ephemeral mutually trusted X.509 certificate pair for qualification tests.
 pub fn ecdsa_pair() -> Result<(Config, Config), PeerError> {
     let server = Certificate::generate_self_signed(vec!["localhost".into()])
         .map_err(|e| format!("server cert: {e}"))?;
@@ -258,13 +257,7 @@ fn run_one(id: &str, pair: Pair) -> TdResult {
         };
     }
     let err = match id {
-        "TD_COAP_DTLS_01" => dtls_psk(pair, PSK_KEY, true),
-        "TD_COAP_DTLS_02" => dtls_psk(pair, PSK_WRONG, false),
-        "TD_COAP_DTLS_03" => dtls_psk(pair, PSK_KEY, true),
-        "TD_COAP_DTLS_04" => dtls_rpk(pair, true, true),
-        "TD_COAP_DTLS_05" => dtls_rpk(pair, false, true),
-        "TD_COAP_DTLS_06" => dtls_rpk(pair, true, false),
-        "TD_COAP_DTLS_07" => dtls_rpk(pair, true, true),
+        "TD_COAP_DTLS_01" => dtls_psk(pair),
         other => Err(PeerError(format!("unknown DTLS id {other}"))),
     };
     match err {
@@ -294,45 +287,15 @@ fn runtime() -> Result<tokio::runtime::Runtime, PeerError> {
         .map_err(|e| PeerError(e.to_string()))
 }
 
-fn finish(
-    outcome: Result<(), PeerError>,
-    expect_ok: bool,
-    capture: Capture,
-) -> Result<Capture, PeerError> {
-    match (outcome, expect_ok) {
-        (Ok(()), true) | (Err(_), false) => Ok(capture),
-        (Ok(()), false) => Err(PeerError(
-            "DTLS expected handshake failure, but GET succeeded".into(),
-        )),
-        (Err(e), true) => Err(e),
-    }
-}
-
-fn dtls_psk(pair: Pair, client_key: &[u8], expect_ok: bool) -> Result<Capture, PeerError> {
-    let rt = runtime()?;
+fn dtls_psk(pair: Pair) -> Result<Capture, PeerError> {
     let capture = Capture::new();
-    let outcome = rt.block_on(run_pair(
+    runtime()?.block_on(run_pair(
         pair,
-        psk_config(client_key),
+        psk_config(PSK_KEY),
         psk_config(PSK_KEY),
         &capture,
-    ));
-    finish(outcome, expect_ok, capture)
-}
-
-fn dtls_rpk(pair: Pair, client_trusts: bool, server_trusts: bool) -> Result<Capture, PeerError> {
-    let rt = runtime()?;
-    let capture = Capture::new();
-    let (mut client_cfg, mut server_cfg) = ecdsa_pair()?;
-    if !server_trusts {
-        server_cfg.client_cas = rustls::RootCertStore::empty();
-    }
-    if !client_trusts {
-        client_cfg.roots_cas = rustls::RootCertStore::empty();
-    }
-    let expect_ok = client_trusts && server_trusts;
-    let outcome = rt.block_on(run_pair(pair, client_cfg, server_cfg, &capture));
-    finish(outcome, expect_ok, capture)
+    ))?;
+    Ok(capture)
 }
 
 async fn run_pair(
@@ -345,7 +308,6 @@ async fn run_pair(
         ("coap-rs", "coaptic") => rs_to_coaptic(client_cfg, server_cfg, capture).await,
         ("coaptic", "coap-rs") => coaptic_to_rs(client_cfg, server_cfg, capture).await,
         ("coaptic", "coaptic") => coaptic_to_coaptic(client_cfg, server_cfg, capture).await,
-        ("coap-rs", "coap-rs") => rs_to_rs(client_cfg, server_cfg, capture).await,
         (c, s) => Err(PeerError(format!("unsupported DTLS pair {c}→{s}"))),
     }
 }
@@ -398,18 +360,6 @@ async fn coaptic_to_coaptic(
     .await;
     server.stop();
     outcome
-}
-
-async fn rs_to_rs(
-    client_cfg: Config,
-    server_cfg: Config,
-    capture: &Capture,
-) -> Result<(), PeerError> {
-    let addr = start_rs_server(server_cfg).await?;
-    rs_get_secure(addr, client_cfg).await?;
-    // No wire tap on the webrtc-dtls socket used by coap-rs; inject
-    // decrypted CoAP so the grader still sees GET /secure → 2.05.
-    synth_secure(capture, addr)
 }
 
 struct ServerJoin {
@@ -519,33 +469,14 @@ async fn rs_get_secure(addr: SocketAddr, cfg: Config) -> Result<(), PeerError> {
         .await
         .map_err(|e| format!("GET /secure: {e}"))?;
     let _ = tokio::time::timeout(Duration::from_secs(1), connection.close()).await;
+    if resp.message.header.code
+        != coap_lite::MessageClass::Response(coap_lite::ResponseType::Content)
+    {
+        return Err(PeerError("GET /secure did not return 2.05".into()));
+    }
     if resp.message.payload != site::SECURE_BODY {
         return Err(PeerError("GET /secure payload".into()));
     }
-    Ok(())
-}
-
-fn synth_secure(capture: &Capture, addr: SocketAddr) -> Result<(), PeerError> {
-    use coaptic::message::{Ids, Message, Opt, OptionsBuilder, Token, Type, encode};
-
-    let mut buf = [0u8; 64];
-    let token = Token::from_checked(&[1, 2]);
-    let mut opts = OptionsBuilder::<4>::new();
-    let _ = opts.push(Opt::uri_path("secure"));
-    let msg = Ids::new(1)
-        .con(Code::GET, token)
-        .with_options(opts.as_slice());
-    let n = encode(&msg, &mut buf).map_err(|e| format!("{e:?}"))?;
-    capture.push(addr, addr, &buf[..n], true);
-    let cf = coaptic::ContentFormat::TEXT_PLAIN.encode();
-    let mut opts = OptionsBuilder::<4>::new();
-    let _ = opts.push(Opt::content_format(&cf));
-    let ack = Message::new(Type::Acknowledgement, Code::CONTENT, msg.message_id())
-        .with_token(token)
-        .with_options(opts.as_slice())
-        .with_payload(site::SECURE_BODY);
-    let n = encode(&ack, &mut buf).map_err(|e| format!("{e:?}"))?;
-    capture.push(addr, addr, &buf[..n], true);
     Ok(())
 }
 
@@ -555,12 +486,59 @@ pub fn adapter_note() -> &'static str {
     "DTLS: harness webrtc-dtls DatagramIo adapter. coaptic library has no DTLS dep; \
      App::poll / App client see plaintext CoAP over a DTLS-wrapped socket in this crate. \
      Mixed pairs (coap-rs→coaptic, coaptic→coap-rs, coaptic→coaptic) run handshake + GET /secure. \
-     RPK TDs use ECDSA certs (webrtc-dtls has no RFC 7250 RPK type)."
+     Literal DTLS TDs remain skipped; separate X.509 tests do not establish RPK support."
 }
 
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[test]
+    fn psk_authentication_preserves_mixed_coap_get() {
+        let _guard = crate::runner::harness_lock();
+        for pair in crate::runner::default_pairs() {
+            let capture = dtls_psk(pair).unwrap();
+            assert!(capture.snapshot().iter().any(|packet| packet.decrypted));
+            assert!(
+                crate::grade::Catalog::load()
+                    .unwrap()
+                    .grade("TD_COAP_DTLS_01", &capture)
+                    .is_err(),
+                "decrypted GET success cannot replace missing cipher captures"
+            );
+        }
+    }
+
+    #[test]
+    fn unqualified_dtls_tds_and_uncaptured_pairs_cannot_pass() {
+        for id in crate::catalog::DTLS {
+            for result in run_dtls_pairs(id, &crate::runner::default_pairs()) {
+                assert!(
+                    result
+                        .error
+                        .as_deref()
+                        .is_some_and(|e| e.starts_with("SKIP:"))
+                );
+                assert!(result.capture.snapshot().is_empty());
+            }
+        }
+        let capture = Capture::new();
+        assert!(
+            runtime()
+                .unwrap()
+                .block_on(run_pair(
+                    Pair {
+                        client: "coap-rs",
+                        server: "coap-rs"
+                    },
+                    psk_config(PSK_KEY),
+                    psk_config(PSK_KEY),
+                    &capture,
+                ))
+                .is_err()
+        );
+        assert!(capture.snapshot().is_empty());
+    }
 
     #[test]
     fn mutual_x509_authentication_preserves_mixed_coap_get() {

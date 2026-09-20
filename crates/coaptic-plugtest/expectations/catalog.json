@@ -352,7 +352,7 @@
   },
   "TD_COAP_DTLS_01": {
     "allow_extra": true,
-    "dtls": {"handshake": "success"},
+    "dtls": {"handshake": "success", "client_hello_contains": "TLS_PSK_WITH_AES_128_CCM_8", "server_hello": "TLS_PSK_WITH_AES_128_CCM_8"},
     "coap": [
       {"code": "0.01", "uri_path": ["secure"]},
       {"code": "2.05", "payload": "nonempty"}
