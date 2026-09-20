@@ -91,6 +91,22 @@ not qualify ARM/RISC-V MCU execution, big-endian targets, device stack high-wate
 entropy, networking or platform allocators. Compiler target selection and image
 headers complement actual test execution; none replaces the other.
 
+## Emulated big-endian execution
+
+`host.py --target s390x-unknown-linux-gnu --output PATH` runs the same six
+feature configurations under QEMU user-mode on Linux, using the explicit Cargo
+runner and cross-linker. Install Rust 1.97.1 with that target plus Ubuntu
+`qemu-user`, `gcc-s390x-linux-gnu` and `libc6-dev-s390x-cross` packages. Reports
+retain tool/package versions, exact runner commands, native executable hashes,
+verified big-endian s390x ELF headers, executed tests and failures. CI runs this
+qualification; missing tool identity or wrong byte order fails it.
+
+This is emulated library unit/integration execution, with one test thread;
+rustdoc is excluded. It does not establish hardware behavior, MCU runtime,
+physical memory-model/concurrency qualification or device stack high-water.
+See the [Rust target guide](https://doc.rust-lang.org/rustc/platform-support/s390x-unknown-linux-gnu.html)
+and [QEMU user-mode documentation](https://www.qemu.org/docs/master/user/main.html).
+
 ## Source coverage evidence
 
 Install `llvm-tools` for Rust 1.97.1, then run
