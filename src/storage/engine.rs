@@ -1350,6 +1350,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Retains the same bounded request matchability context as
     /// [`Self::apply_block1_rx`]; a mismatching continuation cannot mutate it.
+    ///
+    /// Every payload must carry Size1. Missing or changed sizes are rejected
+    /// before modifying the body.
     pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1404,7 +1407,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Uses the first Q-Block2 option. Repeatable recover-request options
     /// are for the outgoing reissue hook, not this assemble path. Missing
-    /// Q-Block2 is [`BlockTransferError::MissingBlock`].
+    /// Q-Block2 is [`BlockTransferError::MissingBlock`]. Every payload must carry
+    /// Size2; missing or changed sizes are rejected before modifying the body.
     pub fn apply_q_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1968,6 +1972,9 @@ impl<S: Storage + BodySlots> Engine<S> {
                     None => None,
                 }
             };
+            if matches!(which, RxBlockOpt::QBlock1 | RxBlockOpt::QBlock2) && expected.is_none() {
+                return Err(BlockTransferError::MissingSize);
+            }
             let identity = which.read_identity(&parsed)?;
             let binding = if which.uses_size1() {
                 Some(RequestBinding::from_message(&parsed)?)

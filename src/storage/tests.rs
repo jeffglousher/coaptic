@@ -4185,6 +4185,9 @@ fn wire_block_requests_bind_exact_operation_and_preserve_body_on_mismatch() {
                         Opt::block1(&block)
                     })
                     .unwrap();
+                if q {
+                    options.push(Opt::new(OptionNumber::SIZE1, &[24])).unwrap();
+                }
                 options
                     .push(Opt::new(OptionNumber::new(280), other))
                     .unwrap();
@@ -4314,6 +4317,100 @@ fn classic_wire_size_estimates_can_change_or_disappear() {
                         assert!(!progress.complete());
                         assert_eq!(engine.rx_body_payload(progress.id()), Some(&body[..16]));
                     } else {
+                        assert_eq!(Some(progress.id()), first_id);
+                        assert!(progress.complete());
+                        assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn q_wire_size_is_mandatory_stable_and_refusal_preserves_body() {
+    use crate::message::OptionsBuilder;
+    for upload in [false, true] {
+        for bad_hint in [None, Some(0), Some(23), Some(25), Some(u32::MAX)] {
+            let mut engine = build_default_bodies();
+            let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+            let token = sample_token(&[0xab]);
+            let body = b"abcdefghijklmnopqrstuvwx";
+            let mut first_id = None;
+            // Refuse a missing initial indication; accept first; refuse bad
+            // continuation; accept corrected continuation using the same slot.
+            for phase in 0..4 {
+                let num = if phase < 2 { 0 } else { 1 };
+                let hint = match phase {
+                    0 => None,
+                    2 => bad_hint,
+                    _ => Some(24),
+                };
+                let blk = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+                let size = encode_uint(hint.unwrap_or(0));
+                let mut options = OptionsBuilder::<4>::new();
+                if upload {
+                    options.push(Opt::q_block1(&blk)).unwrap();
+                    if hint.is_some() {
+                        options.push(Opt::size1(&size)).unwrap();
+                    }
+                    options.push(Opt::request_tag(b"body")).unwrap();
+                } else {
+                    options.push(Opt::etag(b"body")).unwrap();
+                    if hint.is_some() {
+                        options.push(Opt::size2(&size)).unwrap();
+                    }
+                    options.push(Opt::q_block2(&blk)).unwrap();
+                }
+                let msg = Message::new(
+                    Type::NonConfirmable,
+                    if upload { Code::PUT } else { Code::CONTENT },
+                    MessageId::new(phase),
+                )
+                .with_token(token)
+                .with_options(options.as_slice())
+                .with_payload(if num == 0 { &body[..16] } else { &body[16..] });
+                let mut bytes = [0; 80];
+                let n = encode(&msg, &mut bytes).unwrap();
+                let rx = engine.acquire_rx().unwrap();
+                engine.write_rx(rx, &bytes[..n], ep).unwrap();
+                let result = if upload {
+                    engine.apply_q_block1_rx(rx)
+                } else {
+                    engine.apply_q_block2_rx(rx)
+                };
+                engine.release_rx(rx).unwrap();
+                match phase {
+                    0 => {
+                        assert_eq!(result, Err(BlockTransferError::MissingSize));
+                        assert_eq!(
+                            engine.lookup_rx_body(
+                                BlockKey::new(token, ep)
+                                    .with_identity(BodyTag::new(b"body").unwrap())
+                            ),
+                            None
+                        );
+                    }
+                    1 => {
+                        let progress = result.unwrap();
+                        first_id = Some(progress.id());
+                        assert!(!progress.complete());
+                    }
+                    2 => {
+                        assert_eq!(
+                            result,
+                            Err(if hint.is_none() {
+                                BlockTransferError::MissingSize
+                            } else {
+                                BlockTransferError::LengthInconsistent
+                            })
+                        );
+                        let id = first_id.unwrap();
+                        assert_eq!(engine.rx_body_payload(id), Some(&body[..16]));
+                        assert!(!engine.rx_body_transfer(id).unwrap().is_complete());
+                    }
+                    _ => {
+                        let progress = result.unwrap();
                         assert_eq!(Some(progress.id()), first_id);
                         assert!(progress.complete());
                         assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
