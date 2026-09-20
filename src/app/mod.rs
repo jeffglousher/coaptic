@@ -556,7 +556,9 @@ where
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
     /// (RFC 7252 ping). Incomplete Q-Block1 gets an empty ACK for CON;
     /// NON payloads get 2.31 only after a complete payload set, with the
-    /// acknowledged Q-Block1 NUM. Q recovery and partial-body expiry run after
+    /// acknowledged Q-Block1 NUM. Successful Q-Block2 responses use all-NON
+    /// payloads; a CON request receives a separate empty ACK before the set.
+    /// Q recovery and partial-body expiry run after
     /// ingress; exhausted client Q downloads complete with [`CallFailure::TimedOut`].
     /// Incomplete classic Block1 is 2.31 (handler not
     /// run); a complete body is [`Request::body`]. Unrecognized critical
@@ -1827,6 +1829,20 @@ where
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
+    if meta.q_block2.is_some() && response.code().is_success() {
+        // Q bodies consistently use NON responses, including handlers that
+        // request a separate response. The Q sender supplies the empty ACK.
+        return send_response(
+            engine,
+            io,
+            ids,
+            meta,
+            response,
+            now_ms,
+            oscore_ctx,
+            dedup_closed,
+        );
+    }
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = response_body_for(engine, key) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
@@ -1844,7 +1860,18 @@ where
             if ty == Type::NonConfirmable {
                 meta.mid = ids.next_for(engine, now_ms)?;
             }
-            return continue_outgoing(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx);
+            return continue_outgoing(
+                engine,
+                io,
+                ids,
+                now_ms,
+                meta,
+                response,
+                ty,
+                id,
+                oscore_ctx,
+                dedup_closed,
+            );
         }
     }
 
@@ -1895,7 +1922,18 @@ where
             // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
             let meta = SendResponse { mid, ..meta };
-            start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx)
+            start_outgoing(
+                engine,
+                io,
+                ids,
+                now_ms,
+                meta,
+                response,
+                ty,
+                key,
+                oscore_ctx,
+                dedup_closed,
+            )
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1957,12 +1995,34 @@ where
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             )
         }) {
-            return continue_outgoing(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx);
+            return continue_outgoing(
+                engine,
+                io,
+                ids,
+                now_ms,
+                meta,
+                response,
+                ty,
+                id,
+                oscore_ctx,
+                dedup_closed,
+            );
         }
     }
 
     if (meta.block2.is_some() || meta.q_block2.is_some()) && response.code().is_success() {
-        return start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx);
+        return start_outgoing(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            ty,
+            key,
+            oscore_ctx,
+            dedup_closed,
+        );
     }
 
     let Some(tx) = acquire_tx_or_evict(engine) else {
@@ -1999,7 +2059,18 @@ where
             // True size miss: Inner Block2 (also under OSCORE). Protocol
             // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
-            start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx)
+            start_outgoing(
+                engine,
+                io,
+                ids,
+                now_ms,
+                meta,
+                response,
+                ty,
+                key,
+                oscore_ctx,
+                dedup_closed,
+            )
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -2033,9 +2104,10 @@ fn start_outgoing<S, T>(
     ty: Type,
     key: BlockKey,
     oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let szx = szx_for(meta.block2, meta.q_block2);
@@ -2066,9 +2138,31 @@ where
             .q_request
             .is_some_and(|p| p.q_block2().nth(1).is_some());
     let outcome = if selective {
-        issue_q_selection(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+        issue_q_selection(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            ty,
+            id,
+            oscore_ctx,
+            dedup_closed,
+        )
     } else if meta.q_block2.is_some() {
-        issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+        issue_q_window(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            ty,
+            id,
+            oscore_ctx,
+            dedup_closed,
+        )
     } else {
         issue_classic(
             engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
@@ -2095,9 +2189,10 @@ fn continue_outgoing<S, T>(
     ty: Type,
     id: SlotId,
     oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let role = engine
@@ -2126,13 +2221,46 @@ where
                         || q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
                             != 0 =>
                 {
-                    issue_q_selection(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+                    issue_q_selection(
+                        engine,
+                        io,
+                        ids,
+                        now_ms,
+                        meta,
+                        response,
+                        ty,
+                        id,
+                        oscore_ctx,
+                        dedup_closed,
+                    )
                 }
                 Some(q) => {
                     engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
-                    issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+                    issue_q_window(
+                        engine,
+                        io,
+                        ids,
+                        now_ms,
+                        meta,
+                        response,
+                        ty,
+                        id,
+                        oscore_ctx,
+                        dedup_closed,
+                    )
                 }
-                None => issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx),
+                None => issue_q_window(
+                    engine,
+                    io,
+                    ids,
+                    now_ms,
+                    meta,
+                    response,
+                    ty,
+                    id,
+                    oscore_ctx,
+                    dedup_closed,
+                ),
             }
         }
         BlockRole::OutgoingBlock2 => issue_classic(
@@ -2203,6 +2331,37 @@ where
 // RFC 9177 section 4.4: M=0 asks for exactly NUM; a non-aligned
 // M=1 asks for NUM through the end of its MAX_PAYLOADS_SET. Reissuing
 // selections never advances or acknowledges a retained transfer's window.
+fn q_response_mid<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
+    meta: SendResponse,
+    first_ty: Type,
+    dedup_closed: &mut Option<DedupClosed>,
+) -> Result<MessageId, Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + DedupSlots,
+    T: DatagramIo,
+{
+    if first_ty == Type::Acknowledgement {
+        // Preflight has succeeded. Cache before I/O so duplicate protected
+        // requests can retry the ACK without re-entering the handler.
+        remember_empty_ack(
+            engine,
+            meta.dest,
+            meta.mid,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        );
+        send_empty_ack(engine, io, meta.dest, meta.mid)?;
+        ids.next_for(engine, now_ms)
+    } else {
+        Ok(meta.mid)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn issue_q_selection<S, T>(
     engine: &mut Engine<S>,
@@ -2214,9 +2373,10 @@ fn issue_q_selection<S, T>(
     first_ty: Type,
     id: SlotId,
     oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let selections = || meta.q_request.into_iter().flat_map(ParsedMessage::q_block2);
@@ -2241,11 +2401,12 @@ where
                 continue;
             }
             let issued = engine.reissue_q_block2(id, num).map_err(Error::Block)?;
-            let (ty, mid) = if last_sent.is_none() {
-                (first_ty, meta.mid)
+            let mid = if last_sent.is_none() {
+                q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
             } else {
-                (Type::NonConfirmable, ids.next_for(engine, now_ms)?)
+                ids.next_for(engine, now_ms)?
             };
+            let ty = Type::NonConfirmable;
             send_issued(
                 engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
             )?;
@@ -2269,9 +2430,10 @@ fn issue_q_window<S, T>(
     first_ty: Type,
     id: SlotId,
     oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
     let mut extra = 0u16;
@@ -2281,11 +2443,12 @@ where
             Err(BlockTransferError::OutsideWindow) => return Ok(()),
             Err(e) => return Err(Error::Block(e)),
         };
-        let (ty, mid) = if extra == 0 {
-            (first_ty, meta.mid)
+        let mid = if extra == 0 {
+            q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
         } else {
-            (Type::NonConfirmable, ids.next_for(engine, now_ms)?)
+            ids.next_for(engine, now_ms)?
         };
+        let ty = Type::NonConfirmable;
         send_issued(
             engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
         )?;
