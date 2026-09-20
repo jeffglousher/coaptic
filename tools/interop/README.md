@@ -29,7 +29,7 @@ Windows: use MSVC (`-G "Visual Studio 17 2022" -A x64`, `--config Release`) and 
 
 Both directions between Coaptic and each independent peer, plus Coaptic self-pair: GET exact bytes, 4.04 status, 2,000-byte Block2 assembly and repeated fresh client sessions. DTLS adds wrong-PSK refusal followed by successful service. Peer startup is bounded by 8 seconds; client deadline is bounded by its argument plus a process-kill margin. Children are always reaped. Server restarts reuse the same UDP port.
 
-A bounded UDP relay records actual datagrams and injects one lost response, one duplicate request, or a blackhole. Lost replies must cause observable retransmission. Counter POST followed by GET must prove exactly one handler effect under duplication/retransmission. Blackhole must return a protocol timeout, not a process crash or supervisor kill. Restart checks explicitly expect fresh in-memory fixture state; they make no storage durability claim.
+A bounded UDP relay records actual datagrams and injects one lost response, one duplicate request, or a blackhole. Lost replies must cause observable retransmission. Against Coaptic servers, counter POST followed by GET must prove exactly one handler effect under duplication/retransmission. Against alternative servers, idempotent PUT followed by GET proves exact final state and retransmissions must preserve every request byte; this does not prove their duplicate suppression. Blackhole must return a protocol timeout, not a process crash or supervisor kill. Restart checks explicitly expect fresh in-memory fixture state; they make no storage durability claim.
 
 JSON schema `coaptic-process-interop/2` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Peer protocol `coaptic-peer/2` requires integer nanosecond samples and clock metadata. Libcoap uses `CLOCK_MONOTONIC` on POSIX and `QueryPerformanceCounter` on Windows; Rust uses `Instant` (its resolution is reported as unknown). All peers stop timing before JSON formatting. Raw request/host samples and nanosecond summaries are retained; microsecond summaries are derived without integer truncation. OS-reported clock resolution is not measurement accuracy. Old peer executables are rejected: rebuild all peers with this runner. Default and CI use 100 samples per pairing, still a smoke benchmark. Never infer a performance ranking from mixed debug/release builds or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
 
@@ -82,8 +82,11 @@ The full run contains 64 scenario results (55 with local C-peer DTLS excluded):
   state logic but use independent CoAP codecs; C implements the fixture separately.
 - Twenty UDP reliability scenarios: each of the three clients against a Coaptic
   server, plus Coaptic against each independent server, with dropped reply,
-  duplicated request, blackhole and server restart. Exact counter readback must
-  prove one handler effect after loss or duplication. These checks do not
+  duplicated request, blackhole and server restart. Coaptic server counter readback must
+  prove one handler effect after loss or duplication. Alternative server cases
+  use idempotent PUT/readback and require identical retransmitted bytes.
+  Exploratory non-idempotent POST tests produced two effects in both alternative
+  fixtures; that limitation remains explicit in the capability gaps. These checks do not
   qualify DTLS/IPv6 faults, arbitrary reorder/delay/MTU or compound schedules.
 - Six DTLS endpoint-reuse scenarios: each client against each Rust server, using
  a relay with one fixed server-visible UDP endpoint. Three fresh authenticated

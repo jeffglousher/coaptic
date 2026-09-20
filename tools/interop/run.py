@@ -240,6 +240,12 @@ class Proxy:
             raise RuntimeError(f"proxy failed: {self.error}")
 
 
+def expect_identical_requests(trace, require_repeat=False):
+    requests = [row["hex"] for row in trace if row["direction"] == "request"]
+    if len(requests) < (2 if require_repeat else 1) or len(set(requests)) != 1:
+        raise AssertionError("missing or changed retransmitted request bytes")
+
+
 def summary(samples):
     ordered = sorted(samples)
     return {"n": len(samples), "min": min(samples), "mean": statistics.mean(samples),
@@ -477,20 +483,33 @@ def main():
             def fault(client=client, server=server, mode=mode):
                 with Server(peers[server], "udp") as service:
                     with Proxy(service.number, mode) as relay:
+                        idempotent = server != "coaptic"
                         event = request(peers[client], "udp", relay.number,
-                                        path="counter" if mode != "blackhole" else "test",
-                                        method="POST" if mode != "blackhole" else "GET",
+                                        path=("methods" if idempotent else "counter") if mode != "blackhole" else "test",
+                                        method=("PUT" if idempotent else "POST") if mode != "blackhole" else "GET",
+                                        payload=b"once" if idempotent and mode != "blackhole" else b"",
                                         timeout=6500 if mode != "blackhole" else 500)
                     if mode == "blackhole":
                         expect_refusal(event)
                     else:
-                        expect(event, 68, b"")
-                        expect(request(peers[client], "udp", service.number, path="counter"), 69, b"1")
-                        if mode == "drop-reply" and sum(x["direction"] == "request" for x in relay.trace) < 2:
-                            raise AssertionError("no observed retransmission")
+                        if idempotent:
+                            # A cached Created or a reprocessed Changed are valid
+                            # PUT outcomes. Neither proves server deduplication.
+                            if event.get("code") not in (65, 68):
+                                raise AssertionError("PUT did not create or replace the resource")
+                            expect(event, event["code"], b"")
+                            readback = request(peers[client], "udp", service.number, path="methods")
+                            expect(readback, 69, b"once")
+                        else:
+                            expect(event, 68, b"")
+                            readback = request(peers[client], "udp", service.number, path="counter")
+                            expect(readback, 69, b"1")
+                        expect_identical_requests(relay.trace, require_repeat=mode == "drop-reply")
                     if not relay.trace or not any(x["action"] != "forward" for x in relay.trace):
                         raise AssertionError("fault was not exercised")
-                    return {"trace": relay.trace, "result": event}
+                    return {"trace": relay.trace, "result": event,
+                            "readback": None if mode == "blackhole" else readback,
+                            "effect_oracle": "idempotent PUT state" if idempotent else "single POST effect"}
             case(f"reliability:{label}->{mode}", fault)
         def restart(client=client, server=server):
             number = port()
