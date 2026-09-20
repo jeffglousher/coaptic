@@ -2960,6 +2960,7 @@ fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
 
 #[derive(Default)]
 struct QWire {
+    fail_send: bool,
     inbox: Option<(Endpoint, std::vec::Vec<u8>)>,
     sent: std::vec::Vec<std::vec::Vec<u8>>,
 }
@@ -2976,6 +2977,9 @@ impl DatagramIo for QWire {
         Ok(Some((bytes.len(), peer)))
     }
     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if core::mem::take(&mut self.fail_send) {
+            return Err("injected send failure");
+        }
         assert!(self.sent.len() < 16, "bounded test transcript");
         self.sent.push(bytes.to_vec());
         Ok(bytes.len())
@@ -3352,6 +3356,13 @@ fn app_oscore_qblock1_ack_continue_and_complete_follow_payload_set() {
             let request_ref = sender.lookup(token).unwrap();
             server.transport_mut().sent.clear();
             server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+            if !non && num == 0 {
+                server.transport_mut().fail_send = true;
+                assert!(server.poll(u64::from(num)).is_err());
+                assert!(server.transport().sent.is_empty());
+                assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+            }
             server.poll(u64::from(num)).unwrap();
             if non && num < 9 {
                 assert!(server.transport().sent.is_empty());

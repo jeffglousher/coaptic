@@ -1288,16 +1288,18 @@ where
                     dedup_closed,
                 )
             } else if meta.ty == Type::Confirmable {
-                send_empty_ack(engine, io, meta.dest, meta.mid).map(|()| {
-                    remember_empty_ack(
-                        engine,
-                        meta.dest,
-                        meta.mid,
-                        now_ms,
-                        meta.request,
-                        dedup_closed,
-                    );
-                })
+                // Body admission and authenticated replay state already advanced.
+                // Retain the ACK before I/O so a failed send can be retried by
+                // the peer without reopening the protected request.
+                remember_empty_ack(
+                    engine,
+                    meta.dest,
+                    meta.mid,
+                    now_ms,
+                    meta.request,
+                    dedup_closed,
+                );
+                send_empty_ack(engine, io, meta.dest, meta.mid)
             } else {
                 Ok(())
             };
@@ -1305,7 +1307,7 @@ where
             return outcome;
         }
         InboundBody::Refused(code) => {
-            // Apply errors (gap, SZX mismatch, overflow, Q-Block duplicate, …).
+            // Apply errors (gap, SZX mismatch, overflow, …).
             // Classic Overlap / AlreadyComplete replay 2.31 above.
             // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
             let outcome = send_response(
