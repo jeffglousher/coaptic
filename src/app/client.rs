@@ -708,6 +708,12 @@ where
     /// without replacing data or refreshing Max-Age. OSCORE notifications use
     /// authenticated Partial-IV ordering instead. For block-wise notifications,
     /// ordering is established by the first accepted block, before completion.
+    /// Max-Age expiry does not cancel the subscription. Use the retained
+    /// `received_at_ms` and `max_age_secs` (default 60 seconds when absent)
+    /// to assess representation freshness against the same monotonic clock.
+    /// A response without Observe ends the subscription; explicit cancellation
+    /// and deadlines also release it. Unrecognized plaintext CON responses
+    /// receive Reset so the peer can stop notifying.
     /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
     /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
     /// terminal outcome; no synthetic CoAP response code is invented.
@@ -1363,8 +1369,13 @@ where
         .lookup_observe(ObserveKey::new(parsed.token(), peer))
         .is_some();
     if via_exchange.is_none() && !via_observe {
+        let outcome = if parsed.ty() == Type::Confirmable {
+            super::send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
         let _ = engine.release_rx(rx);
-        return Ok(());
+        return outcome;
     }
     // RFC 7252 sections 5.4.1 and 4.2: reject the response, not an
     // otherwise matching ACK. No inbox/body/Observe state may accept it.
@@ -2314,7 +2325,9 @@ fn accept_client_observe<Mem>(
         let _ = engine.take_observe(key);
         return;
     }
-    if parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
+    let subscribed = live.is_some_and(|live| live.observe == OutgoingObserve::Register)
+        || engine.lookup_observe(key).is_some();
+    if subscribed && parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
         let resource = live
             .map(|live| ObserveResource::from_path(live.path.segments()))
             .unwrap_or(ObserveResource::NONE);
@@ -2325,7 +2338,7 @@ fn accept_client_observe<Mem>(
             .and_then(Result::ok)
             .unwrap_or(super::DEFAULT_MAX_AGE_SECS);
         let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-    } else if via_exchange {
+    } else if via_exchange || subscribed {
         let _ = engine.take_observe(key);
     }
 }
