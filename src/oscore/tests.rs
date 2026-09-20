@@ -3244,3 +3244,58 @@ fn app_oscore_repeated_qblock2_selection_preserves_inner_ranges_and_distinct_piv
         assert_eq!(inner.etag().next(), Some(&b"v1"[..]));
     }
 }
+
+#[test]
+fn app_oscore_qblock1_missing_metadata_returns_protected_bad_request() {
+    use crate::{App, profiles, put};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for missing_tag in [true, false] {
+        let mut sender = client_c1();
+        let q = BlockValue::from_size(0, false, 16).unwrap().encode();
+        let size = encode_uint(0);
+        let mut options = OptionsBuilder::<4>::new();
+        options.push(Opt::uri_path("upload")).unwrap();
+        options.push(Opt::q_block1(&q)).unwrap();
+        if missing_tag {
+            options.push(Opt::size1(&size)).unwrap();
+        } else {
+            options.push(Opt::request_tag(&[])).unwrap();
+        }
+        let token = Token::new(&[3]).unwrap();
+        let request = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+            .with_token(token)
+            .with_options(options.as_slice());
+        let mut wire = [0; WIRE];
+        let n = sender.protect_request(&request, &mut wire).unwrap();
+        let request_ref = sender.lookup(token).unwrap();
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "upload",
+                put(|_| panic!("missing metadata reached handler")),
+            )
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+        server.poll(0).unwrap();
+        assert_eq!(server.transport().sent.len(), 1);
+        let outer = decode(&server.transport().sent[0]).unwrap();
+        assert!(outer.oscore().is_some());
+        let mut plain = [0; WIRE];
+        let inner = sender
+            .unprotect_response(&outer, request_ref, &mut plain)
+            .unwrap();
+        assert_eq!(inner.code(), Code::BAD_REQUEST);
+        assert_eq!(inner.token(), token);
+        for index in 0..server.engine().capacities().rx_body_slots.unwrap() {
+            assert!(
+                server
+                    .engine()
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}

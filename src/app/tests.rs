@@ -4904,7 +4904,14 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
             })
             .unwrap();
         app.poll(0).unwrap();
-        assert_eq!(last_wide(&app).code(), Code::BAD_OPTION);
+        assert_eq!(
+            last_wide(&app).code(),
+            if tags.is_empty() {
+                Code::BAD_REQUEST
+            } else {
+                Code::BAD_OPTION
+            }
+        );
         assert_eq!(app.engine_mut().rx_occupied(), 0);
     }
 }
@@ -5235,7 +5242,14 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
             app.poll(u64::from(phase)).unwrap();
             let reply = last_reply(&app);
             match phase {
-                0 | 2 => assert_eq!(reply.code, Code::REQUEST_ENTITY_INCOMPLETE),
+                0 | 2 => assert_eq!(
+                    reply.code,
+                    if phase == 0 || bad_hint.is_none() {
+                        Code::BAD_REQUEST
+                    } else {
+                        Code::REQUEST_ENTITY_INCOMPLETE
+                    }
+                ),
                 1 => assert_eq!(reply.code, Code::CONTINUE),
                 _ => {
                     assert_eq!(reply.code, Code::CHANGED);
@@ -8039,4 +8053,55 @@ fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch
             Code::BAD_OPTION
         );
     }
+}
+
+#[test]
+fn qblock1_missing_required_metadata_is_bad_request_without_body_admission() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn handler(_: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+    let size = encode_uint(0);
+    for has_tag in [false, true] {
+        for has_size in [false, true] {
+            let mut opts = OptionsBuilder::<4>::new();
+            opts.push(Opt::q_block1(&block)).unwrap();
+            if has_size {
+                opts.push(Opt::size1(&size)).unwrap();
+            }
+            if has_tag {
+                opts.push(Opt::request_tag(&[])).unwrap();
+            }
+            let (wire, n) = encode_wide(Code::PUT, &["upload"], opts.as_slice(), 0x3b00);
+            let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .route("upload", put(handler))
+                .bind(WideLoopback::default())
+                .unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(0).unwrap();
+            assert_eq!(
+                last_wide(&app).code(),
+                if has_tag && has_size {
+                    Code::CHANGED
+                } else {
+                    Code::BAD_REQUEST
+                }
+            );
+            assert_eq!(app.transport().send_n, 1);
+            for index in 0..app.engine.capacities().rx_body_slots.unwrap() {
+                assert!(
+                    app.engine
+                        .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+    }
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
 }
