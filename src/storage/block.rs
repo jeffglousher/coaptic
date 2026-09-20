@@ -925,7 +925,11 @@ impl BlockTransfer {
         self.complete
     }
 
-    /// Size1 / Size2 hint when known.
+    /// Initial Size1 / Size2 indication, or the outgoing body length.
+    ///
+    /// Classic Block (including BERT) treats this as an estimate; completion
+    /// follows M=0 and actual bytes remain bounded by the body slot. Q-Block
+    /// requires an exact body length.
     #[must_use]
     pub const fn expected_len(self) -> Option<u32> {
         self.expected_len
@@ -1065,12 +1069,6 @@ impl BlockTransfer {
         if end > capacity {
             return Err(BlockTransferError::Overflow);
         }
-        if let Some(expected) = self.expected_len {
-            let expected = usize::try_from(expected).map_err(|_| BlockTransferError::Overflow)?;
-            if end > expected || (!block.more() && end != expected) {
-                return Err(BlockTransferError::LengthInconsistent);
-            }
-        }
 
         self.num = block.num();
         self.more = block.more();
@@ -1102,12 +1100,6 @@ impl BlockTransfer {
             .ok_or(BlockTransferError::Overflow)?;
         if end > capacity {
             return Err(BlockTransferError::Overflow);
-        }
-        if let Some(expected) = self.expected_len {
-            let expected = usize::try_from(expected).map_err(|_| BlockTransferError::Overflow)?;
-            if end > expected || (!block.more() && end != expected) {
-                return Err(BlockTransferError::LengthInconsistent);
-            }
         }
 
         let nblocks =
@@ -1700,10 +1692,68 @@ mod tests {
     }
 
     #[test]
-    fn incoming_size1_must_match_on_m0() {
-        let err = BlockTransfer::incoming_block1(key(), szx16(0, false), 8, 4096, Some(16))
-            .expect_err("short");
-        assert_eq!(err, BlockTransferError::LengthInconsistent);
+    fn classic_size_estimates_do_not_control_completion_or_capacity() {
+        for role in [BlockRole::IncomingBlock1, BlockRole::IncomingBlock2] {
+            for hint in [
+                None,
+                Some(0),
+                Some(1),
+                Some(16),
+                Some(24),
+                Some(25),
+                Some(u32::MAX),
+            ] {
+                for bert in [false, true] {
+                    let first_len = if bert { 1024 } else { 16 };
+                    let block = |num, more| {
+                        if bert {
+                            BlockValue::bert(num, more).expect("bert")
+                        } else {
+                            szx16(num, more)
+                        }
+                    };
+                    let mut t = BlockTransfer::incoming(
+                        key(),
+                        role,
+                        block(0, true),
+                        first_len,
+                        first_len + 8,
+                        hint,
+                    )
+                    .expect("estimate does not limit bytes");
+                    assert!(!t.is_complete(), "M=1 even when estimate is exhausted");
+                    assert_eq!(t.expected_len(), hint);
+                    let before = t;
+                    assert_eq!(
+                        t.accept_incoming(block(1, false), 9, first_len + 8),
+                        Err(BlockTransferError::Overflow)
+                    );
+                    assert_eq!(t, before, "refusal preserves transfer");
+                    assert_eq!(
+                        t.accept_incoming(block(1, false), 8, first_len + 8),
+                        Ok(first_len)
+                    );
+                    assert!(t.is_complete(), "M=0 despite inaccurate estimate");
+                    assert_eq!(t.filled(), first_len + 8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn q_size_indications_still_require_exact_length() {
+        for role in [BlockRole::IncomingQBlock1, BlockRole::IncomingQBlock2] {
+            for hint in [0, 7, 9, u32::MAX] {
+                assert_eq!(
+                    BlockTransfer::incoming_q(key(), role, szx16(0, false), 8, 4096, Some(hint)),
+                    Err(BlockTransferError::LengthInconsistent)
+                );
+            }
+            let t = BlockTransfer::incoming_q(key(), role, szx16(0, false), 8, 4096, Some(8))
+                .expect("exact");
+            assert!(t.is_complete());
+            assert_eq!(t.filled(), 8);
+        }
     }
 
     #[test]
@@ -1796,13 +1846,6 @@ mod tests {
             full.accept_incoming(extra, 1, 4096).expect_err("cap"),
             BlockTransferError::Overflow
         );
-    }
-
-    #[test]
-    fn incoming_size2_must_match_on_m0() {
-        let err = BlockTransfer::incoming_block2(key(), szx16(0, false), 8, 4096, Some(16))
-            .expect_err("short");
-        assert_eq!(err, BlockTransferError::LengthInconsistent);
     }
 
     #[test]
