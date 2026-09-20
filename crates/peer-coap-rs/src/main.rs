@@ -50,6 +50,7 @@ async fn run() -> Result<(), Error> {
             Server::new_udp(a.address())?
         };
         let resource = Arc::new(std::sync::Mutex::new(support::MethodResource::new()));
+        let upload = Arc::new(std::sync::Mutex::new(support::UploadResource::new()));
         let counter = Arc::new(AtomicU32::new(0));
         support::ready(
             "coap-rs",
@@ -62,9 +63,29 @@ async fn run() -> Result<(), Error> {
                 move |mut req: Box<coap_lite::CoapRequest<std::net::SocketAddr>>| {
                     let counter = Arc::clone(&counter);
                     let resource = Arc::clone(&resource);
+                    let upload = Arc::clone(&upload);
                     async move {
                         let path = req.get_path();
                         let method = *req.get_method();
+                        if path == "upload" {
+                            let method: u8 = MessageClass::Request(method).into();
+                            let format_ok = req
+                                .message
+                                .get_option(CoapOption::ContentFormat)
+                                .is_some_and(|values| {
+                                    values.len() == 1 && values.front().is_some_and(|v| v == &[42])
+                                });
+                            let (code, body) = upload.lock().expect("fixture lock").respond(
+                                method,
+                                &req.message.payload,
+                                format_ok,
+                            );
+                            if let Some(r) = req.response.as_mut() {
+                                r.message.header.code = code.into();
+                                r.message.payload = body;
+                            }
+                            return req;
+                        }
                         if path == "methods" {
                             let method: u8 = MessageClass::Request(method).into();
                             let format_ok = req
@@ -129,7 +150,9 @@ async fn run() -> Result<(), Error> {
             None,
         )
         .options(
-            if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+            if matches!(a.path.as_str(), "methods" | "upload")
+                && matches!(a.method, 2 | 3 | 5 | 6 | 7)
+            {
                 vec![(CoapOption::ContentFormat, vec![42])]
             } else {
                 vec![]
