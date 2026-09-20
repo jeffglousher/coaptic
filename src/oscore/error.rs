@@ -42,6 +42,10 @@ pub enum Error {
     SequenceRollback,
     /// Partial IV is a replay (or left of the window).
     Replay,
+    /// Persisted replay checkpoint exceeds the five-byte sequence space.
+    ReplayState,
+    /// Restoring this checkpoint would weaken live replay protection.
+    ReplayRollback,
     /// AEAD open failed (wrong key, nonce, AAD, or ciphertext).
     Decrypt,
     /// AEAD seal failed.
@@ -76,6 +80,8 @@ impl core::fmt::Display for Error {
             Self::SequenceExhausted => f.write_str("sender sequence number is exhausted"),
             Self::SequenceRollback => f.write_str("sender sequence number cannot move backwards"),
             Self::Replay => f.write_str("OSCORE replay"),
+            Self::ReplayState => f.write_str("invalid replay checkpoint"),
+            Self::ReplayRollback => f.write_str("replay checkpoint would weaken protection"),
             Self::Decrypt => f.write_str("OSCORE decryption failed"),
             Self::Encrypt => f.write_str("OSCORE encryption failed"),
             Self::Encode(e) => write!(f, "{e}"),

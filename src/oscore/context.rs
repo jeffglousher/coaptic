@@ -6,6 +6,43 @@ use super::aead;
 use super::header::PartialIv;
 use super::{Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WINDOW};
 
+/// Recipient replay-window checkpoint for caller-owned durable storage.
+///
+/// This contains no key material and is not a wire format. Store its parts with
+/// an authenticated context/epoch identity and an anti-rollback generation.
+/// A stale checkpoint restored into a newly derived context cannot be detected
+/// by this crate. Commit the updated checkpoint after successful unprotection
+/// and before acknowledging application acceptance or performing effects.
+/// Sender sequence reservation and live request/Observe state are separate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplayCheckpoint {
+    left: u64,
+    received: u32,
+}
+
+impl ReplayCheckpoint {
+    /// Validate a persisted lower bound and bitmap (bit zero names `left`).
+    /// `left == 2^40` with an empty bitmap conservatively refuses all sequences.
+    /// Invalid bounds or bits beyond the five-byte sequence space are refused.
+    pub const fn from_parts(left: u64, received: u32) -> Result<Self, Error> {
+        let end = 1u64 << 40;
+        if left > end
+            || (received != 0
+                && (left == end || (31 - received.leading_zeros()) as u64 >= end - left))
+        {
+            return Err(Error::ReplayState);
+        }
+        Ok(Self { left, received })
+    }
+
+    /// Persist these parts without loss, together with context identity and
+    /// a freshness/anti-rollback mechanism owned by the caller.
+    #[must_use]
+    pub const fn parts(self) -> (u64, u32) {
+        (self.left, self.received)
+    }
+}
+
 /// Inputs for [`SecurityContext::derive`].
 ///
 /// `master_salt` and `id_context` may be empty. Sender and Recipient IDs
@@ -401,10 +438,49 @@ impl SecurityContext {
         aead::nonce(&self.common_iv, self.recipient_id.as_bytes(), piv)
     }
 
+    /// Snapshot recipient replay protection for a caller-owned durable barrier.
+    /// This does not persist or authenticate the checkpoint.
+    #[must_use]
+    pub const fn replay_checkpoint(&self) -> ReplayCheckpoint {
+        ReplayCheckpoint {
+            left: self.replay_left,
+            received: self.replay_bits,
+        }
+    }
+
+    /// Restore a validated recipient checkpoint without weakening this live
+    /// context's replay protection. Any currently rejected sequence must remain
+    /// rejected. A refusal leaves the context unchanged.
+    ///
+    /// Before reusing keys after reboot, the caller must supply the latest
+    /// durable checkpoint for this exact context, reserve/restore sender
+    /// sequence numbers, and account for lost live bindings/Observe state.
+    /// This comparison cannot detect an old checkpoint in a freshly derived
+    /// context. Use a fresh cryptographic context if recovery is uncertain
+    /// (RFC 8613 section 7.5). App does not provide a durable pre-handler barrier;
+    /// use the lower-level unprotect API to commit before application effects.
+    pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
+        if checkpoint.left < self.replay_left {
+            return Err(Error::ReplayRollback);
+        }
+        let shift = checkpoint.left - self.replay_left;
+        let retained = if shift >= REPLAY_WINDOW {
+            0
+        } else {
+            self.replay_bits >> shift as u32
+        };
+        if retained & !checkpoint.received != 0 {
+            return Err(Error::ReplayRollback);
+        }
+        self.replay_left = checkpoint.left;
+        self.replay_bits = checkpoint.received;
+        Ok(())
+    }
+
     /// `true` if `seq` may be accepted (not yet marked). Does not update.
     #[must_use]
     pub fn replay_fresh(&self, seq: u64) -> bool {
-        if seq < self.replay_left {
+        if seq >= (1u64 << 40) || seq < self.replay_left {
             return false;
         }
         let delta = seq - self.replay_left;
@@ -415,9 +491,10 @@ impl SecurityContext {
         self.replay_bits & bit == 0
     }
 
-    /// Mark `seq` received after a successful decrypt.
+    /// Mark `seq` received after a successful decrypt. Out-of-range and stale
+    /// sequences leave the window unchanged.
     pub fn replay_accept(&mut self, seq: u64) {
-        if seq < self.replay_left {
+        if seq >= (1u64 << 40) || seq < self.replay_left {
             return;
         }
         let delta = seq - self.replay_left;
