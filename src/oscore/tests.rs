@@ -669,7 +669,7 @@ fn app_oscore_observe_register_notify() {
     use crate::{App, Request, Response, get, profiles};
 
     fn hello(_req: Request<'_>) -> Response<'static> {
-        Response::content(b"obs-0").observe(0)
+        Response::content(b"obs-0").observe(0).max_age(0)
     }
 
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
@@ -722,7 +722,7 @@ fn app_oscore_observe_register_notify() {
 
     server.transport_mut().last_send = None;
     let sent = server
-        .notify(10, &["obs"], Response::content(b"obs-1"))
+        .notify(10, &["obs"], Response::content(b"obs-1").max_age(0))
         .expect("notify");
     assert_eq!(sent, 1);
     let (_, bytes, n) = server.transport().last_send.expect("protected notify");
@@ -742,7 +742,7 @@ fn app_oscore_observe_register_notify() {
     let old = (bytes, n);
     assert_eq!(
         server
-            .notify(10_000, &["obs"], Response::content(b"obs-2"))
+            .notify(10_000, &["obs"], Response::content(b"obs-2").max_age(0))
             .unwrap(),
         1
     );
