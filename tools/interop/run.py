@@ -25,14 +25,28 @@ BODY = b"core-test-payload"
 LARGE = bytes(i % 251 for i in range(2000))
 
 
-def port():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.bind(("127.0.0.1", 0))
+def port(family="ipv4"):
+    with socket.socket(socket.AF_INET6 if family == "ipv6" else socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("::1" if family == "ipv6" else "127.0.0.1", 0))
         return sock.getsockname()[1]
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000):
-    return [str(exe), role, transport, str(number), key, path, method, str(timeout)]
+def ipv6_probe(number):
+    # Independent, hand-written CON GET /test proves the server is reachable
+    # at ::1. A peer silently falling back to IPv4 cannot satisfy this probe.
+    wire = b"\x41\x01\x76\x60\x8d\xb4test"
+    with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
+        sock.bind(("::1", 0))
+        sock.settimeout(2)
+        sock.sendto(wire, ("::1", number))
+        reply, sender = sock.recvfrom(4096)
+    if sender[0] != "::1" or sender[1] != number or reply[:5] != b"\x61\x45\x76\x60\x8d" or not reply.endswith(b"\xff" + BODY):
+        raise AssertionError("IPv6 server probe response mismatch")
+    return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
+
+
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4"):
+    return [str(exe), role, transport, str(number), key, path, method, str(timeout), family]
 
 
 def decode(line):
@@ -45,11 +59,11 @@ def decode(line):
 
 
 class Server:
-    def __init__(self, exe, transport, number=None):
-        self.number = number or port()
+    def __init__(self, exe, transport, number=None, family="ipv4"):
+        self.number = number or port(family)
         self.stderr = tempfile.TemporaryFile()
         start = time.perf_counter_ns()
-        self.proc = subprocess.Popen(command(exe, "server", transport, self.number),
+        self.proc = subprocess.Popen(command(exe, "server", transport, self.number, family=family),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=self.stderr)
         events = queue.Queue(maxsize=1)
@@ -321,6 +335,17 @@ def main():
                         expect(request(peers[client], transport, service.number))
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
             case(label, matrix)
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        def ipv6_matrix(client=client, server=server):
+            with Server(peers[server], "udp", family="ipv6") as service:
+                probe = ipv6_probe(service.number)
+                expect(request(peers[client], "udp", service.number, family="ipv6"))
+                expect(request(peers[client], "udp", service.number, family="ipv6", path="missing"), 132, None)
+                expect(request(peers[client], "udp", service.number, family="ipv6", path="large"), 69, LARGE)
+                expect(request(peers[client], "udp", service.number, family="ipv6"))
+                return {"server": service.ready, "address": "::1", "ipv6_socket_probe": probe, "verified": ["IPv6 UDP GET bytes", "4.04", "2000-byte Block2", "service after refusal"]}
+        case(f"ipv6-udp:{client}->{server}", ipv6_matrix)
 
     # The relay preserves one server-visible UDP endpoint across fresh clients.
     for server in ("coaptic", "coap-rs"):

@@ -50,12 +50,17 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 31 scenario results (26 with local C-peer DTLS excluded):
+The full run contains 36 scenario results (31 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
   exact GET bytes, 4.04, 2,000-byte Block2 and repeated fresh clients. DTLS also
   checks wrong-key refusal and subsequent valid service.
+- Five IPv6 UDP scenarios use the same client/server pairings and check exact GET,
+  4.04, 2,000-byte Block2 and a subsequent valid GET. An independent IPv6 socket
+  probe records actual request/response bytes from `::1`, preventing silent IPv4
+  fallback from passing. These are loopback checks, not scoped/link-local, DTLS
+  or IPv6 fault-injection qualification.
 - Twelve UDP reliability scenarios: each of the three clients against a Coaptic
   server, with dropped reply, duplicated request, blackhole and server restart.
   This does not test datagram loss against alternative servers or over DTLS.
