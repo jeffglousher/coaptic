@@ -28,14 +28,14 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 
 - [`Peer`](src/peer.rs) — start/stop server, client request, local UDP addr. Backends: `coaptic`, `coap-rs`. Add a library by implementing the trait.
 - Pcap writer + golden JSON grader (`expectations/catalog.json`). CORE goldens assert type, token echo, and CON↔ACK MID, and omit `allow_extra`. OBS / BLOCK / LINK / DTLS keep `allow_extra` (notifications, block trains, mixed-peer extras). Ports / time are wildcards.
-- DTLS: feature `dtls` uses webrtc-dtls 0.12 via explicit transport adapters as a **harness** `DatagramIo` adapter. The `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
+- DTLS: feature `dtls` uses webrtc-dtls 0.12 via explicit transport adapters as a **harness** `DatagramIo` adapter. The default `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
 - `TD_6LoWPAN_*` stay skipped (`future/backlog` — contributor opportunity).
 
 ### Qualification boundary
 
 The App TD runner reports known incomplete scenarios as `SKIP: coverage gap #199`.
 These are unfinished work, not conformance passes: CORE separate responses and
-loss scenarios; full BLOCK and OBS scenarios; DTLS loss, authenticated
+loss scenarios; full BLOCK and OBS scenarios; DTLS cipher/Finished capture, loss, authenticated
 failure evidence and raw-public-key scenarios. The X.509 fixture does not prove
 raw-public-key support. The Engine tests, dogfood and process tests retain their
 separate, narrower coverage. See [#199](https://github.com/jeffglousher/coaptic/issues/199).

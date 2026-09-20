@@ -149,6 +149,9 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
         "TD_COAP_CORE_15" | "TD_COAP_CORE_16" => {
             Some("coverage gap #199: required loss injection is not implemented")
         }
+        "TD_COAP_DTLS_01" => Some(
+            "coverage gap #199: cipher offer/selection and Finished handshake evidence not captured",
+        ),
         "TD_COAP_DTLS_02" => Some(
             "coverage gap #199: dtls authentication failure lacks authenticated alert evidence",
         ),

@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from capabilities import load_manifest, evaluate
 
 SCHEMA = "coaptic-peer/2"
 BODY = b"core-test-payload"
@@ -117,6 +118,15 @@ def request(exe, transport, number, **kwargs):
         raise RuntimeError(f"peer crashed or contradicted response: {event}")
     event["exit_code"] = result.returncode
     return event
+
+
+def expect_refusal(event, *, handshake=False):
+    words = ("timeout", "timed out", "deadline", "elapsed")
+    if handshake:
+        words += ("handshake", "decrypt", "alert")
+    if type(event.get("exit_code")) is not int or event["exit_code"] != 1 or event.get("event") != "error" or not any(
+            word in event.get("message", "").lower() for word in words):
+        raise AssertionError(f"not a bounded protocol refusal/timeout: {event}")
 
 
 def validate_timing(event):
@@ -263,6 +273,7 @@ def main():
     if not 1 <= args.iterations <= 10000:
         parser.error("iterations must be 1..10000")
     peers = {"coaptic": args.coaptic.resolve(), "coap-rs": args.coap_rs.resolve(), "libcoap": args.libcoap.resolve()}
+    manifest, manifest_hash = load_manifest()
     report = {"schema": "coaptic-process-interop/2", "platform": platform.platform(),
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
@@ -271,6 +282,7 @@ def main():
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
               "limitations": ["PSK DTLS only; this suite does not qualify OSCORE, Observe or certificates; no claim of full ETSI coverage"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
+              "capability_manifest": {"path": "tools/interop/capabilities.json", "sha256": manifest_hash},
               "cases": [], "benchmarks": []}
     if args.libcoap_udp_only:
         report["limitations"].append("libcoap DTLS explicitly excluded for this local build")
@@ -304,8 +316,7 @@ def main():
                         raise AssertionError(f"request measurement failed: {measured['sample_failures']}")
                     if transport == "dtls":
                         refused = request(peers[client], transport, service.number, key="incorrect", timeout=1500)
-                        if refused["exit_code"] == 0 or not any(s in refused.get("message", "").lower() for s in ("timeout", "timed out", "deadline", "handshake", "decrypt", "alert", "elapsed")):
-                            raise AssertionError(f"wrong key did not produce authentication failure/timeout: {refused}")
+                        expect_refusal(refused, handshake=True)
                         # A failed handshake must not destroy availability.
                         expect(request(peers[client], transport, service.number))
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
@@ -322,8 +333,7 @@ def main():
                         for _ in range(3):
                             expect(request(peers[client], "dtls", relay.number))
                         refused = request(peers[client], "dtls", relay.number, key="incorrect", timeout=1500)
-                        if refused["exit_code"] == 0:
-                            raise AssertionError("wrong-key reconnect unexpectedly succeeded")
+                        expect_refusal(refused, handshake=True)
                         expect(request(peers[client], "dtls", relay.number))
                         endpoint = relay.back.getsockname()
                 return {"server_endpoint": endpoint, "successful_connections": 4,
@@ -366,8 +376,7 @@ def main():
                                         method="POST" if mode != "blackhole" else "GET",
                                         timeout=6500 if mode != "blackhole" else 500)
                     if mode == "blackhole":
-                        if event["exit_code"] == 0 or not any(s in event.get("message", "").lower() for s in ("timed out", "timeout", "elapsed")):
-                            raise AssertionError(f"blackhole did not return bounded timeout: {event}")
+                        expect_refusal(event)
                     else:
                         expect(event, 68, b"")
                         expect(request(peers[client], "udp", service.number, path="counter"), 69, b"1")
@@ -387,8 +396,12 @@ def main():
                 expect(request(peers[client], "udp", service.number, path="counter"), 69, b"0")
             return {"port": number, "note": "fresh in-memory fixture after process restart; no durability claim"}
         case(f"reliability:{client}->restart", restart)
-    report["passed"] = all(c["passed"] for c in report["cases"])
-    report["failures"] = sum(not c["passed"] for c in report["cases"])
+    report["coverage"] = evaluate(manifest, report["cases"],
+        libcoap_dtls=not args.libcoap_udp_only, system=platform.system().lower())
+    report["passed"] = report["coverage"]["complete"]
+    report["failures"] = len(report["coverage"]["problems"])
+    for problem in report["coverage"]["problems"]:
+        print(f"FAIL coverage: {problem}", flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     return 0 if report["passed"] else 1

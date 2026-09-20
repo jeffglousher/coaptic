@@ -1,7 +1,7 @@
 //! Multi-implementation CoAP#4 plugtest harness with pcap capture and grading.
 //!
 //! This crate is **not** part of the `coaptic` library. The library stays
-//! `no_std` with zero runtime Cargo dependencies. Peers, pcap, and DTLS live
+//! `no_std` with zero default runtime Cargo dependencies. Peers, pcap, and DTLS live
 //! here as test/harness code.
 //!
 //! ```text
@@ -53,10 +53,10 @@
 //! There is no wire tap on the webrtc-dtls socket, so ClientHello cipher
 //! lists are not graded.
 //!
-//! Raw-public-key TDs (`TD_COAP_DTLS_04`–`07`) run as mutually-authenticated
-//! ECDSA certificates: webrtc-dtls has no RFC 7250 RPK certificate type.
-//! Cipher `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8` is requested when the stack
-//! offers it.
+//! Literal DTLS TDs remain skipped until all required handshake evidence is
+//! captured. Separate tests exercise PSK and mutual X.509 GET/refusal paths.
+//! The backend has no RFC 7250 RPK certificate type; X.509 tests cannot
+//! qualify raw-public-key TDs (`TD_COAP_DTLS_04`–`07`).
 //!
 //! # 6LoWPAN
 //!
