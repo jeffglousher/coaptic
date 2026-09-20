@@ -70,7 +70,10 @@
 //!
 //! Observe: return [`.observe`](Response::observe) on a successful GET, or
 //! attach [`MethodRouter::observe`]; later representations are
-//! [`App::notify`]. Client subscribe is [`Outgoing::observe`] /
+//! [`App::notify`]. Server re-registration with the same peer, Token and route
+//! advances the retained 24-bit sequence while replacing scheduling and OSCORE
+//! request state. Sequence continuity after removal or restart is not retained.
+//! Client subscribe is [`Outgoing::observe`] /
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
 //! (RFC 9175 4.01) is caller-owned through [`AppBuilder::echo_policy`]. Pairwise OSCORE
 //! (feature `oscore`) is `App::set_oscore`.
@@ -1596,11 +1599,19 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
 
     let opted = response.observe_seq().is_some() || plan.has_source;
     response = response.without_observe();
-    if plan.deregister || plan.register {
-        let _ = engine.take_observe(key);
-    }
+    let previous = if plan.deregister || plan.register {
+        engine.take_observe(key)
+    } else {
+        None
+    };
     if plan.register && response.code().is_success() && opted {
+        // Re-registration replaces scheduling and protection state, but the
+        // same Token/resource must retain ordering across that replacement.
+        let sequence = previous
+            .filter(|interest| interest.resource() == plan.resource)
+            .map_or(0, |interest| interest.seq().wrapping_add(1) & 0x00ff_ffff);
         let interest = ObserveInterest::new(plan.token, peer)
+            .with_seq(sequence)
             .with_resource(plan.resource)
             .with_content_format(response.format());
         #[cfg(feature = "oscore")]
@@ -1610,7 +1621,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
         if engine.insert_observe(interest).is_some() {
             let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
             let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-            response = response.observe(0);
+            response = response.observe(sequence);
         } else {
             response = response.without_observe();
         }
