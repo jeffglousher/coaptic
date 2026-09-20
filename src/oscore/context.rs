@@ -378,6 +378,27 @@ impl SecurityContext {
         None
     }
 
+    /// Read-only admission check; App commits only after response ACK succeeds.
+    pub(crate) fn notification_fresh(
+        &self,
+        token: Token,
+        piv: Option<PartialIv>,
+    ) -> Result<(), Error> {
+        let row = self
+            .live
+            .iter()
+            .find_map(|row| row.as_ref().filter(|r| r.token == token))
+            .ok_or(Error::Context)?;
+        if match piv {
+            None => row.notify_no_piv,
+            Some(piv) => row.notify_number.is_some_and(|n| piv.seq() <= n),
+        } {
+            Err(Error::Replay)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Replay-protect an Observe notification (RFC 8613 §7.4.1).
     ///
     /// At most one notification without Partial IV. A Partial IV must be
@@ -390,28 +411,17 @@ impl SecurityContext {
         token: Token,
         piv: Option<PartialIv>,
     ) -> Result<(), Error> {
+        self.notification_fresh(token, piv)?;
         let row = self
             .live
             .iter_mut()
             .find_map(|row| row.as_mut().filter(|r| r.token == token))
             .ok_or(Error::Context)?;
         match piv {
-            None => {
-                if row.notify_no_piv {
-                    return Err(Error::Replay);
-                }
-                row.notify_no_piv = true;
-                Ok(())
-            }
-            Some(piv) => {
-                let seq = piv.seq();
-                if row.notify_number.is_some_and(|n| seq <= n) {
-                    return Err(Error::Replay);
-                }
-                row.notify_number = Some(seq);
-                Ok(())
-            }
+            None => row.notify_no_piv = true,
+            Some(piv) => row.notify_number = Some(piv.seq()),
         }
+        Ok(())
     }
 
     pub(crate) fn take_sender_piv(&mut self) -> Result<PartialIv, Error> {
