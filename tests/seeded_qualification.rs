@@ -70,7 +70,7 @@ fn seeded_datagram_mutations_preserve_views_and_reject_invalid_headers() {
         if n >= 4 {
             bytes[0] &= 0x3f;
             assert!(decode(&bytes[..n]).is_err());
-            bytes[0] = 0x40 | 9 + ((random.next() % 7) as u8);
+            bytes[0] = 0x40 | (9 + ((random.next() % 7) as u8));
             assert!(decode(&bytes[..n]).is_err());
         }
     }
