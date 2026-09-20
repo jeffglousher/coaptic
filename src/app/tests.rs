@@ -6303,9 +6303,10 @@ fn client_observe_survives_stale_data_then_ends_on_final_response() {
         } else {
             Code::CONTENT
         };
-        let final_message = Message::new(Type::Confirmable, code, MessageId::new(200))
-            .with_token(call.token())
-            .with_payload(b"final");
+        let final_message =
+            Message::new(Type::Confirmable, code, MessageId::new(200 + iteration * 2))
+                .with_token(call.token())
+                .with_payload(b"final");
         inject_empty(&mut app, peer, final_message);
         app.poll(4).unwrap();
         assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
@@ -6318,10 +6319,84 @@ fn client_observe_survives_stale_data_then_ends_on_final_response() {
         inject_empty(&mut app, peer, final_message);
         app.poll(5).unwrap();
         let (_, wire, n) = app.transport().sent[0].unwrap();
+        let ack = decode(&wire[..n]).unwrap();
+        assert!(ack.is_empty_ack());
+        assert_eq!(ack.message_id(), final_message.message_id());
+        assert!(app.take_response(call).is_none());
+        // A new unsolicited response after termination still receives RST.
+        let unknown = Message::new(Type::Confirmable, code, MessageId::new(201 + iteration * 2))
+            .with_token(call.token())
+            .with_payload(b"new");
+        app.transport_mut().sent_n = 0;
+        inject_empty(&mut app, peer, unknown);
+        app.poll(6).unwrap();
+        let (_, wire, n) = app.transport().sent[0].unwrap();
         let reset = decode(&wire[..n]).unwrap();
         assert!(reset.is_empty_rst());
-        assert_eq!(reset.message_id(), final_message.message_id());
+        assert_eq!(reset.message_id(), unknown.message_id());
         assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn accepted_response_ack_cache_is_bounded_and_expires_without_redelivery() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let mut first = None;
+    let mut last = None;
+    // Default has eight dedup rows. A ninth accepted response evicts the oldest.
+    for index in 0..9u16 {
+        app.transport_mut().sent_n = 0;
+        let now = u64::from(index);
+        let call = app.get("value").to(peer).non().send(now).unwrap();
+        let response = Message::new(
+            Type::Confirmable,
+            Code::CONTENT,
+            MessageId::new(300 + index),
+        )
+        .with_token(call.token())
+        .with_payload(b"value");
+        inject_empty(&mut app, peer, response);
+        app.poll(now).unwrap();
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap().payload(),
+            &b"value"[..]
+        );
+        assert!(app.take_response(call).is_none());
+        if index == 0 {
+            first = Some(call);
+        }
+        last = Some(call);
+        assert_eq!(app.engine.rx_occupied(), 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+    let first = first.unwrap();
+    let last = last.unwrap();
+    for (call, mid, now, expect_ack) in [
+        (first, 300, 10, false),
+        (last, 308, 11, true),
+        (
+            last,
+            308,
+            8 + u64::from(Transmission::EXCHANGE_LIFETIME_MS),
+            false,
+        ),
+    ] {
+        app.transport_mut().sent_n = 0;
+        let response = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(mid))
+            .with_token(call.token())
+            .with_payload(b"value");
+        inject_empty(&mut app, peer, response);
+        app.poll(now).unwrap();
+        assert_eq!(app.transport().sent_n, 1);
+        let (_, wire, n) = app.transport().sent[0].unwrap();
+        let reply = decode(&wire[..n]).unwrap();
+        assert_eq!(reply.is_empty_ack(), expect_ack);
+        assert_eq!(reply.is_empty_rst(), !expect_ack);
+        assert_eq!(reply.message_id(), MessageId::new(mid));
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine.rx_occupied(), 0);
         assert_eq!(app.engine.tx_occupied(), 0);
     }
 }
