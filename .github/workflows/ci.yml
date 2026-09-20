@@ -29,6 +29,27 @@ jobs:
       - run: cargo check --locked -p coaptic --no-default-features
       - run: cargo check --locked -p coaptic --all-features
 
+  cross-build:
+    name: no_std code generation (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [thumbv6m-none-eabi, thumbv7em-none-eabi, riscv32imac-unknown-none-elf, wasm32-unknown-unknown]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - run: python3 tools/qualification/cross_build.py --target ${{ matrix.target }} --output ${{ runner.temp }}/cross-build.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: cross-build-${{ matrix.target }}
+          path: ${{ runner.temp }}/cross-build.json
+          if-no-files-found: error
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest

@@ -30,6 +30,20 @@ The [CI workflow](.github/workflows/ci.yml) is authoritative for job flags and
 platforms. It runs on pull requests and manual dispatch; process timing JSON is
 retained as the `process-interop` artifact. CI smoke timings are not a performance SLA.
 
+## Cross-target build evidence
+
+CI pins Rust 1.97.1 for Cortex-M0 (`thumbv6m-none-eabi`), Cortex-M4
+(`thumbv7em-none-eabi`), RV32 (`riscv32imac-unknown-none-elf`) and WebAssembly
+(`wasm32-unknown-unknown`). `tools/qualification/cross_build.py` builds a concrete
+bounded App probe with core, alloc, OSCORE and alloc+OSCORE configurations and
+archives source identity, compiler, commands and results. Install that toolchain
+and target, then run it with `--target TARGET --output PATH` to reproduce.
+
+This establishes release code generation, including the library dependency.
+It does not link a firmware image, execute on a device, measure stack high-water,
+or qualify platform allocators, entropy or networking. Those remain tracked in #202.
+The library MSRV remains 1.85; ordinary host CI also checks current stable.
+
 ## Packaging and release
 
 Only `coaptic` is published; harnesses and peers are test-only. Packaging checks
