@@ -2551,6 +2551,31 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
     })
 }
 
+// Retire a timed-out Q download in the same poll that reclaims its body.
+// The inbox must not keep a partial SlotId that another transfer can reuse.
+pub(crate) fn qblock_give_up<Mem>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    oscore: &mut super::oscore::Field,
+    key: ExchangeKey,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
+    let call = Call::new(key.token(), key.endpoint());
+    if lives.get(call).is_some() {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::TimedOut,
+            true,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fail_call<Mem>(
     engine: &mut Engine<Mem>,
