@@ -695,6 +695,8 @@ where
     /// follow-ups. Changes return `BlockTransferError::IdentityMismatch` before
     /// body output or transfer advancement. Other retained snapshot metadata
     /// and final-block recovery are not guaranteed.
+    /// The body snapshot survives incomplete same-Token follow-up blocks,
+    /// including send failure, and is released after the final successful send.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
@@ -1944,7 +1946,7 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let outcome = issue_classic(
-        engine, io, meta, response, ty, meta.mid, id, pending, oscore_ctx,
+        engine, io, meta, response, ty, meta.mid, id, pending, true, oscore_ctx,
     );
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -2321,7 +2323,16 @@ where
         )
     } else {
         issue_classic(
-            engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            meta.mid,
+            id,
+            None,
+            response.observe_seq().is_some(),
+            oscore_ctx,
         )
     };
     // Selective requests are independent exchanges. A fresh handler body is
@@ -2433,7 +2444,7 @@ where
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
             issue_classic(
-                engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
+                engine, io, meta, response, ty, meta.mid, id, None, true, oscore_ctx,
             )
         }
         _ => Ok(()),
@@ -2450,6 +2461,7 @@ fn issue_classic<S, T>(
     mid: MessageId,
     id: SlotId,
     pending: Option<(u64, MessageId, u32)>,
+    retain_incomplete: bool,
     oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
@@ -2489,10 +2501,10 @@ where
     send_issued(
         engine, io, meta, response, ty, mid, issued, false, pending, oscore_ctx,
     )?;
-    // Classic requests are independent exchanges and may change tokens. The
-    // handler supplies the representation for each request; retain state only
-    // for a notification whose body must survive until its follow-up blocks.
-    if issued.complete() || (pending.is_none() && response.observe_seq().is_none()) {
+    // Ordinary classic requests reconstruct independent snapshots. Observe
+    // snapshots survive every incomplete follow-up, whose response correctly
+    // omits Observe, until the last block is sent or lifecycle cleanup runs.
+    if issued.complete() || !retain_incomplete {
         let _ = engine.release_tx_body(id);
     }
     Ok(())
