@@ -988,14 +988,11 @@ where
         }
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
-        } else if let Some(interest) = engine.reject_observe_notify(parsed.message_id(), peer) {
-            // RST is Empty (no Token). Match the notify Message ID.
-            #[cfg(feature = "oscore")]
-            if let Some(ctx) = oscore.as_mut() {
-                let _ = ctx.take(interest.token());
-            }
-            #[cfg(not(feature = "oscore"))]
-            let _ = interest;
+        } else {
+            // RST identifies a server notification by MID and endpoint. Its
+            // request reference belongs to the removed server interest;
+            // outgoing client bindings may independently use the same Token.
+            let _ = engine.reject_observe_notify(parsed.message_id(), peer);
         }
         let _ = engine.release_rx(rx);
         return Ok(());
