@@ -1186,6 +1186,28 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.rx_body_transfer(id)
     }
 
+    #[cfg(feature = "oscore")]
+    pub(crate) fn remember_qblock1_request(
+        &mut self,
+        id: SlotId,
+        token: crate::message::Token,
+        request: crate::oscore::RequestRef,
+    ) {
+        let Some(mut transfer) = self.storage.rx_body_transfer(id) else {
+            return;
+        };
+        if transfer.role() != BlockRole::IncomingQBlock1 {
+            return;
+        }
+        if transfer
+            .oscore_request
+            .is_none_or(|(_, old)| request.piv().seq() > old.piv().seq())
+        {
+            transfer.oscore_request = Some((token, request));
+            let _ = self.storage.set_rx_body_transfer(id, transfer);
+        }
+    }
+
     /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
     ///
     /// [`Self::apply_q_block1`] / [`Self::apply_q_block2`] do not take a clock.
