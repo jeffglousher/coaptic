@@ -644,7 +644,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     /// Admit or continue an incoming transfer identified by `key` and `role`.
     ///
     /// A present Request-Tag / ETag also matches an existing slot at the same
-    /// endpoint when Tokens differ.
+    /// endpoint when Tokens differ. Q-Block requires the same `expected_len`
+    /// on every call; a change is refused without modifying the transfer.
+    /// This range API permits `None` for caller-managed metadata; wire assembly
+    /// requires the mandatory size indication on every Q-Block payload.
     pub fn apply_incoming(
         &mut self,
         key: BlockKey,
@@ -653,10 +656,11 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        if let Some(id) = self.lookup(key) {
-            return self.write_incoming(id, role, block, payload);
-        }
-        if let Some(id) = self.lookup_identity(key, role) {
+        if let Some(id) = self.lookup(key).or_else(|| self.lookup_identity(key, role)) {
+            let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+            if role.is_q_block() && transfer.expected_len() != expected_len {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
             return self.write_incoming(id, role, block, payload);
         }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;

@@ -4878,3 +4878,58 @@ fn missing_initial_block_completes_with_typed_failure_and_reclaims_state() {
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     assert!(app.get("value").to(peer).send(2).is_ok());
 }
+
+#[test]
+fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn handler(req: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        put_body(req)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for bad_hint in [None, Some(0), Some(19), Some(21), Some(u32::MAX)] {
+        CALLS.store(0, Ordering::SeqCst);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<true>()
+            .route(LED_PATH, put(handler))
+            .bind(Loopback {
+                inbox: None,
+                last_send: None,
+            })
+            .unwrap();
+        for phase in 0..4 {
+            let payload: &[u8] = if phase < 2 {
+                b"AAAAAAAAAAAAAAAA"
+            } else {
+                b"REST"
+            };
+            let mut req = q_block1(
+                payload,
+                if phase < 2 { 0 } else { 1 },
+                phase < 2,
+                0x1100 + phase,
+                20,
+            );
+            req.size1 = match phase {
+                0 => None,
+                2 => bad_hint,
+                _ => Some(20),
+            };
+            let (wire, n) = encode_block_req(req);
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.transport_mut().last_send = None;
+            app.poll(u64::from(phase)).unwrap();
+            let reply = last_reply(&app);
+            match phase {
+                0 | 2 => assert_eq!(reply.code, Code::REQUEST_ENTITY_INCOMPLETE),
+                1 => assert_eq!(reply.code, Code::CONTINUE),
+                _ => {
+                    assert_eq!(reply.code, Code::CHANGED);
+                    assert_eq!(&reply.payload[..reply.payload_len], b"AAAAAAAAAAAAAAAAREST");
+                }
+            }
+            assert_eq!(CALLS.load(Ordering::SeqCst), usize::from(phase == 3));
+        }
+    }
+}
