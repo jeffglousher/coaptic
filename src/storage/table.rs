@@ -581,7 +581,8 @@ impl ObserveInterest {
 
     /// Last library-assigned notification sequence (24-bit).
     ///
-    /// Zero after register, before the first [`Self::take_due`]. See
+    /// Zero for a new registration; App re-registration continues the previous
+    /// sequence for the same peer, Token and route. See
     /// `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn seq(self) -> u32 {
