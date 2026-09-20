@@ -586,7 +586,10 @@ where
     /// An OSCORE CON retransmit is keyed on the *outer* Message ID so the
     /// cached protected ACK is replayed without a second unprotect.
     /// Observe register / deregister and
-    /// [`ObserveSource`] notify run here; caller-built notifications use
+    /// [`ObserveSource`] notify run here. Pending notification signals are
+    /// claimed after ingress: cancellation/re-registration cannot transfer a
+    /// signal to a replacement row, and an earlier send failure preserves it.
+    /// Caller-built notifications use
     /// [`Self::notify`]. Empty RST matching a notification Message ID
     /// drops that observer (RFC 7641 §4.5; RST has no Token).
     /// Max-Age expiry only makes representation data stale; it does not
@@ -702,7 +705,7 @@ where
         Err(DatagramIoError::Saturated) => (None, true),
         Err(e) => return Err(e.into()),
     };
-    let progress = engine.progress(now_ms);
+    let progress = engine.progress_before_dispatch(now_ms);
     // RX dispatch and retransmission give-up may change or release this body.
     // Retain only the small timer identity, not a second body-transfer copy.
     let recovery_wait = progress.qblock_recover().and_then(|recover| {
@@ -748,7 +751,12 @@ where
         )?;
     }
 
-    if let Some(id) = progress.observe_notify() {
+    // Claim after ingress. Replacement registrations start with no pending
+    // signal, so a reused slot cannot inherit the old relation's opportunity.
+    if let Some(id) = progress
+        .observe_notify()
+        .and_then(|id| engine.claim_observe_notification(id, now_ms))
+    {
         if let Some(interest) = engine.observe_interest(id) {
             let seq = interest.seq();
             if observe_endpoint_held(engine, interest.endpoint(), now_ms)
