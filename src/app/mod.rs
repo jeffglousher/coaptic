@@ -593,7 +593,10 @@ where
     /// Honors notification NSTART. CON when the row
     /// [`ObserveInterest::must_confirm`]; otherwise NON. Returns how many
     /// notifications were sent. Domain data stays in `response` — `App`
-    /// does not hold it.
+    /// does not hold it. Successful notifications must keep the initial
+    /// Content-Format, including its absence. A mismatch sends 4.06 without
+    /// Observe and ends that relation. Non-success responses also omit Observe
+    /// and end the relation after successful transmission (RFC 7641 §4.2).
     pub fn notify(
         &mut self,
         now_ms: u64,
@@ -1230,24 +1233,25 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
 ) -> Response<'a> {
     let key = ObserveKey::new(plan.token, peer);
 
-    if plan.deregister {
+    let opted = response.observe_seq().is_some() || plan.has_source;
+    response = response.without_observe();
+    if plan.deregister || plan.register {
         let _ = engine.take_observe(key);
-    } else if plan.register && response.code().is_success() {
-        let opted = response.observe_seq().is_some() || plan.has_source;
-        if opted {
-            let _ = engine.take_observe(key);
-            let interest = ObserveInterest::new(plan.token, peer).with_resource(plan.resource);
-            #[cfg(feature = "oscore")]
-            let interest = interest.with_oscore(oscore_req);
-            #[cfg(not(feature = "oscore"))]
-            let _ = oscore_req;
-            if engine.insert_observe(interest).is_some() {
-                let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
-                let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-                response = response.observe(0);
-            } else {
-                response = response.without_observe();
-            }
+    }
+    if plan.register && response.code().is_success() && opted {
+        let interest = ObserveInterest::new(plan.token, peer)
+            .with_resource(plan.resource)
+            .with_content_format(response.format());
+        #[cfg(feature = "oscore")]
+        let interest = interest.with_oscore(oscore_req);
+        #[cfg(not(feature = "oscore"))]
+        let _ = oscore_req;
+        if engine.insert_observe(interest).is_some() {
+            let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+            let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
+            response = response.observe(0);
+        } else {
+            response = response.without_observe();
         }
     }
     if plan.delete && response.code().is_success() {
@@ -1410,8 +1414,17 @@ where
         Type::NonConfirmable
     };
     let mid = ids.next();
-    let mut notify = *response;
-    notify.set_observe(seq);
+    let mut notify =
+        if response.code().is_success() && response.format() != interest.content_format() {
+            Response::new(Code::NOT_ACCEPTABLE)
+        } else {
+            *response
+        };
+    if notify.code().is_success() {
+        notify.set_observe(seq);
+    } else {
+        notify = notify.without_observe();
+    }
     let dest = interest.endpoint();
     let token = interest.token();
     let key = BlockKey::new(token, dest);
@@ -1461,6 +1474,10 @@ where
         }
     };
     outcome?;
+    if !notify.code().is_success() {
+        let _ = engine.take_observe(interest.key());
+        return Ok(());
+    }
 
     let confirmable = ty == Type::Confirmable;
     let _ = engine.record_observe_notify(interest.key(), now_ms, mid, confirmable);
