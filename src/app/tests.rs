@@ -6997,3 +6997,28 @@ fn failed_observe_cancellation_retires_local_state_and_reports_uncertainty() {
         app.transport_mut().fail = false;
     }
 }
+
+#[test]
+fn observe_cancellation_cannot_select_an_unread_terminal_response() {
+    fn decline(_: Request<'_>) -> Response<'static> {
+        Response::not_found()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("x", get(decline))
+        .bind(Echo::default())
+        .unwrap();
+    let call = app.get("x").observe().to(peer).send(0).unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(
+        app.get("x").deregister_call(call).to(peer).send(1),
+        Err(Error::ObserveCancellationMismatch)
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::NOT_FOUND
+    );
+}

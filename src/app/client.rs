@@ -537,11 +537,13 @@ impl ClientLives {
         peer: Endpoint,
         identity: ObserveRequest,
         target: Option<Call>,
+        is_live: impl Fn(Call) -> bool,
     ) -> Result<Call, Error<E>> {
         let mut matches = self.rows.iter().flatten().filter(|live| {
             live.call.peer == peer
                 && live.observe == OutgoingObserve::Register
                 && live.due_ms != 0
+                && is_live(live.call)
                 && live.observe_request == Some(identity)
                 && target.is_none_or(|call| live.call == call)
         });
@@ -1103,6 +1105,10 @@ where
                     dest,
                     observe_request.expect("Observe identity"),
                     self.observe_target,
+                    |call| {
+                        !self.app.inbox.contains(call)
+                            || client_observe_live(&self.app.engine, call)
+                    },
                 )?
                 .token()
         } else {
