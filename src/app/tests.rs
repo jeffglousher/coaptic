@@ -7826,3 +7826,217 @@ fn failed_qblock2_window_continuations_retire_partial_representation() {
         }
     }
 }
+
+#[test]
+fn qblock2_repeated_selections_send_the_union_once() {
+    static BODY: [u8; 184] = [b'R'; 184];
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let cases: &[(&[u8], &[u32])] = &[
+        (&[0x80, 0xa0], &[8, 10]),
+        (&[0x78, 0x80, 0x90], &[7, 8, 9]),
+        (&[0x98, 0xa0, 0xb8], &[9, 10, 11]),
+    ];
+    for cached in [false, true] {
+        for &(values, expected) in cases {
+            let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .route("large", get(body))
+                .bind(WideLoopback::default())
+                .unwrap();
+            let before = if cached {
+                let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+                    .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+                let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
+                for _ in 0..10 {
+                    app.engine.next_q_block2(id).unwrap();
+                }
+                Some((id, app.engine.tx_body_transfer(id).unwrap()))
+            } else {
+                None
+            };
+            let mut options = crate::message::OptionsBuilder::<4>::new();
+            for v in values {
+                options
+                    .push(Opt::opaque(
+                        OptionNumber::Q_BLOCK2,
+                        core::slice::from_ref(v),
+                    ))
+                    .unwrap();
+            }
+            let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3700);
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(0).unwrap();
+            assert_eq!(app.transport().send_n, expected.len());
+            for (index, &num) in expected.iter().enumerate() {
+                let reply =
+                    decode(&app.transport().sends[index][..app.transport().send_lens[index]])
+                        .unwrap();
+                let block = reply.q_block2().next().unwrap().unwrap();
+                assert_eq!(block.num(), num);
+                assert_eq!(
+                    reply.payload(),
+                    &BODY[num as usize * 16..((num as usize + 1) * 16).min(BODY.len())]
+                );
+                assert_eq!(reply.etag().next(), Some(&b"v1"[..]));
+                assert_eq!(reply.size2(), Some(Ok(BODY.len() as u32)));
+                if index > 0 {
+                    let previous = decode(
+                        &app.transport().sends[index - 1][..app.transport().send_lens[index - 1]],
+                    )
+                    .unwrap();
+                    assert_ne!(reply.message_id(), previous.message_id());
+                }
+            }
+            if let Some((id, before)) = before {
+                assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+            } else {
+                for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                    assert!(
+                        app.engine
+                            .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn qblock2_invalid_later_options_refuse_before_handler_and_preserve_cached_body() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn body(_: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::content(&LARGE).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let cases: &[(&[u8], Code)] = &[
+        (&[0x20, 0x10], Code::BAD_REQUEST), // Decreasing NUM.
+        (&[0x20, 0x20], Code::BAD_REQUEST), // Duplicate NUM.
+        (&[0x20, 0x31], Code::BAD_REQUEST), // Different SZX.
+        (&[0x20, 0x37], Code::BAD_OPTION),  // Invalid datagram Q SZX.
+    ];
+    for &(values, expected) in cases {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("large", get(body))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+            .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+        let id = app.engine.start_q_block2(key, &LARGE, 0).unwrap();
+        let before = app.engine.tx_body_transfer(id).unwrap();
+        let mut options = crate::message::OptionsBuilder::<4>::new();
+        for v in values {
+            options
+                .push(Opt::opaque(
+                    OptionNumber::Q_BLOCK2,
+                    core::slice::from_ref(v),
+                ))
+                .unwrap();
+        }
+        let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3800);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        let reply = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+        assert_eq!(reply.code(), expected);
+        assert!(reply.q_block2().next().is_none());
+        assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+    }
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn qblock2_later_out_of_range_selection_is_preflighted_before_output() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(get_large))
+        .bind(WideLoopback::default())
+        .unwrap();
+    // Valid block 0 then invalid block 2 for 2000 bytes / 1024.
+    let opts = [
+        Opt::opaque(OptionNumber::Q_BLOCK2, &[0x06]),
+        Opt::opaque(OptionNumber::Q_BLOCK2, &[0x26]),
+    ];
+    let (wire, n) = encode_wide(Code::GET, &["large"], &opts, 0x3900);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    assert_eq!(
+        app.poll(0),
+        Err(Error::Block(crate::error::BlockTransferError::Gap))
+    );
+    assert_eq!(app.transport().send_n, 0);
+    for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch() {
+    fn never(_: Request<'_>) -> Response<'static> {
+        panic!("invalid block options reached handler")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let cases: &[&[(OptionNumber, &[u8])]] = &[
+        &[
+            (OptionNumber::Q_BLOCK1, &[0]),
+            (OptionNumber::BLOCK2, &[0]),
+            (OptionNumber::REQUEST_TAG, &[]),
+        ],
+        &[
+            (OptionNumber::Q_BLOCK1, &[0]),
+            (OptionNumber::BLOCK1, &[0]),
+            (OptionNumber::REQUEST_TAG, &[]),
+        ],
+        &[(OptionNumber::BLOCK1, &[0]), (OptionNumber::Q_BLOCK2, &[0])],
+        &[(OptionNumber::BLOCK2, &[0]), (OptionNumber::Q_BLOCK2, &[0])],
+        &[
+            (OptionNumber::Q_BLOCK1, &[0]),
+            (OptionNumber::Q_BLOCK1, &[0]),
+            (OptionNumber::REQUEST_TAG, &[]),
+        ],
+        &[
+            (OptionNumber::OBSERVE, &[]),
+            (OptionNumber::Q_BLOCK2, &[0x20]),
+            (OptionNumber::Q_BLOCK2, &[0x30]),
+        ],
+        &[
+            (OptionNumber::Q_BLOCK2, &[0x20]),
+            (OptionNumber::Q_BLOCK2, &[0, 0, 0, 0]),
+        ],
+    ];
+    for case in cases {
+        let mut options = crate::message::OptionsBuilder::<4>::new();
+        for &(number, value) in *case {
+            options.push(Opt::opaque(number, value)).unwrap();
+        }
+        let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3a00);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("large", get(never))
+            .bind(WideLoopback::default())
+            .unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        assert_eq!(
+            decode(&app.transport().sends[0][..app.transport().send_lens[0]])
+                .unwrap()
+                .code(),
+            Code::BAD_OPTION
+        );
+    }
+}
