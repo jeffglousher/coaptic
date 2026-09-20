@@ -549,6 +549,9 @@ where
     /// [`ObserveSource`] notify run here; caller-built notifications use
     /// [`Self::notify`]. Empty RST matching a notification Message ID
     /// drops that observer (RFC 7641 §4.5; RST has no Token).
+    /// Max-Age expiry only makes representation data stale; it does not
+    /// remove client or server Observe relations. CON notification retry
+    /// exhaustion removes the server relation independently of Max-Age.
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
     /// is the [`Response`]. Non-Block [`Response::payload`] copies at most
@@ -656,8 +659,17 @@ where
             }
             Retransmit::GiveUp(pending) => {
                 client::give_up_client(engine, inbox, lives, oscore, pending.tx_slot());
+                let _ = engine.reject_observe_notify(pending.message_id(), pending.endpoint());
                 engine.release_tx(pending.tx_slot())?;
             }
+        }
+    }
+
+    // Max-Age expires a representation, not an observation (RFC 7641
+    // section 3.3.1). Only explicit CON-wait expiry terminates an interest.
+    if let Some(crate::storage::ObserveExpiry::ClientOff(id)) = progress.observe_expired() {
+        if let Some(interest) = engine.observe_interest(id) {
+            let _ = engine.take_observe(interest.key());
         }
     }
 
@@ -675,16 +687,6 @@ where
             now_ms,
             rx,
         )?;
-    }
-
-    if let Some(expiry) = progress.observe_expired() {
-        if let Some(interest) = engine.observe_interest(expiry.slot()) {
-            #[cfg(feature = "oscore")]
-            if let Some(ctx) = oscore.as_mut() {
-                let _ = ctx.take(interest.token());
-            }
-            let _ = engine.take_observe(interest.key());
-        }
     }
 
     if let Some(id) = progress.observe_notify() {
@@ -1462,9 +1464,10 @@ where
 
     let confirmable = ty == Type::Confirmable;
     let _ = engine.record_observe_notify(interest.key(), now_ms, mid, confirmable);
-    let max_age = notify.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
-    let con_mid = confirmable.then_some(mid);
-    let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, con_mid);
+    if !confirmable {
+        let max_age = notify.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
+        let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, None);
+    }
     Ok(())
 }
 

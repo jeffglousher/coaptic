@@ -2583,7 +2583,7 @@ fn empty_con_ping_rst_does_not_drop_observe() {
 }
 
 #[test]
-fn observe_max_age_expiry_drops_interest() {
+fn observe_max_age_expiry_preserves_interest() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
@@ -2598,8 +2598,13 @@ fn observe_max_age_expiry_drops_interest() {
     app.poll(0).expect("poll");
     assert!(observe_registered(&app, peer));
 
-    app.poll(5_000).expect("expired");
-    assert!(!observe_registered(&app, peer));
+    app.poll(5_000).expect("stale representation");
+    assert!(observe_registered(&app, peer));
+    assert_eq!(
+        app.notify(5_001, &["sensors", "temp"], Response::content(b"updated"))
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -5910,4 +5915,192 @@ fn stale_observe_block_zero_cannot_replace_incomplete_representation() {
     assert_eq!(response.observe_seq(), Some(10));
     assert_eq!(response.received_at_ms(), Some(0));
     assert_eq!(app.engine.tx_occupied(), 0);
+}
+
+#[test]
+fn client_observe_survives_stale_data_then_ends_on_final_response() {
+    use crate::message::encode_uint;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    for iteration in 0..12 {
+        app.transport_mut().sent_n = 0;
+        let call = app.get("value").observe().to(peer).non().send(0).unwrap();
+        for (sequence, now) in [(0, 0), (1, 2)] {
+            let seq = encode_uint(sequence);
+            let zero = encode_uint(0);
+            let opts = [Opt::observe(&seq), Opt::max_age(&zero)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(100 + sequence as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(b"value");
+            let mut wire = [0; 256];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(now).unwrap();
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap().observe_seq(),
+                Some(sequence)
+            );
+            app.poll(now + 1).unwrap();
+            assert!(
+                app.engine
+                    .lookup_observe(ObserveKey::new(call.token(), peer))
+                    .is_some()
+            );
+            assert!(app.take_response(call).is_none());
+        }
+        let code = if iteration % 2 == 0 {
+            Code::NOT_FOUND
+        } else {
+            Code::CONTENT
+        };
+        let final_message = Message::new(Type::Confirmable, code, MessageId::new(200))
+            .with_token(call.token())
+            .with_payload(b"final");
+        inject_empty(&mut app, peer, final_message);
+        app.poll(4).unwrap();
+        assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+        assert!(
+            app.engine
+                .lookup_observe(ObserveKey::new(call.token(), peer))
+                .is_none()
+        );
+        app.transport_mut().sent_n = 0;
+        inject_empty(&mut app, peer, final_message);
+        app.poll(5).unwrap();
+        let (_, wire, n) = app.transport().sent[0].unwrap();
+        let reset = decode(&wire[..n]).unwrap();
+        assert!(reset.is_empty_rst());
+        assert_eq!(reset.message_id(), final_message.message_id());
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn unsolicited_observe_option_does_not_create_subscription() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    for _ in 0..12 {
+        app.transport_mut().sent_n = 0;
+        let call = app.get("value").to(peer).non().send(0).unwrap();
+        let opts = [Opt::observe_register()];
+        let response = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(100))
+            .with_token(call.token())
+            .with_options(&opts);
+        inject_empty(&mut app, peer, response);
+        app.poll(0).unwrap();
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap().code(),
+            Code::CONTENT
+        );
+        assert!(
+            app.engine
+                .lookup_observe(ObserveKey::new(call.token(), peer))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for acknowledge in [false, true] {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["sensors", "temp"],
+            &[Opt::observe_register()],
+            0x1001,
+        );
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<false>()
+            .route(&["sensors", "temp"], get(get_obs))
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        assert_eq!(
+            app.notify(
+                0,
+                &["sensors", "temp"],
+                Response::content(b"non").max_age(0)
+            )
+            .unwrap(),
+            1
+        );
+        app.poll(1).unwrap();
+        assert!(observe_registered(&app, peer));
+        assert_eq!(
+            app.notify(1, &["sensors", "temp"], Response::content(b"held"))
+                .unwrap(),
+            0
+        );
+        let now = ObserveTransmission::CONFIRM_INTERVAL_MS;
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                now,
+                &["sensors", "temp"],
+                Response::content(b"con").max_age(0)
+            )
+            .unwrap(),
+            1
+        );
+        let mid = last_wide(&app).message_id();
+        assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+        app.poll(now).unwrap();
+        assert!(observe_registered(&app, peer));
+        assert_eq!(app.engine.tx_occupied(), 1);
+        if acknowledge {
+            let mut wire = [0; WIRE];
+            let n = encode(&Message::empty_ack(mid), &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(now + 1).unwrap();
+            assert_eq!(app.engine.tx_occupied(), 0);
+            app.transport_mut().send_n = 0;
+            app.poll(now + 62_000).unwrap();
+            assert!(observe_registered(&app, peer));
+            assert_eq!(app.transport().send_n, 0);
+        } else {
+            for delta in [2_000, 6_000, 14_000, 30_000, 62_000] {
+                app.transport_mut().send_n = 0;
+                app.poll(now + delta).unwrap();
+                assert_eq!(observe_registered(&app, peer), delta < 62_000);
+                assert_eq!(app.transport().send_n, usize::from(delta < 62_000));
+            }
+            assert_eq!(app.engine.tx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn observe_signal_at_max_age_boundary_is_not_discarded() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register()],
+        0x1001,
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    app.transport_mut().send_n = 0;
+    assert_eq!(app.signal(&["sensors", "temp"]), 1);
+    app.poll(5_000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert!(observe_registered(&app, peer));
+    assert_eq!(last_wide(&app).observe().and_then(Result::ok), Some(1));
 }

@@ -597,6 +597,8 @@ impl ObserveInterest {
     /// send. See `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
     pub fn record_notify(&mut self, now_ms: u64, message_id: MessageId, confirmable: bool) {
         if confirmable {
+            // A previous representation's Max-Age must not end CON delivery.
+            self.lifetime = None;
             self.confirm_due_ms =
                 Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
             self.notify_hold = Some(ObserveNotifyHold::con(message_id));
@@ -614,7 +616,9 @@ impl ObserveInterest {
         self.notify_hold = None;
     }
 
-    /// If the colocated lifetime is due, clear it, pending, and notify hold.
+    /// Surface and clear a due lifetime. Only CON-wait expiry clears pending
+    /// work and notification hold; stale representation data does not cancel
+    /// a notification or relax its congestion-control hold.
     ///
     /// Surfaces once. The row stays occupied. See
     /// `knowledge/rfcs/rfc7641.txt`.
@@ -624,8 +628,10 @@ impl ObserveInterest {
             return None;
         }
         self.lifetime = None;
-        self.pending = false;
-        self.notify_hold = None;
+        if matches!(life, ObserveLifetime::Unacked { .. }) {
+            self.pending = false;
+            self.notify_hold = None;
+        }
         Some(life)
     }
 
