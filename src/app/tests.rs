@@ -2294,7 +2294,7 @@ fn large_get_without_body_pools_fails_clearly() {
 #[test]
 fn large_get_q_block2_issues_a_window() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let q = BlockValue::from_size(0, false, 1024).expect("q").encode();
+    let q = BlockValue::from_size(0, true, 1024).expect("q").encode();
     let extra = [Opt::q_block2(&q)];
     let (wire, n) = encode_wide(Code::GET, &["large"], &extra, 0x1001);
     let mut app = App::profile::<profiles::Default>()
@@ -2325,6 +2325,203 @@ fn large_get_q_block2_issues_a_window() {
     assert!(!q1.more());
     assert_eq!(second.payload(), &LARGE[1024..]);
     assert_eq!(second.etag().next(), Some(&b"large-v1"[..]));
+}
+
+#[test]
+fn qblock2_single_selection_honors_num_and_reclaims_temporary_snapshots() {
+    use crate::storage::SlotId;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(get_large))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for cycle in 0..16 {
+        // Literal Q-Block2 integers: NUM=0/M=0/SZX=6 or NUM=1/M=0/SZX=6.
+        let num = cycle % 2;
+        let q = [if num == 0 { 0x06 } else { 0x16 }];
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["large"],
+            &[Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &q)],
+            0x3400 + cycle,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().send_n = 0;
+        app.poll(u64::from(cycle)).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        let response = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+        assert_eq!(response.ty(), Type::Acknowledgement);
+        assert_eq!(response.message_id(), MessageId::new(0x3400 + cycle));
+        assert_eq!(response.token(), Token::new(&[0xa1]).unwrap());
+        let block = response.q_block2().next().unwrap().unwrap();
+        assert_eq!(block.num(), u32::from(num));
+        assert_eq!(block.more(), num == 0);
+        assert_eq!(block.szx(), 6);
+        assert_eq!(
+            response.payload(),
+            if num == 0 {
+                &LARGE[..1024]
+            } else {
+                &LARGE[1024..]
+            }
+        );
+        assert_eq!(response.etag().next(), Some(&b"large-v1"[..]));
+        assert_eq!(response.size2(), Some(Ok(2000)));
+        assert_eq!(app.engine.tx_occupied(), 0);
+        for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .tx_body_transfer(SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn qblock2_missing_tail_reissues_only_selected_blocks_without_advancing_window() {
+    static BODY: [u8; 184] = [b'Q'; 184];
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for cached in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("large", get(body))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let retained = if cached {
+            let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+                .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+            let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
+            for _ in 0..10 {
+                app.engine.next_q_block2(id).unwrap();
+            }
+            Some((id, app.engine.tx_body_transfer(id).unwrap()))
+        } else {
+            None
+        };
+        // NUM=8/M=1/SZX=0 requests just blocks 8 and 9, not 0..7 or 10..11.
+        let q = [0x88];
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["large"],
+            &[Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &q)],
+            0x3500,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().send_n, 2);
+        for index in 0..2 {
+            let response =
+                decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+            let block = response.q_block2().next().unwrap().unwrap();
+            assert_eq!(block.num(), 8 + index as u32);
+            assert!(block.more());
+            assert_eq!(
+                response.payload(),
+                &BODY[128 + index * 16..144 + index * 16]
+            );
+            assert_eq!(response.size2(), Some(Ok(184)));
+            assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+        }
+        if let Some((id, before)) = retained {
+            assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+            // M=0 is also a reissue and must not acknowledge/advance the set.
+            let q = [0x20];
+            let (wire, n) = encode_wide(
+                Code::GET,
+                &["large"],
+                &[Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &q)],
+                0x3501,
+            );
+            app.transport_mut().send_n = 0;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(1).unwrap();
+            assert_eq!(app.transport().send_n, 1);
+            assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+            let response =
+                decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+            assert_eq!(response.q_block2().next().unwrap().unwrap().num(), 2);
+            // Changed SZX cannot silently select a different byte range.
+            let q = [0x21];
+            let (wire, n) = encode_wide(
+                Code::GET,
+                &["large"],
+                &[Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &q)],
+                0x3502,
+            );
+            app.transport_mut().send_n = 0;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            assert_eq!(
+                app.poll(2),
+                Err(Error::Block(crate::error::BlockTransferError::SzxMismatch))
+            );
+            assert_eq!(app.transport().send_n, 0);
+            assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+        } else {
+            for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine
+                        .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn qblock2_out_of_range_selection_refuses_without_leaking_state() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(get_large))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for cycle in 0..12 {
+        let q = [0x26]; // NUM=2, beyond the 2000-byte body at SZX=6.
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["large"],
+            &[Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &q)],
+            0x3600 + cycle,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(cycle)),
+            Err(Error::Block(crate::error::BlockTransferError::Gap))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn qblock2_client_requests_entire_body_with_m_set() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let request = app.get("large").q_block2();
+    request.to(peer).send(0).unwrap();
+    let request = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let q = request.q_block2().next().unwrap().unwrap();
+    assert_eq!(q.encode().as_bytes(), &[0x0e]);
 }
 
 fn observe_registered<const BLOCK_WISE: bool>(

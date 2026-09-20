@@ -982,7 +982,8 @@ where
         self
     }
 
-    /// Ask for Q-Block2 (NUM 0, SZX 1024). The peer may still use classic Block2.
+    /// Ask for the entire Q-Block2 body (NUM 0, M=1, SZX 1024).
+    /// The peer may still use classic Block2.
     #[must_use]
     pub const fn q_block2(mut self) -> Self {
         self.q_block2 = true;
@@ -1248,7 +1249,7 @@ fn with_client_options<R>(
     let acc = spec.accept.map(ContentFormat::encode);
     let q2 = spec
         .q_block2
-        .then(|| BlockValue::new(0, false, BlockValue::SZX_MAX))
+        .then(|| BlockValue::new(0, true, BlockValue::SZX_MAX))
         .and_then(Result::ok)
         .map(BlockValue::encode);
     let b2 = spec.block2.map(BlockValue::encode);

@@ -1892,14 +1892,21 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    let outcome = if meta.q_block2.is_some() {
+    let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0);
+    let outcome = if selective {
+        issue_q_selection(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+    } else if meta.q_block2.is_some() {
         issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
     } else {
         issue_classic(
             engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
         )
     };
-    if outcome.is_err() {
+    // Selective requests are independent exchanges. A fresh handler body is
+    // only a temporary snapshot; retaining it would leave an unadvanced window
+    // occupying a body slot forever. Existing full-transfer state is handled
+    // separately by continue_outgoing and survives recovery selections.
+    if outcome.is_err() || selective {
         let _ = engine.release_tx_body(id);
     }
     outcome
@@ -1935,12 +1942,21 @@ where
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
+            if meta.q_block2.is_some_and(|q| q.szx() != transfer.szx()) {
+                return Err(Error::Block(BlockTransferError::SzxMismatch));
+            }
             match meta.q_block2 {
-                Some(q) if q.more() => {
+                Some(q)
+                    if !q.more()
+                        || q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+                            != 0 =>
+                {
+                    issue_q_selection(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
+                }
+                Some(q) => {
                     engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
                     issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
                 }
-                Some(_) => Ok(()),
                 None => issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx),
             }
         }
@@ -2005,6 +2021,53 @@ where
     // for a notification whose body must survive until its follow-up blocks.
     if issued.complete() || (pending.is_none() && response.observe_seq().is_none()) {
         let _ = engine.release_tx_body(id);
+    }
+    Ok(())
+}
+
+// RFC 9177 section 4.4: M=0 asks for exactly NUM; a non-aligned
+// M=1 asks for NUM through the end of its MAX_PAYLOADS_SET. Reissuing
+// selections never advances or acknowledges a retained transfer's window.
+#[allow(clippy::too_many_arguments)]
+fn issue_q_selection<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
+    meta: SendResponse,
+    response: &Response<'_>,
+    first_ty: Type,
+    id: SlotId,
+    oscore_ctx: &oscore::Field,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots,
+    T: DatagramIo,
+{
+    let q = meta
+        .q_block2
+        .ok_or(Error::Block(BlockTransferError::MissingBlock))?;
+    let count = if q.more() {
+        u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+            - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+    } else {
+        1
+    };
+    for offset in 0..count {
+        let issued = engine
+            .reissue_q_block2(id, q.num() + offset)
+            .map_err(Error::Block)?;
+        let (ty, mid) = if offset == 0 {
+            (first_ty, meta.mid)
+        } else {
+            (Type::NonConfirmable, ids.next_for(engine, now_ms)?)
+        };
+        send_issued(
+            engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
+        )?;
+        if !issued.block().more() {
+            break;
+        }
     }
     Ok(())
 }
