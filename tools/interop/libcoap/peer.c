@@ -162,14 +162,28 @@ static coap_response_t response_handler(coap_session_t *session,
       (unsigned long long)clock_resolution_ns);
   complete=1;return COAP_RESPONSE_OK;
 }
+static coap_oscore_conf_t *oscore_config(int server, int wrong_key, uint64_t sequence) {
+  char conf[512];
+  int length = snprintf(conf, sizeof(conf),
+    "master_secret,hex,\"%s\"\nmaster_salt,hex,\"9e7ca92223786340\"\n"
+    "sender_id,hex,\"%s\"\nrecipient_id,hex,\"%s\"\n"
+    "replay_window,integer,32\naead_alg,integer,10\nhkdf_alg,integer,-10\nssn_freq,integer,1\n",
+    wrong_key ? "fe02030405060708090a0b0c0d0e0f10" : "0102030405060708090a0b0c0d0e0f10",
+    server ? "01" : "", server ? "" : "01");
+  if(length < 0 || (size_t)length >= sizeof(conf)) return NULL;
+  coap_str_const_t text = {(size_t)length, (const uint8_t *)conf};
+  return coap_new_oscore_conf(text, NULL, NULL, sequence);
+}
+
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
-  if(argc<8 || argc>10){failure("invalid arguments");return 2;}
+  if(argc<8 || argc>11){failure("invalid arguments");return 2;}
   const char *family = argc >= 9 ? argv[8] : "ipv4";
   if(strcmp(family,"ipv4") && strcmp(family,"ipv6")){failure("invalid address family");return 2;}
   const int ipv6 = strcmp(family,"ipv6")==0;
   const int server=strcmp(argv[1],"server")==0,dtls=strcmp(argv[2],"dtls")==0;
-  if ((!server && strcmp(argv[1],"client")) || (!dtls && strcmp(argv[2],"udp"))) {failure("invalid mode");return 2;}
+  const int oscore=strcmp(argv[2],"oscore")==0;
+  if ((!server && strcmp(argv[1],"client")) || (!dtls && !oscore && strcmp(argv[2],"udp"))) {failure("invalid mode");return 2;}
   char *end=NULL;long port=strtol(argv[3],&end,10);
   if(*end || port<1 || port>65535){failure("invalid port");return 2;}
   long timeout=strtol(argv[7],&end,10);
@@ -179,7 +193,7 @@ int main(int argc,char **argv) {
   unsigned method = 0;
   for(unsigned i = 0; i < 7; i++) if(!strcmp(argv[6], methods[i])) method = i + 1;
   if(!method) { failure("unsupported method"); return 2; }
-  const char *hex = argc == 10 ? argv[9] : "";
+  const char *hex = argc >= 10 ? argv[9] : "";
   size_t payload_length = strlen(hex) / 2;
   uint8_t payload[256];
   if(strlen(hex) % 2 || payload_length > sizeof(payload)) { failure("invalid bounded payload hex"); return 2; }
@@ -189,9 +203,16 @@ int main(int argc,char **argv) {
     payload[i] = (uint8_t)(hi*16 + lo);
   }
   if(strlen(argv[4])<1 || strlen(argv[4])>64){failure("invalid PSK length");return 2;}
+  uint64_t sequence=0;
+  if(argc==11) {
+    if(!argv[10][0] || strspn(argv[10],"0123456789")!=strlen(argv[10]) || strlen(argv[10])>13) { failure("invalid sequence");return 2; }
+    sequence=strtoull(argv[10],&end,10);
+    if(*end || sequence >= (1ULL<<40)) { failure("invalid sequence");return 2; }
+  }
   clock_init();started=clock_stamp();
   coap_startup();coap_set_log_level(COAP_LOG_EMERG);
   if(dtls && !coap_dtls_is_supported()){failure("DTLS unavailable in libcoap build");coap_cleanup();return 2;}
+  if(oscore && !coap_oscore_is_supported()){failure("OSCORE unavailable in libcoap build");coap_cleanup();return 2;}
   for(size_t i=0;i<sizeof(large_body);i++)large_body[i]=(uint8_t)(i%251);
   coap_context_t *ctx=coap_new_context(NULL);
   if(!ctx){failure("context failed");coap_cleanup();return 1;}
@@ -207,24 +228,27 @@ int main(int argc,char **argv) {
   }
   coap_proto_t proto=dtls?COAP_PROTO_DTLS:COAP_PROTO_UDP;
   int status=0;
+  coap_oscore_conf_t *oscore_conf=oscore?oscore_config(server,strcmp(argv[4],"sesame")!=0,sequence):NULL;
+  if(oscore && !oscore_conf) { failure("OSCORE configuration failed");status=1;goto done; }
   if(server) {
+    if(oscore && !coap_context_oscore_server(ctx,oscore_conf)) { failure("OSCORE configuration failed");status=1;goto done; }
     if(dtls && !coap_context_set_psk(ctx,"password",(const uint8_t *)argv[4],(unsigned)strlen(argv[4]))){failure("PSK setup failed");status=1;goto done;}
     if(!coap_new_endpoint(ctx,&addr,proto)){failure("bind failed");status=1;goto done;}
     const char *paths[]={"test","large","counter"};
     for(size_t i=0;i<3;i++) {
-      coap_resource_t *r=coap_resource_init(coap_make_str_const(paths[i]),0);
+      coap_resource_t *r=coap_resource_init(coap_make_str_const(paths[i]),oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
       coap_register_handler(r,COAP_REQUEST_GET,get_fixture);
       if(i==2)coap_register_handler(r,COAP_REQUEST_POST,post_counter);
       coap_add_resource(ctx,r);
     }
-    coap_resource_t *methods_resource = coap_resource_init(coap_make_str_const("methods"), 0);
+    coap_resource_t *methods_resource = coap_resource_init(coap_make_str_const("methods"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
     for(unsigned i = 1; i <= 7; i++) coap_register_handler(methods_resource, (coap_request_t)i, method_resource);
     coap_add_resource(ctx, methods_resource);
-    printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,dtls?"dtls":"udp");
+    printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,oscore?"oscore":dtls?"dtls":"udp");
     while(coap_io_process(ctx,100)>=0) {}
     status=1;
   } else {
-    coap_session_t *session=dtls?coap_new_client_session_psk(ctx,NULL,&addr,proto,"password",(const uint8_t *)argv[4],(unsigned)strlen(argv[4])):coap_new_client_session(ctx,NULL,&addr,proto);
+    coap_session_t *session=oscore?coap_new_client_session_oscore(ctx,NULL,&addr,proto,oscore_conf):dtls?coap_new_client_session_psk(ctx,NULL,&addr,proto,"password",(const uint8_t *)argv[4],(unsigned)strlen(argv[4])):coap_new_client_session(ctx,NULL,&addr,proto);
     if(!session){failure("session failed");status=1;goto done;}
     coap_register_response_handler(ctx,response_handler);
     coap_pdu_t *pdu=coap_new_pdu(COAP_MESSAGE_CON,(coap_pdu_code_t)method,session);

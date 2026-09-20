@@ -4,7 +4,7 @@ Three separately built executables communicate only over loopback UDP/DTLS:
 
 - `peer-coaptic`: Coaptic App, webrtc-dtls 0.12 / util 0.11. No coap-rs dependency.
 - `peer-coap-rs`: coap 0.28.1 with a test transport bridge to webrtc-dtls 0.12 / util 0.11. No Coaptic dependency.
-- `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; this initial matrix exercises PSK DTLS, not OSCORE.
+- `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; the matrix exercises PSK DTLS and the explicitly listed OSCORE state cases.
 
 libcoap is BSD-2-Clause; its independent source/build is outside the published library. OpenSSL is a test-machine dependency. No C FFI or DTLS dependency enters Coaptic. Lockfile pins Rust peers; the C source pin is checked by CMake. These are test fixtures, with a public, non-production PSK (`sesame`).
 
@@ -23,7 +23,7 @@ python3 -m unittest discover -s tools/interop -p 'test_*.py'
 python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --build-note "all peers Release; record OS/compiler here" --output target/process-interop.json
 ```
 
-Windows: use MSVC (`-G "Visual Studio 17 2022" -A x64`, `--config Release`) and `.exe` paths. Without native OpenSSL, configure `-DENABLE_DTLS=OFF -DENABLE_OSCORE=OFF` and explicitly pass `--libcoap-udp-only`. The resulting report records the missing C-peer DTLS coverage; CI does not use this exception. Build directories may live on another drive.
+Windows: use MSVC (`-G "Visual Studio 17 2022" -A x64`, `--config Release`) and `.exe` paths. Without native OpenSSL, configure `-DENABLE_DTLS=OFF -DENABLE_OSCORE=OFF` and explicitly pass `--libcoap-udp-only`. The resulting report records the missing C-peer DTLS and OSCORE coverage; CI does not use this exception. Build directories may live on another drive.
 
 ## Coverage and interpretation
 
@@ -33,7 +33,7 @@ A bounded UDP relay records actual datagrams and injects one lost response, one 
 
 JSON schema `coaptic-process-interop/2` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Peer protocol `coaptic-peer/2` requires integer nanosecond samples and clock metadata. Libcoap uses `CLOCK_MONOTONIC` on POSIX and `QueryPerformanceCounter` on Windows; Rust uses `Instant` (its resolution is reported as unknown). All peers stop timing before JSON formatting. Raw request/host samples and nanosecond summaries are retained; microsecond summaries are derived without integer truncation. OS-reported clock resolution is not measurement accuracy. Old peer executables are rejected: rebuild all peers with this runner. Default and CI use 100 samples per pairing, still a smoke benchmark. Never infer a performance ranking from mixed debug/release builds or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
 
-This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, OSCORE, certificates, Q-Block, standardized patch formats or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
+This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, certificates, Q-Block, standardized patch formats or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
 
 The peers remain separate executables with independent CoAP implementations.
 Both Rust peers use the same modern DTLS backend; DTLS implementation diversity
@@ -50,8 +50,14 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 69 scenario results (58 with local C-peer DTLS excluded):
+The full run contains 72 scenario results (59 with local C-peer DTLS excluded):
 
+- Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
+  use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
+  refusal and plaintext 4.01/state preservation are checked. The supervisor
+  explicitly advances client sender sequences between fresh client processes.
+  This does not qualify replay/corruption campaigns, protected block/Observe,
+  persistent key/sequence storage or production credential management.
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
   exact GET bytes, 4.04, 2,000-byte Block2 and repeated fresh clients. DTLS also
@@ -155,3 +161,16 @@ an explicit qualification update. Wrong-key/blackhole cases require the peer's
 normal error exit and a protocol refusal/timeout indication; crashes and setup
 errors cannot satisfy them. Timeout alone does not establish an authenticated
 DTLS alert or qualify the literal ETSI failure scenario.
+
+OSCORE test peers accept an optional final decimal sender-sequence argument.
+`sesame` selects the public C.1 vector master secret; other key labels select a
+fixed deliberately mismatching test secret. Coap-rs explicitly refuses OSCORE.
+For a C build with DTLS but no OSCORE, use `--libcoap-oscore-unavailable`; the
+existing `--libcoap-udp-only` option excludes both C cryptographic configurations.
+These fixture keys and restarted sender contexts are never production credentials.
+
+The Coaptic OSCORE client explicitly retries one authenticated 4.01 carrying
+Echo, preserving request parameters and the original deadline. It records the
+retry count; plaintext responses and repeated challenges cannot trigger this
+policy. The libcoap direction requires its default B.1.2 challenge to be exercised.
+This is a bounded fixture policy, not automatic freshness policy in the library.

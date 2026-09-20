@@ -45,8 +45,9 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b""):
-    return [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None):
+    result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
+    return result + ([str(sequence)] if sequence is not None else [])
 
 
 def decode(line):
@@ -341,6 +342,7 @@ def method_workflow(client, server, transport="udp", family="ipv4"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--libcoap-oscore-unavailable", action="store_true", help="Explicitly exclude C-peer OSCORE for this build")
     parser.add_argument("--coaptic", required=True, type=Path)
     parser.add_argument("--coap-rs", required=True, type=Path)
     parser.add_argument("--libcoap", required=True, type=Path)
@@ -359,7 +361,7 @@ def main():
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
               "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
               "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
-              "limitations": ["PSK DTLS only; this suite does not qualify OSCORE, Observe or certificates; no claim of full ETSI coverage"],
+              "limitations": ["Only named plaintext/PSK DTLS/OSCORE assertions; Observe, certificates and full ETSI coverage remain unqualified"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "capability_manifest": {"path": "tools/interop/capabilities.json", "sha256": manifest_hash},
               "cases": [], "benchmarks": []}
@@ -374,6 +376,40 @@ def main():
         except Exception as error:
             report["cases"].append({"name": name, "passed": False, "error": str(error)})
             print(f"FAIL {name}: {error}", flush=True)
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        if (args.libcoap_udp_only or args.libcoap_oscore_unavailable) and "libcoap" in (client, server):
+            continue
+        def oscore_state(client=client, server=server):
+            with Server(peers[server], "oscore") as service:
+                traces, results = [], []
+                sequence = 0
+                def exchange(**kwargs):
+                    nonlocal sequence
+                    with Proxy(service.number, "dtls-reconnect") as relay:
+                        result = request(peers[client], "oscore", relay.number, sequence=sequence, **kwargs)
+                    sequence += 100
+                    if not relay.trace:
+                        raise AssertionError("OSCORE exchange had no wire evidence")
+                    traces.append(relay.trace)
+                    results.append(result)
+                    return result
+                initial = exchange()
+                expect(initial)
+                if client == "coaptic" and server == "libcoap" and initial.get("echo_retries") != 1:
+                    raise AssertionError("libcoap authenticated Echo challenge was not exercised exactly once")
+                expect(exchange(path="methods", method="PUT", payload=b"alpha"), 65, b"")
+                refused = exchange(path="methods", method="PUT", payload=b"poison", key="incorrect", timeout=1500)
+                expect_refusal(refused)
+                expect(exchange(path="methods"), 69, b"alpha")
+                plain = request(peers[client], "udp", service.number, path="methods", method="PUT", payload=b"poison")
+                expect(plain, 129, None)
+                expect(exchange(path="methods"), 69, b"alpha")
+                return {"server": service.ready, "traces": traces, "results": results, "plaintext_refusal": plain,
+                        "fixture_context": "RFC 8613 C.1 public keys; client sequences 0,100,200,300,400",
+                        "verified": ["exact authenticated GET", "PUT/readback", "wrong-key and plaintext state preservation"],
+                        "unqualified": ["persistent keys/sequences", "replay/corruption campaign", "OSCORE Observe/block transfer"]}
+        case(f"oscore-state:{client}->{server}", oscore_state)
 
     for transport in ("udp", "dtls"):
         pairs = [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]
@@ -531,7 +567,7 @@ def main():
             return {"port": number, "note": "fresh in-memory fixture after process restart; no durability claim"}
         case(f"reliability:{label}->restart", restart)
     report["coverage"] = evaluate(manifest, report["cases"],
-        libcoap_dtls=not args.libcoap_udp_only, system=platform.system().lower())
+        libcoap_dtls=not args.libcoap_udp_only, libcoap_oscore=not (args.libcoap_udp_only or args.libcoap_oscore_unavailable), system=platform.system().lower())
     report["passed"] = report["coverage"]["complete"]
     report["failures"] = len(report["coverage"]["problems"])
     for problem in report["coverage"]["problems"]:
