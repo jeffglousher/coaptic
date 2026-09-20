@@ -465,6 +465,7 @@ pub struct ObserveInterest {
     content_format: Option<crate::message::ContentFormat>,
     seq: u32,
     pending: bool,
+    deleted: bool,
     lifetime: Option<ObserveLifetime>,
     confirm_due_ms: Option<u64>,
     notify_hold: Option<ObserveNotifyHold>,
@@ -484,6 +485,7 @@ impl ObserveInterest {
             content_format: None,
             seq: 0,
             pending: false,
+            deleted: false,
             lifetime: None,
             confirm_due_ms: None,
             notify_hold: None,
@@ -563,6 +565,17 @@ impl ObserveInterest {
         Self {
             oscore: request,
             ..self
+        }
+    }
+
+    pub(crate) const fn is_deleted(self) -> bool {
+        self.deleted
+    }
+
+    pub(crate) fn mark_deleted(&mut self) {
+        if !self.key.is_client() {
+            self.deleted = true;
+            self.pending = true;
         }
     }
 

@@ -2404,3 +2404,81 @@ fn dual_role_protected_observe_uses_independent_same_token_relations() {
         b"still serving"
     );
 }
+
+#[test]
+fn protected_delete_delivers_terminal_notification_before_releasing_client_binding() {
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    fn remove(_: Request<'_>) -> Response<'static> {
+        Response::deleted()
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value).delete(remove))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let observe = client.get("obs").observe().to(server_ep).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(0).unwrap();
+    assert!(
+        client
+            .take_response(observe)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_some()
+    );
+    let deletion = client.delete("obs").to(server_ep).send(1).unwrap();
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(1).unwrap();
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(1).unwrap();
+    assert_eq!(
+        client.take_response(deletion).unwrap().unwrap().code(),
+        Code::DELETED
+    );
+    assert!(client.oscore().unwrap().lookup(observe.token()).is_some());
+    server.poll(2).unwrap();
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    let terminal = decode(&bytes[..n]).unwrap();
+    assert!(terminal.oscore().is_some());
+    assert_eq!(terminal.ty(), Type::Confirmable);
+    assert_eq!(terminal.token(), observe.token());
+    assert!(terminal.observe().is_none());
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(2).unwrap();
+    let response = client.take_response(observe).unwrap().unwrap();
+    assert_eq!(response.code(), Code::NOT_FOUND);
+    assert!(response.observe_seq().is_none());
+    assert!(client.oscore().unwrap().lookup(observe.token()).is_none());
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    assert!(decode(&bytes[..n]).unwrap().is_empty_ack());
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(3).unwrap();
+    assert_eq!(server.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        server
+            .notify(10, &["obs"], Response::content(b"gone"))
+            .unwrap(),
+        0
+    );
+    assert!(client.take_response(observe).is_none());
+}
