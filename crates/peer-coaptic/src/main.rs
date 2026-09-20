@@ -57,7 +57,7 @@ async fn run() -> Result<(), Error> {
         let listener =
             dtls::listener::BoundedListener::bind(a.address(), dtls::psk_config(a.key.as_bytes()))
                 .await?;
-        support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, true);
+        support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, "dtls");
         loop {
             let (conn, peer) = listener.accept().await?;
             tokio::spawn(async move {
@@ -97,8 +97,36 @@ async fn run() -> Result<(), Error> {
         Io::Udp(socket)
     };
     let mut app = fixture(io)?;
+    if a.oscore {
+        // Public RFC 8613 C.1 fixture material, never production credentials.
+        let mut secret = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        if a.key != "sesame" {
+            secret[0] ^= 0xff;
+        }
+        let mut context = coaptic::oscore::SecurityContext::derive(coaptic::oscore::DeriveParams {
+            master_secret: &secret,
+            master_salt: &[0x9e, 0x7c, 0xa9, 0x22, 0x23, 0x78, 0x63, 0x40],
+            sender_id: if a.server { &[1] } else { &[] },
+            recipient_id: if a.server { &[] } else { &[1] },
+            id_context: &[],
+        })
+        .map_err(|e| format!("OSCORE derivation: {e:?}"))?;
+        context
+            .set_sender_seq(a.sequence)
+            .map_err(|e| format!("OSCORE sequence: {e:?}"))?;
+        app.set_oscore(context);
+    }
     if a.server {
-        support::ready("coaptic", "webrtc-dtls 0.12.0", a.port, a.dtls);
+        support::ready(
+            "coaptic",
+            if a.oscore {
+                "coaptic OSCORE"
+            } else {
+                "coaptic UDP"
+            },
+            a.port,
+            if a.oscore { "oscore" } else { "udp" },
+        );
         loop {
             app.poll(start.elapsed().as_millis() as u64 + 1)
                 .map_err(|e| format!("poll: {e}"))?;

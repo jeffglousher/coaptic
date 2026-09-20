@@ -36,6 +36,9 @@ fn config(key: &str) -> Config {
 }
 async fn run() -> Result<(), Error> {
     let a = Args::parse()?;
+    if a.oscore || a.sequence != 0 {
+        return Err("OSCORE unsupported by this peer".into());
+    }
     let start = Instant::now();
     if a.server {
         let server = if a.dtls {
@@ -52,7 +55,7 @@ async fn run() -> Result<(), Error> {
             "coap-rs",
             "coap 0.28.1 / webrtc-dtls 0.12.0",
             a.port,
-            a.dtls,
+            if a.dtls { "dtls" } else { "udp" },
         );
         server
             .run(

@@ -15,19 +15,28 @@ class CapabilityTests(unittest.TestCase):
                          for row in self.manifest["cases"]]
 
     def check(self, outcomes, enabled=True, system="linux"):
-        return evaluate(self.manifest, outcomes, libcoap_dtls=enabled, system=system)
+        return evaluate(self.manifest, outcomes, libcoap_dtls=enabled, libcoap_oscore=enabled, system=system)
 
     def test_full_and_explicitly_limited_inventory(self):
         full = self.check(self.outcomes)
         self.assertTrue(full["complete"])
-        self.assertEqual(full["enabled_cases"], 69)
+        self.assertEqual(full["enabled_cases"], 72)
         excluded = {row["id"] for row in self.manifest["cases"] if row["requires"]}
         limited = self.check([row for row in self.outcomes if row["name"] not in excluded], False, "windows")
         self.assertTrue(limited["complete"])
-        self.assertEqual(limited["enabled_cases"], 58)
-        self.assertEqual(sum(row["status"] == "build-excluded" for row in limited["cases"]), 11)
+        self.assertEqual(limited["enabled_cases"], 59)
+        self.assertEqual(sum(row["status"] == "build-excluded" for row in limited["cases"]), 13)
         self.assertEqual(limited["unqualified"], full["unqualified"])
         self.assertEqual(len(self.digest), 64)
+
+    def test_oscore_exclusion_is_separate_from_dtls(self):
+        excluded = {row["id"] for row in self.manifest["cases"] if "libcoap-oscore" in row["requires"]}
+        result = evaluate(self.manifest, [row for row in self.outcomes if row["name"] not in excluded],
+                          libcoap_dtls=True, libcoap_oscore=False, system="linux")
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["enabled_cases"], 70)
+        self.assertFalse(evaluate(self.manifest, self.outcomes, libcoap_dtls=True,
+                                  libcoap_oscore=False, system="linux")["complete"])
 
     def test_missing_empty_duplicate_and_undeclared_runs_fail(self):
         variants = [[], self.outcomes[1:], self.outcomes + [self.outcomes[0]],
