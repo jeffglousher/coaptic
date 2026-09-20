@@ -460,6 +460,28 @@ struct ObserveRequest {
     len: usize,
 }
 
+impl ObserveRequest {
+    fn same_target(&self, other: &Self) -> bool {
+        use crate::message::OptionNumber as N;
+        let left = crate::message::decode(&self.bytes[..self.len]).expect("encoded identity");
+        let right = crate::message::decode(&other.bytes[..other.len]).expect("encoded identity");
+        let cache_key = |number: N| {
+            !number.is_no_cache_key()
+                && !matches!(number, N::BLOCK1 | N::BLOCK2 | N::Q_BLOCK1 | N::Q_BLOCK2)
+        };
+        left.code() == right.code()
+            && (left.code() != Code::FETCH || left.payload() == right.payload())
+            && left
+                .options()
+                .filter(|option| cache_key(option.number()))
+                .map(|option| (option.number(), option.value()))
+                .eq(right
+                    .options()
+                    .filter(|option| cache_key(option.number()))
+                    .map(|option| (option.number(), option.value())))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveCall {
     call: Call,
@@ -1072,6 +1094,12 @@ where
     /// App retains up to 512 encoded bytes of canonical request identity
     /// (excluding ETag and Observe) for exact cancellation matching. Larger
     /// requests are refused before I/O; use Engine for caller-owned retention.
+    /// Repeated subscriptions to the same peer and cache-key target return the
+    /// existing Call without I/O, new state, or deadline changes (RFC 7641 §3.1).
+    /// FETCH payloads distinguish selections; ETag, NoCacheKey options and block
+    /// controls do not create a second subscription. The caller distributes the
+    /// single response stream to its consumers. Use [`Self::reregister_call`]
+    /// to refresh the request explicitly; cancellation ends the shared Call.
     #[must_use]
     pub const fn observe(mut self) -> Self {
         self.observe = OutgoingObserve::Register;
@@ -1098,7 +1126,7 @@ where
     /// GET/FETCH Observe=1 (deregister). Reuses the uniquely matching live Call.
     /// Repeat the registration request's method, path, options and payload;
     /// ETags may differ. A mismatch or ambiguous match is refused before I/O.
-    /// Use [`Self::deregister_call`] to select among identical subscriptions.
+    /// [`Self::deregister_call`] also validates the explicit Call handle.
     /// After validation, cancellation retires the old local subscription,
     /// queued notifications and pending transmissions. If sending fails,
     /// `take_response` reports [`CallFailure::CancellationFailed`]; remote
@@ -1154,6 +1182,9 @@ where
         let observe = self.observe;
         let refreshing = observe == OutgoingObserve::Register && self.observe_target.is_some();
         let replacing = observe == OutgoingObserve::Deregister || refreshing;
+        if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
+            return Err(Error::ObserveMethodUnsupported);
+        }
         if self.no_response.is_some() && self.q_block1 {
             return Err(Error::NoResponseUploadUnsupported);
         }
@@ -1211,6 +1242,22 @@ where
                 })?,
             )
         };
+        if observe == OutgoingObserve::Register && !refreshing {
+            let identity = request_identity.as_ref().expect("Observe identity");
+            if let Some(existing) = self.app.lives.rows.iter().flatten().find(|live| {
+                live.call.peer == dest
+                    && live.observe == OutgoingObserve::Register
+                    && live.due_ms != 0
+                    && (!self.app.inbox.contains(live.call)
+                        || client_observe_live(&self.app.engine, live.call))
+                    && live
+                        .request_identity
+                        .as_ref()
+                        .is_some_and(|original| original.same_target(identity))
+            }) {
+                return Ok(existing.call);
+            }
+        }
         let token = if replacing {
             self.app
                 .lives
