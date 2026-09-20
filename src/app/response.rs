@@ -796,7 +796,8 @@ impl<'a> Response<'a> {
     /// `None` when this is handler intent or a single-datagram client
     /// snapshot (including a truncated piggyback — see
     /// [`Self::payload_truncated`]). Borrowed from [`super::App`] after
-    /// [`super::App::take_response`] (truncated at [`RESPONSE_BODY`]).
+    /// [`super::App::take_response`]. App refuses representations above
+    /// [`RESPONSE_BODY`] with [`super::CallFailure::ResponseBodyBounds`].
     /// Invalidated by a later take or poll. This is the client path for a
     /// representation larger than [`INLINE_PAYLOAD`].
     #[must_use]

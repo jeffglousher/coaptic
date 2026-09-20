@@ -142,6 +142,8 @@ pub enum CallFailure {
     BlockTransfer(BlockTransferError),
     /// Response metadata exceeds App's option count, byte, or Location count bound.
     ResponseMetadataBounds,
+    /// Complete block representation exceeds App's fixed assembled-response hold.
+    ResponseBodyBounds,
 }
 impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -153,6 +155,7 @@ impl core::fmt::Display for CallFailure {
             Self::TimedOut => f.write_str("request timed out"),
             Self::Reset => f.write_str("peer reset the request"),
             Self::ResponseMetadataBounds => f.write_str("response metadata exceeds App bounds"),
+            Self::ResponseBodyBounds => f.write_str("response body exceeds App bounds"),
             Self::BlockTransfer(error) => write!(f, "response block transfer failed: {error}"),
         }
     }
@@ -760,8 +763,9 @@ where
     ///
     /// When `BLOCK_WISE` and Block2 / Q-Block2 assembled, copies the RX
     /// body into an App hold and returns [`Response::body`] borrowed from
-    /// that hold (released from the Engine, capped at
-    /// [`super::RESPONSE_BODY`]). A later [`Self::take_response`] or
+    /// that hold (released from the Engine). Representations above
+    /// [`super::RESPONSE_BODY`] fail with [`CallFailure::ResponseBodyBounds`],
+    /// even when a custom Engine profile can assemble more bytes. A later [`Self::take_response`] or
     /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
     /// [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
@@ -1709,6 +1713,7 @@ where
                     engine,
                     inbox,
                     lives,
+                    oscore,
                     parsed,
                     peer,
                     rx,
@@ -1787,6 +1792,7 @@ where
                     engine,
                     inbox,
                     lives,
+                    oscore,
                     parsed,
                     peer,
                     rx,
@@ -1877,7 +1883,8 @@ where
 fn finish_assembled<Mem>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
-    lives: &ClientLives,
+    lives: &mut ClientLives,
+    oscore: &mut super::oscore::Field,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     rx: SlotId,
@@ -1885,9 +1892,25 @@ fn finish_assembled<Mem>(
     metadata: ReplyMeta,
     via_exchange: bool,
 ) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let call = Call::new(parsed.token(), peer);
+    if engine
+        .rx_body_payload(body)
+        .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+    {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ResponseBodyBounds,
+            true,
+        );
+        let _ = engine.release_rx(rx);
+        return;
+    }
     let metadata = inbox.partial_meta(call, body).unwrap_or(metadata);
     let original = crate::message::decode(&metadata.header[..usize::from(metadata.header_len)])
         .expect("encoded response header");
