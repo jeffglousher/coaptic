@@ -350,6 +350,7 @@ fn app_protected_get_round_trip() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -357,6 +358,7 @@ fn app_protected_get_round_trip() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -397,6 +399,7 @@ fn app_five_sequential_oscore_gets() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -404,6 +407,7 @@ fn app_five_sequential_oscore_gets() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -445,6 +449,7 @@ fn app_plain_response_does_not_complete_oscore_call() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -480,6 +485,7 @@ fn app_bad_ciphertext_is_silent_drop() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -487,6 +493,7 @@ fn app_bad_ciphertext_is_silent_drop() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -523,6 +530,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -530,6 +538,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -676,6 +685,7 @@ fn app_oscore_observe_register_notify() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
         .bind(Loopback::default())
@@ -683,6 +693,7 @@ fn app_oscore_observe_register_notify() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -801,6 +812,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
         .bind(Loopback::default())
@@ -808,6 +820,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -889,6 +902,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
         .bind(Loopback::default())
@@ -896,6 +910,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1316,6 +1331,7 @@ fn app_oscore_block2_get_assembles() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(hello))
         .bind(WideLoopback::default())
@@ -1323,6 +1339,7 @@ fn app_oscore_block2_get_assembles() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -1366,6 +1383,7 @@ fn app_oscore_block1_put_assembles() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .route("upload", put(accept))
         .bind(WideLoopback::default())
@@ -1373,6 +1391,7 @@ fn app_oscore_block1_put_assembles() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -1418,6 +1437,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(hello))
         .bind(WideLoopback::default())
@@ -1425,6 +1445,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -1484,6 +1505,7 @@ fn app_oscore_max_age_etag_stay_inner() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -1491,6 +1513,7 @@ fn app_oscore_max_age_etag_stay_inner() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1528,6 +1551,7 @@ fn app_plain_etag_max_age_does_not_complete_oscore_call() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1564,6 +1588,7 @@ fn app_unprotected_request_is_401_max_age_zero() {
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
         .bind(Loopback::default())
@@ -1666,6 +1691,7 @@ fn exhausted_sender_seq_is_oscore_error_not_block1() {
 
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .bind(Loopback::default())
         .unwrap();
@@ -1702,6 +1728,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
 
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .route("obs", get(hello))
         .bind(Loopback::default())
@@ -1709,6 +1736,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
     server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .bind(Loopback::default())
         .unwrap();
@@ -1762,6 +1790,7 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer);
         let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
             .block_wise::<true>()
             .bind(Loopback::default())
             .unwrap();
@@ -1829,6 +1858,7 @@ fn cancelled_calls_reclaim_oscore_bindings_without_reusing_sender_sequence() {
     use crate::{App, profiles};
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1870,6 +1900,7 @@ fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .echo_policy(policy)
         .block_wise::<false>()
         .route("value", get(hello))
@@ -1877,6 +1908,7 @@ fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1923,12 +1955,14 @@ fn app_client_no_response_stays_inner_and_unsuppressed_error_is_delivered() {
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .route("value", put(handler))
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<false>()
         .bind(Loopback::default())
         .unwrap();
@@ -1984,6 +2018,7 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
     for confirmable in [false, true] {
         for short in [false, true] {
             let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
                 .block_wise::<false>()
                 .bind(FailSend {
                     fail: !short,
@@ -2049,6 +2084,7 @@ fn protected_partial_upload_failure_releases_all_request_state() {
     for qblock in [false, true] {
         for nth in 1..=if qblock { 3 } else { 1 } {
             let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
                 .block_wise::<true>()
                 .bind(FailNth {
                     sends: 0,

@@ -128,6 +128,7 @@ async fn run() -> Result<(), Error> {
 }
 fn fixture(io: Io) -> Result<App<profiles::Default, Io, 3, true>, Error> {
     App::profile::<profiles::Default>()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .routes::<3>()
         .route(

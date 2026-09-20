@@ -9,6 +9,7 @@ Not on crates.io yet (publish parked — [#132](https://github.com/jeffglousher/
 ```toml
 [dependencies]
 coaptic = { git = "https://github.com/jeffglousher/coaptic" }
+getrandom = "0.3" # host example; embedded callers provide their own secure source
 ```
 
 ## Quick start
@@ -23,6 +24,7 @@ fn get_temp(_req: Request<'_>) -> Response<'static> {
 }
 
 let mut app = App::profile::<profiles::Default>()
+    .randomness(|bytes| getrandom::fill(bytes).is_ok())
     .block_wise::<true>()
     .route("sensors/temp", get(get_temp))
     .bind(io)?;
@@ -33,7 +35,7 @@ app.poll(now_ms)?;
 let response = app.take_response(call);
 ```
 
-`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Tokens and Message IDs are App counters (no OS RNG).
+`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Supply secure entropy for eight-byte Tokens, a randomized initial Message ID and CON retry jitter. The library does not call an OS RNG; deterministic mode is explicitly for tests.
 
 Optional `oscore` provides pairwise AES-CCM protection with caller-owned security
 contexts. See rustdoc for Observe, block-wise transfers and security APIs.

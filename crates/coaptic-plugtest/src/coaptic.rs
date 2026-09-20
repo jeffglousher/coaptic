@@ -165,6 +165,7 @@ where
     T::Error: std::fmt::Debug,
 {
     let mut b = App::profile::<profiles::Default>()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .routes::<24>();
     for (path, router) in site::routers() {
@@ -192,6 +193,7 @@ pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
         return client_ping(&mut io, dest_ep, req.timeout);
     }
     let mut app = App::profile::<profiles::Default>()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .bind(io)
         .map_err(|e| format!("bind: {e}"))?;

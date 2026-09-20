@@ -339,6 +339,7 @@ dependencies = [
  "coap",
  "coap-lite",
  "coaptic",
+ "getrandom 0.3.4",
  "rustls",
  "serde",
  "serde_json",
@@ -1137,6 +1138,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "coaptic",
+ "getrandom 0.3.4",
  "serde_json",
  "tokio",
  "webrtc-dtls",

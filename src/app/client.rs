@@ -37,8 +37,8 @@
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage,
-    Token, Transmission, Type, encode_uint,
+    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
+    Transmission, Type, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
@@ -46,6 +46,7 @@ use crate::storage::{
     ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
+use super::identity::AppIds;
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
 use super::response::{AppAssembled, INLINE_PAYLOAD, Response};
 use super::{App, Error, Method, push_opt};
@@ -77,6 +78,7 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
+///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
 ///     .bind(NullIo)
 ///     .unwrap();
@@ -563,6 +565,7 @@ enum OutgoingObserve {
 /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
+///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
 ///     .bind(NullIo)
 ///     .unwrap();
@@ -964,11 +967,12 @@ where
 {
     /// Encode the request, record the Exchange, and send.
     ///
-    /// `now_ms` starts CON RTO on Engine (caller clock; jitter is 0). Later
+    /// `now_ms` starts CON RTO on Engine with injected random jitter. Later
     /// [`App::poll`](App::poll) sends Due retransmits when that clock
-    /// advances. Returns a [`Call`] for
-    /// [`App::take_response`](App::take_response). Tokens and Message IDs are
-    /// App counters — this crate does not call an OS RNG. A payload that does
+    /// advances. Returns a [`Call`] for [`App::take_response`](App::take_response).
+    /// Production Tokens use eight injected random bytes; Message IDs use a
+    /// randomly initialized counter and bounded reuse guard. See
+    /// [`super::AppBuilder::randomness`]. This crate does not call an OS RNG. A payload that does
     /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
     ///
     /// On failure, local request state is retired, including any partial
@@ -994,8 +998,8 @@ where
             return Err(Error::NoResponseObserveUnsupported);
         }
         let token = match observe {
-            OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest),
-            OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token(),
+            OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest)?,
+            OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token()?,
         };
         if observe == OutgoingObserve::Deregister {
             take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
@@ -1093,12 +1097,20 @@ impl<
     const BLOCK_WISE: bool,
 > App<P, T, N, BLOCK_WISE>
 {
-    fn next_token(&mut self) -> Token {
-        self.tokens = self.tokens.wrapping_add(1);
-        if self.tokens == 0 {
-            self.tokens = 1;
+    fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
+        for _ in 0..8 {
+            let token = self.ids.token().map_err(Error::Identity)?;
+            if !self
+                .lives
+                .rows
+                .iter()
+                .flatten()
+                .any(|live| live.call.token() == token)
+            {
+                return Ok(token);
+            }
         }
-        Token::from_checked(&self.tokens.to_be_bytes())
+        Err(Error::Identity(super::IdentityError::TokenExhausted))
     }
 }
 
@@ -1127,7 +1139,7 @@ struct ClientSend<'a> {
 fn send_client<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     spec: ClientSend<'_>,
@@ -1139,7 +1151,7 @@ where
     if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
-    let mid = ids.next();
+    let mid = ids.next_for(engine, now_ms)?;
     let cf = spec.content_format.map(ContentFormat::encode);
     let no_response = spec.no_response.map(crate::message::NoResponse::encode);
     let acc = spec.accept.map(ContentFormat::encode);
@@ -1209,8 +1221,17 @@ where
         .with_options(opts.as_slice())
         .with_payload(spec.payload);
     match super::oscore::encode_request(oscore, engine, tx, &msg) {
-        Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
-            .map(|()| Call::new(spec.token, spec.dest)),
+        Ok(_) => finish_client_send(
+            engine,
+            io,
+            tx,
+            spec.dest,
+            spec.ty,
+            now_ms,
+            mid,
+            ids.jitter(),
+        )
+        .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             if spec.no_response.is_some() {
                 let _ = engine.release_tx(tx);
@@ -1259,7 +1280,7 @@ where
 fn send_client_block1<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
@@ -1353,7 +1374,7 @@ pub(crate) fn complete_client<Mem, T>(
     io: &mut T,
     inbox: &mut ClientInbox,
     lives: &mut ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     peer: Endpoint,
@@ -1700,7 +1721,7 @@ fn send_block2_continue<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
@@ -1736,7 +1757,7 @@ fn send_q_block2_continue<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
@@ -1772,7 +1793,7 @@ fn send_followup<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     token: Token,
@@ -1831,7 +1852,7 @@ where
     if let Err(e) = filled {
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
-    let mid = ids.next();
+    let mid = ids.next_for(engine, now_ms)?;
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice());
@@ -1853,7 +1874,7 @@ where
             return Err(e.into());
         }
     }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
     super::finish_send(engine, io, tx, peer, pending)?;
     Ok(())
 }
@@ -1863,7 +1884,7 @@ fn continue_block1_tx<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
@@ -1951,7 +1972,7 @@ where
 fn issue_block1<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
@@ -1996,7 +2017,7 @@ where
 fn issue_q_block1_window<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
@@ -2065,7 +2086,7 @@ where
 fn send_block1_issued<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     dest: Endpoint,
@@ -2099,7 +2120,13 @@ where
         Some(tx) => tx,
         None => engine.acquire_tx().ok_or(Error::Saturated)?,
     };
-    let mid = ids.next();
+    let mid = match ids.next_for(engine, now_ms) {
+        Ok(mid) => mid,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(error);
+        }
+    };
     let cf = content_format.map(ContentFormat::encode);
     let acc = accept.map(ContentFormat::encode);
     let blk = issued.block().encode();
@@ -2146,9 +2173,10 @@ where
         let _ = engine.release_tx(tx);
         return Err(e);
     }
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
+    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_client_send<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -2157,6 +2185,7 @@ fn finish_client_send<Mem, T>(
     ty: Type,
     now_ms: u64,
     mid: MessageId,
+    jitter: u32,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges,
@@ -2173,7 +2202,7 @@ where
             return Err(e.into());
         }
     }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, jitter));
     match super::finish_send(engine, io, tx, dest, pending) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -2280,15 +2309,19 @@ fn reuse_observe_token<P, T, const N: usize, const BLOCK_WISE: bool>(
     app: &mut App<P, T, N, BLOCK_WISE>,
     path: Path<'static>,
     dest: Endpoint,
-) -> Token
+) -> Result<Token, Error<T::Error>>
 where
+    T: DatagramIo,
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     if let Some(token) = app.lives.token_for(path, dest) {
-        return token;
+        return Ok(token);
     }
     let resource = ObserveResource::from_path(path.segments());
-    observe_token_on(&app.engine, resource, dest).unwrap_or_else(|| app.next_token())
+    match observe_token_on(&app.engine, resource, dest) {
+        Some(token) => Ok(token),
+        None => app.next_token(),
+    }
 }
 
 fn observe_token_on<Mem>(
