@@ -635,6 +635,12 @@ where
     /// [`Outgoing`]. An Observe subscribe ([`Outgoing::observe`]) uses the
     /// same [`Call`].
     ///
+    /// Retained Q-Block2 representations support block-zero and repeated
+    /// Continue reselection without acknowledging the current set again.
+    /// Future Continue sets must follow the issued window. Representation
+    /// changes, retention after the final set and endpoint-wide congestion
+    /// qualification remain separate from this bounded reselection behavior.
+    ///
     /// **Retransmit.** Engine schedules CON RTO inside [`Engine::progress`]
     /// / [`Engine::poll_retransmit`] and does not send. This poll sends on
     /// [`Retransmit::Due`] and releases on [`Retransmit::GiveUp`]. A matching
@@ -2303,6 +2309,10 @@ where
             match meta.q_block2 {
                 Some(q)
                     if !q.more()
+                        // NUM=0 requests the body, never acknowledges a set.
+                        // Repeated Continue requests reselect an already issued
+                        // set without acknowledging or advancing it again.
+                        || q.num() <= transfer.window_base()
                         || meta
                             .q_request
                             .is_some_and(|p| p.q_block2().nth(1).is_some())

@@ -9794,3 +9794,122 @@ fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
     exercise::<profiles::Default>();
     exercise::<LargeDownload>();
 }
+
+#[test]
+fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state() {
+    #[derive(Default)]
+    struct WindowIo {
+        inbox: Option<(Endpoint, [u8; 64], usize)>,
+        sent: [Option<([u8; 64], usize)>; 12],
+        count: usize,
+    }
+    impl DatagramIo for WindowIo {
+        type Error = &'static str;
+        fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            let Some((peer, wire, n)) = self.inbox.take() else {
+                return Ok(None);
+            };
+            out[..n].copy_from_slice(&wire[..n]);
+            Ok(Some((n, peer)))
+        }
+        fn send(&mut self, _: Endpoint, wire: &[u8]) -> Result<usize, Self::Error> {
+            if wire.len() > 64 || self.count == 12 {
+                return Err("bounded capture full");
+            }
+            let mut bytes = [0; 64];
+            bytes[..wire.len()].copy_from_slice(wire);
+            self.sent[self.count] = Some((bytes, wire.len()));
+            self.count += 1;
+            Ok(wire.len())
+        }
+    }
+    static BODY: [u8; 384] = [b'Q'; 384];
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for confirmable in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("large", get(body))
+            .bind(WindowIo::default())
+            .unwrap();
+        let token = Token::new(b"q").unwrap();
+        let key =
+            BlockKey::new(token, peer).with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+        let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
+        for _ in 0..10 {
+            app.engine.next_q_block2(id).unwrap();
+        }
+        let mut previous = app.engine.tx_body_transfer(id).unwrap();
+        // Initial/full-body reselection, valid Continue, repeated Continue,
+        // old-set reselection, an invalid future Continue, then completion.
+        for (index, num) in [0, 10, 10, 0, 30, 20].into_iter().enumerate() {
+            let q = BlockValue::from_size(num, true, 16).unwrap().encode();
+            let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+            let mid = MessageId::new(100 + index as u16);
+            let request = Message::new(
+                if confirmable {
+                    Type::Confirmable
+                } else {
+                    Type::NonConfirmable
+                },
+                Code::GET,
+                mid,
+            )
+            .with_token(token)
+            .with_options(&opts);
+            let mut wire = [0; 64];
+            let n = encode(&request, &mut wire).unwrap();
+            app.transport_mut().count = 0;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            let result = app.poll(index as u64);
+            if num == 30 {
+                assert_eq!(
+                    result,
+                    Err(Error::Block(
+                        crate::error::BlockTransferError::OutsideWindow
+                    ))
+                );
+                assert_eq!(app.transport().count, 0);
+                assert_eq!(app.engine.tx_body_transfer(id), Some(previous));
+                continue;
+            }
+            result.unwrap();
+            let skip = usize::from(confirmable);
+            if confirmable {
+                let (wire, n) = app.transport().sent[0].unwrap();
+                let ack = decode(&wire[..n]).unwrap();
+                assert!(ack.is_empty_ack());
+                assert_eq!(ack.message_id(), mid);
+            }
+            let count = if num == 20 { 4 } else { 10 };
+            assert_eq!(app.transport().count, count + skip);
+            for offset in 0..count {
+                let (wire, n) = app.transport().sent[offset + skip].unwrap();
+                let response = decode(&wire[..n]).unwrap();
+                let block = response.q_block2().next().unwrap().unwrap();
+                assert_eq!(response.ty(), Type::NonConfirmable);
+                assert_eq!(block.num(), num + offset as u32);
+                assert_eq!(block.more(), num + (offset as u32) < 23);
+                assert_eq!(
+                    response.payload(),
+                    &BODY[(num as usize + offset) * 16..(num as usize + offset + 1) * 16]
+                );
+                assert_eq!(response.size2(), Some(Ok(384)));
+                assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+            }
+            if num == 20 {
+                assert!(app.engine.tx_body_transfer(id).is_none());
+            } else if index == 1 {
+                previous = app.engine.tx_body_transfer(id).unwrap();
+                assert_eq!(previous.window_base(), 10);
+            } else {
+                assert_eq!(app.engine.tx_body_transfer(id), Some(previous));
+            }
+            assert_eq!(app.engine.rx_occupied(), 0);
+            assert_eq!(app.engine.tx_occupied(), 0);
+        }
+    }
+}
