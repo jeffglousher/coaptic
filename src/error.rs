@@ -295,7 +295,7 @@ pub enum BlockTransferError {
     SzxMismatch,
     /// Block range would exceed the body-slot byte capacity.
     Overflow,
-    /// M=0 length does not match Size1 / Size2, or a block would exceed it.
+    /// Q-Block length conflicts with Size1 / Size2 or an earlier final block.
     LengthInconsistent,
     /// Transfer already completed (M=0 accepted or last Block2 issued).
     AlreadyComplete,
@@ -326,7 +326,9 @@ impl core::fmt::Display for BlockTransferError {
             Self::Duplicate => f.write_str("block NUM is already received"),
             Self::SzxMismatch => f.write_str("block SZX does not match the transfer"),
             Self::Overflow => f.write_str("block exceeds body slot capacity"),
-            Self::LengthInconsistent => f.write_str("completed length does not match Size1/Size2"),
+            Self::LengthInconsistent => {
+                f.write_str("Q-Block length conflicts with Size1/Size2 or final block")
+            }
             Self::AlreadyComplete => f.write_str("block transfer is already complete"),
             Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
             Self::Value(e) => write!(f, "{e}"),

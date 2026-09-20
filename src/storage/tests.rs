@@ -4265,3 +4265,61 @@ fn request_binding_boundary_refuses_before_allocating_body() {
         }
     }
 }
+
+#[test]
+fn classic_wire_size_estimates_can_change_or_disappear() {
+    for upload in [false, true] {
+        for first_hint in [None, Some(0), Some(1), Some(16), Some(24), Some(u32::MAX)] {
+            for last_hint in [None, Some(0), Some(1), Some(24), Some(u32::MAX)] {
+                let mut engine = build_default_bodies();
+                let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+                let token = sample_token(&[0xab]);
+                let body = b"abcdefghijklmnopqrstuvwx";
+                let mut first_id = None;
+                for (num, hint, payload) in
+                    [(0, first_hint, &body[..16]), (1, last_hint, &body[16..])]
+                {
+                    let blk = BlockValue::from_size(num, num == 0, 16)
+                        .expect("block")
+                        .encode();
+                    let size = encode_uint(hint.unwrap_or(0));
+                    // Numeric option order differs between Block1/Size1 and Block2/Size2.
+                    let options = if upload {
+                        [Opt::block1(&blk), Opt::size1(&size)]
+                    } else {
+                        [Opt::block2(&blk), Opt::size2(&size)]
+                    };
+                    let options = &options[..if hint.is_some() { 2 } else { 1 }];
+                    let msg = Message::new(
+                        Type::Confirmable,
+                        if upload { Code::PUT } else { Code::CONTENT },
+                        MessageId::new(num as u16),
+                    )
+                    .with_token(token)
+                    .with_options(options)
+                    .with_payload(payload);
+                    let mut buf = [0u8; 80];
+                    let n = encode(&msg, &mut buf).expect("encode");
+                    let rx = engine.acquire_rx().expect("rx");
+                    engine.write_rx(rx, &buf[..n], ep).expect("write");
+                    let progress = if upload {
+                        engine.apply_block1_rx(rx)
+                    } else {
+                        engine.apply_block2_rx(rx)
+                    }
+                    .expect("estimate accepted");
+                    engine.release_rx(rx).expect("release");
+                    if num == 0 {
+                        first_id = Some(progress.id());
+                        assert!(!progress.complete());
+                        assert_eq!(engine.rx_body_payload(progress.id()), Some(&body[..16]));
+                    } else {
+                        assert_eq!(Some(progress.id()), first_id);
+                        assert!(progress.complete());
+                        assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1203,8 +1203,8 @@ impl<S: Storage + BodySlots> Engine<S> {
 
     /// Write the next in-order incoming Block1 range into `id`.
     ///
-    /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
-    /// Size1. Does not invent 4.08 policy.
+    /// Rejects overlap, gap, SZX mismatch, and actual byte overflow. Size1
+    /// is an estimate and does not determine completion. Does not invent 4.08 policy.
     #[inline]
     pub fn write_block1(
         &mut self,
@@ -1263,8 +1263,8 @@ impl<S: Storage + BodySlots> Engine<S> {
 
     /// Write the next in-order incoming Block2 range into `id`.
     ///
-    /// Rejects overlap, gap, SZX mismatch, overflow, and inconsistent
-    /// Size2. Does not invent 4.08 policy.
+    /// Rejects overlap, gap, SZX mismatch, and actual byte overflow. Size2
+    /// is an estimate and does not determine completion. Does not invent 4.08 policy.
     #[inline]
     pub fn write_block2(
         &mut self,
