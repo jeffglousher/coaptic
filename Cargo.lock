@@ -326,6 +326,7 @@ version = "0.1.0"
 dependencies = [
  "aes 0.9.2",
  "ccm 0.6.1",
+ "getrandom 0.3.4",
  "hkdf 0.13.0",
  "sha2 0.11.0",
 ]

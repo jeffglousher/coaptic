@@ -1168,6 +1168,21 @@ fn put_led_is_changed() {
     assert_eq!(&parsed.payload[..parsed.payload_len], b"off");
 }
 
+// Deterministic routing fixture only; the policy security contract is tested
+// separately with authenticated tokens. This fixture is not a MAC example.
+fn test_echo_policy(check: super::EchoCheck) -> super::EchoDecision {
+    if check
+        .echo
+        .ok()
+        .flatten()
+        .is_some_and(|echo| echo.is_time_fresh(check.now_ms, ECHO_FRESH_MS))
+    {
+        super::EchoDecision::Accept
+    } else {
+        super::EchoDecision::Challenge(EchoOpt::mint(check.now_ms, &[]).unwrap())
+    }
+}
+
 const ECHO_FRESH_MS: u64 = 5;
 
 fn assert_echo_401(app: &App<profiles::Default, Loopback>, now_ms: u64) -> EchoOpt {
@@ -1192,7 +1207,7 @@ fn echo_freshness_missing_is_401_problem() {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    app.echo_freshness(ECHO_FRESH_MS);
+    app.echo_policy(test_echo_policy);
     app.poll(10).expect("poll");
     let challenge = assert_echo_401(&app, 10);
 
@@ -1212,7 +1227,7 @@ fn echo_freshness_stale_is_401_problem() {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    app.echo_freshness(ECHO_FRESH_MS);
+    app.echo_policy(test_echo_policy);
     app.poll(15).expect("poll");
     assert_echo_401(&app, 15);
 }
@@ -1226,7 +1241,7 @@ fn echo_freshness_fresh_runs_handler() {
         inbox: Some((peer, wire, n)),
         last_send: None,
     });
-    app.echo_freshness(ECHO_FRESH_MS);
+    app.echo_policy(test_echo_policy);
     app.poll(10).expect("poll");
     let parsed = last_reply(&app);
     assert_eq!(parsed.code, Code::CHANGED);
@@ -1238,7 +1253,7 @@ fn echo_freshness_builder_missing_is_401_problem() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
     let mut app = App::profile::<profiles::Default>()
-        .echo_freshness(ECHO_FRESH_MS)
+        .echo_policy(test_echo_policy)
         .block_wise::<false>()
         .route(&["leds", "0"], get(get_led).put(put_led))
         .bind(Loopback {
@@ -6218,5 +6233,197 @@ fn observe_deregistration_strips_handler_observe_and_releases_relation() {
         app.poll(index as u64).unwrap();
         assert_eq!(last_wide(&app).observe().is_some(), index == 0);
         assert_eq!(observe_registered(&app, peer), index == 0);
+    }
+}
+
+#[cfg(feature = "oscore")]
+fn fixture_echo_mac(
+    peer: Endpoint,
+    protected: bool,
+    issued: u64,
+) -> hkdf::hmac::Hmac<sha2::Sha256> {
+    use hkdf::hmac::{KeyInit, Mac};
+    extern crate std;
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    let key = KEY.get_or_init(|| {
+        let mut key = [0; 32];
+        getrandom::fill(&mut key).expect("test entropy");
+        key
+    });
+    let mut mac = hkdf::hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap();
+    mac.update(b"coaptic-echo-fixture-v1");
+    mac.update(&issued.to_be_bytes());
+    match peer {
+        Endpoint::V4(address, port) => {
+            mac.update(&[4]);
+            mac.update(&address);
+            mac.update(&port.to_be_bytes());
+        }
+        Endpoint::V6(address, port, scope) => {
+            mac.update(&[6]);
+            mac.update(&address);
+            mac.update(&port.to_be_bytes());
+            mac.update(&scope.to_be_bytes());
+        }
+    }
+    mac.update(&[u8::from(protected)]);
+    mac
+}
+
+#[cfg(feature = "oscore")]
+fn fixture_issued_echo(peer: Endpoint, protected: bool, now: u64) -> EchoOpt {
+    use hkdf::hmac::Mac;
+    let tag = fixture_echo_mac(peer, protected, now)
+        .finalize()
+        .into_bytes();
+    EchoOpt::mint(now, &tag).unwrap()
+}
+
+#[cfg(feature = "oscore")]
+fn fixture_authenticated_echo_policy(check: super::EchoCheck) -> super::EchoDecision {
+    use hkdf::hmac::Mac;
+    let verified = check.echo.ok().flatten().is_some_and(|echo| {
+        echo.as_slice().len() == 40
+            && echo.is_time_fresh(check.now_ms, ECHO_FRESH_MS)
+            && fixture_echo_mac(
+                check.peer,
+                check.oscore_protected,
+                echo.issued_at().unwrap(),
+            )
+            .verify_slice(&echo.as_slice()[8..])
+            .is_ok()
+    });
+    if verified {
+        super::EchoDecision::Accept
+    } else {
+        super::EchoDecision::Challenge(fixture_issued_echo(
+            check.peer,
+            check.oscore_protected,
+            check.now_ms,
+        ))
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn explicit_echo_policy_checks_issuance_peer_scope_class_and_expiry_before_handler() {
+    static EFFECTS: AtomicUsize = AtomicUsize::new(0);
+    fn effect(_: Request<'_>) -> Response<'static> {
+        EFFECTS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    let peer = Endpoint::v6_scoped([1; 16], 5683, 4);
+    let issued = fixture_issued_echo(peer, false, 9);
+    let mut altered = [0; 40];
+    altered.copy_from_slice(issued.as_slice());
+    altered[39] ^= 1;
+    for (echo, sender, now, accepted) in [
+        (issued, peer, 9, true),
+        (issued, peer, 13, true),
+        (issued, peer, 14, false),
+        (fixture_issued_echo(peer, false, 11), peer, 10, false),
+        (EchoOpt::mint(9, &[]).unwrap(), peer, 10, false),
+        (EchoOpt::new(&altered).unwrap(), peer, 10, false),
+        (issued, Endpoint::v6_scoped([1; 16], 5683, 5), 10, false),
+        (issued, Endpoint::v6_scoped([1; 16], 5684, 4), 10, false),
+        (issued, Endpoint::v6_scoped([2; 16], 5683, 4), 10, false),
+        (fixture_issued_echo(peer, true, 9), peer, 10, false),
+    ] {
+        let before = EFFECTS.load(Ordering::SeqCst);
+        let (wire, n) = encode_req_with_echo(Code::PUT, &["effect"], b"one", &echo);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<false>()
+            .echo_policy(fixture_authenticated_echo_policy)
+            .route("effect", put(effect))
+            .bind(Loopback {
+                inbox: Some((sender, wire, n)),
+                last_send: None,
+            })
+            .unwrap();
+        app.poll(now).unwrap();
+        assert_eq!(
+            last_reply(&app).code,
+            if accepted {
+                Code::CHANGED
+            } else {
+                Code::UNAUTHORIZED
+            }
+        );
+        assert_eq!(
+            EFFECTS.load(Ordering::SeqCst) - before,
+            usize::from(accepted)
+        );
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn echo_policy_issuance_failure_is_closed_and_reclaims_rx() {
+    fn deny(check: super::EchoCheck) -> super::EchoDecision {
+        assert_eq!(check.echo, Ok(None));
+        assert!(!check.oscore_protected);
+        super::EchoDecision::Reject
+    }
+    fn unreachable(_: Request<'_>) -> Response<'static> {
+        panic!("rejected request reached handler")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .echo_policy(deny)
+        .block_wise::<false>()
+        .route("effect", put(unreachable))
+        .bind(Loopback::default())
+        .unwrap();
+    for mid in 1..=12 {
+        let (wire, n) = encode_req_mid(Code::PUT, &["effect"], b"one", mid);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(mid)).unwrap();
+        let response = last_reply(&app);
+        assert_eq!(response.code, Code::UNAUTHORIZED);
+        assert!(response.echo.is_none());
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+}
+
+#[test]
+fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
+    fn policy(check: super::EchoCheck) -> super::EchoDecision {
+        assert_eq!(check.echo, Err(crate::error::ValueError::EchoLength));
+        super::EchoDecision::Reject
+    }
+    fn unreachable(_: Request<'_>) -> Response<'static> {
+        panic!("invalid Echo reached handler")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .echo_policy(policy)
+        .route("effect", put(unreachable))
+        .bind(RecordIo::default())
+        .unwrap();
+    for value in [&[][..], &[0; 41][..]] {
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let opts = [
+            Opt::uri_path("effect"),
+            Opt::block1(&block),
+            Opt::new(OptionNumber::ECHO, value),
+        ];
+        let message = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(100))
+            .with_token(Token::from_checked(&[1]))
+            .with_options(&opts)
+            .with_payload(b"abcdefghijklmnop");
+        let mut wire = [0; 256];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        let (_, bytes, n) = app.transport().sent[app.transport().sent_n - 1].unwrap();
+        assert_eq!(decode(&bytes[..n]).unwrap().code(), Code::UNAUTHORIZED);
+        for index in 0..app.engine.capacities().rx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
     }
 }

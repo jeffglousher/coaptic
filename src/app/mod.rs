@@ -70,8 +70,8 @@
 //! Observe: return [`.observe`](Response::observe) on a successful GET, or
 //! attach [`MethodRouter::observe`]; later representations are
 //! [`App::notify`]. Client subscribe is [`Outgoing::observe`] /
-//! [`Outgoing::deregister`] on the same [`Call`]. Echo freshness
-//! (RFC 9175 4.01) is [`AppBuilder::echo_freshness`]. Pairwise OSCORE
+//! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
+//! (RFC 9175 4.01) is caller-owned through [`AppBuilder::echo_policy`]. Pairwise OSCORE
 //! (feature `oscore`) is `App::set_oscore`.
 //!
 //! The happy path does not use [`Access`](crate::storage::Access) or
@@ -79,6 +79,7 @@
 //! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
 //! and BERT edges (future / backlog).
 mod client;
+mod echo;
 mod oscore;
 mod request;
 mod response;
@@ -92,8 +93,8 @@ use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, Echo, EchoFreshness, EncodedUint, Ids, Message, MessageId, NoResponse, Opt,
-    OptionsBuilder, ParsedMessage, Transmission, Type, decode, encode, encode_uint,
+    BlockValue, Code, Echo, EncodedUint, Ids, Message, MessageId, NoResponse, Opt, OptionsBuilder,
+    ParsedMessage, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
@@ -107,6 +108,7 @@ use crate::storage::{
 pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, CallFailure, Outgoing, RESPONSE_OPTION_BYTES, RESPONSE_OPTION_COUNT};
+pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
 pub use response::{
     AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,
@@ -153,7 +155,7 @@ pub struct App<
     tokens: u32,
     inbox: client::ClientInbox,
     lives: client::ClientLives,
-    echo_fresh_ms: Option<u64>,
+    echo_policy: Option<EchoPolicy>,
     /// Last POST/PATCH/FETCH whose Dedup insert failed. A CON retransmit
     /// of that Message ID + peer is ACKed without a handler re-run until
     /// `due_ms` (fail-closed, not Miss). Not a seventh memory area.
@@ -180,7 +182,7 @@ pub struct AppBuilder<
     const BLOCK_WISE: bool = false,
 > {
     site: Site<N>,
-    echo_fresh_ms: Option<u64>,
+    echo_policy: Option<EchoPolicy>,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -191,7 +193,7 @@ impl App {
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
         AppBuilder {
             site: Site::new(),
-            echo_fresh_ms: None,
+            echo_policy: None,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -220,7 +222,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         }
         AppBuilder {
             site,
-            echo_fresh_ms: self.echo_fresh_ms,
+            echo_policy: self.echo_policy,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -255,15 +257,13 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         self
     }
 
-    /// Require a time-fresh Echo (RFC 9175) on inbound requests.
+    /// Install an explicit server Echo issuer/verifier. See [`EchoPolicy`].
     ///
-    /// Off by default. When set, [`App::poll`] classifies via
-    /// [`Engine::echo_freshness`]. Missing, invalid, or stale Echo is 4.01
-    /// with [`Response::problem`] and a minted Echo challenge. Fresh
-    /// requests continue to the site. Handlers do not implement this.
+    /// Off by default. Challenge/reject decisions produce 4.01 before body
+    /// assembly or handler side effects. Only `EchoDecision::Accept` proceeds.
     #[must_use]
-    pub const fn echo_freshness(mut self, fresh_ms: u64) -> Self {
-        self.echo_fresh_ms = Some(fresh_ms);
+    pub const fn echo_policy(mut self, policy: EchoPolicy) -> Self {
+        self.echo_policy = Some(policy);
         self
     }
 }
@@ -287,7 +287,7 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
     pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
         AppBuilder {
             site: self.site,
-            echo_fresh_ms: self.echo_fresh_ms,
+            echo_policy: self.echo_policy,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -312,7 +312,7 @@ where
             tokens: 0,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
-            echo_fresh_ms: self.echo_fresh_ms,
+            echo_policy: self.echo_policy,
             dedup_closed: None,
             oscore: oscore::empty_field(),
             assembled: Default::default(),
@@ -338,7 +338,7 @@ where
             tokens: 0,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
-            echo_fresh_ms: self.echo_fresh_ms,
+            echo_policy: self.echo_policy,
             dedup_closed: None,
             oscore: oscore::empty_field(),
             assembled: Default::default(),
@@ -375,10 +375,9 @@ impl<
         self
     }
 
-    /// Require a time-fresh Echo on inbound requests. See
-    /// [`AppBuilder::echo_freshness`].
-    pub const fn echo_freshness(&mut self, fresh_ms: u64) -> &mut Self {
-        self.echo_fresh_ms = Some(fresh_ms);
+    /// Install an explicit server Echo issuer/verifier. See [`EchoPolicy`].
+    pub const fn echo_policy(&mut self, policy: EchoPolicy) -> &mut Self {
+        self.echo_policy = Some(policy);
         self
     }
 
@@ -524,9 +523,9 @@ where
     /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
     /// with [`Response::problem`]. Apply-error 4.08 uses problem details;
     /// Q-Block1 holes after `NON_RECEIVE_TIMEOUT` use
-    /// [`Response::missing_blocks`]. When [`Self::echo_freshness`] is set,
-    /// a request that is not [`EchoFreshness::Fresh`] is 4.01 with a
-    /// minted Echo. Location-Path / Location-Query on the [`Response`]
+    /// [`Response::missing_blocks`]. An installed [`Self::echo_policy`] can
+    /// challenge or reject with 4.01 before processing. Location-Path /
+    /// Location-Query on the [`Response`]
     /// are written on the wire. [`Response::separate`] is an empty ACK
     /// to a CON request, then the representation in a later CON (new
     /// Message ID; NON request → NON). A retransmitted CON request (same
@@ -582,7 +581,7 @@ where
             &mut self.inbox,
             &mut self.lives,
             &mut self.oscore,
-            self.echo_fresh_ms,
+            self.echo_policy,
             &mut self.dedup_closed,
             now_ms,
         )
@@ -635,7 +634,7 @@ fn poll_engine<Mem, T, const N: usize>(
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
     oscore: &mut oscore::Field,
-    echo_fresh_ms: Option<u64>,
+    echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
@@ -685,7 +684,7 @@ where
             lives,
             ids,
             oscore,
-            echo_fresh_ms,
+            echo_policy,
             dedup_closed,
             now_ms,
             rx,
@@ -899,7 +898,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     lives: &mut client::ClientLives,
     ids: &mut Ids,
     oscore: &mut oscore::Field,
-    echo_fresh_ms: Option<u64>,
+    echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     now_ms: u64,
     rx: SlotId,
@@ -1081,15 +1080,21 @@ where
         request: parsed.code(),
     };
 
-    if let Some(fresh_ms) = echo_fresh_ms {
-        match Engine::<Mem>::echo_freshness(&parsed, now_ms, fresh_ms) {
-            EchoFreshness::Fresh => {}
-            EchoFreshness::Missing | EchoFreshness::Invalid | EchoFreshness::Stale => {
+    if let Some(policy) = echo_policy {
+        let decision = policy(EchoCheck {
+            echo: Echo::from_message(&parsed),
+            peer,
+            now_ms,
+            oscore_protected: oscore::is_active(oscore),
+        });
+        match decision {
+            EchoDecision::Accept => {}
+            EchoDecision::Challenge(_) | EchoDecision::Reject => {
                 let outcome = send_response(
                     engine,
                     io,
                     meta,
-                    &unauthorized_echo(now_ms),
+                    &unauthorized_echo(decision),
                     now_ms,
                     oscore,
                     dedup_closed,
@@ -2626,11 +2631,14 @@ where
     }
 }
 
-fn unauthorized_echo(now_ms: u64) -> Response<'static> {
-    let challenge = Echo::mint(now_ms, &[]).expect("timestamp Echo");
-    Response::problem(Code::UNAUTHORIZED)
+fn unauthorized_echo(decision: EchoDecision) -> Response<'static> {
+    let response = Response::problem(Code::UNAUTHORIZED)
         .title("Unauthorized")
-        .echo(challenge)
+        .max_age(0);
+    match decision {
+        EchoDecision::Challenge(challenge) => response.echo(challenge),
+        EchoDecision::Reject | EchoDecision::Accept => response,
+    }
 }
 
 fn szx_for(block2: Option<BlockValue>, q_block2: Option<BlockValue>) -> u8 {

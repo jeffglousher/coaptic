@@ -13,7 +13,7 @@ use super::decode::ParsedMessage;
 ///
 /// Not a seventh core area. Outstanding-request copies live on
 /// [`crate::storage::ExchangeEntry`]. [`crate::App`] applies 4.01 with a
-/// minted challenge when [`crate::app::AppBuilder::echo_freshness`] is set.
+/// caller-issued challenge through [`crate::app::AppBuilder::echo_policy`].
 /// See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Echo {
@@ -112,9 +112,8 @@ impl Echo {
 /// Time-based Echo freshness of one datagram.
 ///
 /// Event-based freshness is equality against a caller-owned [`Echo`].
-/// [`crate::App`] maps anything other than [`Self::Fresh`] to 4.01 when
-/// [`crate::app::AppBuilder::echo_freshness`] is set. The library does not
-/// invent 4.01 unless that policy is on.
+/// This is only a timestamp classifier, not verification of issuance or a
+/// MAC. App uses an explicit [`crate::app::EchoPolicy`] instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EchoFreshness {
     /// No Echo option.
@@ -130,8 +129,7 @@ pub enum EchoFreshness {
 impl EchoFreshness {
     /// Whether this is not [`Self::Fresh`] (missing, invalid, or stale).
     ///
-    /// App uses this when [`crate::app::AppBuilder::echo_freshness`] is set.
-    /// The library still does not invent 4.01 unless App applies that policy.
+    /// This classification alone does not authenticate a challenge.
     #[must_use]
     pub const fn needs_challenge(self) -> bool {
         !matches!(self, Self::Fresh)
