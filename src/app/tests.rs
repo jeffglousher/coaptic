@@ -8808,3 +8808,287 @@ fn qblock2_confirmable_request_gets_empty_ack_then_all_non_payloads() {
         }
     }
 }
+
+#[test]
+fn qblock1_missing_report_reissues_exact_ranges_and_retains_upload_until_final_response() {
+    static BODY: [u8; 3000] = [b'Q'; 3000];
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let tag = crate::storage::BodyTag::new(b"missing").unwrap();
+    let call = app
+        .put("upload")
+        .q_block1()
+        .non()
+        .request_tag(tag)
+        .query("x=1")
+        .query("")
+        .accept(ContentFormat::OCTET_STREAM)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .echo(EchoOpt::new(b"challenge").unwrap())
+        .payload(&BODY)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(app.transport().send_n, 3);
+    let key = BlockKey::new(call.token(), peer).with_identity(tag);
+    let id = app.engine().lookup_tx_body(key).unwrap();
+    let before = app.engine().tx_body_transfer(id).unwrap();
+    app.transport_mut().send_n = 0;
+    let cf = ContentFormat::MISSING_BLOCKS.encode();
+    let opts = [Opt::content_format(&cf)];
+    let report = Message::new(
+        Type::NonConfirmable,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        MessageId::new(500),
+    )
+    .with_token(call.token())
+    .with_options(&opts)
+    .with_payload(&[0, 2]);
+    let mut wire = [0; WIRE];
+    let n = encode(&report, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert_eq!(app.transport().send_n, 2);
+    for (index, num) in [0, 2].into_iter().enumerate() {
+        let request =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        assert_eq!(request.ty(), Type::NonConfirmable);
+        assert_eq!(request.code(), Code::PUT);
+        assert_eq!(request.token(), call.token());
+        assert_eq!(request.uri_path().next(), Some(Ok("upload")));
+        let mut queries = request.uri_query();
+        assert_eq!(queries.next(), Some(Ok("x=1")));
+        assert_eq!(queries.next(), Some(Ok("")));
+        assert!(queries.next().is_none());
+        assert_eq!(request.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+        assert_eq!(
+            request.content_format(),
+            Some(Ok(ContentFormat::OCTET_STREAM))
+        );
+        assert_eq!(request.echo(), Some(&b"challenge"[..]));
+        assert_eq!(request.request_tag().next(), Some(&b"missing"[..]));
+        assert_eq!(request.size1(), Some(Ok(3000)));
+        let block = request.q_block1().unwrap().unwrap();
+        assert_eq!(block.num(), num);
+        assert_eq!(block.more(), num == 0);
+        assert_eq!(block.szx(), 6);
+        let offset = num as usize * 1024;
+        assert_eq!(
+            request.payload(),
+            &BODY[offset..(offset + 1024).min(BODY.len())]
+        );
+    }
+    assert_eq!(app.engine().tx_body_transfer(id), Some(before));
+    assert!(app.take_response(call).is_none());
+    let reply = Message::new(Type::NonConfirmable, Code::CHANGED, MessageId::new(501))
+        .with_token(call.token());
+    let n = encode(&reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert!(app.engine().lookup_tx_body(key).is_none());
+}
+
+#[test]
+fn qblock1_invalid_missing_reports_are_silent_and_preserve_later_recovery() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let tag = crate::storage::BodyTag::new(b"tag").unwrap();
+    let call = app
+        .put("upload")
+        .q_block1()
+        .non()
+        .request_tag(tag)
+        .payload(&[7; 3000])
+        .to(peer)
+        .send(0)
+        .unwrap();
+    let id = app
+        .engine()
+        .lookup_tx_body(BlockKey::new(call.token(), peer).with_identity(tag))
+        .unwrap();
+    let before = app.engine().tx_body_transfer(id);
+    let invalid: &[&[u8]] = &[
+        &[],
+        &[1, 1],
+        &[2, 1],
+        &[0, 3],
+        &[0, 0x18],
+        &[0x81, 1],
+        &[0x20],
+        &[0xfa, 0, 0, 0, 0],
+        &[0x1a, 0xff, 0xff, 0xff, 0xff],
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    ];
+    let cf = ContentFormat::MISSING_BLOCKS.encode();
+    let opts = [Opt::content_format(&cf)];
+    let mut wire = [0; WIRE];
+    for (index, payload) in invalid.iter().enumerate() {
+        let report = Message::new(
+            Type::NonConfirmable,
+            Code::REQUEST_ENTITY_INCOMPLETE,
+            MessageId::new(500 + index as u16),
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(payload);
+        let n = encode(&report, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().send_n = 0;
+        app.poll(index as u64).unwrap();
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine().tx_body_transfer(id), before);
+        assert!(app.take_response(call).is_none());
+    }
+    for (from, token) in [
+        (Endpoint::v4([192, 0, 2, 9], 5683), call.token()),
+        (peer, Token::new(b"wrong").unwrap()),
+    ] {
+        let report = Message::new(
+            Type::NonConfirmable,
+            Code::REQUEST_ENTITY_INCOMPLETE,
+            MessageId::new(550),
+        )
+        .with_token(token)
+        .with_options(&opts)
+        .with_payload(&[1]);
+        let n = encode(&report, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((from, wire, n));
+        app.poll(11).unwrap();
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine().tx_body_transfer(id), before);
+    }
+    let report = Message::new(
+        Type::NonConfirmable,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        MessageId::new(560),
+    )
+    .with_token(call.token())
+    .with_options(&opts)
+    .with_payload(&[1]);
+    let n = encode(&report, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).q_block1().unwrap().unwrap().num(), 1);
+    assert!(app.take_response(call).is_none());
+    // An ordinary 4.08 without the missing-blocks format remains a final error.
+    let reply = Message::new(
+        Type::NonConfirmable,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        MessageId::new(561),
+    )
+    .with_token(call.token());
+    let n = encode(&reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(13).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::REQUEST_ENTITY_INCOMPLETE
+    );
+    assert!(app.engine().tx_body_transfer(id).is_none());
+}
+
+#[test]
+fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_other_call() {
+    struct FaultIo {
+        pipe: WideLoopback,
+        count: usize,
+        fail_at: usize,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.pipe.recv(out)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            self.count += 1;
+            if self.count == self.fail_at {
+                if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("reissue failure")
+                }
+            } else {
+                self.pipe.send(peer, bytes)
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for short in [false, true] {
+        for fail_at in [1, 2] {
+            let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .bind(FaultIo {
+                    pipe: WideLoopback::default(),
+                    count: 0,
+                    fail_at: usize::MAX,
+                    short,
+                })
+                .unwrap();
+            let other = app
+                .get("other")
+                .to(Endpoint::v4([192, 0, 2, 9], 5683))
+                .send(0)
+                .unwrap();
+            for now in 1..13 {
+                app.transport_mut().pipe.send_n = 0;
+                app.transport_mut().fail_at = usize::MAX;
+                let call = app
+                    .put("upload")
+                    .q_block1()
+                    .non()
+                    .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
+                    .payload(&[7; 3000])
+                    .to(peer)
+                    .send(now)
+                    .unwrap();
+                let cf = ContentFormat::MISSING_BLOCKS.encode();
+                let opts = [Opt::content_format(&cf)];
+                let message = Message::new(
+                    Type::NonConfirmable,
+                    Code::REQUEST_ENTITY_INCOMPLETE,
+                    MessageId::new(500 + now as u16),
+                )
+                .with_token(call.token())
+                .with_options(&opts)
+                .with_payload(&[0, 2]);
+                let mut wire = [0; WIRE];
+                let n = encode(&message, &mut wire).unwrap();
+                app.transport_mut().pipe.inbox = Some((peer, wire, n));
+                app.transport_mut().pipe.send_n = 0;
+                app.transport_mut().count = 0;
+                app.transport_mut().fail_at = fail_at;
+                assert!(app.poll(now).is_err());
+                assert_eq!(app.transport().pipe.send_n, fail_at - 1);
+                assert_eq!(
+                    app.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::ContinuationFailed
+                );
+                assert!(app.take_response(other).is_none());
+                assert_eq!(app.engine_mut().tx_occupied(), 1);
+                assert_eq!(app.engine_mut().rx_occupied(), 0);
+                for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+                    assert!(
+                        app.engine()
+                            .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+}

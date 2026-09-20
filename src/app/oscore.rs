@@ -113,8 +113,13 @@ pub(crate) fn inbound<'a>(
                 if !register_ack {
                     ctx.accept_notification(parsed.token(), header.piv)?;
                 }
-            } else if inner.q_block2().next().is_some() {
-                // A Q response set shares one request binding. Authenticate
+            } else if inner.q_block2().next().is_some()
+                || (inner.code() == crate::message::Code::REQUEST_ENTITY_INCOMPLETE
+                    && inner.content_format()
+                        == Some(Ok(crate::message::ContentFormat::MISSING_BLOCKS)))
+            {
+                // Q response sets and missing-block reports may keep the Call
+                // active. Authenticate
                 // before updating replay state; keep the binding until Call
                 // completion/cancellation, including an out-of-order final block.
                 if let Some(piv) = header.piv {

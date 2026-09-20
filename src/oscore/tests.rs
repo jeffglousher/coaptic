@@ -3710,3 +3710,96 @@ fn app_oscore_qblock2_failed_empty_ack_replays_without_reentering_handler() {
     assert_eq!(CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(server.oscore().unwrap().sender_seq(), 0);
 }
+
+#[test]
+fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let call = client
+        .put("upload")
+        .q_block1()
+        .non()
+        .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
+        .payload(&LARGE)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(client.transport().sent.len(), 2);
+    let last = client.transport_mut().sent.pop().unwrap();
+    client.transport_mut().sent.clear();
+    let mut server = server_c1();
+    let request = decode(&last).unwrap();
+    let mut scratch = [0; WIRE];
+    let (_, request_ref) = server.unprotect_request(&request, &mut scratch).unwrap();
+    let cf = ContentFormat::MISSING_BLOCKS.encode();
+    let opts = [Opt::content_format(&cf)];
+    for (index, payload) in [&[1, 1][..], &[0, 9][..], &[1][..]].into_iter().enumerate() {
+        let report = Message::new(
+            Type::NonConfirmable,
+            Code::REQUEST_ENTITY_INCOMPLETE,
+            MessageId::new(500 + index as u16),
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(payload);
+        let mut protected = [0; WIRE];
+        let n = server
+            .protect_response_with_piv(&report, request_ref, &mut protected)
+            .unwrap();
+        // Authentication failures must not affect retained body/binding state.
+        let mut corrupt = protected[..n].to_vec();
+        *corrupt.last_mut().unwrap() ^= 1;
+        client.transport_mut().inbox = Some((peer, corrupt));
+        client.poll(index as u64 + 1).unwrap();
+        assert!(client.transport().sent.is_empty());
+        assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        client.transport_mut().inbox = Some((peer, protected[..n].to_vec()));
+        client.poll(index as u64 + 1).unwrap();
+        assert!(client.take_response(call).is_none());
+        assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        if index < 2 {
+            assert!(client.transport().sent.is_empty());
+            // Authenticated malformed reports are replay-filtered too.
+            client.transport_mut().inbox = Some((peer, protected[..n].to_vec()));
+            client.poll(index as u64 + 1).unwrap();
+            assert!(client.transport().sent.is_empty());
+        }
+    }
+    assert_eq!(client.transport().sent.len(), 1);
+    let wire = client.transport_mut().sent.remove(0);
+    let outer = decode(&wire).unwrap();
+    assert!(outer.oscore().is_some());
+    assert_eq!(outer.ty(), Type::NonConfirmable);
+    let (inner, recovery_ref) = server.unprotect_request(&outer, &mut scratch).unwrap();
+    assert_eq!(inner.q_block1().unwrap().unwrap().num(), 1);
+    assert_eq!(inner.payload(), &LARGE[1024..]);
+    assert_eq!(inner.request_tag().next(), Some(&b"tag"[..]));
+    let final_reply = Message::new(Type::NonConfirmable, Code::CHANGED, MessageId::new(600))
+        .with_token(call.token());
+    let mut wire = [0; WIRE];
+    let n = server
+        .protect_response(&final_reply, recovery_ref, &mut wire)
+        .unwrap();
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(4).unwrap();
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+    assert_eq!(client.engine_mut().tx_occupied(), 0);
+    for index in 0..client.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            client
+                .engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+}
