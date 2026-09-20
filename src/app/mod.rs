@@ -602,6 +602,12 @@ where
     /// Dedup Miss is a new exchange (POST / PATCH / FETCH may re-run).
     /// Proxy-Uri or Proxy-Scheme on a request is 5.05 before the site
     /// (origin; this crate is not a forward-proxy).
+    /// Accepted CON responses also retain an empty ACK in this bounded table,
+    /// including protected responses after reply collection. Replay is keyed
+    /// by peer and Outer MID, without redelivering the response. Failed initial
+    /// ACK sends do not install a replay. Rows expire at `EXCHANGE_LIFETIME`;
+    /// table pressure can evict older App rows, so callers must size the profile
+    /// for their concurrent request/notification history. This adds no body pool.
     /// An OSCORE CON retransmit is keyed on the *outer* Message ID so the
     /// cached protected ACK is replayed without a second unprotect.
     /// Observe register / deregister and
@@ -1149,7 +1155,9 @@ where
     // Dedup keys the *outer* Message ID + peer. OSCORE CON retransmit
     // must replay the cached protected ACK before unprotect, or the
     // replay window consumes the Partial IV and the client never ACKs.
-    if parsed.code().is_request() && parsed.ty() == Type::Confirmable {
+    if (parsed.code().is_request() || parsed.code().is_response())
+        && parsed.ty() == Type::Confirmable
+    {
         match replay_con_request(engine, io, peer, &parsed, now_ms, dedup_closed) {
             Replay::Hit(outcome) => {
                 let _ = engine.release_rx(rx);
@@ -1200,7 +1208,10 @@ where
     };
 
     if !parsed.code().is_request() {
-        return client::complete_client(
+        let cache_ack = parsed.ty() == Type::Confirmable
+            && parsed.unknown_critical().is_none()
+            && client::has_response_target(engine, &parsed, peer);
+        let outcome = client::complete_client(
             engine,
             io,
             inbox,
@@ -1213,6 +1224,19 @@ where
             &parsed,
             rx,
         );
+        // Only a successfully admitted response has earned an ACK replay.
+        // A failed initial ACK must retry admission, not skip delivery.
+        if outcome.is_ok() && cache_ack {
+            remember_empty_ack(
+                engine,
+                peer,
+                parsed.message_id(),
+                now_ms,
+                parsed.code(),
+                dedup_closed,
+            );
+        }
+        return outcome;
     }
 
     let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
