@@ -132,9 +132,11 @@ pub(crate) fn inbound<'a>(
                     // from independent peers. Others need fresh response PIVs.
                     ctx.accept_notification(parsed.token(), None)?;
                 }
-            } else {
-                let _ = ctx.take(parsed.token());
             }
+            // Authentication is not application admission. Unknown critical
+            // options or a failed CON ACK can leave the Call pending. Retire
+            // ordinary bindings when App collects/completes/cancels the Call,
+            // or replace them when a continuation encodes a fresh request.
             (inner, request)
         };
         return Ok(Some((inner, request)));
