@@ -182,3 +182,11 @@ Echo, preserving request parameters and the original deadline. It records the
 retry count; plaintext responses and repeated challenges cannot trigger this
 policy. The libcoap direction requires its default B.1.2 challenge to be exercised.
 This is a bounded fixture policy, not automatic freshness policy in the library.
+
+Three protected Block2 cases exercise Coaptic self-pair and both libcoap directions.
+Each checks exact 2,000-byte assembly normally, with the first reply dropped and
+with duplicated requests, after completing any Echo challenge. Every schedule
+also checks wrong-key refusal and a subsequent exact protected large response.
+Actual fault datagrams and expected-body digest are retained. This is bounded
+IPv4 GET evidence, not Block1, Observe, Q-Block, arbitrary reordering or persistent
+context qualification.

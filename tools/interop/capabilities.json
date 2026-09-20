@@ -2212,6 +2212,94 @@
         "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
       ],
       "executable": "tools/interop/run.py:oscore_fault_workflow"
+    },
+    {
+      "id": "oscore-block2:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "oscore",
+        "block2",
+        "lost-first-reply",
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "exact 2000-byte assembly in normal, dropped-first-reply and duplicated-request schedules",
+        "exact protected large response after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "wrong-key large request cannot complete",
+        "missing follow-up datagrams or unexercised fault fails"
+      ],
+      "executable": "tools/interop/run.py:oscore_block2_workflow"
+    },
+    {
+      "id": "oscore-block2:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "block2",
+        "lost-first-reply",
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "exact 2000-byte assembly in normal, dropped-first-reply and duplicated-request schedules",
+        "exact protected large response after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "wrong-key large request cannot complete",
+        "missing follow-up datagrams or unexercised fault fails"
+      ],
+      "executable": "tools/interop/run.py:oscore_block2_workflow"
+    },
+    {
+      "id": "oscore-block2:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "block2",
+        "lost-first-reply",
+        "duplicate-request"
+      ],
+      "positive_proof": [
+        "exact 2000-byte assembly in normal, dropped-first-reply and duplicated-request schedules",
+        "exact protected large response after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "wrong-key large request cannot complete",
+        "missing follow-up datagrams or unexercised fault fails"
+      ],
+      "executable": "tools/interop/run.py:oscore_block2_workflow"
     }
   ],
   "gaps": [

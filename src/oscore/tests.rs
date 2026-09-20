@@ -5504,6 +5504,12 @@ fn protected_large_server_notifications_assemble_and_recover_from_send_failure()
                     "exhaustion must never fall back to plaintext"
                 );
                 assert!(client.cancel(call));
+                server
+                    .poll(
+                        base + 10_000
+                            + u64::from(crate::message::Transmission::EXCHANGE_LIFETIME_MS),
+                    )
+                    .unwrap();
                 assert_eq!(server.engine_mut().tx_occupied(), 0);
                 assert_eq!(server.engine_mut().rx_occupied(), 0);
                 assert_eq!(client.engine_mut().tx_occupied(), 0);

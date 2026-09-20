@@ -3499,6 +3499,9 @@ fn client_get_block2_assembles_body_without_slot_id() {
     assert_eq!(response.peer, Some(peer));
     assert!(app.take_response(call).is_none());
     assert_eq!(app.engine_mut().rx_occupied(), 0);
+    // The colocated server keeps bounded wire replies for CON retransmission.
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS) + 100)
+        .unwrap();
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
 
@@ -10582,7 +10585,7 @@ fn retained_notification_survives_incomplete_followups_and_send_failure() {
         Response::content(&[b'B'; 4096]).etag(b"v1")
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    for fail_send in [false, true] {
+    for failed_num in [0, 2, 3] {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
@@ -10612,12 +10615,22 @@ fn retained_notification_survives_incomplete_followups_and_send_failure() {
                 &[Opt::opaque(OptionNumber::BLOCK2, &block)],
                 0x7400 + u16::from(num),
             );
-            if fail_send && num == 2 {
+            if num == failed_num {
                 app.transport_mut().send_n = 4;
                 app.transport_mut().inbox = Some((peer, wire, n));
                 assert!(app.poll(u64::from(num) * 10).is_err());
-                assert_eq!(app.engine.tx_body_payload(id), Some(&BODY[..]));
-                assert_eq!(app.engine.tx_occupied(), 0);
+                assert_eq!(
+                    app.engine.tx_body_payload(id),
+                    if num == 3 { None } else { Some(&BODY[..]) }
+                );
+                let pins = (0..app.engine.capacities().dedup_entries)
+                    .filter_map(|n| {
+                        app.engine
+                            .dedup_entry(crate::storage::SlotId::from_index(n))
+                    })
+                    .filter(|row| row.tx_pin().is_some())
+                    .count();
+                assert_eq!(app.engine.tx_occupied(), pins);
             }
             app.transport_mut().send_n = 0;
             app.transport_mut().inbox = Some((peer, wire, n));
@@ -10748,5 +10761,73 @@ fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
         assert_eq!(app.engine.rx_occupied(), 0);
         assert_eq!(app.engine.tx_occupied(), 0);
         assert!(app.engine.start_block2(key, &BODY, 6).is_ok());
+    }
+}
+
+#[test]
+fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static BODY: [u8; 3000] = [b'C'; 3000];
+    fn handler(_: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for code in [Code::GET, Code::POST] {
+        for num in 0..3u8 {
+            for fail_first in [false, true] {
+                CALLS.store(0, Ordering::SeqCst);
+                let mut app = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .route("large", get(handler).post(handler))
+                    .bind(WideLoopback::default())
+                    .unwrap();
+                let value = [(num << 4) | 6];
+                let (wire, n) = encode_wide(
+                    code,
+                    &["large"],
+                    &[Opt::opaque(OptionNumber::BLOCK2, &value)],
+                    0x7800,
+                );
+                app.transport_mut().send_n = if fail_first { 4 } else { 0 };
+                app.transport_mut().inbox = Some((peer, wire, n));
+                assert_eq!(app.poll(0).is_err(), fail_first);
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                app.transport_mut().send_n = 0;
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(1).unwrap();
+                let first = app.transport().sends[0];
+                let first_len = app.transport().send_lens[0];
+                let response = last_wide(&app);
+                let offset = usize::from(num) * 1024;
+                assert_eq!(
+                    response.payload(),
+                    &BODY[offset..(offset + 1024).min(BODY.len())]
+                );
+                assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+                app.transport_mut().send_n = 0;
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(2).unwrap();
+                assert_eq!(
+                    &app.transport().sends[0][..app.transport().send_lens[0]],
+                    &first[..first_len]
+                );
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                app.transport_mut().send_n = 0;
+                app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS) + 1)
+                    .unwrap();
+                assert_eq!(app.engine.tx_occupied(), 0);
+                assert_eq!(app.engine.rx_occupied(), 0);
+                assert!(
+                    super::response_body_for(
+                        &app.engine,
+                        BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+                    )
+                    .is_none()
+                );
+            }
+        }
     }
 }
