@@ -9281,93 +9281,107 @@ fn qblock2_timed_recovery_send_failure_retires_call_without_harming_other_call()
 }
 
 #[test]
-fn fetch_download_followups_retain_selection_body_format_and_conditions() {
+fn download_followups_retain_conditions_and_fetch_selection() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    for mode in 0..3 {
-        for condition in [false, true] {
-            let mut app = App::profile::<profiles::Default>()
-                .deterministic_for_tests()
-                .block_wise::<true>()
-                .bind(WideLoopback::default())
+    for method in [Code::GET, Code::FETCH, Code::POST] {
+        for mode in 0..3 {
+            for condition in [false, true] {
+                let mut app = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .bind(WideLoopback::default())
+                    .unwrap();
+                let request = match method {
+                    Code::GET => app.get("search/items"),
+                    Code::FETCH => app.fetch("search/items").payload(b"selection"),
+                    _ => app.post("search/items").payload(b"selection"),
+                };
+                let request = request
+                    .non()
+                    .etag(b"cached")
+                    .query("a=1")
+                    .content_format(ContentFormat::JSON)
+                    .accept(ContentFormat::OCTET_STREAM)
+                    .to(peer);
+                let request = if condition {
+                    request.if_match(b"v0")
+                } else {
+                    request.if_none_match()
+                };
+                let call = if mode == 0 {
+                    request
+                } else {
+                    request.q_block2()
+                }
+                .send(0)
                 .unwrap();
-            let request = app
-                .fetch("search/items")
-                .non()
-                .query("a=1")
-                .payload(b"selection")
-                .content_format(ContentFormat::JSON)
-                .accept(ContentFormat::OCTET_STREAM)
-                .to(peer);
-            let request = if condition {
-                request.if_match(b"v0")
-            } else {
-                request.if_none_match()
-            };
-            let call = if mode == 0 {
-                request
-            } else {
-                request.q_block2()
-            }
-            .send(0)
-            .unwrap();
-            let count = if mode == 2 {
-                10
-            } else if mode == 1 {
-                2
-            } else {
-                1
-            };
-            for index in 0..count {
-                let num = if mode == 1 && index == 1 { 2 } else { index };
-                let block = BlockValue::from_size(num, mode != 1 || num != 2, 16)
-                    .unwrap()
-                    .encode();
-                let size = encode_uint(if mode == 1 { 48 } else { 176 });
-                let option = if mode == 0 {
-                    Opt::block2(&block)
+                let count = if mode == 2 {
+                    10
+                } else if mode == 1 {
+                    2
                 } else {
-                    Opt::q_block2(&block)
+                    1
                 };
-                let opts = if mode == 0 {
-                    [Opt::etag(b"v1"), option, Opt::size2(&size)]
+                for index in 0..count {
+                    let num = if mode == 1 && index == 1 { 2 } else { index };
+                    let block = BlockValue::from_size(num, mode != 1 || num != 2, 16)
+                        .unwrap()
+                        .encode();
+                    let size = encode_uint(if mode == 1 { 48 } else { 176 });
+                    let option = if mode == 0 {
+                        Opt::block2(&block)
+                    } else {
+                        Opt::q_block2(&block)
+                    };
+                    let opts = if mode == 0 {
+                        [Opt::etag(b"v1"), option, Opt::size2(&size)]
+                    } else {
+                        [Opt::etag(b"v1"), Opt::size2(&size), option]
+                    };
+                    let response = Message::new(
+                        Type::NonConfirmable,
+                        Code::CONTENT,
+                        MessageId::new(100 + num as u16),
+                    )
+                    .with_token(call.token())
+                    .with_options(&opts)
+                    .with_payload(&[b'A'; 16]);
+                    let mut wire = [0; WIRE];
+                    let n = encode(&response, &mut wire).unwrap();
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.poll(0).unwrap();
+                }
+                if mode == 1 {
+                    app.poll(4000).unwrap();
+                }
+                assert_eq!(app.transport().send_n, 2);
+                let next = last_wide(&app);
+                assert_eq!(next.code(), method);
+                assert_eq!(
+                    next.payload(),
+                    if method == Code::FETCH {
+                        &b"selection"[..]
+                    } else {
+                        &[]
+                    }
+                );
+                assert_eq!(next.etag().next(), (mode == 0).then_some(&b"cached"[..]));
+                assert_eq!(next.content_format(), Some(Ok(ContentFormat::JSON)));
+                assert_eq!(next.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                let mut path = next.uri_path();
+                assert_eq!(path.next(), Some(Ok("search")));
+                assert_eq!(path.next(), Some(Ok("items")));
+                assert_eq!(next.uri_query().next(), Some(Ok("a=1")));
+                assert_eq!(next.if_match().next(), condition.then_some(&b"v0"[..]));
+                assert_eq!(next.if_none_match(), !condition);
+                let selection = if mode == 0 {
+                    next.block2().unwrap().unwrap()
                 } else {
-                    [Opt::etag(b"v1"), Opt::size2(&size), option]
+                    next.q_block2().next().unwrap().unwrap()
                 };
-                let response = Message::new(
-                    Type::NonConfirmable,
-                    Code::CONTENT,
-                    MessageId::new(100 + num as u16),
-                )
-                .with_token(call.token())
-                .with_options(&opts)
-                .with_payload(&[b'A'; 16]);
-                let mut wire = [0; WIRE];
-                let n = encode(&response, &mut wire).unwrap();
-                app.transport_mut().inbox = Some((peer, wire, n));
-                app.poll(0).unwrap();
+                assert_eq!(selection.num(), if mode == 2 { 10 } else { 1 });
+                assert!(app.cancel(call));
             }
-            if mode == 1 {
-                app.poll(4000).unwrap();
-            }
-            assert_eq!(app.transport().send_n, 2);
-            let next = last_wide(&app);
-            assert_eq!(next.code(), Code::FETCH);
-            assert_eq!(next.payload(), b"selection");
-            assert_eq!(next.content_format(), Some(Ok(ContentFormat::JSON)));
-            assert_eq!(next.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
-            let mut path = next.uri_path();
-            assert_eq!(path.next(), Some(Ok("search")));
-            assert_eq!(path.next(), Some(Ok("items")));
-            assert_eq!(next.uri_query().next(), Some(Ok("a=1")));
-            assert_eq!(next.if_match().next(), condition.then_some(&b"v0"[..]));
-            assert_eq!(next.if_none_match(), !condition);
-            let selection = if mode == 0 {
-                next.block2().unwrap().unwrap()
-            } else {
-                next.q_block2().next().unwrap().unwrap()
-            };
-            assert_eq!(selection.num(), if mode == 2 { 10 } else { 1 });
-            assert!(app.cancel(call));
         }
     }
 }
@@ -9400,5 +9414,43 @@ fn oversized_fetch_selection_is_refused_before_io_or_call_admission() {
         .send(0)
         .unwrap();
     assert_eq!(app.transport().send_n, 1);
+    assert!(app.cancel(call));
+}
+
+#[test]
+fn retained_conditional_tags_refuse_overflow_before_sending() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for _ in 0..12 {
+        for etag in [false, true] {
+            let request = app.get("large").to(peer);
+            let request = if etag {
+                request.etag(&[7; 9])
+            } else {
+                request.if_match(&[7; 9])
+            };
+            assert_eq!(
+                request.send(0),
+                Err(Error::Message(SlotMessageError::Encode(
+                    EncodeError::OptionValueTooLong
+                )))
+            );
+            assert_eq!(app.transport().send_n, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+        }
+    }
+    let call = app
+        .get("large")
+        .if_match(&[])
+        .etag(&[7; 8])
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(last_wide(&app).if_match().next(), Some(&[][..]));
+    assert_eq!(last_wide(&app).etag().next(), Some(&[7; 8][..]));
     assert!(app.cancel(call));
 }
