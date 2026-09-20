@@ -33,7 +33,7 @@ A bounded UDP relay records actual datagrams and injects one lost response, one 
 
 JSON schema `coaptic-process-interop/2` records source/dirty state, platform, executable hashes, library source/version, all case outcomes, fault traces, startup time, and min/mean/p50/p95/p99/max request timings. `request_us` includes socket/session setup, DTLS handshake and response assembly; process startup is excluded. `host_total_us` includes process startup/exit. Throughput is serial host requests/sec with fresh clients, not warm-session or maximum-load throughput. Peer protocol `coaptic-peer/2` requires integer nanosecond samples and clock metadata. Libcoap uses `CLOCK_MONOTONIC` on POSIX and `QueryPerformanceCounter` on Windows; Rust uses `Instant` (its resolution is reported as unknown). All peers stop timing before JSON formatting. Raw request/host samples and nanosecond summaries are retained; microsecond summaries are derived without integer truncation. OS-reported clock resolution is not measurement accuracy. Old peer executables are rejected: rebuild all peers with this runner. Default and CI use 100 samples per pairing, still a smoke benchmark. Never infer a performance ranking from mixed debug/release builds or different machines. Errors fail the run; successful partial measurements do not make failed cases pass.
 
-This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, OSCORE, certificates, Q-Block, FETCH/PATCH or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
+This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, OSCORE, certificates, Q-Block, standardized patch formats or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
 
 The peers remain separate executables with independent CoAP implementations.
 Both Rust peers use the same modern DTLS backend; DTLS implementation diversity
@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 36 scenario results (31 with local C-peer DTLS excluded):
+The full run contains 41 scenario results (36 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -61,6 +61,16 @@ The full run contains 36 scenario results (31 with local C-peer DTLS excluded):
   probe records actual request/response bytes from `::1`, preventing silent IPv4
   fallback from passing. These are loopback checks, not scoped/link-local, DTLS
   or IPv6 fault-injection qualification.
+- Five IPv4 UDP method workflows use the same pairings and execute 29 ordered
+  steps each: PUT creation/replacement, GET readback, POST append, PATCH changes,
+  repeated idempotent iPATCH, FETCH selection and DELETE. Invalid selection/patch
+  instructions and individual/aggregate 64-byte state overflow must preserve
+  exact prior bytes. Content-Format is application/octet-stream; the fixture's
+  private PATCH syntax is `+suffix`, iPATCH is `=replacement`, and FETCH selects
+  `value`. This proves wire method dispatch, body transport and those application
+  state effects, not JSON Patch, arbitrary patch formats, conditions, DTLS method
+  workflows or complete RFC 8132 conformance. Rust fixtures share application
+  state logic but use independent CoAP codecs; C implements the fixture separately.
 - Twelve UDP reliability scenarios: each of the three clients against a Coaptic
   server, with dropped reply, duplicated request, blackhole and server restart.
   This does not test datagram loss against alternative servers or over DTLS.

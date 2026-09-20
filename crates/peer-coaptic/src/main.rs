@@ -4,7 +4,7 @@ mod dtls;
 #[path = "../../../tools/interop/support.rs"]
 mod support;
 use coaptic::storage::{DatagramIo, Endpoint};
-use coaptic::{App, Method, Request, Response, get, profiles};
+use coaptic::{App, Code, ContentFormat, Method, Request, Response, get, profiles};
 use std::{
     net::UdpSocket,
     sync::atomic::{AtomicU32, Ordering},
@@ -12,6 +12,8 @@ use std::{
 };
 use support::{Args, Error};
 use webrtc_util::conn::Listener;
+static METHOD_RESOURCE: std::sync::Mutex<support::MethodResource> =
+    std::sync::Mutex::new(support::MethodResource::new());
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn count(_: Request<'_>) -> Response<'static> {
     Response::content_copy(COUNTER.load(Ordering::SeqCst).to_string().as_bytes())
@@ -19,6 +21,15 @@ fn count(_: Request<'_>) -> Response<'static> {
 fn increment(_: Request<'_>) -> Response<'static> {
     COUNTER.fetch_add(1, Ordering::SeqCst);
     Response::changed()
+}
+fn method_resource(request: Request<'_>) -> Response<'static> {
+    let method = request.method().expect("routed method").code().as_raw();
+    let (code, bytes) = METHOD_RESOURCE.lock().expect("fixture lock").respond(
+        method,
+        request.payload(),
+        request.content_format() == Some(Ok(ContentFormat::OCTET_STREAM)),
+    );
+    Response::new(Code::from_raw(code)).payload_copy(&bytes)
 }
 enum Io {
     Udp(UdpSocket),
@@ -98,13 +109,26 @@ async fn run() -> Result<(), Error> {
         "test" => &["test"][..],
         "large" => &["large"][..],
         "counter" => &["counter"][..],
+        "methods" => &["methods"][..],
         _ => &["missing"][..],
     };
-    let call = app
-        .request(if a.post { Method::Post } else { Method::Get }, path)
-        .to(Endpoint::from(a.address()))
-        .send(1)
-        .map_err(|e| format!("send: {e}"))?;
+    let method = match a.method {
+        1 => Method::Get,
+        2 => Method::Post,
+        3 => Method::Put,
+        4 => Method::Delete,
+        5 => Method::Fetch,
+        6 => Method::Patch,
+        _ => Method::IPatch,
+    };
+    let mut outgoing = app
+        .request(method, path)
+        .payload(&a.payload)
+        .to(Endpoint::from(a.address()));
+    if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+        outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
+    }
+    let call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
@@ -128,11 +152,11 @@ async fn run() -> Result<(), Error> {
     }
     Err("request timed out".into())
 }
-fn fixture(io: Io) -> Result<App<profiles::Default, Io, 3, true>, Error> {
+fn fixture(io: Io) -> Result<App<profiles::Default, Io, 4, true>, Error> {
     App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
-        .routes::<3>()
+        .routes::<4>()
         .route(
             "/test",
             get(|_: Request<'_>| Response::content(support::BODY)),
@@ -142,6 +166,16 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 3, true>, Error> {
             get(|_: Request<'_>| Response::content(&support::LARGE)),
         )
         .route("/counter", get(count).post(increment))
+        .route(
+            "/methods",
+            get(method_resource)
+                .post(method_resource)
+                .put(method_resource)
+                .delete(method_resource)
+                .fetch(method_resource)
+                .patch(method_resource)
+                .ipatch(method_resource),
+        )
         .bind(io)
         .map_err(|e| format!("bind: {e:?}").into())
 }
