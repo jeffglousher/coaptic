@@ -45,8 +45,8 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4"):
-    return [str(exe), role, transport, str(number), key, path, method, str(timeout), family]
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b""):
+    return [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
 
 
 def decode(line):
@@ -274,6 +274,36 @@ def measure_requests(iterations, request_fn):
     return result
 
 
+def method_workflow(client, server):
+    """Literal byte/state oracles; private binary patch syntax, no JSON Patch claim."""
+    steps = [
+        ("GET", b"", 132, b""),
+        ("PUT", b"alpha", 65, b""), ("GET", b"", 69, b"alpha"),
+        ("PUT", b"a", 68, b""), ("GET", b"", 69, b"a"),
+        ("POST", b"b", 68, b""), ("GET", b"", 69, b"ab"),
+        ("PATCH", b"+c", 68, b""), ("GET", b"", 69, b"abc"),
+        ("PATCH", b"+c", 68, b""), ("GET", b"", 69, b"abcc"),
+        ("IPATCH", b"=final", 68, b""), ("GET", b"", 69, b"final"),
+        ("IPATCH", b"=final", 68, b""), ("GET", b"", 69, b"final"),
+        ("FETCH", b"value", 69, b"final"),
+        ("FETCH", b"wrong", 128, None), ("GET", b"", 69, b"final"),
+        ("PATCH", b"wrong", 128, None), ("GET", b"", 69, b"final"),
+        ("IPATCH", b"wrong", 128, None), ("GET", b"", 69, b"final"),
+        ("PUT", b"x" * 65, 141, None), ("GET", b"", 69, b"final"),
+        ("POST", b"x" * 60, 141, None), ("GET", b"", 69, b"final"),
+        ("DELETE", b"", 66, b""), ("GET", b"", 132, None),
+        ("DELETE", b"", 132, None),
+    ]
+    evidence = []
+    with Server(server, "udp") as service:
+        for method, payload, code, body in steps:
+            result = request(client, "udp", service.number, path="methods", method=method, payload=payload)
+            expect(result, code, body)
+            evidence.append({"method": method, "request_hex": payload.hex(), "expected_code": code,
+                             "expected_payload_hex": None if body is None else body.hex(), "response": result})
+    return {"steps": evidence, "state_limit_bytes": 64, "patch_format": "fixture octet-stream: PATCH +suffix; IPATCH =replacement"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coaptic", required=True, type=Path)
@@ -335,6 +365,9 @@ def main():
                         expect(request(peers[client], transport, service.number))
                     return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
             case(label, matrix)
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        case(f"methods-udp:{client}->{server}", lambda client=client, server=server: method_workflow(peers[client], peers[server]))
 
     for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         def ipv6_matrix(client=client, server=server):
