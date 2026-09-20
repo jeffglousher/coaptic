@@ -4058,3 +4058,139 @@ fn protected_response_matching_preserves_live_state_until_expected_peer_and_mid(
         assert_eq!(client.engine_mut().rx_occupied(), 0);
     }
 }
+
+#[test]
+fn protected_response_rejection_and_failed_ack_preserve_pending_call() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for case in 0..4 {
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        let call = client.get("value").to(peer).send(0).unwrap();
+        let sent = client.transport_mut().sent.remove(0);
+        let request = decode(&sent).unwrap();
+        let mut server = server_c1();
+        let mut scratch = [0; WIRE];
+        let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+        let ty = match case {
+            0 | 3 => Type::Confirmable,
+            1 => Type::NonConfirmable,
+            _ => Type::Acknowledgement,
+        };
+        let opts = [Opt::opaque(crate::message::OptionNumber::new(99), &[1])];
+        let reply = Message::new(ty, Code::CONTENT, request.message_id())
+            .with_token(call.token())
+            .with_payload(b"correct")
+            .with_options(if case == 3 { &[] } else { &opts });
+        let mut wire = [0; WIRE];
+        let n = server
+            .protect_response_with_piv(&reply, reference, &mut wire)
+            .unwrap();
+        let retry = wire[..n].to_vec();
+        client.transport_mut().inbox = Some((peer, retry.clone()));
+        client.transport_mut().fail_send = case == 3;
+        if case == 3 {
+            assert!(client.poll(1).is_err());
+        } else {
+            client.poll(1).unwrap();
+        }
+        assert!(client.take_response(call).is_none());
+        assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        if case == 0 {
+            assert_eq!(client.transport().sent.len(), 1);
+            assert!(
+                decode(&client.transport_mut().sent.remove(0))
+                    .unwrap()
+                    .is_empty_rst()
+            );
+        } else {
+            assert!(client.transport().sent.is_empty());
+        }
+        let good = if case == 3 {
+            retry
+        } else {
+            let reply = Message::new(ty, Code::CONTENT, request.message_id())
+                .with_token(call.token())
+                .with_payload(b"correct");
+            let n = server
+                .protect_response_with_piv(&reply, reference, &mut wire)
+                .unwrap();
+            wire[..n].to_vec()
+        };
+        client.transport_mut().inbox = Some((peer, good));
+        client.poll(2).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().payload(),
+            b"correct"
+        );
+        assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[test]
+fn protected_four_call_capacity_includes_uncollected_replies_and_recovers_repeatedly() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let mut server = server_c1();
+    let mut scratch = [0; WIRE];
+    let mut wire = [0; WIRE];
+    for round in 0..16 {
+        let mut calls = std::vec::Vec::new();
+        let mut replies = std::vec::Vec::new();
+        for index in 0..4 {
+            let call = client.get("value").non().to(peer).send(round * 10).unwrap();
+            let sent = client.transport_mut().sent.remove(0);
+            let request = decode(&sent).unwrap();
+            let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+            let payload = [index];
+            let response = Message::new(Type::NonConfirmable, Code::CONTENT, request.message_id())
+                .with_token(call.token())
+                .with_payload(&payload);
+            let n = server
+                .protect_response(&response, reference, &mut wire)
+                .unwrap();
+            replies.push(wire[..n].to_vec());
+            calls.push(call);
+        }
+        let sequence = client.oscore().unwrap().sender_seq();
+        assert_eq!(
+            client.get("fifth").non().to(peer).send(round * 10),
+            Err(crate::Error::Saturated)
+        );
+        assert_eq!(client.oscore().unwrap().sender_seq(), sequence);
+        assert!(client.transport().sent.is_empty());
+        for reply in replies.into_iter().rev() {
+            client.transport_mut().inbox = Some((peer, reply));
+            client.poll(round * 10 + 1).unwrap();
+        }
+        for call in &calls {
+            assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        }
+        assert_eq!(
+            client.get("fifth").non().to(peer).send(round * 10 + 2),
+            Err(crate::Error::Saturated)
+        );
+        for (index, call) in calls.into_iter().enumerate() {
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap().payload(),
+                &[index as u8]
+            );
+            assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+            assert!(client.take_response(call).is_none());
+        }
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+    }
+}

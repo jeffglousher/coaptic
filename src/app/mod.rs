@@ -458,7 +458,10 @@ impl<
     /// Protected responses must match the Call endpoint and any piggybacked
     /// ACK Message ID before request-binding or notification replay state is
     /// consumed. Established notifications match the client Observe relation;
-    /// unrelated protected responses are silently discarded.
+    /// unrelated protected responses are silently discarded. Authentication
+    /// alone does not retire an ordinary request binding: rejected responses
+    /// and failed ACK sends leave pending Calls usable. Collection, cancellation
+    /// and terminal local failure release the binding; continuation replaces it.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
