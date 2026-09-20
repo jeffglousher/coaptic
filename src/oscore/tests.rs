@@ -2482,3 +2482,114 @@ fn protected_delete_delivers_terminal_notification_before_releasing_client_bindi
     );
     assert!(client.take_response(observe).is_none());
 }
+
+#[test]
+fn notification_reset_preserves_opposite_direction_protected_subscription() {
+    exercise_notification_reset_isolation(10, Type::NonConfirmable);
+    exercise_notification_reset_isolation(86_400_011, Type::Confirmable);
+}
+
+fn exercise_notification_reset_isolation(now: u64, ty: Type) {
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    type Peer = App<profiles::Default, Loopback>;
+    fn transfer(from: &Peer, to: &mut Peer, source: Endpoint, now: u64) {
+        let (_, bytes, n) = from.transport().last_send.unwrap();
+        assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+        to.transport_mut().inbox = Some((source, bytes, n));
+        to.poll(now).unwrap();
+    }
+    let ae = Endpoint::v4([192, 0, 2, 1], 5683);
+    let be = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut a = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value))
+        .bind(Loopback::default())
+        .unwrap();
+    a.set_oscore(client_c1());
+    let mut b = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(value))
+        .bind(Loopback::default())
+        .unwrap();
+    b.set_oscore(server_c1());
+    let ac = a.get("obs").observe().to(be).send(0).unwrap();
+    transfer(&a, &mut b, ae, 0);
+    transfer(&b, &mut a, be, 0);
+    assert!(
+        a.take_response(ac)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_some()
+    );
+    let bc = b.get("obs").observe().to(ae).send(1).unwrap();
+    assert_eq!(
+        ac.token(),
+        bc.token(),
+        "independent requesters may use the same Token"
+    );
+    transfer(&b, &mut a, be, 1);
+    transfer(&a, &mut b, ae, 1);
+    assert!(
+        b.take_response(bc)
+            .unwrap()
+            .unwrap()
+            .observe_seq()
+            .is_some()
+    );
+    if ty == Type::Confirmable {
+        assert_eq!(
+            a.notify(10, &["obs"], Response::content(b"first")).unwrap(),
+            1
+        );
+        transfer(&a, &mut b, ae, 10);
+        assert_eq!(b.take_response(bc).unwrap().unwrap().payload(), b"first");
+    }
+    assert_eq!(
+        a.notify(now, &["obs"], Response::content(b"reject me"))
+            .unwrap(),
+        1
+    );
+    let (_, bytes, n) = a.transport().last_send.unwrap();
+    assert_eq!(decode(&bytes[..n]).unwrap().ty(), ty);
+    let mid = decode(&bytes[..n]).unwrap().message_id();
+    let mut reset = [0u8; 256];
+    let n = encode(&Message::new(Type::Reset, Code::EMPTY, mid), &mut reset).unwrap();
+    // A reset from another endpoint must not remove either relation.
+    a.transport_mut().inbox = Some((Endpoint::v4([192, 0, 2, 3], 5683), reset, n));
+    a.poll(now + 1).unwrap();
+    assert!(a.oscore().unwrap().lookup(ac.token()).is_some());
+    assert!(
+        a.engine_mut()
+            .lookup_observe(crate::storage::ObserveKey::new(bc.token(), be))
+            .is_some()
+    );
+    a.transport_mut().inbox = Some((be, reset, n));
+    a.poll(now + 2).unwrap();
+    assert!(a.oscore().unwrap().lookup(ac.token()).is_some());
+    assert!(
+        a.engine_mut()
+            .lookup_observe(crate::storage::ObserveKey::new(bc.token(), be))
+            .is_none()
+    );
+    assert_eq!(
+        a.notify(now + 10_000, &["obs"], Response::content(b"stopped"))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        b.notify(now + 3, &["obs"], Response::content(b"still receiving"))
+            .unwrap(),
+        1
+    );
+    transfer(&b, &mut a, be, now + 3);
+    assert_eq!(
+        a.take_response(ac).unwrap().unwrap().payload(),
+        b"still receiving"
+    );
+}
