@@ -36,7 +36,7 @@ fn method_resource(request: Request<'_>) -> Response<'static> {
 fn upload_resource(request: Request<'_>) -> Response<'static> {
     let (code, bytes) = UPLOAD_RESOURCE.lock().expect("fixture lock").respond(
         request.method().expect("routed method").code().as_raw(),
-        request.payload(),
+        request.body().unwrap_or(request.payload()),
         request.content_format() == Some(Ok(ContentFormat::OCTET_STREAM)),
     );
     Response::new(Code::from_raw(code)).payload_copy(&bytes)
@@ -149,6 +149,7 @@ async fn run() -> Result<(), Error> {
         "large" => &["large"][..],
         "counter" => &["counter"][..],
         "methods" => &["methods"][..],
+        "upload" => &["upload"][..],
         _ => &["missing"][..],
     };
     let method = match a.method {
