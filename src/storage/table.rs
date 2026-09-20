@@ -179,7 +179,9 @@ pub(crate) trait DedupStore {
 
 /// Lookup identity for one Observe Interest Table row.
 ///
-/// RFC 7641 keys the observer list by client endpoint and Token. Resource
+/// RFC 7641 keys the observer list by client endpoint and Token. The local
+/// client/server role separates independent observer lists in a dual-role App.
+/// Resource
 /// path is not part of that key. This is not Dedup (Message ID + Endpoint),
 /// not pending CON, and not [`super::ExchangeKey`] (same Token + Endpoint
 /// pair, different table). See `knowledge/rfcs/rfc7641.txt`.
@@ -190,13 +192,35 @@ pub(crate) trait DedupStore {
 pub struct ObserveKey {
     token: Token,
     endpoint: Endpoint,
+    client: bool,
 }
 
 impl ObserveKey {
-    /// Identity for one Token at `endpoint`.
+    /// Server-side observer identity for one Token at client `endpoint`.
     #[must_use]
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
-        Self { token, endpoint }
+        Self {
+            token,
+            endpoint,
+            client: false,
+        }
+    }
+
+    /// Client-side subscription identity at server `endpoint`.
+    /// The opposite direction may independently use the same Token/endpoint.
+    #[must_use]
+    pub const fn new_client(token: Token, endpoint: Endpoint) -> Self {
+        Self {
+            token,
+            endpoint,
+            client: true,
+        }
+    }
+
+    /// Whether this row receives notifications instead of serving an observer.
+    #[must_use]
+    pub const fn is_client(self) -> bool {
+        self.client
     }
 
     /// Client Token.
@@ -214,9 +238,11 @@ impl ObserveKey {
 
 /// Compact resource identity on an [`ObserveInterest`] row.
 ///
-/// RFC 7641 still keys the row by Token + Endpoint. This hash lets App
-/// (and Engine helpers) match observers for one Uri-Path without a
-/// parallel table. [`Self::NONE`] means no path was recorded.
+/// Advanced Engine path helpers use a non-cryptographic hash. It is not an
+/// exact or adversarial resource identity. App instead assigns opaque route
+/// identities after exact path-segment comparison; those identities are local
+/// to its immutable site. Do not construct an Engine path hash to address an
+/// App route. [`Self::NONE`] means no resource was recorded.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ObserveResource {
     hash: u64,
@@ -226,6 +252,12 @@ impl ObserveResource {
     /// No Uri-Path recorded (Engine insert without a path).
     pub const NONE: Self = Self { hash: 0 };
 
+    pub(crate) fn app_route(index: usize) -> Self {
+        Self {
+            hash: index as u64 + 1,
+        }
+    }
+
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
@@ -233,9 +265,10 @@ impl ObserveResource {
     #[must_use]
     pub fn from_path(segments: &[&str]) -> Self {
         let mut hash = Self::FNV_OFFSET;
-        for (i, segment) in segments.iter().enumerate() {
-            if i > 0 {
-                hash = Self::fnv_byte(hash, b'/');
+        // Length-prefix each segment: a literal slash is data, not a separator.
+        for segment in segments {
+            for byte in (segment.len() as u64).to_be_bytes() {
+                hash = Self::fnv_byte(hash, byte);
             }
             for byte in segment.as_bytes() {
                 hash = Self::fnv_byte(hash, *byte);
@@ -459,6 +492,15 @@ impl ObserveInterest {
         }
     }
 
+    /// Client-side subscription. It is never a server notification target.
+    #[must_use]
+    pub const fn new_client(token: Token, endpoint: Endpoint) -> Self {
+        Self {
+            key: ObserveKey::new_client(token, endpoint),
+            ..Self::new(token, endpoint)
+        }
+    }
+
     /// Lookup identity.
     #[must_use]
     pub const fn key(self) -> ObserveKey {
@@ -616,6 +658,9 @@ impl ObserveInterest {
     /// either hold so an empty RST can drop this row. Does not encode or
     /// send. See `knowledge/rfcs/rfc7641.txt` §4.5 / §4.5.1.
     pub fn record_notify(&mut self, now_ms: u64, message_id: MessageId, confirmable: bool) {
+        if self.key.is_client() {
+            return;
+        }
         if confirmable {
             // A previous representation's Max-Age must not end CON delivery.
             self.lifetime = None;
@@ -658,8 +703,11 @@ impl ObserveInterest {
     /// Mark this row as needing one notification.
     ///
     /// A second mark before [`Self::take_due`] still yields one work item.
+    /// Client-side subscriptions do not produce server notifications.
     pub fn mark_due(&mut self) {
-        self.pending = true;
+        if !self.key.is_client() {
+            self.pending = true;
+        }
     }
 
     /// If pending, assign the next 24-bit sequence, clear pending, return it.
@@ -690,7 +738,10 @@ impl ObserveInterest {
 
 impl From<ObserveKey> for ObserveInterest {
     fn from(key: ObserveKey) -> Self {
-        Self::new(key.token(), key.endpoint())
+        Self {
+            key,
+            ..Self::new(key.token(), key.endpoint())
+        }
     }
 }
 

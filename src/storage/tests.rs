@@ -4561,3 +4561,25 @@ fn q_wire_receive_requires_identity_without_allocating_on_refusal() {
         }
     }
 }
+
+#[test]
+fn observe_role_keys_and_client_refusal_are_distinct() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[7]).unwrap();
+    let server = ObserveKey::new(token, peer);
+    let client = ObserveKey::new_client(token, peer);
+    assert_ne!(server, client);
+    assert_eq!(ObserveInterest::from(client).key(), client);
+    let mut row = ObserveInterest::new_client(token, peer);
+    row.mark_due();
+    assert!(!row.is_pending());
+    assert_eq!(row.take_due(), None);
+    assert_ne!(
+        ObserveResource::from_path(&["a/b"]),
+        ObserveResource::from_path(&["a", "b"])
+    );
+    assert_ne!(
+        ObserveResource::from_path(&[]),
+        ObserveResource::from_path(&[""])
+    );
+}

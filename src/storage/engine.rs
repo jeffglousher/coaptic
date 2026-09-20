@@ -734,9 +734,13 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Mark the interest matching `key` as due for one notification.
     ///
     /// Coalesces: a second signal before [`Self::progress`] surfaces the row
-    /// still yields one work item. `None` when no row matches. Does not
+    /// still yields one work item. `None` for client-side subscriptions or
+    /// when no row matches. Does not
     /// encode a payload, acquire a TX slot, or invent 4.02 / RST policy.
     pub fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
+        if key.is_client() {
+            return None;
+        }
         self.storage.signal_observe(key)
     }
 
@@ -802,6 +806,9 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     ) -> Option<SlotId> {
         let id = self.storage.lookup_observe(key)?;
         let mut interest = self.storage.observe_interest(id)?;
+        if interest.key().is_client() {
+            return None;
+        }
         if let Some(existing) = interest.notify_hold() {
             if existing.is_held(now_ms) {
                 if confirmable && existing.con_mid() == Some(message_id) {
@@ -960,7 +967,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             let Some(mut interest) = self.storage.observe_interest(id) else {
                 continue;
             };
-            if interest.resource() != resource {
+            if interest.key().is_client() || interest.resource() != resource {
                 continue;
             }
             interest.mark_due();
@@ -986,7 +993,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             let Some(interest) = self.storage.observe_interest(id) else {
                 continue;
             };
-            if interest.resource() != resource {
+            if interest.key().is_client() || interest.resource() != resource {
                 continue;
             }
             if self.take_observe(interest.key()).is_some() {
@@ -1044,7 +1051,11 @@ pub(crate) fn endpoint_notify_held<S: Storage + ObserveSlots>(
         .filter(|&i| {
             storage
                 .observe_interest(SlotId::from_index(i))
-                .is_some_and(|row| row.endpoint() == endpoint && row.is_notify_held(now_ms))
+                .is_some_and(|row| {
+                    !row.key().is_client()
+                        && row.endpoint() == endpoint
+                        && row.is_notify_held(now_ms)
+                })
         })
         .count()
 }
@@ -1060,7 +1071,7 @@ fn lookup_observe_unacked<S: Storage + ObserveSlots>(
         let Some(interest) = storage.observe_interest(id) else {
             continue;
         };
-        if interest.endpoint() != endpoint {
+        if interest.key().is_client() || interest.endpoint() != endpoint {
             continue;
         }
         if interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)

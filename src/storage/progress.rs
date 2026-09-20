@@ -218,7 +218,7 @@ fn progress_observe<S: Storage + ObserveSlots>(
         let Some(mut interest) = engine.observe_interest(id) else {
             continue;
         };
-        if !interest.is_pending() {
+        if interest.key().is_client() || !interest.is_pending() {
             continue;
         }
         if endpoint_notify_held(engine.storage(), interest.endpoint(), now_ms)
