@@ -1713,6 +1713,8 @@ fn encode_block_req(req: BlockReq<'_>) -> ([u8; 256], usize) {
     let encoded = block.encode();
     if req.q_block {
         opts.push(Opt::q_block1(&encoded)).expect("q-block1");
+        opts.push(Opt::request_tag(b"upload-1"))
+            .expect("request-tag");
     } else {
         opts.push(Opt::block1(&encoded)).expect("block1");
     }
@@ -3189,6 +3191,7 @@ fn client_put_q_block1_assembles_body_without_slot_id() {
         .put(&["upload"])
         .to(peer)
         .payload(&LARGE)
+        .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
         .q_block1()
         .send(0)
         .expect("send");
@@ -4182,6 +4185,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
                 assert_eq!(queries.next(), Some(Ok("if=If1")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(parsed.request_tag().next(), Some(&b"response"[..]));
                 self.requests += 1;
             }
             self.pipe.send(dest, bytes)
@@ -4198,6 +4202,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .query("rt=Type1")
         .query("if=If1")
         .accept(ContentFormat::OCTET_STREAM)
+        .request_tag(crate::storage::BodyTag::new(b"response").unwrap())
         .block2(BlockValue::from_size(0, false, 64).unwrap())
         .send(0)
         .unwrap();
@@ -4301,6 +4306,9 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                     parsed.content_format(),
                     Some(Ok(ContentFormat::OCTET_STREAM))
                 );
+                if parsed.q_block1().is_some() {
+                    assert_eq!(parsed.request_tag().next(), Some(&b"upload-1"[..]));
+                }
                 let block = parsed
                     .block1()
                     .or_else(|| parsed.q_block1())
@@ -4337,7 +4345,9 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .content_format(ContentFormat::OCTET_STREAM)
             .payload(&LARGE);
         if qblock {
-            request = request.q_block1();
+            request = request
+                .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                .q_block1();
         }
         let call = request.send(0).unwrap();
         let mut complete = false;
@@ -4370,7 +4380,9 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
             let mut app = pipe_app();
             let mut outgoing = app.put("upload").to(peer).payload(&LARGE);
             if qblock {
-                outgoing = outgoing.q_block1();
+                outgoing = outgoing
+                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                    .q_block1();
             }
             if count_overflow {
                 for _ in 0..9 {
@@ -4405,7 +4417,9 @@ fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() 
             let mut app = pipe_app();
             let mut request = app.put("upload").to(peer).payload(&LARGE);
             if qblock {
-                request = request.q_block1();
+                request = request
+                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                    .q_block1();
             }
             request = match condition {
                 0 => request.if_match(b"version"),
@@ -4454,5 +4468,82 @@ fn single_datagram_conditional_upload_preserves_conditions() {
                 &b"version"[..]
             })
         );
+    }
+}
+
+#[test]
+fn qblock_upload_requires_tag_and_refusal_preserves_capacity() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    assert_eq!(
+        app.put("upload")
+            .to(peer)
+            .payload(&LARGE)
+            .q_block1()
+            .send(0),
+        Err(Error::RequestTagRequired)
+    );
+    assert_eq!(app.transport().len, 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    let call = app
+        .put("upload")
+        .to(peer)
+        .payload(&LARGE)
+        .request_tag(crate::storage::BodyTag::EMPTY)
+        .q_block1()
+        .send(1)
+        .unwrap();
+    assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn active_request_tag_cannot_be_recycled_at_the_same_peer() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let other = Endpoint::v4([192, 0, 2, 3], 5683);
+    let tag = crate::storage::BodyTag::new(b"unique").unwrap();
+    let mut app = pipe_app();
+    let first = app.get("large").to(peer).request_tag(tag).send(0).unwrap();
+    assert_eq!(
+        app.get("large").to(peer).request_tag(tag).send(0),
+        Err(Error::RequestTagInUse)
+    );
+    assert_eq!(app.transport().len, 1);
+    assert_eq!(poll_until_response(&mut app, first).code, Code::CONTENT);
+    app.get("large").to(peer).request_tag(tag).send(1).unwrap();
+    app.get("large").to(other).request_tag(tag).send(1).unwrap();
+}
+
+#[test]
+fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
+    let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+    for tags in [
+        &[][..],
+        &[&b"123456789"[..]][..],
+        &[&b"a"[..], &b"b"[..]][..],
+    ] {
+        let mut opts = OptionsBuilder::<8>::new();
+        opts.push(Opt::q_block1(&block)).unwrap();
+        for tag in tags {
+            opts.push(Opt::request_tag(tag)).unwrap();
+        }
+        let (wire, n) = encode_wide(Code::PUT, &["upload"], opts.as_slice(), 0x7711);
+        let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<true>()
+            .route(
+                "upload",
+                put(|_: Request<'_>| -> Response<'static> {
+                    panic!("invalid tag reached handler")
+                }),
+            )
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        assert_eq!(last_wide(&app).code(), Code::BAD_OPTION);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
     }
 }
