@@ -115,7 +115,8 @@ impl IntoResponse for Response<'static> {
 /// [`Self::missing_block_nums`]. Snapshot [`Self::ty`] / [`Self::token`] /
 /// [`Self::peer`] are `Some` after a completed client exchange. A 2.01
 /// Created can carry [`Self::location_path`] / [`Self::location_query`]
-/// (bounded, `'static`, no heap). [`Self::separate`] is an empty ACK to a
+/// (bounded, borrowed strings, no heap). Received Location values borrow App's
+/// reply hold; handler locations must outlive their response. [`Self::separate`] is an empty ACK to a
 /// CON request, then the representation in a later CON (new Message ID).
 ///
 /// Handler returns and [`Self::observe`] copy the small header +
@@ -132,6 +133,8 @@ impl IntoResponse for Response<'static> {
 #[derive(Clone, Copy, Debug)]
 pub struct Response<'a> {
     invalid: Option<ResponseError>,
+    received_header: Option<crate::message::ParsedMessage<'a>>,
+    received_at_ms: Option<u64>,
     code: Code,
     payload: Payload<'a>,
     content_format: Option<ContentFormat>,
@@ -145,9 +148,9 @@ pub struct Response<'a> {
     peer: Option<Endpoint>,
     assembled: Option<&'a [u8]>,
     echo: Option<Echo>,
-    location_path: [&'static str; LOCATION_MAX],
+    location_path: [&'a str; LOCATION_MAX],
     location_path_len: u8,
-    location_query: [&'static str; LOCATION_MAX],
+    location_query: [&'a str; LOCATION_MAX],
     location_query_len: u8,
     separate: bool,
     /// Length of the source before [`INLINE_PAYLOAD`] / [`RESPONSE_BODY`]
@@ -161,6 +164,8 @@ impl<'a> Response<'a> {
     pub const fn new(code: Code) -> Self {
         Self {
             invalid: None,
+            received_header: None,
+            received_at_ms: None,
             code,
             payload: Payload::Empty,
             content_format: None,
@@ -181,6 +186,36 @@ impl<'a> Response<'a> {
             separate: false,
             payload_src_len: 0,
         }
+    }
+
+    /// Caller clock when the retained header was received by App.
+    ///
+    /// For a block-wise response this is the first accepted fragment, so
+    /// assembly time does not extend Max-Age. Handler-created intents return `None`.
+    #[must_use]
+    pub const fn received_at_ms(&self) -> Option<u64> {
+        self.received_at_ms
+    }
+
+    /// All received options in wire order, including unknown elective options.
+    ///
+    /// Client snapshots retain the encoded values; typed getters omit malformed
+    /// elective values. Handler-created responses have no received header and
+    /// yield an empty iterator. These bytes borrow App's completed-reply hold.
+    pub fn received_options(&self) -> impl Iterator<Item = crate::message::Opt<'_>> {
+        self.received_header
+            .into_iter()
+            .flat_map(|header| header.options())
+    }
+
+    pub(crate) fn with_received_header(
+        mut self,
+        header: crate::message::ParsedMessage<'a>,
+        received_at_ms: u64,
+    ) -> Self {
+        self.received_header = Some(header);
+        self.received_at_ms = Some(received_at_ms);
+        self
     }
 
     /// Check bounded option setters before returning or sending this response.
@@ -480,7 +515,7 @@ impl<'a> Response<'a> {
     /// assert_eq!(response.location_paths(), &["location1", "location2"]);
     /// ```
     #[must_use]
-    pub const fn location_path(mut self, segment: &'static str) -> Self {
+    pub const fn location_path(mut self, segment: &'a str) -> Self {
         let n = self.location_path_len as usize;
         if n >= LOCATION_MAX || segment.len() > 255 {
             return self.invalid(ResponseError::LocationPathBounds);
@@ -510,7 +545,7 @@ impl<'a> Response<'a> {
     /// assert_eq!(response.location_queries(), &["first=1", "second=2"]);
     /// ```
     #[must_use]
-    pub const fn location_query(mut self, query: &'static str) -> Self {
+    pub const fn location_query(mut self, query: &'a str) -> Self {
         let n = self.location_query_len as usize;
         if n >= LOCATION_MAX || query.len() > 255 {
             return self.invalid(ResponseError::LocationQueryBounds);
