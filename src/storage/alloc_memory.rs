@@ -44,6 +44,8 @@ use crate::message::{BlockValue, MessageId};
 ///
 /// Each area is a `Box<[T]>` (and each byte slot a `Box<[u8]>` of the configured
 /// length) created at init. This is not a carved byte slab.
+/// Q-Block assembly retains its total length across payloads. A changed size
+/// is refused before modifying bytes or progress, matching fixed body pools.
 pub struct AllocMemory {
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
@@ -1044,10 +1046,11 @@ impl AllocBodyPool {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        if let Some(id) = self.lookup(key) {
-            return self.write_incoming(id, role, block, payload);
-        }
-        if let Some(id) = self.lookup_identity(key, role) {
+        if let Some(id) = self.lookup(key).or_else(|| self.lookup_identity(key, role)) {
+            let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+            if role.is_q_block() && transfer.expected_len() != expected_len {
+                return Err(BlockTransferError::LengthInconsistent);
+            }
             return self.write_incoming(id, role, block, payload);
         }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;
