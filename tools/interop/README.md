@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 56 scenario results (47 with local C-peer DTLS excluded):
+The full run contains 64 scenario results (55 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -80,9 +80,11 @@ The full run contains 56 scenario results (47 with local C-peer DTLS excluded):
   IPv6 workflows require an independent AF_INET6 socket probe before any method
   steps. Rust fixtures share application
   state logic but use independent CoAP codecs; C implements the fixture separately.
-- Twelve UDP reliability scenarios: each of the three clients against a Coaptic
-  server, with dropped reply, duplicated request, blackhole and server restart.
-  This does not test datagram loss against alternative servers or over DTLS.
+- Twenty UDP reliability scenarios: each of the three clients against a Coaptic
+  server, plus Coaptic against each independent server, with dropped reply,
+  duplicated request, blackhole and server restart. Exact counter readback must
+  prove one handler effect after loss or duplication. These checks do not
+  qualify DTLS/IPv6 faults, arbitrary reorder/delay/MTU or compound schedules.
 - Six DTLS endpoint-reuse scenarios: each client against each Rust server, using
  a relay with one fixed server-visible UDP endpoint. Three fresh authenticated
  connections, one wrong-key refusal, then another successful connection.

@@ -470,11 +470,12 @@ def main():
                     "verified": "Coaptic explicit shutdown and 140 independent POST effects", "trace": relay.trace}
         case("dtls-clean-reconnect:coaptic->libcoap", c_server_reconnect)
 
-    # Fault tests target Coaptic's guarantees; alternative clients remain independent.
-    for client in peers:
+    # Exercise both Coaptic roles against independent peer implementations.
+    for client, server in [(name, "coaptic") for name in peers] + [("coaptic", "coap-rs"), ("coaptic", "libcoap")]:
+        label = client if server == "coaptic" else f"{client}->{server}"
         for mode in ("drop-reply", "duplicate-request", "blackhole"):
-            def fault(client=client, mode=mode):
-                with Server(peers["coaptic"], "udp") as service:
+            def fault(client=client, server=server, mode=mode):
+                with Server(peers[server], "udp") as service:
                     with Proxy(service.number, mode) as relay:
                         event = request(peers[client], "udp", relay.number,
                                         path="counter" if mode != "blackhole" else "test",
@@ -490,17 +491,17 @@ def main():
                     if not relay.trace or not any(x["action"] != "forward" for x in relay.trace):
                         raise AssertionError("fault was not exercised")
                     return {"trace": relay.trace, "result": event}
-            case(f"reliability:{client}->{mode}", fault)
-        def restart(client=client):
+            case(f"reliability:{label}->{mode}", fault)
+        def restart(client=client, server=server):
             number = port()
-            with Server(peers["coaptic"], "udp", number) as service:
+            with Server(peers[server], "udp", number) as service:
                 expect(request(peers[client], "udp", service.number))
                 expect(request(peers[client], "udp", service.number, path="counter", method="POST"), 68, b"")
-            with Server(peers["coaptic"], "udp", number) as service:
+            with Server(peers[server], "udp", number) as service:
                 expect(request(peers[client], "udp", service.number))
                 expect(request(peers[client], "udp", service.number, path="counter"), 69, b"0")
             return {"port": number, "note": "fresh in-memory fixture after process restart; no durability claim"}
-        case(f"reliability:{client}->restart", restart)
+        case(f"reliability:{label}->restart", restart)
     report["coverage"] = evaluate(manifest, report["cases"],
         libcoap_dtls=not args.libcoap_udp_only, system=platform.system().lower())
     report["passed"] = report["coverage"]["complete"]
