@@ -4277,154 +4277,198 @@ fn request_binding_boundary_refuses_before_allocating_body() {
 
 #[test]
 fn classic_wire_size_estimates_can_change_or_disappear() {
-    for upload in [false, true] {
-        for first_hint in [None, Some(0), Some(1), Some(16), Some(24), Some(u32::MAX)] {
-            for last_hint in [None, Some(0), Some(1), Some(24), Some(u32::MAX)] {
-                let mut engine = build_default_bodies();
-                let ep = Endpoint::v4([198, 51, 100, 9], 5683);
-                let token = sample_token(&[0xab]);
-                let body = b"abcdefghijklmnopqrstuvwx";
-                let mut first_id = None;
-                for (num, hint, payload) in
-                    [(0, first_hint, &body[..16]), (1, last_hint, &body[16..])]
-                {
-                    let blk = BlockValue::from_size(num, num == 0, 16)
-                        .expect("block")
-                        .encode();
-                    let size = encode_uint(hint.unwrap_or(0));
-                    // Numeric option order differs between Block1/Size1 and Block2/Size2.
-                    let options = if upload {
-                        [Opt::block1(&blk), Opt::size1(&size)]
-                    } else {
-                        [Opt::block2(&blk), Opt::size2(&size)]
-                    };
-                    let options = &options[..if hint.is_some() { 2 } else { 1 }];
-                    let msg = Message::new(
-                        Type::Confirmable,
-                        if upload { Code::PUT } else { Code::CONTENT },
-                        MessageId::new(num as u16),
-                    )
-                    .with_token(token)
-                    .with_options(options)
-                    .with_payload(payload);
-                    let mut buf = [0u8; 80];
-                    let n = encode(&msg, &mut buf).expect("encode");
-                    let rx = engine.acquire_rx().expect("rx");
-                    engine.write_rx(rx, &buf[..n], ep).expect("write");
-                    let progress = if upload {
-                        engine.apply_block1_rx(rx)
-                    } else {
-                        engine.apply_block2_rx(rx)
-                    }
-                    .expect("estimate accepted");
-                    engine.release_rx(rx).expect("release");
-                    if num == 0 {
-                        first_id = Some(progress.id());
-                        assert!(!progress.complete());
-                        assert_eq!(engine.rx_body_payload(progress.id()), Some(&body[..16]));
-                    } else {
-                        assert_eq!(Some(progress.id()), first_id);
-                        assert!(progress.complete());
-                        assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+        for upload in [false, true] {
+            for first_hint in [None, Some(0), Some(1), Some(16), Some(24), Some(u32::MAX)] {
+                for last_hint in [None, Some(0), Some(1), Some(24), Some(u32::MAX)] {
+                    let mut engine = build();
+                    let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+                    let token = sample_token(&[0xab]);
+                    let body = b"abcdefghijklmnopqrstuvwx";
+                    let mut first_id = None;
+                    for (num, hint, payload) in
+                        [(0, first_hint, &body[..16]), (1, last_hint, &body[16..])]
+                    {
+                        let blk = BlockValue::from_size(num, num == 0, 16)
+                            .expect("block")
+                            .encode();
+                        let size = encode_uint(hint.unwrap_or(0));
+                        // Numeric option order differs between Block1/Size1 and Block2/Size2.
+                        let options = if upload {
+                            [Opt::block1(&blk), Opt::size1(&size)]
+                        } else {
+                            [Opt::block2(&blk), Opt::size2(&size)]
+                        };
+                        let options = &options[..if hint.is_some() { 2 } else { 1 }];
+                        let msg = Message::new(
+                            Type::Confirmable,
+                            if upload { Code::PUT } else { Code::CONTENT },
+                            MessageId::new(num as u16),
+                        )
+                        .with_token(token)
+                        .with_options(options)
+                        .with_payload(payload);
+                        let mut buf = [0u8; 80];
+                        let n = encode(&msg, &mut buf).expect("encode");
+                        let rx = engine.acquire_rx().expect("rx");
+                        engine.write_rx(rx, &buf[..n], ep).expect("write");
+                        let progress = if upload {
+                            engine.apply_block1_rx(rx)
+                        } else {
+                            engine.apply_block2_rx(rx)
+                        }
+                        .expect("estimate accepted");
+                        engine.release_rx(rx).expect("release");
+                        if num == 0 {
+                            first_id = Some(progress.id());
+                            assert!(!progress.complete());
+                            assert_eq!(engine.rx_body_payload(progress.id()), Some(&body[..16]));
+                        } else {
+                            assert_eq!(Some(progress.id()), first_id);
+                            assert!(progress.complete());
+                            assert_eq!(
+                                engine.rx_body_payload(progress.id()),
+                                Some(body.as_slice())
+                            );
+                        }
                     }
                 }
             }
         }
     }
+    exercise(build_default_bodies);
+    #[cfg(feature = "alloc")]
+    exercise(|| {
+        EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(
+                Capacities::from_profile::<profiles::Default>()
+                    .with_block_wise::<profiles::Default>(),
+            )
+            .unwrap()
+    });
 }
 
 #[test]
 fn q_wire_size_is_mandatory_stable_and_refusal_preserves_body() {
-    use crate::message::OptionsBuilder;
-    for upload in [false, true] {
-        for bad_hint in [None, Some(0), Some(23), Some(25), Some(u32::MAX)] {
-            let mut engine = build_default_bodies();
-            let ep = Endpoint::v4([198, 51, 100, 9], 5683);
-            let token = sample_token(&[0xab]);
-            let body = b"abcdefghijklmnopqrstuvwx";
-            let mut first_id = None;
-            // Refuse a missing initial indication; accept first; refuse bad
-            // continuation; accept corrected continuation using the same slot.
-            for phase in 0..4 {
-                let num = if phase < 2 { 0 } else { 1 };
-                let hint = match phase {
-                    0 => None,
-                    2 => bad_hint,
-                    _ => Some(24),
-                };
-                let blk = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
-                let size = encode_uint(hint.unwrap_or(0));
-                let mut options = OptionsBuilder::<4>::new();
-                if upload {
-                    options.push(Opt::q_block1(&blk)).unwrap();
-                    if hint.is_some() {
-                        options.push(Opt::size1(&size)).unwrap();
-                    }
-                    options.push(Opt::request_tag(b"body")).unwrap();
-                } else {
-                    options.push(Opt::etag(b"body")).unwrap();
-                    if hint.is_some() {
-                        options.push(Opt::size2(&size)).unwrap();
-                    }
-                    options.push(Opt::q_block2(&blk)).unwrap();
-                }
-                let msg = Message::new(
-                    Type::NonConfirmable,
-                    if upload { Code::PUT } else { Code::CONTENT },
-                    MessageId::new(phase),
-                )
-                .with_token(token)
-                .with_options(options.as_slice())
-                .with_payload(if num == 0 { &body[..16] } else { &body[16..] });
-                let mut bytes = [0; 80];
-                let n = encode(&msg, &mut bytes).unwrap();
-                let rx = engine.acquire_rx().unwrap();
-                engine.write_rx(rx, &bytes[..n], ep).unwrap();
-                let result = if upload {
-                    engine.apply_q_block1_rx(rx)
-                } else {
-                    engine.apply_q_block2_rx(rx)
-                };
-                engine.release_rx(rx).unwrap();
-                match phase {
-                    0 => {
-                        assert_eq!(result, Err(BlockTransferError::MissingSize));
-                        assert_eq!(
-                            engine.lookup_rx_body(
-                                BlockKey::new(token, ep)
-                                    .with_identity(BodyTag::new(b"body").unwrap())
-                            ),
-                            None
-                        );
-                    }
-                    1 => {
-                        let progress = result.unwrap();
-                        first_id = Some(progress.id());
-                        assert!(!progress.complete());
-                    }
-                    2 => {
-                        assert_eq!(
-                            result,
-                            Err(if hint.is_none() {
-                                BlockTransferError::MissingSize
-                            } else {
-                                BlockTransferError::LengthInconsistent
-                            })
-                        );
-                        let id = first_id.unwrap();
-                        assert_eq!(engine.rx_body_payload(id), Some(&body[..16]));
-                        assert!(!engine.rx_body_transfer(id).unwrap().is_complete());
-                    }
-                    _ => {
-                        let progress = result.unwrap();
-                        assert_eq!(Some(progress.id()), first_id);
-                        assert!(progress.complete());
-                        assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+        use crate::message::OptionsBuilder;
+        for changed_token in [false, true] {
+            for upload in [false, true] {
+                for bad_hint in [None, Some(0), Some(23), Some(25), Some(u32::MAX)] {
+                    let mut engine = build();
+                    let ep = Endpoint::v4([198, 51, 100, 9], 5683);
+                    let token = sample_token(&[0xab]);
+                    let body = b"abcdefghijklmnopqrstuvwx";
+                    let mut first_id = None;
+                    // Refuse a missing initial indication; accept first; refuse bad
+                    // continuation; accept corrected continuation using the same slot.
+                    for phase in 0..4 {
+                        let num = if phase < 2 { 0 } else { 1 };
+                        let hint = match phase {
+                            0 => None,
+                            2 => bad_hint,
+                            _ => Some(24),
+                        };
+                        let blk = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+                        let size = encode_uint(hint.unwrap_or(0));
+                        let mut options = OptionsBuilder::<4>::new();
+                        if upload {
+                            options.push(Opt::q_block1(&blk)).unwrap();
+                            if hint.is_some() {
+                                options.push(Opt::size1(&size)).unwrap();
+                            }
+                            options.push(Opt::request_tag(b"body")).unwrap();
+                        } else {
+                            options.push(Opt::etag(b"body")).unwrap();
+                            if hint.is_some() {
+                                options.push(Opt::size2(&size)).unwrap();
+                            }
+                            options.push(Opt::q_block2(&blk)).unwrap();
+                        }
+                        let msg = Message::new(
+                            Type::NonConfirmable,
+                            if upload { Code::PUT } else { Code::CONTENT },
+                            MessageId::new(phase),
+                        )
+                        .with_token(if changed_token && phase >= 2 {
+                            sample_token(&[0xac])
+                        } else {
+                            token
+                        })
+                        .with_options(options.as_slice())
+                        .with_payload(if num == 0 {
+                            &body[..16]
+                        } else {
+                            &body[16..]
+                        });
+                        let mut bytes = [0; 80];
+                        let n = encode(&msg, &mut bytes).unwrap();
+                        let rx = engine.acquire_rx().unwrap();
+                        engine.write_rx(rx, &bytes[..n], ep).unwrap();
+                        let result = if upload {
+                            engine.apply_q_block1_rx(rx)
+                        } else {
+                            engine.apply_q_block2_rx(rx)
+                        };
+                        engine.release_rx(rx).unwrap();
+                        match phase {
+                            0 => {
+                                assert_eq!(result, Err(BlockTransferError::MissingSize));
+                                assert_eq!(
+                                    engine.lookup_rx_body(
+                                        BlockKey::new(token, ep)
+                                            .with_identity(BodyTag::new(b"body").unwrap())
+                                    ),
+                                    None
+                                );
+                            }
+                            1 => {
+                                let progress = result.unwrap();
+                                first_id = Some(progress.id());
+                                assert!(!progress.complete());
+                            }
+                            2 => {
+                                assert_eq!(
+                                    result,
+                                    Err(if hint.is_none() {
+                                        BlockTransferError::MissingSize
+                                    } else {
+                                        BlockTransferError::LengthInconsistent
+                                    })
+                                );
+                                let id = first_id.unwrap();
+                                assert_eq!(engine.rx_body_payload(id), Some(&body[..16]));
+                                assert!(!engine.rx_body_transfer(id).unwrap().is_complete());
+                            }
+                            _ => {
+                                let progress = result.unwrap();
+                                assert_eq!(Some(progress.id()), first_id);
+                                assert!(progress.complete());
+                                assert_eq!(
+                                    engine.rx_body_payload(progress.id()),
+                                    Some(body.as_slice())
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
     }
+    exercise(build_default_bodies);
+    #[cfg(feature = "alloc")]
+    exercise(|| {
+        EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(
+                Capacities::from_profile::<profiles::Default>()
+                    .with_block_wise::<profiles::Default>(),
+            )
+            .unwrap()
+    });
 }
 
 #[test]
