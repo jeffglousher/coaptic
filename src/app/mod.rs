@@ -1066,6 +1066,22 @@ where
         }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
+            if parsed.is_empty_ack() {
+                if let Err(error) = client::continue_qblock1_ack(
+                    engine,
+                    io,
+                    inbox,
+                    lives,
+                    ids,
+                    oscore,
+                    now_ms,
+                    parsed.message_id(),
+                    peer,
+                ) {
+                    let _ = engine.release_rx(rx);
+                    return Err(error);
+                }
+            }
         }
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
