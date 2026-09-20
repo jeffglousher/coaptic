@@ -2736,6 +2736,11 @@ pub enum Error<E> {
     /// If-Match or If-None-Match semantics. Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,
+    /// No-Response cannot be preserved by App's fragmented upload handshake.
+    /// Nothing was sent; use a single datagram or caller-managed Engine transfer.
+    NoResponseUploadUnsupported,
+    /// App requires a response when registering Observe. Deregistration is allowed.
+    NoResponseObserveUnsupported,
     /// RFC 9177 requires a present Request-Tag for Q-Block1.
     RequestTagRequired,
     /// Another live operation at this peer already owns this Request-Tag.
@@ -2785,6 +2790,12 @@ where
             Self::Path => f.write_str("uri-path has too many segments"),
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
+            Self::NoResponseUploadUnsupported => {
+                f.write_str("No-Response fragmented uploads are unsupported")
+            }
+            Self::NoResponseObserveUnsupported => {
+                f.write_str("No-Response Observe registration is unsupported")
+            }
             Self::ConditionalUploadUnsupported => {
                 f.write_str("conditional fragmented uploads are unsupported")
             }
@@ -2809,6 +2820,8 @@ where
             Self::Response(e) => Some(e),
             Self::Path
             | Self::ConditionalUploadUnsupported
+            | Self::NoResponseUploadUnsupported
+            | Self::NoResponseObserveUnsupported
             | Self::RequestTagRequired
             | Self::RequestTagInUse => None,
             #[cfg(feature = "oscore")]
