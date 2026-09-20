@@ -465,14 +465,13 @@ fn stitch_inner(
 
     // Re-encode so Class U-only outer options (Uri-Host, Hop-Limit, …)
     // sit beside Class E. Dual options on the outer datagram are not
-    // merged: Observe is special-cased below; Block/Size stay Inner
+    // merged: Observe stays Inner (§4.1.3.5.2); Block/Size stay Inner
     // (§4.1.3.4.2); Max-Age Outer is discarded (§8.4); No-Response
     // Outer is ignored (§4.1.3.6). Class E on the outer (ETag, …) is
     // discarded (§8.2 / §8.4).
     let mut merged = [0u8; INNER];
     let n = {
         let fake = decode(&out[..header_end + rest.len()])?;
-        let outer_observe = outer_opts.clone().find(|opt| is_observe(opt));
         let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
         for opt in outer_opts {
             let n = opt.number().get();
@@ -482,12 +481,6 @@ fn stitch_inner(
             opts.push(opt).map_err(|_| Error::Options)?;
         }
         for opt in fake.options() {
-            if is_observe(&opt) && opt.value().is_empty() {
-                if let Some(outer) = outer_observe {
-                    opts.push(outer).map_err(|_| Error::Options)?;
-                    continue;
-                }
-            }
             opts.push(opt).map_err(|_| Error::Options)?;
         }
         let msg = Message::new(ty, fake.code(), mid)

@@ -34,7 +34,9 @@
 //! Observe register/notify is in this slice: Observe is Class E+U
 //! (RFC 8613 Figure 5). Requests use Outer Code FETCH; responses use
 //! Content. Notifications include a new Partial IV (the first register
-//! ACK may omit it).
+//! ACK may omit it). Received Observe values remain Inner; unauthenticated
+//! Outer Observe values are ignored. App orders notifications by authenticated
+//! Partial IV, not by the empty Inner Observe value.
 //!
 //! Block1 / Block2 / Size1 / Size2 are Dual (Figure 5) but App uses the
 //! **Inner** field: fragment the CoAP message, then OSCORE-protect each
