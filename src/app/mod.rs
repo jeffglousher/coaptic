@@ -453,7 +453,7 @@ impl<
     /// Ordinary Q-Block2 response batches use fresh response Partial IVs and
     /// retain the request binding through assembly until response collection
     /// or cancellation. Recipient replay checks use the context's bounded
-    /// 32-sequence window; this does not qualify Q Observe or FETCH body retention.
+    /// 32-sequence window; this does not qualify Q Observe.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
@@ -3357,6 +3357,9 @@ pub enum Error<E> {
     ObserveCancellationAmbiguous,
     /// Observe request identity exceeds the App's 512 encoded-byte bound.
     ObserveRequestTooLarge,
+    /// FETCH selection identity exceeds 512 encoded bytes. Nothing was sent;
+    /// use a smaller selection or retain the request with the advanced Engine.
+    FetchRequestTooLarge,
     /// RFC 9177 requires a present Request-Tag for Q-Block1.
     RequestTagRequired,
     /// Another live operation at this peer already owns this Request-Tag.
@@ -3414,6 +3417,7 @@ where
             Self::ObserveRequestTooLarge => {
                 f.write_str("Observe request identity exceeds 512 bytes")
             }
+            Self::FetchRequestTooLarge => f.write_str("FETCH request identity exceeds 512 bytes"),
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
             Self::NoResponseUploadUnsupported => {
@@ -3451,6 +3455,7 @@ where
             | Self::NoResponseObserveUnsupported
             | Self::ObserveCancellationMismatch
             | Self::ObserveCancellationAmbiguous
+            | Self::FetchRequestTooLarge
             | Self::ObserveRequestTooLarge
             | Self::RequestTagRequired
             | Self::RequestTagInUse => None,
