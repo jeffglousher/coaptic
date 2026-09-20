@@ -6835,7 +6835,7 @@ fn response_non_and_qblock_window_use_shared_local_mid_space() {
             .route("large", get(get_large))
             .bind(WideLoopback::default())
             .unwrap();
-        let q = BlockValue::from_size(0, false, 1024).unwrap().encode();
+        let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
         let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
         let request = Message::new(ty, Code::GET, MessageId::new(500))
             .with_token(Token::from_checked(&[44]))
