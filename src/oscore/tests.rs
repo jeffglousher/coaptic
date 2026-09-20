@@ -4293,3 +4293,88 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
         }
     }
 }
+
+#[test]
+fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 9], 5683);
+    for mode in 0..3 {
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        let request = client.get("value").to(peer);
+        let request = match mode {
+            1 => request.observe(),
+            2 => request.q_block2(),
+            _ => request,
+        };
+        let call = request.send(0).unwrap();
+        let sent = client.transport_mut().sent.remove(0);
+        let request = decode(&sent).unwrap();
+        let mut server = server_c1();
+        let mut scratch = [0; WIRE];
+        let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+        let number = encode_uint(0);
+        let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+        let size = encode_uint(3);
+        let mut opts = OptionsBuilder::<3>::new();
+        if mode == 1 {
+            opts.push(Opt::observe(&number)).unwrap();
+        }
+        if mode == 2 {
+            opts.push(Opt::etag(b"v1")).unwrap();
+            opts.push(Opt::size2(&size)).unwrap();
+            opts.push(Opt::q_block2(&block)).unwrap();
+        }
+        let response = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(100))
+            .with_token(call.token())
+            .with_options(opts.as_slice())
+            .with_payload(b"yes");
+        let mut wire = [0; WIRE];
+        let n = server
+            .protect_response_with_piv(&response, reference, &mut wire)
+            .unwrap();
+        let reply = wire[..n].to_vec();
+        for now in 1..=2 {
+            client.transport_mut().inbox = Some((peer, reply.clone()));
+            client.poll(now).unwrap();
+            assert_eq!(client.transport().sent.len(), now as usize);
+            assert!(
+                decode(client.transport().sent.last().unwrap())
+                    .unwrap()
+                    .is_empty_ack()
+            );
+        }
+        let result = client.take_response(call).unwrap().unwrap();
+        assert_eq!(result.body().unwrap_or(result.payload()), b"yes");
+        assert!(client.take_response(call).is_none());
+        client.transport_mut().inbox = Some((other, reply.clone()));
+        client.poll(3).unwrap();
+        assert_eq!(client.transport().sent.len(), 2);
+        client.transport_mut().inbox = Some((peer, reply.clone()));
+        client.transport_mut().fail_send = true;
+        assert!(client.poll(4).is_err());
+        client.transport_mut().inbox = Some((peer, reply.clone()));
+        client.poll(5).unwrap();
+        assert_eq!(client.transport().sent.len(), 3);
+        assert!(
+            decode(client.transport().sent.last().unwrap())
+                .unwrap()
+                .is_empty_ack()
+        );
+        assert!(client.take_response(call).is_none());
+        let before = client.oscore().unwrap().replay_checkpoint();
+        client.transport_mut().inbox = Some((peer, reply));
+        client
+            .poll(u64::from(crate::message::Transmission::EXCHANGE_LIFETIME_MS) + 1)
+            .unwrap();
+        assert_eq!(client.transport().sent.len(), 3);
+        assert_eq!(client.oscore().unwrap().replay_checkpoint(), before);
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+    }
+}
