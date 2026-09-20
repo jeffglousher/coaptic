@@ -2824,3 +2824,134 @@ fn corrupted_requests_do_not_poison_replay_acceptance_campaign() {
         "authenticated replay campaign: 512 corrupt refusals, 512 originals accepted, 512 duplicates refused"
     );
 }
+
+#[test]
+fn replay_checkpoint_validates_bounds_and_refuses_live_rollback() {
+    use super::ReplayCheckpoint;
+    let end = 1u64 << 40;
+    for (left, bits) in [
+        (end + 1, 0),
+        (u64::MAX, 0),
+        (end, 1),
+        (end - 1, 2),
+        (end - 31, u32::MAX),
+    ] {
+        assert_eq!(
+            ReplayCheckpoint::from_parts(left, bits),
+            Err(Error::ReplayState)
+        );
+    }
+    for (left, bits) in [
+        (0, 0),
+        (0, u32::MAX),
+        (end - 32, u32::MAX),
+        (end - 1, 1),
+        (end, 0),
+    ] {
+        assert_eq!(
+            ReplayCheckpoint::from_parts(left, bits).unwrap().parts(),
+            (left, bits)
+        );
+    }
+    let mut context = server_c1();
+    let initial = context.replay_checkpoint();
+    for seq in [0, 2, 31, 32, 45] {
+        context.replay_accept(seq);
+    }
+    let latest = context.replay_checkpoint();
+    for invalid in [end, u64::MAX] {
+        assert!(!context.replay_fresh(invalid));
+        context.replay_accept(invalid);
+        assert_eq!(context.replay_checkpoint(), latest);
+    }
+    assert_eq!(context.restore_replay(initial), Err(Error::ReplayRollback));
+    assert_eq!(context.replay_checkpoint(), latest);
+    let dropping_seen = ReplayCheckpoint::from_parts(20, (1 << 11) | (1 << 12)).unwrap();
+    assert_eq!(
+        context.restore_replay(dropping_seen),
+        Err(Error::ReplayRollback)
+    );
+    assert_eq!(context.replay_checkpoint(), latest);
+    let advancing = ReplayCheckpoint::from_parts(20, (1 << 11) | (1 << 12) | (1 << 25)).unwrap();
+    context.restore_replay(advancing).unwrap();
+    for seq in [0, 19, 31, 32, 45] {
+        assert!(!context.replay_fresh(seq));
+    }
+    assert!(context.replay_fresh(20));
+    context
+        .restore_replay(ReplayCheckpoint::from_parts(end, 0).unwrap())
+        .unwrap();
+    for seq in [0, end - 1, end, u64::MAX] {
+        assert!(!context.replay_fresh(seq));
+        context.replay_accept(seq);
+    }
+    assert_eq!(context.replay_checkpoint().parts(), (end, 0));
+}
+
+#[test]
+fn restored_recipient_checkpoint_refuses_old_authenticated_requests() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1));
+    let mut wire = [0u8; 128];
+    let mut inner = [0u8; 128];
+    let n = client.protect_request(&request, &mut wire).unwrap();
+    server
+        .unprotect_request(&decode(&wire[..n]).unwrap(), &mut inner)
+        .unwrap();
+    // Simulates the caller retaining the latest committed parts, with their
+    // exact context identity. It does not claim filesystem durability.
+    let parts = server.replay_checkpoint().parts();
+    let mut restarted = server_c1();
+    restarted.set_sender_seq(32).unwrap();
+    restarted
+        .restore_replay(super::ReplayCheckpoint::from_parts(parts.0, parts.1).unwrap())
+        .unwrap();
+    assert_eq!(
+        restarted
+            .unprotect_request(&decode(&wire[..n]).unwrap(), &mut inner)
+            .unwrap_err(),
+        Error::Replay
+    );
+    let n = client.protect_request(&request, &mut wire).unwrap();
+    restarted
+        .unprotect_request(&decode(&wire[..n]).unwrap(), &mut inner)
+        .unwrap();
+    assert!(!restarted.replay_fresh(1));
+    assert_eq!(restarted.sender_seq(), 32);
+}
+
+#[test]
+fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
+    let mut random = 0x0086_1375_0032_u64;
+    for _ in 0..256 {
+        let mut context = server_c1();
+        for _ in 0..8 {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            context.replay_accept(random % 200);
+        }
+        let before = context.replay_checkpoint();
+        let refused: std::vec::Vec<_> =
+            (0..300).filter(|seq| !context.replay_fresh(*seq)).collect();
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let candidate =
+            super::ReplayCheckpoint::from_parts(random % 256, (random >> 8) as u32).unwrap();
+        let (left, bits) = candidate.parts();
+        let safe = left >= before.parts().0
+            && refused
+                .iter()
+                .all(|seq| *seq < left || (*seq - left < 32 && bits & (1 << (*seq - left)) != 0));
+        assert_eq!(context.restore_replay(candidate).is_ok(), safe);
+        if safe {
+            for seq in refused {
+                assert!(!context.replay_fresh(seq));
+            }
+        } else {
+            assert_eq!(context.replay_checkpoint(), before);
+        }
+    }
+}
