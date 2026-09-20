@@ -51,10 +51,14 @@ The library MSRV remains 1.85; ordinary host CI also checks current stable.
 ## Seeded qualification
 
 `python tools/qualification/seeded.py --output PATH` uses Rust 1.97.1 and the
-committed lockfile to retain source-bound outcomes for four finite campaigns:
-50,000 datagram mutations, 50,000 CBOR mutations, 100,000 replay-window model
+committed lockfile to retain source-bound outcomes for five finite campaigns:
+6,000 fixed/allocated body operations, 50,000 datagram mutations, 50,000 CBOR mutations, 100,000 replay-window model
 steps and 512 authenticated corruption/original/replay sequences. Seeds and
-hand-written corpus bytes live beside their oracles in the tests. CI archives
+hand-written corpus bytes live beside their oracles in the tests. Body parity
+compares typed results, every retained byte/sidecar and periodic reclamation,
+with independent exact-byte/range bounds for successful outgoing operations.
+The two backends share protocol-state logic; parity is not an independent RFC
+oracle or complete multi-peer/network/restart soak. CI archives
 the commands, compiler identity, counters and results and refuses missing tests.
 These campaigns establish their named invariants; coverage-guided fuzzing,
 line/branch coverage and compound network/lifecycle soak remain open in #202.
