@@ -4182,6 +4182,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
             if parsed.code() == Code::GET {
                 let mut queries = parsed.uri_query();
                 assert_eq!(queries.next(), Some(Ok("rt=Type1")));
+                assert_eq!(queries.next(), Some(Ok("")));
                 assert_eq!(queries.next(), Some(Ok("if=If1")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
@@ -4200,6 +4201,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .get("large")
         .to(Endpoint::v4([192, 0, 2, 2], 5683))
         .query("rt=Type1")
+        .query("")
         .query("if=If1")
         .accept(ContentFormat::OCTET_STREAM)
         .request_tag(crate::storage::BodyTag::new(b"response").unwrap())
@@ -4299,6 +4301,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             if parsed.code() == Code::PUT {
                 let mut queries = parsed.uri_query();
                 assert_eq!(queries.next(), Some(Ok("target=one")));
+                assert_eq!(queries.next(), Some(Ok("")));
                 assert_eq!(queries.next(), Some(Ok("version=2")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
@@ -4340,6 +4343,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .put("upload")
             .to(Endpoint::v4([192, 0, 2, 2], 5683))
             .query("target=one")
+            .query("")
             .query("version=2")
             .accept(ContentFormat::OCTET_STREAM)
             .content_format(ContentFormat::OCTET_STREAM)
@@ -4568,4 +4572,23 @@ fn disabled_block_assembly_refuses_before_handler_dispatch() {
     app.poll(0).unwrap();
     assert_eq!(last_reply(&app).code, Code::BAD_OPTION);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
+#[test]
+fn empty_query_values_count_toward_the_option_bound() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    let mut outgoing = app.get("value").to(peer);
+    for _ in 0..9 {
+        outgoing = outgoing.query("");
+    }
+    assert_eq!(
+        outgoing.send(0),
+        Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::OptionValueTooLong
+        )))
+    );
+    assert_eq!(app.transport().len, 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert!(app.get("value").to(peer).query("").send(1).is_ok());
 }

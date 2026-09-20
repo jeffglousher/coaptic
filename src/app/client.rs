@@ -649,14 +649,11 @@ where
     }
 
     /// Append a Uri-Query value. Total query bytes are bounded to 256 at send;
-    /// each value is bounded to 255 bytes. Empty values are ignored. More than
+    /// each value is bounded to 255 bytes. Empty values are retained. More than
     /// [`super::MAX_PATH_SEGMENTS`] values are rejected at send. Values and
     /// their order are retained across Block1, Q-Block1 and Block2 requests.
     #[must_use]
     pub fn query(mut self, value: &'a str) -> Self {
-        if value.is_empty() {
-            return self;
-        }
         let n = usize::from(self.query_n);
         if n < MAX_PATH_SEGMENTS {
             self.queries[n] = value;
