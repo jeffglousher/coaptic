@@ -417,6 +417,7 @@ struct LiveCall {
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
+    observed: Option<(u32, u64)>,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
@@ -462,6 +463,30 @@ impl ClientLives {
         })
     }
 
+    fn observe_fresh(&self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) -> bool {
+        let Some(sequence) = observation_start(parsed) else {
+            return true;
+        };
+        let Some((previous, received)) = self.get(call).and_then(|live| live.observed) else {
+            return true;
+        };
+        let delta = sequence.wrapping_sub(previous) & 0x00ff_ffff;
+        (delta != 0 && delta < 0x0080_0000) || now_ms.saturating_sub(received) > 128_000
+    }
+
+    fn record_observation(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+        if let Some(sequence) = observation_start(parsed) {
+            if let Some(live) = self
+                .rows
+                .iter_mut()
+                .flatten()
+                .find(|live| live.call == call)
+            {
+                live.observed = Some((sequence, now_ms));
+            }
+        }
+    }
+
     fn upload_key(&self, call: Call) -> BlockKey {
         BlockKey::new(call.token, call.peer).with_identity(
             self.get(call)
@@ -490,6 +515,21 @@ impl ClientLives {
             .map(|row| row.call.token)
         })
     }
+}
+
+// RFC 7959 section 2.6: only block zero carries a new notification.
+fn observation_start(parsed: &ParsedMessage<'_>) -> Option<u32> {
+    if !parsed.code().is_success()
+        || parsed
+            .block2()
+            .is_some_and(|block| block.is_ok_and(|block| block.num() != 0))
+        || parsed
+            .q_block2()
+            .any(|block| block.is_ok_and(|block| block.num() != 0))
+    {
+        return None;
+    }
+    parsed.observe().and_then(Result::ok)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -663,6 +703,11 @@ where
     /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
     /// [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
+    /// Plaintext/DTLS notifications obey RFC 7641 serial-number ordering
+    /// and its strict 128-second fallback. Stale CON notifications are ACKed
+    /// without replacing data or refreshing Max-Age. OSCORE notifications use
+    /// authenticated Partial-IV ordering instead. For block-wise notifications,
+    /// ordering is established by the first accepted block, before completion.
     /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
     /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
     /// terminal outcome; no synthetic CoAP response code is invented.
@@ -1023,6 +1068,7 @@ where
             echo: self.echo,
             no_response: self.no_response,
             observe,
+            observed: None,
             deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
@@ -1344,6 +1390,15 @@ where
             return Err(e);
         }
     }
+    // ACK stale CON notifications too, but do not refresh their lifetime,
+    // replace the inbox, or alter assembly. OSCORE already authenticated and
+    // ordered notifications by Partial IV (RFC 8613 section 4.1.3.5.2).
+    if !super::oscore::is_active(oscore)
+        && !lives.observe_fresh(Call::new(parsed.token(), peer), parsed, now_ms)
+    {
+        let _ = engine.release_rx(rx);
+        return Ok(());
+    }
     // Piggybacked ACK shares the request MID. A separate CON/NON response
     // uses a new MID; stop RTO using the exchange's request MID.
     if let Some(entry) = via_exchange {
@@ -1395,6 +1450,7 @@ where
     if parsed.block2().is_some() {
         match engine.apply_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 finish_assembled(
                     engine,
                     inbox,
@@ -1409,6 +1465,7 @@ where
                 return Ok(());
             }
             Ok(progress) => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1458,6 +1515,7 @@ where
     } else if parsed.q_block2().next().is_some() {
         match engine.apply_q_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 finish_assembled(
                     engine,
@@ -1473,6 +1531,7 @@ where
                 return Ok(());
             }
             Ok(progress) => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1522,6 +1581,7 @@ where
         }
     }
 
+    lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
     accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
     take_exchange(engine, parsed, peer);
     store_reply(

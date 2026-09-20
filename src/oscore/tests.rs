@@ -738,7 +738,32 @@ fn app_oscore_observe_register_notify() {
         .expect("protected notification")
         .expect("remote response");
     assert_eq!(got.payload(), b"obs-1");
-    assert!(got.observe_seq().is_some());
+    assert_eq!(got.observe_seq(), Some(0), "Inner Observe is empty");
+    let old = (bytes, n);
+    assert_eq!(
+        server
+            .notify(10_000, &["obs"], Response::content(b"obs-2"))
+            .unwrap(),
+        1
+    );
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(10_000).unwrap();
+    let got = client.take_response(call).unwrap().unwrap();
+    assert_eq!(got.payload(), b"obs-2");
+    assert_eq!(
+        got.observe_seq(),
+        Some(0),
+        "new PIV wins even with equal Inner Observe"
+    );
+    for (time, (bytes, n)) in [(10_001, old), (10_002, (bytes, n))] {
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(time).unwrap();
+        assert!(
+            client.take_response(call).is_none(),
+            "old and duplicate PIV must not surface"
+        );
+    }
 }
 
 #[test]
