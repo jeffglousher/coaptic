@@ -5030,3 +5030,114 @@ fn protected_client_reregistration_rebinds_and_reports_send_failure() {
         }
     }
 }
+
+#[test]
+fn protected_observe_format_refusal_precedes_replay_commit_and_body_admission() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for body_mode in 0..3 {
+        for fail_rst in [false, true] {
+            let mut client = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .bind(QWire::default())
+                .unwrap();
+            client.set_oscore(client_c1());
+            let call = client.get("obs").observe().to(peer).send(0).unwrap();
+            let request = client.transport_mut().sent.remove(0);
+            let mut server = server_c1();
+            let mut scratch = [0; WIRE];
+            let (_, reference) = server
+                .unprotect_request(&decode(&request).unwrap(), &mut scratch)
+                .unwrap();
+            let other = client.get("other").non().to(peer).send(0).unwrap();
+            client.transport_mut().sent.clear();
+            let initial_format = encode_uint(u32::from(ContentFormat::TEXT_PLAIN.get()));
+            let changed_format = encode_uint(u32::from(ContentFormat::OCTET_STREAM.get()));
+            let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+            let size = encode_uint(32);
+            for step in 0..2 {
+                let seq = encode_uint(step);
+                let mut opts = OptionsBuilder::<5>::new();
+                opts.push(Opt::observe(&seq)).unwrap();
+                opts.push(Opt::content_format(if step == 0 {
+                    &initial_format
+                } else {
+                    &changed_format
+                }))
+                .unwrap();
+                if step == 1 && body_mode != 0 {
+                    opts.push(Opt::etag(b"v1")).unwrap();
+                    opts.push(Opt::size2(&size)).unwrap();
+                    opts.push(if body_mode == 1 {
+                        Opt::block2(&block)
+                    } else {
+                        Opt::q_block2(&block)
+                    })
+                    .unwrap();
+                }
+                let response = Message::new(
+                    Type::Confirmable,
+                    Code::CONTENT,
+                    MessageId::new(100 + step as u16),
+                )
+                .with_token(call.token())
+                .with_options(opts.as_slice())
+                .with_payload(b"abcdefghijklmnop");
+                let mut wire = [0; WIRE];
+                let n = server
+                    .protect_response_with_piv(&response, reference, &mut wire)
+                    .unwrap();
+                let checkpoint = client.oscore().unwrap().replay_checkpoint();
+                client.transport_mut().fail_send = step == 1 && fail_rst;
+                client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+                let result = client.poll(u64::from(step) + 1);
+                if step == 0 {
+                    result.unwrap();
+                    assert_eq!(
+                        client.take_response(call).unwrap().unwrap().payload(),
+                        b"abcdefghijklmnop"
+                    );
+                    assert!(
+                        decode(&client.transport_mut().sent.remove(0))
+                            .unwrap()
+                            .is_empty_ack()
+                    );
+                } else {
+                    if fail_rst {
+                        assert!(matches!(result, Err(crate::app::Error::Io(_))));
+                    } else {
+                        result.unwrap();
+                        assert!(
+                            decode(&client.transport_mut().sent.remove(0))
+                                .unwrap()
+                                .is_empty_rst()
+                        );
+                    }
+                    assert_eq!(
+                        client.take_response(call).unwrap().unwrap_err(),
+                        crate::CallFailure::ObserveFormatMismatch
+                    );
+                    assert_eq!(client.oscore().unwrap().replay_checkpoint(), checkpoint);
+                    assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+                    assert!(client.oscore().unwrap().lookup(other.token()).is_some());
+                    assert!(
+                        client
+                            .engine()
+                            .rx_body_transfer(crate::storage::SlotId::from_index(0))
+                            .is_none()
+                    );
+                    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+                    client.poll(3).unwrap();
+                    assert!(
+                        client.transport().sent.is_empty(),
+                        "a refused CON must not acquire an ACK replay entry"
+                    );
+                }
+            }
+            assert!(client.cancel(other));
+            assert_eq!(client.engine_mut().tx_occupied(), 0);
+            assert_eq!(client.engine_mut().rx_occupied(), 0);
+        }
+    }
+}

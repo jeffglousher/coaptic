@@ -10259,3 +10259,96 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
         assert_eq!(client.engine_mut().rx_occupied(), 0);
     }
 }
+
+#[test]
+fn client_observe_format_change_is_terminal_without_delivering_wrong_representation() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for initial_format in [None, Some(ContentFormat::TEXT_PLAIN)] {
+        for confirmable in [false, true] {
+            for invalid in 0..4 {
+                if invalid == 1 && initial_format.is_none() {
+                    continue;
+                }
+                let mut app = record_client();
+                let call = app.get("obs").observe().non().to(peer).send(0).unwrap();
+                for step in 0..3 {
+                    let sequence = encode_uint(step);
+                    let initial = initial_format.map(|format| encode_uint(u32::from(format.get())));
+                    let changed = encode_uint(u32::from(ContentFormat::OCTET_STREAM.get()));
+                    let mut options = OptionsBuilder::<4>::new();
+                    options.push(Opt::observe(&sequence)).unwrap();
+                    options.push(Opt::etag(b"v1")).unwrap();
+                    if step == 0 {
+                        if let Some(format) = &initial {
+                            options.push(Opt::content_format(format)).unwrap();
+                        }
+                    } else if step == 2 {
+                        match invalid {
+                            0 => {
+                                options.push(Opt::content_format(&changed)).unwrap();
+                            }
+                            1 => {}
+                            2 => {
+                                options
+                                    .push(Opt::opaque(OptionNumber::CONTENT_FORMAT, &[1, 2, 3]))
+                                    .unwrap();
+                            }
+                            _ => {
+                                options.push(Opt::content_format(&changed)).unwrap();
+                                options.push(Opt::content_format(&changed)).unwrap();
+                            }
+                        }
+                    }
+                    let ty = if confirmable {
+                        Type::Confirmable
+                    } else {
+                        Type::NonConfirmable
+                    };
+                    let message = Message::new(
+                        ty,
+                        if step == 1 {
+                            Code::VALID
+                        } else {
+                            Code::CONTENT
+                        },
+                        MessageId::new(100 + step as u16),
+                    )
+                    .with_token(call.token())
+                    .with_options(options.as_slice())
+                    .with_payload(if step == 1 {
+                        b""
+                    } else {
+                        b"representation"
+                    });
+                    let mut wire = [0; 256];
+                    let n = encode(&message, &mut wire).unwrap();
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.poll(u64::from(step) + 1).unwrap();
+                    let result = app.take_response(call).unwrap();
+                    if step == 0 {
+                        assert_eq!(result.unwrap().payload(), b"representation");
+                    } else if step == 1 {
+                        assert_eq!(result.unwrap().code(), Code::VALID);
+                    } else {
+                        assert_eq!(
+                            result.unwrap_err(),
+                            crate::CallFailure::ObserveFormatMismatch
+                        );
+                        if confirmable {
+                            let (_, bytes, len) =
+                                app.transport().sent[app.transport().sent_n - 1].unwrap();
+                            assert_eq!(decode(&bytes[..len]).unwrap().ty(), Type::Reset);
+                        }
+                    }
+                }
+                assert!(
+                    app.engine()
+                        .lookup_observe(ObserveKey::new_client(call.token(), peer))
+                        .is_none()
+                );
+                assert_eq!(app.engine_mut().rx_occupied(), 0);
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+            }
+        }
+    }
+}

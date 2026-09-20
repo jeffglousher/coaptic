@@ -23,6 +23,10 @@
 //! 64-bit hosts; it is separate from the optional assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
 //! unknown elective options are retained in `Response::received_options`.
+//! New Observe representations retain their initial Content-Format, including
+//! absence. A fresh changed/malformed format terminates the Call with
+//! `CallFailure::ObserveFormatMismatch` (RST for CON); stale representations do
+//! not change this state. A 2.03 validation may omit Content-Format.
 //! A matching ACK still stops retries. Replies retain at most 24 options and
 //! 512 encoded header/Token/option bytes, with at most eight Location-Path and
 //! eight Location-Query values. Overflow completes the call with
@@ -133,6 +137,8 @@ pub enum CallFailure {
     CancellationFailed,
     /// Re-registration could not be sent; local subscription is retired.
     ReregistrationFailed,
+    /// A new Observe representation changes or malforms its established format.
+    ObserveFormatMismatch,
     /// A block continuation could not be sent. Poll returns the detailed error;
     /// the call is retired locally and remote effects remain uncertain.
     ContinuationFailed,
@@ -155,6 +161,7 @@ impl core::fmt::Display for CallFailure {
             Self::Cancelled => f.write_str("call cancelled"),
             Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
             Self::ReregistrationFailed => f.write_str("Observe re-registration send failed"),
+            Self::ObserveFormatMismatch => f.write_str("Observe notification format mismatch"),
             Self::ContinuationFailed => f.write_str("block continuation send failed"),
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
@@ -470,6 +477,7 @@ struct LiveCall {
     no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
     observed: Option<(u32, u64)>,
+    observed_format: Option<Option<ContentFormat>>,
     request_identity: Option<ObserveRequest>,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
@@ -527,6 +535,40 @@ impl ClientLives {
         (delta != 0 && delta < 0x0080_0000) || now_ms.saturating_sub(received) > 128_000
     }
 
+    pub(crate) fn observe_format_admissible(
+        &self,
+        call: Call,
+        parsed: &ParsedMessage<'_>,
+        now_ms: u64,
+        protected: bool,
+    ) -> bool {
+        (!protected && !self.observe_fresh(call, parsed, now_ms))
+            || self.observe_format_matches(call, parsed)
+    }
+
+    fn observe_format_matches(&self, call: Call, parsed: &ParsedMessage<'_>) -> bool {
+        if observation_start(parsed).is_none() {
+            return true;
+        }
+        if parsed
+            .content_format()
+            .is_some_and(|format| format.is_err())
+            || parsed
+                .get_options(crate::message::OptionNumber::CONTENT_FORMAT)
+                .count()
+                > 1
+        {
+            return false;
+        }
+        // 2.03 may validate a cached representation without repeating its format.
+        if parsed.code() == Code::VALID && parsed.content_format().is_none() {
+            return true;
+        }
+        self.get(call)
+            .and_then(|live| live.observed_format)
+            .is_none_or(|initial| initial == parsed.content_format().and_then(Result::ok))
+    }
+
     fn record_observation(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
         if let Some(sequence) = observation_start(parsed) {
             if let Some(live) = self
@@ -536,6 +578,11 @@ impl ClientLives {
                 .find(|live| live.call == call)
             {
                 live.observed = Some((sequence, now_ms));
+                if live.observed_format.is_none()
+                    && (parsed.code() != Code::VALID || parsed.content_format().is_some())
+                {
+                    live.observed_format = Some(parsed.content_format().and_then(Result::ok));
+                }
             }
         }
     }
@@ -1265,6 +1312,7 @@ where
             no_response: self.no_response,
             observe,
             observed: prior.and_then(|live| live.observed),
+            observed_format: prior.and_then(|live| live.observed_format),
             request_identity,
             deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
@@ -1637,6 +1685,26 @@ where
         let _ = engine.release_rx(rx);
         return outcome;
     }
+    let call = Call::new(parsed.token(), peer);
+    let fresh = super::oscore::is_active(oscore) || lives.observe_fresh(call, parsed, now_ms);
+    if !lives.observe_format_admissible(call, parsed, now_ms, super::oscore::is_active(oscore)) {
+        let outcome = if parsed.ty() == Type::Confirmable {
+            super::send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ObserveFormatMismatch,
+            true,
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
     if parsed.ty() == Type::Confirmable {
         if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {
             let _ = engine.release_rx(rx);
@@ -1660,9 +1728,7 @@ where
     // ACK stale CON notifications too, but do not refresh their lifetime,
     // replace the inbox, or alter assembly. OSCORE already authenticated and
     // ordered notifications by Partial IV (RFC 8613 section 4.1.3.5.2).
-    if !super::oscore::is_active(oscore)
-        && !lives.observe_fresh(Call::new(parsed.token(), peer), parsed, now_ms)
-    {
+    if !fresh {
         let _ = engine.release_rx(rx);
         return Ok(());
     }
