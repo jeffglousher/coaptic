@@ -10867,3 +10867,49 @@ fn response_unprocessed_options_preserves_fields_and_refuses_overflow() {
         .unwrap();
     assert_eq!(plain.payload(), &[0xa2, 0x23, 0x18, 0x82, 0x27, 0x17]);
 }
+
+#[test]
+fn replay_cache_admission_distinguishes_eviction_from_real_saturation() {
+    use crate::storage::{DedupEntry, DedupKey};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for evictable in [false, true] {
+        let mut app = record_client();
+        let capacity = app.engine.capacities().tx_datagram_slots;
+        for index in 0..capacity {
+            let tx = app.engine.acquire_tx().unwrap();
+            app.engine.write_tx(tx, &[b'R'; 128], peer).unwrap();
+            if evictable {
+                let entry = DedupEntry::new(MessageId::new(100 + index as u16), peer)
+                    .with_due_ms(1000 + index as u64)
+                    .with_tx_pin(tx);
+                app.engine.insert_dedup(entry).unwrap();
+            }
+        }
+        let before = app.metrics().saturated;
+        let acquired = super::acquire_tx_or_evict(&mut app.engine);
+        if evictable {
+            assert!(acquired.is_some());
+            assert_eq!(
+                app.metrics().saturated,
+                before,
+                "recoverable cache eviction is not caller-visible saturation"
+            );
+            let id = app
+                .engine
+                .lookup_dedup(DedupKey::new(MessageId::new(100), peer))
+                .unwrap();
+            let evicted = app.engine.dedup_entry(id).unwrap();
+            assert!(evicted.tx_pin().is_none());
+            assert!(
+                evicted.replay().is_some(),
+                "old request remains ACKed without re-execution"
+            );
+            app.engine.release_tx(acquired.unwrap()).unwrap();
+            assert_eq!(app.engine.tx_occupied(), capacity - 1);
+        } else {
+            assert!(acquired.is_none());
+            assert_eq!(app.metrics().saturated, before + 1);
+            assert_eq!(app.engine.tx_occupied(), capacity);
+        }
+    }
+}
