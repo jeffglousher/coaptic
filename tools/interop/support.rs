@@ -13,6 +13,7 @@ pub const LARGE: [u8; 2000] = {
 };
 pub struct Args {
     pub server: bool,
+    pub ipv6: bool,
     pub dtls: bool,
     pub port: u16,
     pub key: String,
@@ -23,9 +24,10 @@ pub struct Args {
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let a: Vec<_> = std::env::args().skip(1).collect();
-        if a.len() != 7 {
+        if !(7..=8).contains(&a.len()) {
             return Err(
-                "usage: PEER server|client udp|dtls PORT KEY PATH GET|POST TIMEOUT_MS".into(),
+                "usage: PEER server|client udp|dtls PORT KEY PATH GET|POST TIMEOUT_MS [ipv4|ipv6]"
+                    .into(),
             );
         }
         if !matches!(a[0].as_str(), "server" | "client")
@@ -36,6 +38,10 @@ impl Args {
         }
         if !matches!(a[4].as_str(), "test" | "large" | "counter" | "missing") {
             return Err("unsupported fixture path".into());
+        }
+        let family = a.get(7).map(String::as_str).unwrap_or("ipv4");
+        if !matches!(family, "ipv4" | "ipv6") {
+            return Err("invalid address family".into());
         }
         let port = a[2].parse()?;
         if port == 0 {
@@ -50,6 +56,7 @@ impl Args {
         }
         Ok(Self {
             server: a[0] == "server",
+            ipv6: family == "ipv6",
             dtls: a[1] == "dtls",
             port,
             key: a[3].clone(),
@@ -59,7 +66,11 @@ impl Args {
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {
-        ([127, 0, 0, 1], self.port).into()
+        if self.ipv6 {
+            (std::net::Ipv6Addr::LOCALHOST, self.port).into()
+        } else {
+            ([127, 0, 0, 1], self.port).into()
+        }
     }
 }
 pub fn ready(peer: &str, stack: &str, port: u16, dtls: bool) {
