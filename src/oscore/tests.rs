@@ -4485,3 +4485,102 @@ fn protected_response_inline_and_assembled_boundaries_reclaim_state() {
         }
     }
 }
+
+#[test]
+fn protected_qblock2_aligned_reselection_preserves_windows_and_uses_fresh_pivs() {
+    use crate::{App, Request, Response, get, profiles};
+    static BODY: [u8; 384] = [b'Q'; 384];
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(b"q").unwrap();
+    let mut sender = client_c1();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(body))
+        .bind(QWire::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    let key = crate::storage::BlockKey::new(token, peer)
+        .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+    let id = server.engine_mut().start_q_block2(key, &BODY, 0).unwrap();
+    for _ in 0..10 {
+        server.engine_mut().next_q_block2(id).unwrap();
+    }
+    let mut previous = server.engine().tx_body_transfer(id).unwrap();
+    let mut sequence = 0;
+    for (index, num) in [0, 10, 10, 0, 30, 20].into_iter().enumerate() {
+        let q = BlockValue::from_size(num, true, 16).unwrap().encode();
+        let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+        let request = Message::new(
+            Type::Confirmable,
+            Code::GET,
+            MessageId::new(100 + index as u16),
+        )
+        .with_token(token)
+        .with_options(&opts);
+        let mut wire = [0; WIRE];
+        let n = sender.protect_request(&request, &mut wire).unwrap();
+        let reference = sender.lookup(token).unwrap();
+        server.transport_mut().sent.clear();
+        server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+        let result = server.poll(index as u64);
+        if num == 30 {
+            assert_eq!(
+                result,
+                Err(crate::Error::Block(
+                    crate::error::BlockTransferError::OutsideWindow
+                ))
+            );
+            assert!(server.transport().sent.is_empty());
+            assert_eq!(server.engine().tx_body_transfer(id), Some(previous));
+            assert_eq!(server.oscore().unwrap().sender_seq(), sequence);
+            continue;
+        }
+        result.unwrap();
+        let ack = server.transport_mut().sent.remove(0);
+        assert!(decode(&ack).unwrap().is_empty_ack());
+        assert_eq!(decode(&ack).unwrap().message_id(), request.message_id());
+        let count = if num == 20 { 4 } else { 10 };
+        assert_eq!(server.transport().sent.len(), count);
+        for (offset, wire) in server.transport().sent.iter().enumerate() {
+            let outer = decode(wire).unwrap();
+            assert_eq!(outer.ty(), Type::NonConfirmable);
+            assert!(outer.q_block2().next().is_none());
+            assert_eq!(
+                header::OscoreHeader::parse(outer.oscore().unwrap())
+                    .unwrap()
+                    .piv
+                    .unwrap()
+                    .seq(),
+                sequence
+            );
+            sequence += 1;
+            let mut plain = [0; WIRE];
+            let response = sender
+                .unprotect_response(&outer, reference, &mut plain)
+                .unwrap();
+            assert_eq!(
+                response.q_block2().next().unwrap().unwrap().num(),
+                num + offset as u32
+            );
+            assert_eq!(
+                response.payload(),
+                &BODY[(num as usize + offset) * 16..(num as usize + offset + 1) * 16]
+            );
+            assert_eq!(response.size2(), Some(Ok(384)));
+        }
+        if num == 20 {
+            assert!(server.engine().tx_body_transfer(id).is_none());
+        } else if index == 1 {
+            previous = server.engine().tx_body_transfer(id).unwrap();
+            assert_eq!(previous.window_base(), 10);
+        } else {
+            assert_eq!(server.engine().tx_body_transfer(id), Some(previous));
+        }
+        assert_eq!(server.engine_mut().rx_occupied(), 0);
+        assert_eq!(server.engine_mut().tx_occupied(), 0);
+    }
+}
