@@ -2,7 +2,7 @@
 import socket
 import unittest
 from unittest.mock import patch
-from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow
+from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests
 
 
 class RunnerTests(unittest.TestCase):
@@ -96,6 +96,13 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["failures"], 1)
         self.assertEqual(result["samples_ns"]["request"], [])
         self.assertNotIn("request_ns", result)
+
+    def test_retransmission_requires_exact_wire_identity(self):
+        one = {"direction": "request", "hex": "41031234aa"}
+        expect_identical_requests([one, one], require_repeat=True)
+        for trace in ([], [one], [one, {"direction": "request", "hex": "41031235aa"}]):
+            with self.assertRaises(AssertionError):
+                expect_identical_requests(trace, require_repeat=True)
 
     def test_ipv6_relay_preserves_bytes_in_both_directions(self):
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as client:

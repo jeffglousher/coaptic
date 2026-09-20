@@ -1648,13 +1648,18 @@
       ],
       "requires": [],
       "features": [
-        "drop-reply"
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
       ],
       "positive_proof": [
-        "observable retransmission; final counter exactly one"
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
       ],
       "failure_proof": [
-        "missing retransmission or extra handler effects fail"
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
       ],
       "executable": "tools/interop/run.py:main.fault"
     },
@@ -1671,13 +1676,18 @@
       ],
       "requires": [],
       "features": [
-        "drop-reply"
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
       ],
       "positive_proof": [
-        "observable retransmission; final counter exactly one"
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
       ],
       "failure_proof": [
-        "missing retransmission or extra handler effects fail"
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
       ],
       "executable": "tools/interop/run.py:main.fault"
     },
@@ -1694,13 +1704,18 @@
       ],
       "requires": [],
       "features": [
-        "duplicate-request"
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
       ],
       "positive_proof": [
-        "injected duplicate; final counter exactly one"
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
       ],
       "failure_proof": [
-        "missing injected duplicate or extra effects fail"
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
       ],
       "executable": "tools/interop/run.py:main.fault"
     },
@@ -1717,13 +1732,18 @@
       ],
       "requires": [],
       "features": [
-        "duplicate-request"
+        "idempotent-put",
+        "request-wire-identity",
+        "fault-injection"
       ],
       "positive_proof": [
-        "injected duplicate; final counter exactly one"
+        "Created or Changed response followed by exact idempotent PUT state",
+        "identical retransmitted request bytes"
       ],
       "failure_proof": [
-        "missing injected duplicate or extra effects fail"
+        "actual dropped reply or duplicated request in trace",
+        "lost reply requires observed retransmission",
+        "no claim of alternative server non-idempotent duplicate suppression"
       ],
       "executable": "tools/interop/run.py:main.fault"
     },
@@ -2043,6 +2063,20 @@
       ],
       "reason": "No source-bound full requirements/branch-coverage or seeded campaign evidence in this process suite.",
       "issue": 202,
+      "executable_cases": []
+    },
+    {
+      "feature": "alternative-server-non-idempotent-deduplication",
+      "status": "unqualified",
+      "role": "server",
+      "transport_security": "udp",
+      "peers": "coap-rs, libcoap",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "reason": "Exploratory dropped-reply and duplicated-request counter POSTs produced two effects in both alternative fixtures. Their passing fault cases qualify idempotent PUT state and Coaptic retransmission identity only; no fixture response cache was added to mask this result.",
+      "issue": 200,
       "executable_cases": []
     }
   ]
