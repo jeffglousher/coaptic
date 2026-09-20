@@ -3,7 +3,7 @@
 Three separately built executables communicate only over loopback UDP/DTLS:
 
 - `peer-coaptic`: Coaptic App, webrtc-dtls 0.12 / util 0.11. No coap-rs dependency.
-- `peer-coap-rs`: coap 0.28.1, its own webrtc-dtls 0.8 / util 0.8. No Coaptic dependency.
+- `peer-coap-rs`: coap 0.28.1 with a test transport bridge to webrtc-dtls 0.12 / util 0.11. No Coaptic dependency.
 - `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; this initial matrix exercises PSK DTLS, not OSCORE.
 
 libcoap is BSD-2-Clause; its independent source/build is outside the published library. OpenSSL is a test-machine dependency. No C FFI or DTLS dependency enters Coaptic. Lockfile pins Rust peers; the C source pin is checked by CMake. These are test fixtures, with a public, non-production PSK (`sesame`).
@@ -35,9 +35,18 @@ JSON schema `coaptic-process-interop/2` records source/dirty state, platform, ex
 
 This complements the existing ETSI catalog/pcap harness. It does not establish coverage for Observe, OSCORE, certificates, Q-Block, FETCH/PATCH or complete option handling. The App TD harness reports its known incomplete scenarios explicitly; Engine tests have a separate in-memory scope. No new ETSI identifiers are invented. Capability expansion should add explicit scenarios and proof rather than label a library feature-complete by reputation.
 
-Old DTLS dependencies remain isolated to the legacy peer and harness. Their
-known advisory debt is tracked in [#193](https://github.com/jeffglousher/coaptic/issues/193).
-Library dependencies and peer dependency versions need not match.
+The peers remain separate executables with independent CoAP implementations.
+Both Rust peers use the same modern DTLS backend; DTLS implementation diversity
+comes from libcoap/OpenSSL. The coap-rs bridge disables its bundled legacy DTLS
+feature and adapts its public client/server transport traits. No Coaptic types
+enter that executable. Library and peer dependency versions need not match.
+
+The bridge bounds active connection tasks and retained request responders to
+128 each, refuses plaintext datagrams above 1,600 bytes, times out idle reads
+at 30 seconds, and closes authenticated clients explicitly after measurement.
+The separate harness tests mutually authenticated X.509 GET in both mixed CoAP
+directions and self-pair, plus untrusted-client/server refusal with a specific
+certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
@@ -69,8 +78,8 @@ DTLS implementation qualification.
 
 One additional Linux case sends 140 fresh Coaptic counter POSTs and a GET to
 libcoap at one fixed endpoint, checking explicit client shutdown and all effects.
-This does not qualify abrupt-client replacement at the libcoap server. The legacy
-Rust client exits without explicit shutdown in the Rust-server reuse scenarios.
+This does not qualify abrupt-client replacement at the libcoap server. Both
+Rust clients now explicitly close authenticated connections after measurement.
 Coaptic awaits bounded DTLS shutdown before process exit; request timing stops
 at response assembly and host timing includes shutdown.
 

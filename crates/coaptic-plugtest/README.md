@@ -28,7 +28,7 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 
 - [`Peer`](src/peer.rs) — start/stop server, client request, local UDP addr. Backends: `coaptic`, `coap-rs`. Add a library by implementing the trait.
 - Pcap writer + golden JSON grader (`expectations/catalog.json`). CORE goldens assert type, token echo, and CON↔ACK MID, and omit `allow_extra`. OBS / BLOCK / LINK / DTLS keep `allow_extra` (notifications, block trains, mixed-peer extras). Ports / time are wildcards.
-- DTLS: feature `dtls` uses webrtc-dtls (same stack as coap-rs) as a **harness** `DatagramIo` adapter. The `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
+- DTLS: feature `dtls` uses webrtc-dtls 0.12 via explicit transport adapters as a **harness** `DatagramIo` adapter. The `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
 - `TD_6LoWPAN_*` stay skipped (`future/backlog` — contributor opportunity).
 
 ### Qualification boundary
@@ -49,3 +49,10 @@ and require Content-Format 40. They run in both mixed peer directions and the
 Coaptic self-pair. Refusal tests cover missing, extra, duplicate and truncated
 links and missing/incorrect Content-Format. This fixture comparison is not a
 general-purpose RFC 6690 parser qualification.
+
+The legacy coap-rs DTLS feature is disabled. Test-only bridges use its public
+transport traits with webrtc-dtls 0.12, keeping CoAP behavior independent while
+retiring the old ring/webpki chain. Dedicated tests qualify mutual X.509 GET in
+the two mixed directions and Coaptic self-pair, and require a certificate-verifier
+error for unrelated trust roots on either endpoint. They do not upgrade skipped
+RPK TDs to passes; independent DTLS-backend coverage remains libcoap/OpenSSL.

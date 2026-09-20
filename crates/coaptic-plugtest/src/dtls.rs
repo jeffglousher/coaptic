@@ -12,6 +12,9 @@
 //! RPK TDs (`TD_COAP_DTLS_04`–`07`) use mutually-authenticated ECDSA
 //! certificates: webrtc-dtls has no RFC 7250 raw-public-key certificate type.
 
+#[path = "../../../tools/interop/coap_dtls.rs"]
+mod coap_dtls;
+
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc as std_mpsc};
@@ -212,10 +215,10 @@ pub fn ecdsa_pair() -> Result<(Config, Config), PeerError> {
     let mut server_roots = rustls::RootCertStore::empty();
     let mut client_roots = rustls::RootCertStore::empty();
     server_roots
-        .add(&client.certificate[0])
+        .add(client.certificate[0].clone())
         .map_err(|e| format!("root: {e}"))?;
     client_roots
-        .add(&server.certificate[0])
+        .add(server.certificate[0].clone())
         .map_err(|e| format!("root: {e}"))?;
     let server_cfg = Config {
         certificates: vec![server],
@@ -478,7 +481,7 @@ async fn start_rs_server(cfg: Config) -> Result<SocketAddr, PeerError> {
         .await
         .map_err(|e| format!("listen: {e}"))?;
     let addr = listener.addr().await.map_err(|e| format!("addr: {e}"))?;
-    let server = Server::from_listeners(vec![Box::new(listener)]);
+    let server = Server::from_listeners(vec![Box::new(coap_dtls::Server(listener))]);
     tokio::spawn(async move {
         let _ = server
             .run(
@@ -497,16 +500,11 @@ async fn start_rs_server(cfg: Config) -> Result<SocketAddr, PeerError> {
 
 async fn rs_get_secure(addr: SocketAddr, cfg: Config) -> Result<(), PeerError> {
     use coap::client::CoAPClient;
-    use coap::dtls::UdpDtlsConfig;
-
-    let dtls = UdpDtlsConfig {
-        config: cfg,
-        dest_addr: addr,
-    };
-    let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, CoAPClient::from_udp_dtls_config(dtls))
+    let transport = coap_dtls::Client::connect(addr, cfg)
         .await
-        .map_err(|_| PeerError("handshake: timeout".into()))?
         .map_err(|e| PeerError(format!("handshake: {e}")))?;
+    let connection = Arc::clone(&transport.0);
+    let client = CoAPClient::from_transport(transport);
     let resp = client
         .send(
             coap::request::RequestBuilder::request_path(
@@ -520,6 +518,7 @@ async fn rs_get_secure(addr: SocketAddr, cfg: Config) -> Result<(), PeerError> {
         )
         .await
         .map_err(|e| format!("GET /secure: {e}"))?;
+    let _ = tokio::time::timeout(Duration::from_secs(1), connection.close()).await;
     if resp.message.payload != site::SECURE_BODY {
         return Err(PeerError("GET /secure payload".into()));
     }
@@ -557,4 +556,68 @@ pub fn adapter_note() -> &'static str {
      App::poll / App client see plaintext CoAP over a DTLS-wrapped socket in this crate. \
      Mixed pairs (coap-rs→coaptic, coaptic→coap-rs, coaptic→coaptic) run handshake + GET /secure. \
      RPK TDs use ECDSA certs (webrtc-dtls has no RFC 7250 RPK type)."
+}
+
+#[cfg(test)]
+mod qualification_tests {
+    use super::*;
+
+    #[test]
+    fn mutual_x509_authentication_preserves_mixed_coap_get() {
+        let _guard = crate::runner::harness_lock();
+        for pair in crate::runner::default_pairs() {
+            let (client, server) = ecdsa_pair().unwrap();
+            let capture = Capture::new();
+            runtime()
+                .unwrap()
+                .block_on(run_pair(pair, client, server, &capture))
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn x509_rejects_untrusted_server_and_client_with_verifier_evidence() {
+        for reject_server in [true, false] {
+            let (mut client_cfg, mut server_cfg) = ecdsa_pair().unwrap();
+            // Use a valid but unrelated root, so refusal must occur during
+            // peer verification rather than invalid local configuration.
+            let stranger = Certificate::generate_self_signed(vec!["localhost".into()]).unwrap();
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(stranger.certificate[0].clone()).unwrap();
+            if reject_server {
+                client_cfg.roots_cas = roots;
+            } else {
+                server_cfg.client_cas = roots;
+            }
+            let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let server = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            client.connect(server.local_addr().unwrap()).await.unwrap();
+            server.connect(client.local_addr().unwrap()).await.unwrap();
+            let outcomes = tokio::time::timeout(Duration::from_secs(4), async {
+                tokio::join!(
+                    DTLSConn::new(Arc::new(client), client_cfg, true, None),
+                    DTLSConn::new(Arc::new(server), server_cfg, false, None),
+                )
+            })
+            .await
+            .expect("timeout is not certificate-refusal evidence");
+            let (verifier, remote) = if reject_server {
+                outcomes
+            } else {
+                (outcomes.1, outcomes.0)
+            };
+            let error = match verifier {
+                Ok(_) => panic!("accepted untrusted certificate"),
+                Err(e) => e,
+            };
+            assert!(
+                matches!(error, webrtc_dtls::Error::Other(ref reason) if matches!(reason.as_str(), "invalid peer certificate: UnknownIssuer" | "invalid peer certificate: BadSignature")),
+                "wrong refusal: {error:?}"
+            );
+            assert!(
+                remote.is_err(),
+                "other endpoint must not complete authentication"
+            );
+        }
+    }
 }

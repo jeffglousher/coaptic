@@ -10,10 +10,9 @@ repository = "https://github.com/jeffglousher/coaptic"
 
 [features]
 default = []
-# Real DTLS: coap 0.28.1 exposes these dependency types in its public API.
-# Keep dtls 0.8 / util 0.8 / rustls 0.21 aligned until coap migrates (#185).
+# Test-only transport bridge avoids coap 0.28.1's legacy DTLS feature.
 # Harness-only; the library has no DTLS dependency.
-dtls = ["coap/dtls", "dep:webrtc-dtls", "dep:webrtc-util", "dep:rustls"]
+dtls = ["dep:async-trait", "dep:webrtc-dtls", "dep:webrtc-util", "dep:rustls"]
 # Pairwise OSCORE dogfood (`--oscore`). Library feature; no extra harness deps.
 oscore = ["coaptic/oscore"]
 
@@ -24,9 +23,10 @@ coap-lite = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-webrtc-dtls = { version = "0.8", optional = true }
-webrtc-util = { version = "0.8", optional = true }
-rustls = { version = "0.21", optional = true }
+webrtc-dtls = { version = "0.12", optional = true }
+webrtc-util = { version = "0.11", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
+async-trait = { version = "0.1", optional = true }
 
 [[test]]
 name = "interop"
