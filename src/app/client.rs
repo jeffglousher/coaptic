@@ -158,6 +158,12 @@ pub const RESPONSE_OPTION_COUNT: usize = 24;
 /// Maximum encoded header, Token and options retained per client response (no payload).
 pub const RESPONSE_OPTION_BYTES: usize = 512;
 
+/// Maximum canonical Observe request bytes retained per live Call for exact
+/// cancellation matching, including a fixed four-byte header and payload.
+/// Four App Call slots each reserve this space plus bounded length metadata.
+/// Observe and ETag options are excluded; no hash replaces exact comparison.
+pub const OBSERVE_REQUEST_BYTES: usize = 512;
+
 #[derive(Clone, Copy, Debug)]
 struct ReplyMeta {
     received_at_ms: u64,
@@ -421,7 +427,7 @@ impl RetainedQueries {
 /// Fixed header/Token; Observe and ETag are omitted. Includes the FETCH body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ObserveRequest {
-    bytes: [u8; 512],
+    bytes: [u8; OBSERVE_REQUEST_BYTES],
     len: usize,
 }
 
@@ -1296,7 +1302,7 @@ fn with_client_options<R>(
 fn observe_request_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
     with_client_options(spec, true, |options| {
         let mut identity = ObserveRequest {
-            bytes: [0; 512],
+            bytes: [0; OBSERVE_REQUEST_BYTES],
             len: 0,
         };
         let message = Message::new(Type::Confirmable, spec.code, MessageId::new(0))
