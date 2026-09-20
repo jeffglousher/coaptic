@@ -315,7 +315,7 @@ fn encode_req_extra(
 }
 
 fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
@@ -380,7 +380,7 @@ fn get_sensors_temp_is_content() {
 fn constrained_plain_get_is_content() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
-    let mut app = App::profile::<profiles::Constrained>()
+    let mut app = App::profile::<profiles::Constrained>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .bind(Loopback {
@@ -444,7 +444,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_post() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
     let (wire, n) = encode_req_extra(Code::POST, &["items"], &extra, b"ciphertext");
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
         .bind(Loopback {
@@ -471,7 +471,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
     let (wire, n) = encode_req_extra(Code::FETCH, &["probe"], &extra, b"ciphertext");
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], fetch(fetch_query))
         .bind(Loopback {
@@ -505,7 +505,7 @@ fn proxy_uri_is_505_not_404() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::proxy_uri("coap://example.com/x")];
     let (wire, n) = encode_req_extra(Code::GET, &[], &extra, &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
         .bind(Loopback {
@@ -536,7 +536,7 @@ fn proxy_scheme_is_505_before_handler() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::proxy_scheme("coap")];
     let (wire, n) = encode_req_extra(Code::GET, &["sensors", "temp"], &extra, &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
         .bind(Loopback {
@@ -560,7 +560,7 @@ fn proxy_scheme_is_505_before_handler() {
 fn created_response_carries_location_path_and_query() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
         .bind(Loopback {
@@ -596,7 +596,7 @@ fn duplicate_con_get_replays_without_second_handler() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
         .bind(RecordIo {
@@ -635,7 +635,7 @@ fn duplicate_con_post_does_not_reinvoke_handler() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
         .bind(RecordIo {
@@ -670,7 +670,7 @@ fn duplicate_con_patch_does_not_reinvoke_handler() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::PATCH, &["delta"], b"p");
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["delta"], patch(counting_patch))
         .bind(RecordIo {
@@ -698,7 +698,7 @@ fn duplicate_con_fetch_does_not_reinvoke_handler() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::FETCH, &["query"], b"sel");
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["query"], fetch(counting_fetch))
         .bind(RecordIo {
@@ -733,7 +733,7 @@ fn duplicate_con_separate_replays_empty_ack() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let req_mid = MessageId::new(0x1001);
     let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(counting_separate))
         .bind(RecordIo {
@@ -768,7 +768,7 @@ fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &["sensors", "temp"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
         .bind(RecordIo {
@@ -802,7 +802,7 @@ fn duplicate_con_post_empty_dedup_row_acks_without_rerun() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mid = MessageId::new(0x1001);
     let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
         .bind(RecordIo {
@@ -869,7 +869,7 @@ fn duplicate_con_post_insert_failure_does_not_rerun() {
     let filler = Endpoint::v4([192, 0, 2, 99], 5683);
     let mid = MessageId::new(0x1001);
     let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
         .bind(RecordIo {
@@ -942,7 +942,7 @@ fn push_opt_fails_loud_when_builder_is_full() {
 fn created_metadata_on_wire_excludes_unsolicited_observe() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
         .bind(Loopback {
@@ -983,7 +983,7 @@ fn separate_response_is_empty_ack_then_con() {
     let token = Token::new(&[0xA1]).expect("token");
     let req_mid = MessageId::new(0x1001);
     let (wire, n) = encode_req(Code::GET, &["separate"], &[]);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(get_separate))
         .bind(RecordIo {
@@ -1075,7 +1075,7 @@ fn wrong_method_is_not_allowed() {
 }
 
 fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
@@ -1252,7 +1252,7 @@ fn echo_freshness_fresh_runs_handler() {
 fn echo_freshness_builder_missing_is_401_problem() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::PUT, &["leds", "0"], b"1");
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .echo_policy(test_echo_policy)
         .block_wise::<false>()
         .route(&["leds", "0"], get(get_led).put(put_led))
@@ -1328,7 +1328,7 @@ fn no_response_con_sends_empty_ack() {
         &[],
         Some(u32::from(crate::message::NoResponse::SUPPRESS_2)),
     );
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .bind(RecordIo {
@@ -1350,7 +1350,7 @@ fn well_known_core_lists_registered_paths() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
     // Catalog must be generated from these `.route` registrations (not a stored string).
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["a"], get(get_temp))
         .route(&["b"], get(get_led))
@@ -1434,7 +1434,7 @@ fn well_known_core_lists_all_registered_routes_past_inline() {
 fn well_known_core_poll_lists_every_upfront_route() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = well_known_request();
-    let mut builder = App::profile::<profiles::Default>()
+    let mut builder = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .routes::<16>();
     for path in TEN_PLUS_ROUTES {
@@ -1543,7 +1543,7 @@ fn request_carries_standard_and_custom_option() {
     parsed.check_rfc7252_options().expect("elective custom");
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], put(put_std_and_custom))
         .bind(Loopback {
@@ -1765,7 +1765,7 @@ fn block1_incomplete_is_continue() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1786,7 +1786,7 @@ fn block1_acked_num_retransmit_is_continue() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1829,7 +1829,7 @@ fn block1_complete_exposes_body() {
     let first = [b'A'; 16];
     let second = *b"REST";
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &first, 0, true, 16, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1857,7 +1857,7 @@ fn qblock1_incomplete_is_continue() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1875,7 +1875,7 @@ fn qblock1_complete_exposes_body() {
     let first = [b'A'; 16];
     let second = *b"REST";
     let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 20));
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1904,7 +1904,7 @@ fn qblock1_holes_are_request_entity_incomplete() {
     let first = [0x11u8; 16];
     let last = [0x33u8; 8];
     let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 40));
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1943,7 +1943,7 @@ fn qblock1_apply_error_is_request_entity_incomplete() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -1975,7 +1975,7 @@ fn qblock2_recover_sent_from_poll() {
     let token = Token::new(&[0xA1]).expect("token");
     let key = BlockKey::new(token, peer);
     let body: [u8; 40] = core::array::from_fn(|i| (i + 7) as u8);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(Loopback::default())
         .expect("bind");
@@ -2019,7 +2019,7 @@ fn qblock2_recover_sent_from_poll() {
 
 #[test]
 fn block_wise_bind_uses_body_pools() {
-    let app = App::profile::<profiles::Default>()
+    let app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(Loopback::default())
         .expect("bind");
@@ -2133,7 +2133,7 @@ fn duplicate_con_post_oversize_ack_replays_from_tx_pin() {
 
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::POST, &["bulk"], &[], 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["bulk"], post(counting_post))
         .bind(WideLoopback {
@@ -2170,7 +2170,7 @@ fn duplicate_con_post_oversize_ack_replays_from_tx_pin() {
 fn large_get_ships_block2_without_slot_id() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
@@ -2212,7 +2212,7 @@ fn large_get_ships_block2_without_slot_id() {
 fn large_get_location_etag_echo_and_block2_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["loud"], &[], 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
         .bind(WideLoopback {
@@ -2239,7 +2239,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
 fn large_get_without_body_pools_fails_clearly() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["large"], &[], 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
@@ -2261,7 +2261,7 @@ fn large_get_q_block2_issues_a_window() {
     let q = BlockValue::from_size(0, false, 1024).expect("q").encode();
     let extra = [Opt::q_block2(&q)];
     let (wire, n) = encode_wide(Code::GET, &["large"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
@@ -2317,7 +2317,7 @@ where
 fn observe_insert_miss_strips_observe_option() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback::default())
@@ -2363,7 +2363,7 @@ fn observe_register_notify_deregister() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2417,7 +2417,7 @@ fn notify_nstart_one_per_endpoint() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2453,7 +2453,7 @@ fn notify_fans_out_to_distinct_endpoints() {
     let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_nstart_wire(Code::GET, &["sensors", "temp"], &extra, 0x1001, 0xA1);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2493,7 +2493,7 @@ fn observe_non_notify_rst_drops_interest() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2537,7 +2537,7 @@ fn observe_con_notify_rst_drops_interest() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2586,7 +2586,7 @@ fn empty_con_ping_rst_does_not_drop_observe() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2610,7 +2610,7 @@ fn observe_max_age_expiry_preserves_interest() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -2639,7 +2639,7 @@ fn observe_source_sends_on_signal_poll() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
         .bind(WideLoopback {
@@ -2664,7 +2664,7 @@ fn observe_signal_survives_tx_saturated_poll() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
         .bind(WideLoopback {
@@ -2741,7 +2741,7 @@ impl DatagramIo for Echo {
 }
 
 fn echo_app() -> App<profiles::Default, Echo> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_body))
@@ -2862,7 +2862,7 @@ fn client_put_round_trip_without_slot_id() {
 }
 
 fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
@@ -2964,7 +2964,7 @@ fn client_non_get_matches() {
 #[test]
 fn client_get_sends_query_accept_etag_if_match_and_block2() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
@@ -3005,7 +3005,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
 #[test]
 fn client_full_path_query_and_extras_all_on_wire() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
@@ -3070,7 +3070,7 @@ fn get_tagged(_: Request<'_>) -> Response<'static> {
 #[test]
 fn client_take_response_copies_etag() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["validate"], get(get_tagged))
         .bind(Echo::default())
@@ -3160,7 +3160,7 @@ impl DatagramIo for Pipe {
 }
 
 fn pipe_app() -> App<profiles::Default, Pipe, DEFAULT_ROUTES, true> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .route(&["upload"], put(put_large))
@@ -3315,7 +3315,7 @@ fn client_empty_path_segment_is_error() {
 }
 
 fn echo_obs_app() -> App<profiles::Default, Echo> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(Echo::default())
@@ -3389,7 +3389,7 @@ fn client_observe_register_notify_deregister() {
 }
 
 fn record_client() -> App<profiles::Default, RecordIo> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind")
@@ -3590,7 +3590,7 @@ fn client_con_give_up_releases_after_max_retransmit() {
 #[test]
 fn poll_progresses_when_rx_saturated() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Constrained>()
+    let mut app = App::profile::<profiles::Constrained>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
@@ -3846,7 +3846,7 @@ fn metrics_observe_register_notify_deregister() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
     let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback {
@@ -3962,7 +3962,7 @@ fn metrics_block1_assemble() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &payload, 0, true, 16, 0x1001);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
         .bind(Loopback {
@@ -3978,7 +3978,7 @@ fn metrics_block1_assemble() {
 #[test]
 fn metrics_rx_saturated_and_reset() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Constrained>()
+    let mut app = App::profile::<profiles::Constrained>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .expect("bind");
@@ -4128,7 +4128,7 @@ fn response_unknown_option_policy_precedes_completion_and_ack() {
     ] {
         for critical in [true, false] {
             let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-            let mut app = App::profile::<profiles::Default>()
+            let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
                 .block_wise::<false>()
                 .bind(RecordIo::default())
                 .unwrap();
@@ -4188,7 +4188,7 @@ fn response_unknown_option_policy_precedes_completion_and_ack() {
 #[test]
 fn block2_requests_with_new_tokens_select_requested_ranges_and_release_slots() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback::default())
@@ -4232,7 +4232,7 @@ fn block2_outside_representation_refuses_without_retaining_body() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let block = BlockValue::from_size(100, false, 512).unwrap().encode();
     let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::block2(&block)], 0x7100);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .bind(WideLoopback {
@@ -4281,7 +4281,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
             self.pipe.send(dest, bytes)
         }
     }
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
         .bind(CheckedPipe::default())
@@ -4421,7 +4421,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
         }
     }
     for qblock in [false, true] {
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<true>()
             .route(
                 "upload",
@@ -4628,7 +4628,7 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
         }
         let (wire, n) = encode_wide(Code::PUT, &["upload"], opts.as_slice(), 0x7711);
         let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<true>()
             .route(
                 "upload",
@@ -4651,7 +4651,7 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
 fn disabled_block_assembly_refuses_before_handler_dispatch() {
     let (wire, n) = encode_req_block1(Code::PUT, &["upload"], &[0x11; 16], 0, true, 16, 0x7111);
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(
             "upload",
@@ -4781,7 +4781,7 @@ fn deadline_refusal_boundary_and_reused_tx_ownership() {
 fn cancellation_reclaims_tagged_upload_and_download_bodies() {
     use crate::storage::BodyTag;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -4856,7 +4856,7 @@ fn deadline_progresses_when_receive_fails() {
         }
     }
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(BadReceive)
         .unwrap();
@@ -4900,7 +4900,7 @@ fn deadline_wins_at_exact_boundary_but_preserves_an_earlier_response() {
 #[test]
 fn missing_initial_block_completes_with_typed_failure_and_reclaims_state() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -4936,7 +4936,7 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     for bad_hint in [None, Some(0), Some(19), Some(21), Some(u32::MAX)] {
         CALLS.store(0, Ordering::SeqCst);
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(handler))
             .bind(Loopback {
@@ -4994,7 +4994,7 @@ fn qblock2_without_etag_is_refused_before_sending_or_retaining_body() {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let q = BlockValue::from_size(0, false, 1024).unwrap().encode();
         let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::q_block2(&q)], 0x1200);
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<true>()
             .route(&["large"], get(handler))
             .bind(WideLoopback {
@@ -5033,7 +5033,7 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
         }
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(handler))
         .bind(WideLoopback::default())
@@ -5147,7 +5147,7 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_wide(Code::GET, &["test"], &[], 0x1400);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
         .bind(WideLoopback {
@@ -5189,7 +5189,7 @@ fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
     VALID.store(false, Ordering::SeqCst);
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let token = Token::new(&[0xA1]).unwrap();
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
         .bind(WideLoopback::default())
@@ -5243,7 +5243,7 @@ fn invalid_handler_response_releases_assembled_upload_body() {
     }
     static LONG: [u8; 256] = [b'x'; 256];
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(handler))
         .bind(Loopback {
@@ -5272,7 +5272,7 @@ fn invalid_handler_response_releases_assembled_upload_body() {
 #[test]
 fn client_snapshot_retains_location_max_age_echo_and_unknown_options() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -5318,7 +5318,7 @@ fn client_snapshot_retains_location_max_age_echo_and_unknown_options() {
 fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply() {
     for mode in 0..8 {
         let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<false>()
             .bind(WideLoopback::default())
             .unwrap();
@@ -5388,7 +5388,7 @@ fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply()
 #[test]
 fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -5445,7 +5445,7 @@ fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
 fn four_untaken_response_metadata_snapshots_remain_distinct_and_bounded() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let names = ["one", "two", "three", "four"];
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -5480,7 +5480,7 @@ fn four_untaken_response_metadata_snapshots_remain_distinct_and_bounded() {
 fn block2_metadata_overflow_reclaims_partial_body_and_call() {
     use crate::storage::SlotId;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -5534,7 +5534,7 @@ fn block2_metadata_overflow_reclaims_partial_body_and_call() {
 #[test]
 fn malformed_elective_response_values_remain_raw_without_creating_observe() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -5582,7 +5582,7 @@ fn explicit_echo_retry_uses_received_challenge_and_preserves_request() {
         }
     }
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .route("value", put(handler))
         .bind(Pipe::default())
@@ -5631,7 +5631,7 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
             (2, false, Some(Code::NOT_FOUND)),
             (26, false, None),
         ] {
-            let mut app = App::profile::<profiles::Default>()
+            let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
                 .block_wise::<true>()
                 .route("value", put(|_: Request<'_>| Response::changed()))
                 .bind(Pipe::default())
@@ -5760,7 +5760,7 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
         for confirmable in [false, true] {
             for short in [false, true] {
                 for fail_at in 1..=if qblock { 3 } else { 1 } {
-                    let mut app = App::profile::<profiles::Default>()
+                    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
                         .block_wise::<true>()
                         .bind(FaultIo {
                             sends: 0,
@@ -5891,7 +5891,7 @@ fn client_observe_serial_order_wrap_and_time_boundary() {
 fn stale_observe_block_zero_cannot_replace_incomplete_representation() {
     use crate::message::encode_uint;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .bind(RecordIo::default())
         .unwrap();
@@ -6043,7 +6043,7 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
             &[Opt::observe_register()],
             0x1001,
         );
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<false>()
             .route(&["sensors", "temp"], get(get_obs))
             .bind(WideLoopback {
@@ -6123,7 +6123,7 @@ fn observe_signal_at_max_age_boundary_is_not_discarded() {
         &[Opt::observe_register()],
         0x1001,
     );
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
         .bind(WideLoopback {
@@ -6165,7 +6165,7 @@ fn observe_notification_format_and_terminal_response_contract() {
                 };
                 let (wire, n) =
                     encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 0x1001);
-                let mut app = App::profile::<profiles::Default>()
+                let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
                     .block_wise::<false>()
                     .route("obs", get(handler))
                     .bind(WideLoopback {
@@ -6214,7 +6214,7 @@ fn observe_notification_format_and_terminal_response_contract() {
 #[test]
 fn observe_deregistration_strips_handler_observe_and_releases_relation() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
         .bind(WideLoopback::default())
@@ -6326,7 +6326,7 @@ fn explicit_echo_policy_checks_issuance_peer_scope_class_and_expiry_before_handl
     ] {
         let before = EFFECTS.load(Ordering::SeqCst);
         let (wire, n) = encode_req_with_echo(Code::PUT, &["effect"], b"one", &echo);
-        let mut app = App::profile::<profiles::Default>()
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
             .block_wise::<false>()
             .echo_policy(fixture_authenticated_echo_policy)
             .route("effect", put(effect))
@@ -6363,7 +6363,7 @@ fn echo_policy_issuance_failure_is_closed_and_reclaims_rx() {
         panic!("rejected request reached handler")
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .echo_policy(deny)
         .block_wise::<false>()
         .route("effect", put(unreachable))
@@ -6390,7 +6390,7 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
         panic!("invalid Echo reached handler")
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().deterministic_for_tests()
         .block_wise::<true>()
         .echo_policy(policy)
         .route("effect", put(unreachable))
@@ -6420,5 +6420,94 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
                     .is_none()
             );
         }
+    }
+}
+
+#[test]
+fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
+    assert!(matches!(App::profile::<profiles::Default>().block_wise::<false>().bind(RecordIo::default()), Err(crate::BuildError::RandomnessRequired)));
+    assert!(matches!(App::profile::<profiles::Default>().randomness(|_| false).block_wise::<false>().bind(RecordIo::default()), Err(crate::BuildError::RandomnessUnavailable)));
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for source in [
+        (|bytes: &mut [u8]| { bytes.fill(0); bytes.len() != 8 }) as super::RandomSource,
+        (|bytes: &mut [u8]| { bytes.fill(0); bytes.len() != 4 }) as super::RandomSource,
+    ] {
+        let mut app = App::profile::<profiles::Default>().randomness(source).block_wise::<false>().bind(RecordIo::default()).unwrap();
+        for _ in 0..12 {
+            assert_eq!(app.get("value").to(peer).send(0), Err(Error::Identity(super::IdentityError::RandomnessUnavailable)));
+            assert_eq!(app.transport().sent_n, 0);
+            assert_eq!(app.engine.tx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn injected_entropy_drives_wire_identity_and_exact_retransmission_boundary() {
+    fn fill(bytes: &mut [u8]) -> bool {
+        match bytes.len() {
+            2 => bytes.copy_from_slice(&0x1234u16.to_be_bytes()),
+            4 => bytes.copy_from_slice(&1000u32.to_be_bytes()),
+            8 => bytes.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]),
+            _ => return false,
+        }
+        true
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>().randomness(fill).block_wise::<false>().bind(RecordIo::default()).unwrap();
+    let call = app.get("value").to(peer).send(100).unwrap();
+    let (_, first, n) = app.transport().sent[0].unwrap();
+    assert_eq!(call.token().as_bytes(), &[1,2,3,4,5,6,7,8]);
+    assert_eq!(decode(&first[..n]).unwrap().message_id().get(), 0x1234);
+    // Repeated active Tokens are rejected after bounded retries, before I/O.
+    assert_eq!(app.get("other").to(peer).send(100), Err(Error::Identity(super::IdentityError::TokenExhausted)));
+    assert_eq!(app.transport().sent_n, 1);
+    app.poll(3099).unwrap(); assert_eq!(app.transport().sent_n, 1);
+    app.poll(3100).unwrap(); assert_eq!(app.transport().sent_n, 2);
+    let (_, retransmitted, rn) = app.transport().sent[1].unwrap();
+    assert_eq!(&retransmitted[..rn], &first[..n]);
+    app.poll(9099).unwrap(); assert_eq!(app.transport().sent_n, 2);
+    app.poll(9100).unwrap(); assert_eq!(app.transport().sent_n, 3);
+    assert!(app.cancel(call)); assert_eq!(app.engine.tx_occupied(), 0);
+}
+
+#[test]
+fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) == 0
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>().randomness(fill).block_wise::<true>().bind(RecordIo::default()).unwrap();
+    for _ in 0..12 {
+        DRAWS.store(0, Ordering::SeqCst);
+        assert_eq!(app.put("value").to(peer).payload(&[7; 3000]).send(0), Err(Error::Identity(super::IdentityError::RandomnessUnavailable)));
+        assert_eq!(app.transport().sent_n, 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+            assert!(app.engine.tx_body_transfer(crate::storage::SlotId::from_index(i)).is_none());
+        }
+    }
+}
+
+#[test]
+fn response_non_and_qblock_window_use_shared_local_mid_space() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for ty in [Type::Confirmable, Type::NonConfirmable] {
+        let mut app = App::profile::<profiles::Default>().deterministic_for_tests().block_wise::<true>()
+            .route("large", get(get_large)).bind(WideLoopback::default()).unwrap();
+        let q = BlockValue::from_size(0, false, 1024).unwrap().encode();
+        let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+        let request = Message::new(ty, Code::GET, MessageId::new(500))
+            .with_token(Token::from_checked(&[44])).with_options(&opts);
+        let mut wire = [0; WIRE]; let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n)); app.poll(0).unwrap();
+        assert_eq!(app.transport().send_n, 2);
+        let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+        let second = decode(&app.transport().sends[1][..app.transport().send_lens[1]]).unwrap();
+        assert_eq!(first.message_id().get(), if ty == Type::Confirmable { 500 } else { 1 });
+        assert_eq!(second.message_id().get(), if ty == Type::Confirmable { 1 } else { 2 });
+        app.get("other").to(peer).non().send(1).unwrap();
+        assert_eq!(last_wide(&app).message_id().get(), if ty == Type::Confirmable { 2 } else { 3 });
     }
 }

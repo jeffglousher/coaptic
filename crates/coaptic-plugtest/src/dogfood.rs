@@ -1659,7 +1659,7 @@ fn run_coaptic_client(
     dest: SocketAddr,
 ) -> Result<(PairReport, String, Metrics, u64, String), PeerError> {
     let (sock, _) = bind_loopback().map_err(|e| e.to_string())?;
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .bind(sock)
         .map_err(|e| format!("bind: {e}"))?;
@@ -1820,7 +1820,7 @@ fn run_coaptic_observe_notify(
     server: &CoapticServer,
 ) -> Result<NotifyReport, PeerError> {
     let (sock, _) = bind_loopback().map_err(|e| e.to_string())?;
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .bind(sock)
         .map_err(|e| format!("bind: {e}"))?;
@@ -2186,7 +2186,7 @@ fn run_oscore_section(cfg: &Config, out: &mut impl Write) -> Result<OscoreReport
 #[cfg(feature = "oscore")]
 fn oscore_plain_get(dest: SocketAddr, timeout: Duration) -> Result<Code, PeerError> {
     let (sock, _) = bind_loopback().map_err(|e| e.to_string())?;
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .bind(sock)
         .map_err(|e| format!("bind plain GET: {e}"))?;
@@ -2215,7 +2215,7 @@ fn run_oscore_client(
         CapturingIo::new(sock, local, capture.clone()),
         Arc::clone(&injected),
     );
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .bind(io)
         .map_err(|e| format!("bind OSCORE client: {e}"))?;

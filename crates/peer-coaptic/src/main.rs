@@ -127,7 +127,7 @@ async fn run() -> Result<(), Error> {
     Err("request timed out".into())
 }
 fn fixture(io: Io) -> Result<App<profiles::Default, Io, 3, true>, Error> {
-    App::profile::<profiles::Default>()
+    App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .routes::<3>()
         .route(

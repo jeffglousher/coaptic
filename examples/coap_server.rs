@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     socket.set_read_timeout(Some(timeout))?;
     client.set_read_timeout(Some(timeout))?;
 
-    let mut app = App::profile::<profiles::Default>()
+    let mut app = App::profile::<profiles::Default>().randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .route("sensors/temp", get(get_temp))
         .route("leds/0", get(get_led).put(put_led))

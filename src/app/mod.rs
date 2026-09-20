@@ -49,6 +49,7 @@
 //! #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 //! # }
 //! let mut app = App::profile::<profiles::Default>()
+//!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .route("leds/0", get(get_led).put(put_led))
@@ -80,6 +81,7 @@
 //! and BERT edges (future / backlog).
 mod client;
 mod echo;
+mod identity;
 mod oscore;
 mod request;
 mod response;
@@ -93,7 +95,7 @@ use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, Echo, EncodedUint, Ids, Message, MessageId, NoResponse, Opt, OptionsBuilder,
+    BlockValue, Code, Echo, EncodedUint, Message, MessageId, NoResponse, Opt, OptionsBuilder,
     ParsedMessage, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
@@ -108,6 +110,8 @@ use crate::storage::{
 pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{Call, CallFailure, Outgoing, RESPONSE_OPTION_BYTES, RESPONSE_OPTION_COUNT};
+use identity::{AppIds, Source as IdentitySource};
+pub use identity::{IdentityError, RandomSource};
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
 pub use response::{
@@ -151,8 +155,7 @@ pub struct App<
     engine: Engine<AppStore<P, BLOCK_WISE>>,
     io: T,
     site: Site<N>,
-    ids: Ids,
-    tokens: u32,
+    ids: AppIds,
     inbox: client::ClientInbox,
     lives: client::ClientLives,
     echo_policy: Option<EchoPolicy>,
@@ -183,6 +186,7 @@ pub struct AppBuilder<
 > {
     site: Site<N>,
     echo_policy: Option<EchoPolicy>,
+    identity: Option<IdentitySource>,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -194,6 +198,7 @@ impl App {
         AppBuilder {
             site: Site::new(),
             echo_policy: None,
+            identity: None,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -223,6 +228,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         AppBuilder {
             site,
             echo_policy: self.echo_policy,
+            identity: self.identity,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -257,6 +263,22 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         self
     }
 
+    /// Supply cryptographically secure bytes for Tokens, initial MID and RTO jitter.
+    /// Required before bind; see [`RandomSource`]. The library does not call an OS RNG.
+    #[must_use]
+    pub const fn randomness(mut self, source: RandomSource) -> Self {
+        self.identity = Some(IdentitySource::Random(source));
+        self
+    }
+
+    /// Predictable counters and minimum RTO, for reproducible tests only.
+    /// Do not use this configuration on a production network.
+    #[must_use]
+    pub const fn deterministic_for_tests(mut self) -> Self {
+        self.identity = Some(IdentitySource::Test);
+        self
+    }
+
     /// Install an explicit server Echo issuer/verifier. See [`EchoPolicy`].
     ///
     /// Off by default. Challenge/reject decisions produce 4.01 before body
@@ -288,6 +310,7 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
+            identity: self.identity,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -308,8 +331,7 @@ where
             engine,
             io,
             site: self.site,
-            ids: Ids::new(1),
-            tokens: 0,
+            ids: AppIds::new(self.identity)?,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_policy: self.echo_policy,
@@ -334,8 +356,7 @@ where
             engine,
             io,
             site: self.site,
-            ids: Ids::new(1),
-            tokens: 0,
+            ids: AppIds::new(self.identity)?,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_policy: self.echo_policy,
@@ -467,6 +488,7 @@ impl<
     /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
     /// # }
     /// let mut app = App::profile::<profiles::Default>()
+///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
     ///     .block_wise::<false>()
     ///     .bind(NullIo)
     ///     .unwrap();
@@ -630,7 +652,7 @@ fn poll_engine<Mem, T, const N: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
     oscore: &mut oscore::Field,
@@ -808,7 +830,7 @@ where
 fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &oscore::Field,
     now_ms: u64,
     recover: QBlockRecover,
@@ -826,6 +848,7 @@ where
     }
     match recover.role() {
         BlockRole::IncomingQBlock2 => {
+            let mid = ids.next(now_ms)?;
             let Some(tx) = engine.acquire_tx() else {
                 return Err(Error::Saturated);
             };
@@ -834,7 +857,7 @@ where
                 tx,
                 Type::NonConfirmable,
                 Code::GET,
-                ids.next(),
+                mid,
             ) {
                 let _ = engine.release_tx(tx);
                 return Err(Error::Block(e));
@@ -850,7 +873,7 @@ where
             let meta = SendResponse {
                 dest: recover.key().endpoint(),
                 ty: Type::NonConfirmable,
-                mid: ids.next(),
+                mid: ids.next(now_ms)?,
                 token: recover.key().token(),
                 no_response: NoResponse::DEFAULT,
                 block2: None,
@@ -862,6 +885,7 @@ where
             send_response(
                 engine,
                 io,
+                ids,
                 meta,
                 &Response::missing_blocks(nums.into_iter().take(n)),
                 now_ms,
@@ -896,7 +920,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     site: &Site<N>,
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut oscore::Field,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
@@ -979,7 +1003,7 @@ where
     let opened = match oscore::inbound(oscore, &parsed, inner_scratch.as_mut()) {
         Ok(opened) => opened,
         Err(e) => {
-            let outcome = oscore_inbound_error(engine, io, &parsed, peer, now_ms, e, dedup_closed);
+            let outcome = oscore_inbound_error(engine, io, ids, &parsed, peer, now_ms, e, dedup_closed);
             let _ = engine.release_rx(rx);
             return outcome;
         }
@@ -1027,6 +1051,7 @@ where
         let outcome = send_response(
             engine,
             io,
+                ids,
             meta,
             &Response::problem(Code::PROXYING_NOT_SUPPORTED).title("Proxying Not Supported"),
             now_ms,
@@ -1055,6 +1080,7 @@ where
         let outcome = send_response(
             engine,
             io,
+                ids,
             meta,
             &Response::problem(Code::BAD_OPTION).title("Bad Option"),
             now_ms,
@@ -1093,6 +1119,7 @@ where
                 let outcome = send_response(
                     engine,
                     io,
+                ids,
                     meta,
                     &unauthorized_echo(decision),
                     now_ms,
@@ -1111,6 +1138,7 @@ where
             let outcome = send_response(
                 engine,
                 io,
+                ids,
                 meta,
                 &Response::new(Code::CONTINUE),
                 now_ms,
@@ -1127,6 +1155,7 @@ where
             let outcome = send_response(
                 engine,
                 io,
+                ids,
                 meta,
                 &Response::problem(code).title(match code {
                     Code::REQUEST_ENTITY_INCOMPLETE => "Request Entity Incomplete",
@@ -1185,7 +1214,8 @@ where
             dedup_closed,
         )
     } else {
-        send_response(engine, io, meta, &response, now_ms, oscore, dedup_closed)
+        send_response(engine, io,
+                ids, meta, &response, now_ms, oscore, dedup_closed)
     };
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
@@ -1268,7 +1298,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
 fn notify_engine<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut oscore::Field,
     now_ms: u64,
     resource: ObserveResource,
@@ -1401,7 +1431,7 @@ fn observe_endpoint_held<S: Storage + ObserveSlots>(
 fn send_notification<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     oscore: &mut oscore::Field,
     now_ms: u64,
     interest: ObserveInterest,
@@ -1418,7 +1448,7 @@ where
     } else {
         Type::NonConfirmable
     };
-    let mid = ids.next();
+    let mid = ids.next(now_ms)?;
     let mut notify =
         if response.code().is_success() && response.format() != interest.content_format() {
             Response::new(Code::NOT_ACCEPTABLE)
@@ -1454,7 +1484,7 @@ where
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
     let outcome = match encode_notification(
         engine,
         tx,
@@ -1499,7 +1529,7 @@ fn start_notify_block2<S, T>(
     meta: SendResponse,
     response: &Response<'_>,
     ty: Type,
-    pending: Option<(u64, MessageId)>,
+    pending: Option<(u64, MessageId, u32)>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1536,7 +1566,7 @@ where
 fn send_separate<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
-    ids: &mut Ids,
+    ids: &mut AppIds,
     now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
@@ -1561,7 +1591,9 @@ where
                 Type::NonConfirmable => Type::NonConfirmable,
                 Type::Acknowledgement | Type::Reset => return Ok(()),
             };
-            return continue_outgoing(engine, io, meta, response, ty, id, oscore_ctx);
+            let mut meta = meta;
+            if ty == Type::NonConfirmable { meta.mid = ids.next(now_ms)?; }
+            return continue_outgoing(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx);
         }
     }
 
@@ -1586,8 +1618,8 @@ where
         return Ok(());
     }
 
-    let mid = ids.next();
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let mid = ids.next(now_ms)?;
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
 
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
@@ -1612,7 +1644,7 @@ where
             // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
             let meta = SendResponse { mid, ..meta };
-            start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
+            start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1621,9 +1653,11 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_response<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
+    ids: &mut AppIds,
     meta: SendResponse,
     response: &Response<'_>,
     now_ms: u64,
@@ -1659,6 +1693,9 @@ where
         Type::Acknowledgement | Type::Reset => return Ok(()),
     };
 
+    let mut meta = meta;
+    if ty == Type::NonConfirmable { meta.mid = ids.next(now_ms)?; }
+
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = response_body_for(engine, key) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
@@ -1667,12 +1704,12 @@ where
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             )
         }) {
-            return continue_outgoing(engine, io, meta, response, ty, id, oscore_ctx);
+            return continue_outgoing(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx);
         }
     }
 
     if (meta.block2.is_some() || meta.q_block2.is_some()) && response.code().is_success() {
-        return start_outgoing(engine, io, meta, response, ty, key, oscore_ctx);
+        return start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx);
     }
 
     let Some(tx) = acquire_tx_or_evict(engine) else {
@@ -1709,7 +1746,7 @@ where
             // True size miss: Inner Block2 (also under OSCORE). Protocol
             // protect failures are `Error::Oscore`, not this arm.
             let _ = engine.release_tx(tx);
-            start_outgoing(engine, io, meta, response, ty, key, oscore_ctx)
+            start_outgoing(engine, io, ids, now_ms, meta, response, ty, key, oscore_ctx)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1732,9 +1769,12 @@ fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) 
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_outgoing<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
     ty: Type,
@@ -1769,7 +1809,7 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let outcome = if meta.q_block2.is_some() {
-        issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
+        issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
     } else {
         issue_classic(
             engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
@@ -1781,9 +1821,12 @@ where
     outcome
 }
 
+#[allow(clippy::too_many_arguments)]
 fn continue_outgoing<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
     ty: Type,
@@ -1811,10 +1854,10 @@ where
             match meta.q_block2 {
                 Some(q) if q.more() => {
                     engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
-                    issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
+                    issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
                 }
                 Some(_) => Ok(()),
-                None => issue_q_window(engine, io, meta, response, ty, id, oscore_ctx),
+                None => issue_q_window(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx),
             }
         }
         BlockRole::OutgoingBlock2 => issue_classic(
@@ -1833,7 +1876,7 @@ fn issue_classic<S, T>(
     ty: Type,
     mid: MessageId,
     id: SlotId,
-    pending: Option<(u64, MessageId)>,
+    pending: Option<(u64, MessageId, u32)>,
     oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
@@ -1882,9 +1925,12 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn issue_q_window<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
     first_ty: Type,
@@ -1905,7 +1951,7 @@ where
         let (ty, mid) = if extra == 0 {
             (first_ty, meta.mid)
         } else {
-            (Type::NonConfirmable, meta.mid.wrapping_add(extra))
+            (Type::NonConfirmable, ids.next(now_ms)?)
         };
         send_issued(
             engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
@@ -1928,7 +1974,7 @@ fn send_issued<S, T>(
     mid: MessageId,
     issued: OutgoingBlock,
     q_block: bool,
-    pending: Option<(u64, MessageId)>,
+    pending: Option<(u64, MessageId, u32)>,
     oscore_ctx: &oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
@@ -2541,7 +2587,7 @@ pub(crate) fn finish_send<S, T>(
     io: &mut T,
     tx: SlotId,
     dest: Endpoint,
-    pending: Option<(u64, MessageId)>,
+    pending: Option<(u64, MessageId, u32)>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons,
@@ -2551,9 +2597,9 @@ where
         let _ = engine.release_tx(tx);
         return Err(Error::Slot(e));
     }
-    if let Some((now_ms, mid)) = pending {
+    if let Some((now_ms, mid, jitter)) = pending {
         if engine
-            .record_pending_con(tx, dest, mid, now_ms, 0)
+            .record_pending_con(tx, dest, mid, now_ms, jitter)
             .is_none()
         {
             let _ = engine.release_tx(tx);
@@ -2575,9 +2621,11 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn oscore_inbound_error<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
+    ids: &mut AppIds,
     parsed: &crate::message::ParsedMessage<'_>,
     peer: Endpoint,
     now_ms: u64,
@@ -2612,6 +2660,7 @@ where
         send_response(
             engine,
             io,
+                ids,
             meta,
             // Unprotected OSCORE processing error: Max-Age 0 so a
             // cacheable 4.01 does not stick in intermediaries
@@ -2626,7 +2675,7 @@ where
     }
     #[cfg(not(feature = "oscore"))]
     {
-        let _ = (engine, io, parsed, peer, now_ms, err, dedup_closed);
+        let _ = (engine, io, ids, parsed, peer, now_ms, err, dedup_closed);
         Ok(())
     }
 }
@@ -2744,6 +2793,8 @@ where
 /// Failure of [`App::poll`] or [`Outgoing::send`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error<E> {
+    /// Fresh identity or randomized transmission schedule could not be obtained.
+    Identity(IdentityError),
     /// Handler/notification response contains an invalid bounded option.
     Response(ResponseError),
     /// Absolute caller deadline has already elapsed; no request was sent.
@@ -2808,6 +2859,7 @@ where
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Identity(error) => write!(f, "{error}"),
             Self::Io(e) => write!(f, "{e}"),
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
@@ -2840,6 +2892,7 @@ where
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Identity(error) => Some(error),
             Self::Io(e) => Some(e),
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
