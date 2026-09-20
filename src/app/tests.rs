@@ -10651,3 +10651,102 @@ fn retained_notification_survives_incomplete_followups_and_send_failure() {
         }
     }
 }
+
+#[test]
+fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
+    use crate::storage::ObserveInterest;
+    static BODY: [u8; 4096] = [b'L'; 4096];
+    fn current(_: Request<'_>) -> Response<'static> {
+        Response::content(b"current").observe(0)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xa1]).unwrap();
+    for mode in 0..5 {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("obs", get(current))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let resource = app.site.observe_resource(&["obs"]);
+        app.engine
+            .insert_observe(ObserveInterest::new(token, peer).with_resource(resource))
+            .unwrap();
+        let client = app
+            .engine
+            .insert_observe(ObserveInterest::new_client(token, peer))
+            .unwrap();
+        let key = BlockKey::new(token, peer);
+        let upload = app.engine.start_block1(key, b"client upload", 0).unwrap();
+        let now = if mode == 1 || mode == 4 {
+            ObserveTransmission::CONFIRM_INTERVAL_MS
+        } else {
+            0
+        };
+        if mode == 1 || mode == 4 {
+            assert_eq!(
+                app.notify(0, &["obs"], Response::content(b"first"))
+                    .unwrap(),
+                1
+            );
+            app.transport_mut().send_n = 0;
+        }
+        assert_eq!(
+            app.notify(now, &["obs"], Response::content(&BODY)).unwrap(),
+            1
+        );
+        let note = last_wide(&app);
+        let mid = note.message_id();
+        assert_eq!(note.ty() == Type::Confirmable, mode == 1 || mode == 4);
+        let body = super::response_body_for(&app.engine, key).unwrap();
+        let mut unrelated = [0; WIRE];
+        let n = encode(
+            &Message::empty_rst(MessageId::new(mid.get().wrapping_add(1))),
+            &mut unrelated,
+        )
+        .unwrap();
+        app.transport_mut().inbox = Some((peer, unrelated, n));
+        app.poll(now + 1).unwrap();
+        assert!(app.engine.tx_body_transfer(body).is_some());
+        app.transport_mut().send_n = 0;
+        match mode {
+            0 | 1 => {
+                let mut wire = [0; WIRE];
+                let n = encode(&Message::empty_rst(mid), &mut wire).unwrap();
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(now + 2).unwrap();
+            }
+            2 | 3 => {
+                let option = if mode == 2 {
+                    Opt::observe_deregister()
+                } else {
+                    Opt::observe_register()
+                };
+                let (wire, n) = encode_wide(Code::GET, &["obs"], &[option], 0x7600);
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(now + 2).unwrap();
+            }
+            _ => {
+                for delta in [2_000, 6_000, 14_000, 30_000, 62_000] {
+                    app.transport_mut().send_n = 0;
+                    app.poll(now + delta).unwrap();
+                }
+            }
+        }
+        assert!(app.engine.tx_body_transfer(body).is_none(), "mode {mode}");
+        assert_eq!(
+            app.engine.tx_body_payload(upload),
+            Some(&b"client upload"[..])
+        );
+        assert!(app.engine.observe_interest(client).is_some());
+        assert_eq!(
+            app.engine
+                .lookup_observe(ObserveKey::new(token, peer))
+                .is_some(),
+            mode == 3
+        );
+        assert_eq!(app.engine.rx_occupied(), 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        assert!(app.engine.start_block2(key, &BODY, 6).is_ok());
+    }
+}

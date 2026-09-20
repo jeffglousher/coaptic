@@ -696,7 +696,8 @@ where
     /// body output or transfer advancement. Other retained snapshot metadata
     /// and final-block recovery are not guaranteed.
     /// The body snapshot survives incomplete same-Token follow-up blocks,
-    /// including send failure, and is released after the final successful send.
+    /// including send failure. Completion, cancellation, replacement registration,
+    /// matching notification RST or CON give-up releases it.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
@@ -763,7 +764,11 @@ where
             }
             Retransmit::GiveUp(pending) => {
                 client::give_up_client(engine, inbox, lives, oscore, pending.tx_slot());
-                let _ = engine.reject_observe_notify(pending.message_id(), pending.endpoint());
+                if let Some(interest) =
+                    engine.reject_observe_notify(pending.message_id(), pending.endpoint())
+                {
+                    release_observe_response_body(engine, interest);
+                }
                 engine.release_tx(pending.tx_slot())?;
             }
         }
@@ -774,6 +779,7 @@ where
     if let Some(crate::storage::ObserveExpiry::ClientOff(id)) = progress.observe_expired() {
         if let Some(interest) = engine.observe_interest(id) {
             let _ = engine.take_observe(interest.key());
+            release_observe_response_body(engine, interest);
         }
     }
 
@@ -1184,7 +1190,9 @@ where
             // RST identifies a server notification by MID and endpoint. Its
             // request reference belongs to the removed server interest;
             // outgoing client bindings may independently use the same Token.
-            let _ = engine.reject_observe_notify(parsed.message_id(), peer);
+            if let Some(interest) = engine.reject_observe_notify(parsed.message_id(), peer) {
+                release_observe_response_body(engine, interest);
+            }
         }
         let _ = engine.release_rx(rx);
         return Ok(());
@@ -1602,7 +1610,7 @@ impl ObservePlan {
     }
 }
 
-fn apply_observe<'a, S: Storage + ObserveSlots>(
+fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
     peer: Endpoint,
@@ -1619,6 +1627,9 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
     } else {
         None
     };
+    if let Some(interest) = previous {
+        release_observe_response_body(engine, interest);
+    }
     if plan.register && response.code().is_success() && opted {
         // Re-registration replaces scheduling and protection state, but the
         // same Token/resource must retain ordering across that replacement.
@@ -2233,6 +2244,19 @@ fn response_block_key<E>(
                 .map_err(Error::Block)?,
         )),
         None => Ok(key),
+    }
+}
+
+fn release_observe_response_body<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    interest: ObserveInterest,
+) {
+    if !interest.key().is_client() {
+        if let Some(id) =
+            response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
+        {
+            let _ = engine.release_tx_body(id);
+        }
     }
 }
 
