@@ -1549,6 +1549,7 @@ pub(crate) fn complete_client<Mem, T>(
     lives: &mut ClientLives,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
+    response_state: super::oscore::ResponseState,
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
@@ -1592,6 +1593,10 @@ where
             let _ = engine.release_rx(rx);
             return Err(e);
         }
+    }
+    if let Err(error) = super::oscore::commit_response(oscore, response_state) {
+        let _ = engine.release_rx(rx);
+        return Err(error);
     }
     // ACK stale CON notifications too, but do not refresh their lifetime,
     // replace the inbox, or alter assembly. OSCORE already authenticated and
