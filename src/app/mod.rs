@@ -908,6 +908,7 @@ where
                 no_response: NoResponse::DEFAULT,
                 block2: None,
                 q_block2: None,
+                q_request: None,
                 block1: None,
                 oscore: oscore::no_request(),
                 request: Code::GET,
@@ -939,8 +940,38 @@ fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> boo
         || parsed.unknown_critical().is_some()
         || (parsed.oscore().is_some() && !oscore::is_active(oscore))
         || matches!(parsed.block2(), Some(Err(_)))
-        || matches!(parsed.q_block2().next(), Some(Err(_)))
+        || parsed
+            .q_block2()
+            .any(|value| value.map_or(true, |block| block.is_bert()))
+        || ((parsed.block1().is_some() || parsed.block2().is_some())
+            && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some()))
+        || parsed
+            .get_options(crate::message::OptionNumber::Q_BLOCK1)
+            .nth(1)
+            .is_some()
+        || (parsed.q_block2().nth(1).is_some()
+            && (parsed.observe().is_some()
+                || parsed.q_block2().any(|q| {
+                    q.is_ok_and(|q| {
+                        q.more()
+                            && q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0
+                    })
+                })))
         || matches!(parsed.block1(), Some(Err(_)))
+}
+
+fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
+    let mut previous: Option<BlockValue> = None;
+    for value in parsed.q_block2() {
+        let Ok(value) = value else {
+            return false;
+        };
+        if previous.is_some_and(|last| value.num() <= last.num() || value.szx() != last.szx()) {
+            return false;
+        }
+        previous = Some(value);
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1072,6 +1103,7 @@ where
             no_response,
             block2: None,
             q_block2: None,
+            q_request: None,
             block1: None,
             oscore: oscore_req,
             request: parsed.code(),
@@ -1101,6 +1133,7 @@ where
             no_response,
             block2: None,
             q_block2: None,
+            q_request: None,
             block1: None,
             oscore: oscore_req,
             request: parsed.code(),
@@ -1129,10 +1162,31 @@ where
         no_response,
         block2,
         q_block2,
+        q_request: q_block2.map(|_| parsed),
         block1,
         oscore: oscore_req,
         request: parsed.code(),
     };
+
+    if !valid_q_selections(&parsed) {
+        let outcome = send_response(
+            engine,
+            io,
+            ids,
+            SendResponse {
+                block2: None,
+                q_block2: None,
+                q_request: None,
+                ..meta
+            },
+            &Response::bad_request(),
+            now_ms,
+            oscore,
+            dedup_closed,
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
 
     if let Some(policy) = echo_policy {
         let decision = policy(EchoCheck {
@@ -1560,6 +1614,7 @@ where
         no_response: NoResponse::DEFAULT,
         block2: None,
         q_block2: None,
+        q_request: None,
         block1: None,
         oscore: oscore_req,
         request: Code::GET,
@@ -1785,7 +1840,7 @@ where
     }
 
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = response_body_for(engine, key) {
+    if let Some(id) = response_body_for(engine, key).filter(|_| response.code().is_success()) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),
@@ -1896,7 +1951,10 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0);
+    let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0)
+        || meta
+            .q_request
+            .is_some_and(|p| p.q_block2().nth(1).is_some());
     let outcome = if selective {
         issue_q_selection(engine, io, ids, now_ms, meta, response, ty, id, oscore_ctx)
     } else if meta.q_block2.is_some() {
@@ -1952,6 +2010,9 @@ where
             match meta.q_block2 {
                 Some(q)
                     if !q.more()
+                        || meta
+                            .q_request
+                            .is_some_and(|p| p.q_block2().nth(1).is_some())
                         || q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
                             != 0 =>
                 {
@@ -2048,29 +2109,40 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
-    let q = meta
-        .q_block2
-        .ok_or(Error::Block(BlockTransferError::MissingBlock))?;
-    let count = if q.more() {
-        u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-            - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-    } else {
-        1
-    };
-    for offset in 0..count {
-        let issued = engine
-            .reissue_q_block2(id, q.num() + offset)
-            .map_err(Error::Block)?;
-        let (ty, mid) = if offset == 0 {
-            (first_ty, meta.mid)
+    let selections = || meta.q_request.into_iter().flat_map(ParsedMessage::q_block2);
+    // Validate every requested starting range before the first send, so a
+    // bad later option cannot turn a rejected request into partial output.
+    for q in selections() {
+        let q = q.map_err(|e| Error::Block(e.into()))?;
+        engine.reissue_q_block2(id, q.num()).map_err(Error::Block)?;
+    }
+    let mut last_sent = None;
+    for q in selections() {
+        let q = q.map_err(|e| Error::Block(e.into()))?;
+        let count = if q.more() {
+            u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+                - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
         } else {
-            (Type::NonConfirmable, ids.next_for(engine, now_ms)?)
+            1
         };
-        send_issued(
-            engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
-        )?;
-        if !issued.block().more() {
-            break;
+        for offset in 0..count {
+            let num = q.num() + offset;
+            if last_sent.is_some_and(|last| num <= last) {
+                continue;
+            }
+            let issued = engine.reissue_q_block2(id, num).map_err(Error::Block)?;
+            let (ty, mid) = if last_sent.is_none() {
+                (first_ty, meta.mid)
+            } else {
+                (Type::NonConfirmable, ids.next_for(engine, now_ms)?)
+            };
+            send_issued(
+                engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
+            )?;
+            last_sent = Some(num);
+            if !issued.block().more() {
+                return Ok(());
+            }
         }
     }
     Ok(())
@@ -2808,6 +2880,7 @@ where
             no_response: NoResponse::DEFAULT,
             block2: None,
             q_block2: None,
+            q_request: None,
             block1: None,
             oscore: oscore::no_request(),
             request: parsed.code(),
@@ -2860,7 +2933,7 @@ struct BlockOpt {
 }
 
 #[derive(Clone, Copy)]
-struct SendResponse {
+struct SendResponse<'a> {
     dest: Endpoint,
     ty: Type,
     mid: MessageId,
@@ -2868,6 +2941,7 @@ struct SendResponse {
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
+    q_request: Option<ParsedMessage<'a>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockValue>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
