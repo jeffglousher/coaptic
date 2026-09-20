@@ -20,7 +20,14 @@
 //! continuation identity. This bounded state adds about 1.1 KiB per App on
 //! 64-bit hosts; it is separate from the optional assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
-//! unknown elective options are ignored. A matching ACK still stops retries.
+//! unknown elective options are retained in `Response::received_options`.
+//! A matching ACK still stops retries. Replies retain at most 24 options and
+//! 512 encoded header/Token/option bytes, with at most eight Location-Path and
+//! eight Location-Query values. Overflow completes the call with
+//! `CallFailure::ResponseMetadataBounds`, never a partial metadata snapshot.
+//! Four reply rows plus one borrowed-response hold each contain a fixed
+//! 512-byte header buffer. No allocation or additional assembled-body buffer
+//! is used for metadata.
 //!
 //! [`Call`] is Token plus peer — not a [`SlotId`](crate::storage::SlotId).
 //! [`App::poll`](super::App::poll) advances this alongside site routing on
@@ -116,6 +123,8 @@ pub enum CallFailure {
     Reset,
     /// Received blocks could not be assembled into the requested representation.
     BlockTransfer(BlockTransferError),
+    /// Response metadata exceeds App's option count, byte, or Location count bound.
+    ResponseMetadataBounds,
 }
 impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -124,6 +133,7 @@ impl core::fmt::Display for CallFailure {
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
             Self::Reset => f.write_str("peer reset the request"),
+            Self::ResponseMetadataBounds => f.write_str("response metadata exceeds App bounds"),
             Self::BlockTransfer(error) => write!(f, "response block transfer failed: {error}"),
         }
     }
@@ -138,77 +148,114 @@ impl std::error::Error for CallFailure {}
 /// is [`Error::Saturated`] — no silent eviction.
 pub(crate) const RESPONSE_INBOX: usize = 4;
 
+/// Maximum options retained per client response, including unknown elective options.
+pub const RESPONSE_OPTION_COUNT: usize = 24;
+/// Maximum encoded header, Token and options retained per client response (no payload).
+pub const RESPONSE_OPTION_BYTES: usize = 512;
+
 #[derive(Clone, Copy, Debug)]
 struct ReplyMeta {
-    code: Code,
-    ty: Type,
-    token: Token,
-    mid: MessageId,
+    received_at_ms: u64,
+    header: [u8; RESPONSE_OPTION_BYTES],
+    header_len: u16,
     peer: Endpoint,
     payload: [u8; INLINE_PAYLOAD],
     payload_len: u16,
     payload_src_len: u16,
-    content_format: Option<ContentFormat>,
-    observe: Option<u32>,
-    etag: [u8; 8],
-    etag_len: u8,
 }
 
 impl ReplyMeta {
-    fn from_parsed(parsed: &ParsedMessage<'_>, peer: Endpoint) -> Self {
+    fn from_parsed(
+        parsed: &ParsedMessage<'_>,
+        peer: Endpoint,
+        received_at_ms: u64,
+    ) -> Result<Self, CallFailure> {
+        let mut options = OptionsBuilder::<RESPONSE_OPTION_COUNT>::new();
+        let mut locations = [0usize; 2];
+        for option in parsed.options() {
+            let index = match option.number() {
+                crate::message::OptionNumber::LOCATION_PATH => Some(0),
+                crate::message::OptionNumber::LOCATION_QUERY => Some(1),
+                _ => None,
+            };
+            if let Some(index) = index {
+                locations[index] += 1;
+                if locations[index] > super::LOCATION_MAX {
+                    return Err(CallFailure::ResponseMetadataBounds);
+                }
+            }
+            options
+                .push(option)
+                .map_err(|_| CallFailure::ResponseMetadataBounds)?;
+        }
+        let message = Message::new(parsed.ty(), parsed.code(), parsed.message_id())
+            .with_token(parsed.token())
+            .with_options(options.as_slice());
+        let mut header = [0; RESPONSE_OPTION_BYTES];
+        let header_len = crate::message::encode(&message, &mut header)
+            .map_err(|_| CallFailure::ResponseMetadataBounds)?;
         let src = parsed.payload();
         let n = src.len().min(INLINE_PAYLOAD);
         let mut payload = [0u8; INLINE_PAYLOAD];
         payload[..n].copy_from_slice(&src[..n]);
-        let mut etag = [0u8; 8];
-        let etag_len = parsed
-            .etag()
-            .next()
-            .map(|tag| {
-                let n = tag.len().min(8);
-                etag[..n].copy_from_slice(&tag[..n]);
-                n as u8
-            })
-            .unwrap_or(0);
-        Self {
-            code: parsed.code(),
-            ty: parsed.ty(),
-            token: parsed.token(),
-            mid: parsed.message_id(),
+        Ok(Self {
+            received_at_ms,
+            header,
+            header_len: header_len as u16,
             peer,
             payload,
             payload_len: n as u16,
             payload_src_len: u16::try_from(src.len()).unwrap_or(u16::MAX),
-            content_format: parsed.content_format().and_then(Result::ok),
-            observe: parsed.observe().and_then(Result::ok),
-            etag,
-            etag_len,
-        }
+        })
     }
 
-    fn into_response(self) -> Response<'static> {
+    fn response(&self) -> Response<'_> {
+        // The stored header was produced by the encoder and is immutable.
+        let parsed = crate::message::decode(&self.header[..usize::from(self.header_len)])
+            .expect("encoded response header");
         let mut response = Response::from_client(
-            self.code,
-            self.ty,
-            self.token,
-            self.mid,
+            parsed.code(),
+            parsed.ty(),
+            parsed.token(),
+            parsed.message_id(),
             self.peer,
             &self.payload[..usize::from(self.payload_len)],
-            self.content_format,
+            parsed.content_format().and_then(Result::ok),
         )
         .with_payload_src_len(self.payload_src_len);
-        if self.etag_len > 0 {
-            response = response.etag(&self.etag[..usize::from(self.etag_len)]);
+        if let Some(etag) = parsed
+            .etag()
+            .next()
+            .filter(|tag| (1..=8).contains(&tag.len()))
+        {
+            response = response.etag(etag);
         }
-        match self.observe {
-            Some(seq) => response.observe(seq),
-            None => response,
+        if let Some(seq) = parsed.observe().and_then(Result::ok) {
+            response = response.observe(seq);
         }
+        if let Some(age) = parsed.max_age().and_then(Result::ok) {
+            response = response.max_age(age);
+        }
+        if let Ok(Some(echo)) = crate::message::Echo::from_message(&parsed) {
+            response = response.echo(echo);
+        }
+        for path in parsed.location_path().flatten() {
+            if path.len() <= 255 && path != "." && path != ".." {
+                response = response.location_path(path);
+            }
+        }
+        for query in parsed.location_query().flatten() {
+            if query.len() <= 255 {
+                response = response.location_query(query);
+            }
+        }
+        response.with_received_header(parsed, self.received_at_ms)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct InboxRow {
+    complete: bool,
     call: Call,
     meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
@@ -218,12 +265,14 @@ struct InboxRow {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientInbox {
     rows: [Option<InboxRow>; RESPONSE_INBOX],
+    held: Option<ReplyMeta>,
 }
 
 impl ClientInbox {
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; RESPONSE_INBOX],
+            held: None,
         }
     }
 
@@ -242,27 +291,75 @@ impl ClientInbox {
                 .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
         }) {
             let prev = slot.take().and_then(|row| row.body);
-            *slot = Some(InboxRow { call, meta, body });
+            *slot = Some(InboxRow {
+                complete: true,
+                call,
+                meta,
+                body,
+            });
             return Ok(prev);
         }
         if let Some(slot) = self.rows.iter_mut().find(|row| row.is_none()) {
-            *slot = Some(InboxRow { call, meta, body });
+            *slot = Some(InboxRow {
+                complete: true,
+                call,
+                meta,
+                body,
+            });
             return Ok(None);
         }
         Err(())
     }
 
     fn contains(&self, call: Call) -> bool {
-        self.rows.iter().flatten().any(|row| row.call == call)
+        self.rows
+            .iter()
+            .flatten()
+            .any(|row| row.call == call && row.complete)
     }
+    fn partial_meta(&self, call: Call, body: SlotId) -> Option<ReplyMeta> {
+        self.rows
+            .iter()
+            .flatten()
+            .find(|row| row.call == call && !row.complete && row.body == Some(body))?
+            .meta
+            .ok()
+    }
+
+    fn retain_partial(
+        &mut self,
+        call: Call,
+        meta: ReplyMeta,
+        body: SlotId,
+    ) -> Result<Option<SlotId>, ()> {
+        if self.partial_meta(call, body).is_some() {
+            return Ok(None);
+        }
+        let previous = self.insert(call, Ok(meta), Some(body))?;
+        if let Some(row) = self.rows.iter_mut().flatten().find(|row| row.call == call) {
+            row.complete = false;
+        }
+        Ok(previous)
+    }
+
     fn take(&mut self, call: Call) -> Option<(Result<Response<'_>, CallFailure>, Option<SlotId>)> {
         let i = self.rows.iter().position(|row| {
-            row.as_ref()
-                .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
+            row.as_ref().is_some_and(|row| {
+                row.complete && row.call.token == call.token && row.call.peer == call.peer
+            })
         })?;
-        self.rows[i]
-            .take()
-            .map(|row| (row.meta.map(ReplyMeta::into_response), row.body))
+        let row = self.rows[i].take()?;
+        let response = match row.meta {
+            Ok(meta) => {
+                self.held = Some(meta);
+                Ok(self.held.as_ref().expect("stored reply").response())
+            }
+            Err(error) => {
+                self.held = None;
+                Err(error)
+            }
+        };
+        Some((response, row.body))
     }
 }
 
@@ -563,6 +660,10 @@ where
     /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
     /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
     /// terminal outcome; no synthetic CoAP response code is invented.
+    /// Location, Max-Age, Echo and raw options are retained within
+    /// [`RESPONSE_OPTION_COUNT`] / [`RESPONSE_OPTION_BYTES`]. Block-wise replies
+    /// retain the first accepted fragment's header metadata; no response is
+    /// exposed until assembly completes. Metadata and assembled bytes borrow App.
     pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
@@ -1195,16 +1296,54 @@ where
         }
     }
 
+    let metadata = match ReplyMeta::from_parsed(parsed, peer, now_ms) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            fail_call(
+                engine,
+                inbox,
+                lives,
+                oscore,
+                Call::new(parsed.token(), peer),
+                error,
+                true,
+            );
+            let _ = engine.release_rx(rx);
+            return Ok(());
+        }
+    };
+
     // Classify from the already-decoded response. A plain 2.05 must not
     // stack Block IO scratch via MissingBlock probes.
     if parsed.block2().is_some() {
         match engine.apply_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
-                accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
-                finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+                finish_assembled(
+                    engine,
+                    inbox,
+                    lives,
+                    parsed,
+                    peer,
+                    rx,
+                    progress.id(),
+                    metadata,
+                    via_exchange.is_some(),
+                );
                 return Ok(());
             }
             Ok(progress) => {
+                match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
+                {
+                    Ok(Some(previous)) if previous != progress.id() => {
+                        let _ = engine.release_rx_body(previous);
+                    }
+                    Ok(_) => {}
+                    Err(()) => {
+                        let _ = engine.release_rx_body(progress.id());
+                        let _ = engine.release_rx(rx);
+                        return Err(Error::Saturated);
+                    }
+                }
                 take_exchange(engine, parsed, peer);
                 let outcome = send_block2_continue(
                     engine,
@@ -1243,11 +1382,32 @@ where
         match engine.apply_q_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
                 let _ = engine.note_q_receive(progress.id(), now_ms);
-                accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
-                finish_assembled(engine, inbox, parsed, peer, rx, progress.id());
+                finish_assembled(
+                    engine,
+                    inbox,
+                    lives,
+                    parsed,
+                    peer,
+                    rx,
+                    progress.id(),
+                    metadata,
+                    via_exchange.is_some(),
+                );
                 return Ok(());
             }
             Ok(progress) => {
+                match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
+                {
+                    Ok(Some(previous)) if previous != progress.id() => {
+                        let _ = engine.release_rx_body(previous);
+                    }
+                    Ok(_) => {}
+                    Err(()) => {
+                        let _ = engine.release_rx_body(progress.id());
+                        let _ = engine.release_rx(rx);
+                        return Err(Error::Saturated);
+                    }
+                }
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 let outcome = if needs_q_continue(engine, progress.id()) {
                     take_exchange(engine, parsed, peer);
@@ -1291,29 +1451,45 @@ where
         engine,
         inbox,
         Call::new(parsed.token(), peer),
-        ReplyMeta::from_parsed(parsed, peer),
+        metadata,
         None,
     );
     let _ = engine.release_rx(rx);
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_assembled<Mem>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
+    lives: &ClientLives,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     rx: SlotId,
     body: SlotId,
+    metadata: ReplyMeta,
+    via_exchange: bool,
 ) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots,
+    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots,
 {
+    let call = Call::new(parsed.token(), peer);
+    let metadata = inbox.partial_meta(call, body).unwrap_or(metadata);
+    let original = crate::message::decode(&metadata.header[..usize::from(metadata.header_len)])
+        .expect("encoded response header");
+    accept_client_observe(
+        engine,
+        lives,
+        &original,
+        peer,
+        metadata.received_at_ms,
+        via_exchange,
+    );
     take_exchange(engine, parsed, peer);
     store_reply(
         engine,
         inbox,
         Call::new(parsed.token(), peer),
-        ReplyMeta::from_parsed(parsed, peer),
+        metadata,
         Some(body),
     );
     let _ = engine.release_rx(rx);
@@ -1329,7 +1505,9 @@ fn store_reply<Mem: Storage + BodySlots>(
     match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
             if let Some(id) = prev {
-                let _ = engine.release_rx_body(id);
+                if Some(id) != body {
+                    let _ = engine.release_rx_body(id);
+                }
             }
         }
         Err(()) => {
@@ -1937,7 +2115,7 @@ fn accept_client_observe<Mem>(
         let _ = engine.take_observe(key);
         return;
     }
-    if parsed.observe().is_some() && parsed.code().is_success() {
+    if parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
         let resource = live
             .map(|live| ObserveResource::from_path(live.path.segments()))
             .unwrap_or(ObserveResource::NONE);
