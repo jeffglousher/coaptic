@@ -4,7 +4,7 @@ Three separately built executables communicate only over loopback UDP/DTLS:
 
 - `peer-coaptic`: Coaptic App, webrtc-dtls 0.12 / util 0.11. No coap-rs dependency.
 - `peer-coap-rs`: coap 0.28.1 with a test transport bridge to webrtc-dtls 0.12 / util 0.11. No Coaptic dependency.
-- `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; the matrix exercises PSK DTLS and the explicitly listed OSCORE state cases.
+- `peer-libcoap`: C fixture using libcoap 4.3.5b at `851533c3cf63d16984d370ce39d586ecb3694971`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; the matrix exercises PSK DTLS and the explicitly listed OSCORE state cases.
 
 libcoap is BSD-2-Clause; its independent source/build is outside the published library. OpenSSL is a test-machine dependency. No C FFI or DTLS dependency enters Coaptic. Lockfile pins Rust peers; the C source pin is checked by CMake. These are test fixtures, with a public, non-production PSK (`sesame`).
 
@@ -15,7 +15,7 @@ Requires stable Rust, Python 3.10+, CMake 3.20+, a C compiler and OpenSSL develo
 ```sh
 cargo build --locked --release -p peer-coaptic -p peer-coap-rs
 git init /tmp/libcoap
-git -C /tmp/libcoap fetch --depth 1 https://github.com/obgm/libcoap.git 7cf7465b784baded4de183290c547d582becfd28
+git -C /tmp/libcoap fetch --depth 1 https://github.com/obgm/libcoap.git 851533c3cf63d16984d370ce39d586ecb3694971
 git -C /tmp/libcoap checkout --detach FETCH_HEAD
 cmake -S tools/interop/libcoap -B target/libcoap-peer -DLIBCOAP_SOURCE=/tmp/libcoap -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
 cmake --build target/libcoap-peer --parallel 2

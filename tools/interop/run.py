@@ -419,7 +419,7 @@ def main():
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
               "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
-              "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
+              "libcoap_source": "851533c3cf63d16984d370ce39d586ecb3694971",
               "limitations": ["Only named plaintext/PSK DTLS/OSCORE assertions; Observe, certificates and full ETSI coverage remain unqualified"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "capability_manifest": {"path": "tools/interop/capabilities.json", "sha256": manifest_hash},

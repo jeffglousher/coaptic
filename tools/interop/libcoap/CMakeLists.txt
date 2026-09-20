@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(coaptic_libcoap_peer C)
 if(NOT DEFINED LIBCOAP_SOURCE)
-  message(FATAL_ERROR "Set LIBCOAP_SOURCE to pinned libcoap 7cf7465b784baded4de183290c547d582becfd28")
+  message(FATAL_ERROR "Set LIBCOAP_SOURCE to pinned libcoap 851533c3cf63d16984d370ce39d586ecb3694971")
 endif()
 find_package(Git REQUIRED)
 execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
   WORKING_DIRECTORY "${LIBCOAP_SOURCE}" OUTPUT_VARIABLE LIBCOAP_REV
   OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-if(NOT LIBCOAP_REV STREQUAL "7cf7465b784baded4de183290c547d582becfd28")
+if(NOT LIBCOAP_REV STREQUAL "851533c3cf63d16984d370ce39d586ecb3694971")
   message(FATAL_ERROR "Unexpected libcoap source revision: ${LIBCOAP_REV}")
 endif()
 execute_process(COMMAND "${GIT_EXECUTABLE}" diff --exit-code HEAD
