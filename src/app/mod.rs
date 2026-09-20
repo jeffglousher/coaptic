@@ -462,6 +462,9 @@ impl<
     /// alone does not retire an ordinary request binding: rejected responses
     /// and failed ACK sends leave pending Calls usable. Collection, cancellation
     /// and terminal local failure release the binding; continuation replaces it.
+    /// Response replay bookkeeping commits after critical-option validation and
+    /// successful CON acknowledgment. This is in-memory admission, not a durable
+    /// replay checkpoint barrier for application effects.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
@@ -1178,27 +1181,37 @@ where
             return outcome;
         }
     };
-    let (parsed, oscore_req) = match opened {
-        Some((inner, req)) => {
+    let (parsed, oscore_req, response_state) = match opened {
+        Some((inner, req, response_state)) => {
             #[cfg(feature = "oscore")]
             {
                 // Inner Block-wise (RFC 8613 §4.1.3.4.1): assembly reads
                 // the RX slot. Replace the outer OSCORE datagram with the
                 // opened Inner so Block1/Block2 see Class E options.
                 write_unprotected_rx(engine, rx, &inner, peer)?;
-                (inner, Some(req))
+                (inner, Some(req), response_state)
             }
             #[cfg(not(feature = "oscore"))]
             {
-                (inner, req)
+                (inner, req, response_state)
             }
         }
-        None => (parsed, oscore::no_request()),
+        None => (parsed, oscore::no_request(), oscore::ResponseState::None),
     };
 
     if !parsed.code().is_request() {
         return client::complete_client(
-            engine, io, inbox, lives, ids, oscore, now_ms, peer, &parsed, rx,
+            engine,
+            io,
+            inbox,
+            lives,
+            ids,
+            oscore,
+            response_state,
+            now_ms,
+            peer,
+            &parsed,
+            rx,
         );
     }
 
