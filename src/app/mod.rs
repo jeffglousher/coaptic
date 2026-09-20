@@ -455,6 +455,11 @@ impl<
     /// or cancellation. Recipient replay checks use the context's bounded
     /// 32-sequence window; this does not qualify Q Observe.
     ///
+    /// Protected responses must match the Call endpoint and any piggybacked
+    /// ACK Message ID before request-binding or notification replay state is
+    /// consumed. Established notifications match the client Observe relation;
+    /// unrelated protected responses are silently discarded.
+    ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
     /// IDs, replay window). Engine does not store keys. Protect happens
@@ -1146,6 +1151,18 @@ where
             }
             Replay::Miss => {}
         }
+    }
+
+    // Match the Outer routing identity before OSCORE consumes a binding or
+    // advances recipient replay/notification state. Inner authentication cannot
+    // replace the Call's endpoint and piggybacked-ACK matching rules.
+    if oscore::is_active(oscore)
+        && parsed.oscore().is_some()
+        && !parsed.code().is_request()
+        && !client::has_response_target(engine, &parsed, peer)
+    {
+        let _ = engine.release_rx(rx);
+        return Ok(());
     }
 
     let mut inner_scratch = Mem::RxScratch::default();
