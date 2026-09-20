@@ -4746,3 +4746,171 @@ fn incoming_request_and_response_bodies_with_the_same_key_are_isolated() {
             .unwrap()
     });
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn seeded_body_backends_match_results_state_and_reclamation() {
+    let mut fixed = build_default_bodies();
+    let mut allocated = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(true)
+        .build_alloc(
+            Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>(),
+        )
+        .unwrap();
+    let body: [u8; 4097] = core::array::from_fn(|n| (n % 251) as u8);
+    let mut seed = 0x7be2_915du32;
+    let mut accepted = 0;
+    let mut refused = 0;
+    let mut counts = [0; 20];
+    let mut successes = [0; 20];
+    for step in 0..6000 {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        let role = step % 20;
+        counts[role] += 1;
+        let token = Token::new(&[(seed % 4) as u8]).unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1 + ((seed >> 3) % 2) as u8], 5683);
+        let tag = [(seed >> 5) as u8 % 2];
+        let key = BlockKey::new(token, peer).with_identity(BodyTag::new(&tag).unwrap());
+        let mut id = SlotId::from_index((seed as usize >> 7) % 6);
+        if (4..=11).contains(&role) && seed & 1 == 0 {
+            let wanted = match role {
+                4 => BlockRole::OutgoingBlock1,
+                5 => BlockRole::OutgoingBlock2,
+                6 | 8 | 10 => BlockRole::OutgoingQBlock1,
+                _ => BlockRole::OutgoingQBlock2,
+            };
+            if let Some(active) = (0..6).map(SlotId::from_index).find(|slot| {
+                fixed
+                    .tx_body_transfer(*slot)
+                    .is_some_and(|transfer| transfer.role() == wanted)
+            }) {
+                id = active;
+            }
+        }
+        let size = [0, 1, 15, 16, 17, 160, 161, 4096, 4097][(seed as usize >> 10) % 9];
+        let num = if matches!(role, 8 | 9) && seed & 1 == 0 {
+            fixed
+                .tx_body_transfer(id)
+                .map_or(0, |transfer| transfer.window_base())
+        } else {
+            (seed >> 14) % 12
+        };
+        let block = BlockValue::from_size(num, seed & 0x40000 != 0, 16).unwrap();
+        let fragment = &body[..(seed as usize >> 20) % 18];
+        let hint = [None, Some(0), Some(32), Some(160), Some(u32::MAX)][(seed as usize >> 25) % 5];
+        macro_rules! same {
+            ($method:ident($($arg:expr),* $(,)?)) => {{
+                let a = fixed.$method($($arg),*);
+                let b = allocated.$method($($arg),*);
+                assert_eq!(a, b, "step={step}, seed={seed:#x}, method={}", stringify!($method));
+                if a.is_ok() { accepted += 1;
+                    successes[role] += 1; } else { refused += 1; }
+                a
+            }};
+        }
+        match role {
+            0..=3 => {
+                let result = match role {
+                    0 => same!(start_block1(key, &body[..size], 0)),
+                    1 => same!(start_block2(key, &body[..size], 0)),
+                    2 => same!(start_q_block1(key, &body[..size], 0)),
+                    _ => same!(start_q_block2(key, &body[..size], 0)),
+                };
+                if let Ok(slot) = result {
+                    assert_eq!(fixed.tx_body_payload(slot), Some(&body[..size]));
+                }
+            }
+            4..=9 => {
+                let result = match role {
+                    4 => same!(next_block1(id)),
+                    5 => same!(next_block2(id)),
+                    6 => same!(next_q_block1(id)),
+                    7 => same!(next_q_block2(id)),
+                    8 => same!(reissue_q_block1(id, num)),
+                    _ => same!(reissue_q_block2(id, num)),
+                };
+                if let Ok(range) = result {
+                    let payload = fixed.tx_body_payload(range.id()).unwrap();
+                    assert!(range.offset() + range.len() <= payload.len());
+                    assert_eq!(range.offset(), range.block().num() as usize * 16);
+                    assert_eq!(
+                        &payload[range.offset()..range.offset() + range.len()],
+                        &body[range.offset()..range.offset() + range.len()]
+                    );
+                }
+            }
+            10 => {
+                let _ = same!(ack_q_block1(id, num));
+            }
+            11 => {
+                let _ = same!(ack_q_block2(id, num));
+            }
+            12 => {
+                let _ = same!(apply_block1(key, block, fragment, hint));
+            }
+            13 => {
+                let _ = same!(apply_block2(key, block, fragment, hint));
+            }
+            14 => {
+                let _ = same!(apply_q_block1(key, block, fragment, hint));
+            }
+            15 => {
+                let _ = same!(apply_q_block2(key, block, fragment, hint));
+            }
+            16 | 17 => {
+                let _ = same!(release_rx_body(id));
+            }
+            _ => {
+                let _ = same!(release_tx_body(id));
+            }
+        }
+        // Compare every occupied byte and sidecar, including untouched slots.
+        for index in 0..6 {
+            let slot = SlotId::from_index(index);
+            assert_eq!(
+                fixed.rx_body_transfer(slot),
+                allocated.rx_body_transfer(slot),
+                "RX step {step}"
+            );
+            assert_eq!(
+                fixed.tx_body_transfer(slot),
+                allocated.tx_body_transfer(slot),
+                "TX step {step}"
+            );
+            assert_eq!(
+                fixed.rx_body_payload(slot),
+                allocated.rx_body_payload(slot),
+                "RX bytes step {step}"
+            );
+            assert_eq!(
+                fixed.tx_body_payload(slot),
+                allocated.tx_body_payload(slot),
+                "TX bytes step {step}"
+            );
+        }
+        if step % 64 == 63 || step == 5999 {
+            for index in 0..6 {
+                let slot = SlotId::from_index(index);
+                let _ = same!(release_rx_body(slot));
+                let _ = same!(release_tx_body(slot));
+                assert!(fixed.rx_body_transfer(slot).is_none());
+                assert!(allocated.rx_body_transfer(slot).is_none());
+                assert!(fixed.tx_body_transfer(slot).is_none());
+                assert!(allocated.tx_body_transfer(slot).is_none());
+            }
+        }
+    }
+    assert_eq!(counts, [300; 20]);
+    assert!(accepted > 100 && refused > 100);
+    assert!(
+        successes[..10].iter().all(|n| *n > 0),
+        "successful operations: {successes:?}"
+    );
+    assert!(
+        successes[12..16].iter().all(|n| *n > 0),
+        "successful admissions: {successes:?}"
+    );
+}
