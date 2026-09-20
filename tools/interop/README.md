@@ -50,14 +50,20 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 72 scenario results (59 with local C-peer DTLS excluded):
+The full run contains 75 scenario results (60 with local C-peer DTLS excluded):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
   refusal and plaintext 4.01/state preservation are checked. The supervisor
   explicitly advances client sender sequences between fresh client processes.
-  This does not qualify replay/corruption campaigns, protected block/Observe,
+  This does not qualify protected block/Observe,
   persistent key/sequence storage or production credential management.
+- Three OSCORE fault scenarios replay accepted counter POST ciphertext from a
+  new endpoint with a changed outer MID, then require the counter to remain one.
+  A real relay corrupts the authentication tag of a future-sequence POST; valid
+  low-sequence readback and a subsequent valid high-sequence POST must still work,
+  ending at counter two. This is a sequential bounded fixture, not concurrent,
+  restart/persistent replay or exhaustive ciphertext qualification.
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
   exact GET bytes, 4.04, 2,000-byte Block2 and repeated fresh clients. DTLS also
