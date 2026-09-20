@@ -1,7 +1,8 @@
 """Exercise wire fault injection and fail-closed result validation."""
 import socket
 import unittest
-from run import Proxy, decode, expect, summary, validate_timing, measure_requests
+from unittest.mock import patch
+from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow
 
 
 class RunnerTests(unittest.TestCase):
@@ -14,6 +15,19 @@ class RunnerTests(unittest.TestCase):
             expect({"exit_code":0,"code":69,"payload_hex":"00"})
         with self.assertRaises(AssertionError):
             expect({"exit_code":1,"code":69,"payload_hex":""})
+
+    def test_method_workflow_rejects_success_without_resource_effect(self):
+        # A peer claims Created but the readback did not retain the write.
+        with patch("run.Server") as server, patch("run.request") as request:
+            server.return_value.__enter__.return_value.number = 1234
+            request.side_effect = [
+                {"exit_code": 0, "code": 132, "payload_hex": ""},
+                {"exit_code": 0, "code": 65, "payload_hex": ""},
+                {"exit_code": 0, "code": 69, "payload_hex": ""},
+            ]
+            with self.assertRaises(AssertionError):
+                method_workflow("client", "server")
+            self.assertEqual(request.call_count, 3)
 
     def test_nearest_rank_percentiles(self):
         self.assertEqual(summary([4,1,3,2])["p50"], 2)

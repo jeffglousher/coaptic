@@ -14,7 +14,7 @@ mod dtls_listener;
 #[path = "../../../tools/interop/support.rs"]
 mod support;
 use coap::{Server, client::CoAPClient, request::RequestBuilder};
-use coap_lite::{MessageClass, RequestType, ResponseType};
+use coap_lite::{CoapOption, MessageClass, RequestType, ResponseType};
 use std::{
     sync::{
         Arc,
@@ -46,6 +46,7 @@ async fn run() -> Result<(), Error> {
         } else {
             Server::new_udp(a.address())?
         };
+        let resource = Arc::new(std::sync::Mutex::new(support::MethodResource::new()));
         let counter = Arc::new(AtomicU32::new(0));
         support::ready(
             "coap-rs",
@@ -57,9 +58,29 @@ async fn run() -> Result<(), Error> {
             .run(
                 move |mut req: Box<coap_lite::CoapRequest<std::net::SocketAddr>>| {
                     let counter = Arc::clone(&counter);
+                    let resource = Arc::clone(&resource);
                     async move {
                         let path = req.get_path();
                         let method = *req.get_method();
+                        if path == "methods" {
+                            let method: u8 = MessageClass::Request(method).into();
+                            let format_ok = req
+                                .message
+                                .get_option(CoapOption::ContentFormat)
+                                .is_some_and(|values| {
+                                    values.len() == 1 && values.front().is_some_and(|v| v == &[42])
+                                });
+                            let (code, body) = resource.lock().expect("fixture lock").respond(
+                                method,
+                                &req.message.payload,
+                                format_ok,
+                            );
+                            if let Some(r) = req.response.as_mut() {
+                                r.message.header.code = code.into();
+                                r.message.payload = body;
+                            }
+                            return req;
+                        }
                         if let Some(r) = req.response.as_mut() {
                             let (code, body) = match (method, path.as_str()) {
                                 (RequestType::Get, "test") => {
@@ -91,14 +112,25 @@ async fn run() -> Result<(), Error> {
     let operation = async {
         let request = RequestBuilder::request_path(
             &format!("/{}", a.path),
-            if a.post {
-                RequestType::Post
-            } else {
-                RequestType::Get
+            match a.method {
+                1 => RequestType::Get,
+                2 => RequestType::Post,
+                3 => RequestType::Put,
+                4 => RequestType::Delete,
+                5 => RequestType::Fetch,
+                6 => RequestType::Patch,
+                _ => RequestType::IPatch,
             },
-            None,
+            Some(a.payload.clone()),
             vec![],
             None,
+        )
+        .options(
+            if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+                vec![(CoapOption::ContentFormat, vec![42])]
+            } else {
+                vec![]
+            },
         )
         .build();
         let response = if a.dtls {
