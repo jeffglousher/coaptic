@@ -394,7 +394,10 @@ def main():
                     traces.append(relay.trace)
                     results.append(result)
                     return result
-                expect(exchange())
+                initial = exchange()
+                expect(initial)
+                if client == "coaptic" and server == "libcoap" and initial.get("echo_retries") != 1:
+                    raise AssertionError("libcoap authenticated Echo challenge was not exercised exactly once")
                 expect(exchange(path="methods", method="PUT", payload=b"alpha"), 65, b"")
                 refused = exchange(path="methods", method="PUT", payload=b"poison", key="incorrect", timeout=1500)
                 expect_refusal(refused)

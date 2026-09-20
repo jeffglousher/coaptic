@@ -148,6 +148,7 @@ async fn run() -> Result<(), Error> {
                 response.message.header.code.into(),
                 &response.message.payload,
                 elapsed,
+                None,
             );
             return Ok::<(), Error>(());
         } else {
@@ -160,6 +161,7 @@ async fn run() -> Result<(), Error> {
             response.message.header.code.into(),
             &response.message.payload,
             start.elapsed(),
+            None,
         );
         Ok::<(), Error>(())
     };

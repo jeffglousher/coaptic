@@ -156,7 +156,8 @@ async fn run() -> Result<(), Error> {
     if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
         outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
     }
-    let call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
+    let mut call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
+    let mut echo_retried = false;
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
@@ -165,21 +166,67 @@ async fn run() -> Result<(), Error> {
                 r.code().as_raw(),
                 r.body().unwrap_or(r.payload()).to_vec(),
                 start.elapsed(),
+                r.echo_option(),
             )
         });
-        if let Some((code, body, elapsed)) = response {
+        if let Some((code, body, elapsed, echo)) = response {
+            if let Some(challenge) = retry_challenge(a.oscore, echo_retried, code, echo) {
+                // The configured App only admits authenticated responses. Echo
+                // retry is explicit, once, to the same peer with identical
+                // method/body/options; the original wall-clock deadline stays.
+                let mut retry = app
+                    .request(method, path)
+                    .payload(&a.payload)
+                    .to(Endpoint::from(a.address()))
+                    .echo(challenge);
+                if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+                    retry = retry.content_format(ContentFormat::OCTET_STREAM);
+                }
+                call = retry
+                    .send(start.elapsed().as_millis() as u64 + 1)
+                    .map_err(|e| format!("Echo retry: {e}"))?;
+                echo_retried = true;
+                continue;
+            }
             // Flush CloseNotify before the runtime exits. Response timing ends
             // at assembly; host timing includes this bounded session shutdown.
             if let Io::Dtls(io) = app.transport_mut() {
                 io.close().await?;
             }
-            support::response(code, &body, elapsed);
+            support::response(code, &body, elapsed, Some(u8::from(echo_retried)));
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(1));
     }
     Err("request timed out".into())
 }
+fn retry_challenge(
+    protected: bool,
+    already_retried: bool,
+    code: u8,
+    echo: Option<coaptic::message::Echo>,
+) -> Option<coaptic::message::Echo> {
+    if protected && !already_retried && code == 129 {
+        echo
+    } else {
+        None
+    }
+}
+
+#[test]
+fn echo_retry_requires_protection_challenge_and_unused_budget() {
+    let echo = coaptic::message::Echo::new(b"authenticated-challenge").unwrap();
+    assert_eq!(retry_challenge(true, false, 129, Some(echo)), Some(echo));
+    for (protected, retried, code, challenge) in [
+        (false, false, 129, Some(echo)),
+        (true, true, 129, Some(echo)),
+        (true, false, 132, Some(echo)),
+        (true, false, 129, None),
+    ] {
+        assert_eq!(retry_challenge(protected, retried, code, challenge), None);
+    }
+}
+
 fn fixture(io: Io) -> Result<App<profiles::Default, Io, 4, true>, Error> {
     App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())

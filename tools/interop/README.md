@@ -168,3 +168,9 @@ fixed deliberately mismatching test secret. Coap-rs explicitly refuses OSCORE.
 For a C build with DTLS but no OSCORE, use `--libcoap-oscore-unavailable`; the
 existing `--libcoap-udp-only` option excludes both C cryptographic configurations.
 These fixture keys and restarted sender contexts are never production credentials.
+
+The Coaptic OSCORE client explicitly retries one authenticated 4.01 carrying
+Echo, preserving request parameters and the original deadline. It records the
+retry count; plaintext responses and repeated challenges cannot trigger this
+policy. The libcoap direction requires its default B.1.2 challenge to be exercised.
+This is a bounded fixture policy, not automatic freshness policy in the library.
