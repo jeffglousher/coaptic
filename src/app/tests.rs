@@ -1879,7 +1879,7 @@ fn block1_complete_exposes_body() {
 }
 
 #[test]
-fn qblock1_incomplete_is_continue() {
+fn qblock1_incomplete_con_is_empty_ack() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
@@ -1893,7 +1893,7 @@ fn qblock1_incomplete_is_continue() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert_eq!(last_reply(&app).code, Code::EMPTY);
 }
 
 #[test]
@@ -1912,7 +1912,7 @@ fn qblock1_complete_exposes_body() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert_eq!(last_reply(&app).code, Code::EMPTY);
 
     let (wire, n) = encode_block_req(q_block1(&second, 1, false, 0x1002, 20));
     app.transport_mut().inbox = Some((peer, wire, n));
@@ -1931,7 +1931,8 @@ fn qblock1_holes_are_request_entity_incomplete() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let first = [0x11u8; 16];
     let last = [0x33u8; 8];
-    let (wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 40));
+    let (mut wire, n) = encode_block_req(q_block1(&first, 0, true, 0x1001, 40));
+    wire[0] |= 0x10; // NON payloads use delayed missing-block reporting.
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
@@ -1942,13 +1943,14 @@ fn qblock1_holes_are_request_entity_incomplete() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert!(app.transport().last_send.is_none());
 
-    let (wire, n) = encode_block_req(q_block1(&last, 2, false, 0x1002, 40));
+    let (mut wire, n) = encode_block_req(q_block1(&last, 2, false, 0x1002, 40));
+    wire[0] |= 0x10;
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(1).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert!(app.transport().last_send.is_none());
 
     app.transport_mut().inbox = None;
     app.transport_mut().last_send = None;
@@ -1968,7 +1970,7 @@ fn qblock1_holes_are_request_entity_incomplete() {
 }
 
 #[test]
-fn qblock1_apply_error_is_request_entity_incomplete() {
+fn qblock1_duplicate_con_repeats_ack_and_preserves_body() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let payload = [0xABu8; 16];
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1001, 32));
@@ -1982,21 +1984,20 @@ fn qblock1_apply_error_is_request_entity_incomplete() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
-    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert_eq!(last_reply(&app).code, Code::EMPTY);
 
     let (wire, n) = encode_block_req(q_block1(&payload, 0, true, 0x1002, 32));
     app.transport_mut().inbox = Some((peer, wire, n));
     app.transport_mut().last_send = None;
     app.poll(1).expect("duplicate");
     let parsed = last_reply(&app);
-    assert_eq!(parsed.code, Code::REQUEST_ENTITY_INCOMPLETE);
-    assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
-    let details = ProblemDetails::decode(&parsed.payload[..parsed.payload_len]).expect("cbor");
-    assert_eq!(
-        details.response_code(),
-        Some(Code::REQUEST_ENTITY_INCOMPLETE)
-    );
-    assert_eq!(details.title_text(), Some("Request Entity Incomplete"));
+    assert_eq!(parsed.code, Code::EMPTY);
+    assert_eq!(parsed.ty, Type::Acknowledgement);
+    assert_eq!(parsed.payload_len, 0);
+    let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+        .with_identity(crate::storage::BodyTag::new(b"upload-1").unwrap());
+    let id = app.engine.lookup_rx_body(key).unwrap();
+    assert_eq!(app.engine.rx_body_payload(id), Some(payload.as_slice()));
 }
 
 #[test]
@@ -5250,7 +5251,7 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
                         Code::REQUEST_ENTITY_INCOMPLETE
                     }
                 ),
-                1 => assert_eq!(reply.code, Code::CONTINUE),
+                1 => assert_eq!(reply.code, Code::EMPTY),
                 _ => {
                     assert_eq!(reply.code, Code::CHANGED);
                     assert_eq!(&reply.payload[..reply.payload_len], b"AAAAAAAAAAAAAAAAREST");
@@ -8104,4 +8105,90 @@ fn qblock1_missing_required_metadata_is_bad_request_without_body_admission() {
         }
     }
     assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn qblock1_con_ack_non_set_continue_and_final_handler_effect_are_distinct() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static BODY: [u8; 168] = [b'A'; 168];
+    fn finish(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.body(), Some(BODY.as_slice()));
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for non in [false, true] {
+        CALLS.store(0, Ordering::SeqCst);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(LED_PATH, put(finish))
+            .bind(Loopback::default())
+            .unwrap();
+        for num in 0..11 {
+            let offset = num as usize * 16;
+            let (mut wire, n) = encode_block_req(q_block1(
+                &BODY[offset..(offset + 16).min(BODY.len())],
+                num,
+                num < 10,
+                0x3c00 + num as u16,
+                BODY.len() as u32,
+            ));
+            if non {
+                wire[0] |= 0x10;
+            }
+            app.transport_mut().last_send = None;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(u64::from(num)).unwrap();
+            if num == 10 {
+                assert_eq!(last_reply(&app).code, Code::CHANGED);
+            } else if non && num < 9 {
+                assert!(app.transport().last_send.is_none());
+            } else if non {
+                let (_, wire, n) = app.transport().last_send.unwrap();
+                let reply = decode(&wire[..n]).unwrap();
+                assert_eq!(reply.code(), Code::CONTINUE);
+                assert_eq!(reply.ty(), Type::NonConfirmable);
+                let q = reply.q_block1().unwrap().unwrap();
+                assert_eq!(q.encode().as_bytes(), &[0x98]); // NUM9/M1/SZX0.
+                assert!(reply.block1().is_none());
+                assert_eq!(reply.token(), Token::new(&[0xa1]).unwrap());
+            } else {
+                let (_, wire, n) = app.transport().last_send.unwrap();
+                let ack = decode(&wire[..n]).unwrap();
+                assert!(ack.is_empty_ack());
+                assert_eq!(ack.message_id(), MessageId::new(0x3c00 + num as u16));
+                assert_eq!(ack.token(), Token::EMPTY);
+            }
+            assert_eq!(CALLS.load(Ordering::SeqCst), usize::from(num == 10));
+        }
+    }
+}
+
+#[test]
+fn qblock1_non_out_of_order_and_duplicate_payloads_wait_for_the_entire_set() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .bind(Loopback::default())
+        .unwrap();
+    for (index, num) in [0, 2, 3, 4, 5, 6, 7, 8, 9, 9, 1, 1].into_iter().enumerate() {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, true, 0x3d00 + index as u16, 176));
+        wire[0] |= 0x10;
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(index as u64).unwrap();
+        if index < 10 {
+            assert!(app.transport().last_send.is_none());
+        } else {
+            let (_, wire, n) = app.transport().last_send.unwrap();
+            let reply = decode(&wire[..n]).unwrap();
+            assert_eq!(reply.code(), Code::CONTINUE);
+            assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+        }
+    }
 }
