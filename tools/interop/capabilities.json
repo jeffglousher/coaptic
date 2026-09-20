@@ -1838,6 +1838,200 @@
         "stale counter or unavailable service fails; no durability guarantee"
       ],
       "executable": "tools/interop/run.py:main.restart"
+    },
+    {
+      "id": "methods-ipv6-dtls:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "all exchanges traverse AF_INET6/IPV6_V6ONLY relays with retained datagrams"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-dtls:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "all exchanges traverse AF_INET6/IPV6_V6ONLY relays with retained datagrams"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-dtls:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "all exchanges traverse AF_INET6/IPV6_V6ONLY relays with retained datagrams"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-dtls:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "all exchanges traverse AF_INET6/IPV6_V6ONLY relays with retained datagrams"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "methods-ipv6-dtls:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "put",
+        "post",
+        "delete",
+        "fetch",
+        "patch",
+        "ipatch",
+        "content-format",
+        "bounded-state"
+      ],
+      "positive_proof": [
+        "29-step exact status and resource-state workflow",
+        "PUT creation/replacement and POST append readback",
+        "PATCH effects and repeated iPATCH idempotence",
+        "FETCH selection bytes and DELETE removal",
+        "all exchanges traverse AF_INET6/IPV6_V6ONLY relays with retained datagrams"
+      ],
+      "failure_proof": [
+        "invalid FETCH/PATCH/iPATCH leaves state unchanged",
+        "oversized replacement and aggregate append refusal preserve state",
+        "missing resource and repeated DELETE return 4.04",
+        "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
+      ],
+      "executable": "tools/interop/run.py:method_workflow"
     }
   ],
   "gaps": [

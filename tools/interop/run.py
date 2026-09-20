@@ -286,6 +286,17 @@ def measure_requests(iterations, request_fn):
     return result
 
 
+def ipv6_dtls_request(client, number, traces, **kwargs):
+    # Each session has a fresh server-visible endpoint; IPv6-only sockets
+    # prevent a fixture silently falling back to IPv4 from satisfying the case.
+    with Proxy(number, "dtls-reconnect", family="ipv6") as relay:
+        result = request(client, "dtls", relay.number, family="ipv6", **kwargs)
+    if not any(row["direction"] == "request" for row in relay.trace):
+        raise AssertionError("no IPv6 request datagrams")
+    traces.append(relay.trace)
+    return result
+
+
 def method_workflow(client, server, transport="udp", family="ipv4"):
     """Literal byte/state oracles; private binary patch syntax, no JSON Patch claim."""
     steps = [
@@ -306,22 +317,26 @@ def method_workflow(client, server, transport="udp", family="ipv4"):
         ("DELETE", b"", 66, b""), ("GET", b"", 132, None),
         ("DELETE", b"", 132, None),
     ]
-    evidence = []
+    evidence, traces = [], []
     with Server(server, transport, family=family) as service:
-        probe = ipv6_probe(service.number) if family == "ipv6" else None
+        probe = ipv6_probe(service.number) if family == "ipv6" and transport == "udp" else None
+        def exchange(**kwargs):
+            if family == "ipv6" and transport == "dtls":
+                return ipv6_dtls_request(client, service.number, traces, **kwargs)
+            return request(client, transport, service.number, family=family, **kwargs)
         refusal = None
         for index, (method, payload, code, body) in enumerate(steps):
             if transport == "dtls" and index == 2:
                 # A refused replacement must leave the accepted PUT intact.
-                refusal = request(client, transport, service.number, family=family, path="methods",
+                refusal = exchange(path="methods",
                                   method="PUT", payload=b"poison", key="incorrect", timeout=1500)
                 expect_refusal(refusal, handshake=True)
-            result = request(client, transport, service.number, family=family, path="methods", method=method, payload=payload)
+            result = exchange(path="methods", method=method, payload=payload)
             expect(result, code, body)
             evidence.append({"method": method, "request_hex": payload.hex(), "expected_code": code,
                              "expected_payload_hex": None if body is None else body.hex(), "response": result})
     return {"steps": evidence, "transport": transport, "address_family": family,
-            "ipv6_socket_probe": probe, "wrong_key_result": refusal, "state_limit_bytes": 64, "patch_format": "fixture octet-stream: PATCH +suffix; IPATCH =replacement"}
+            "ipv6_socket_probe": probe, "ipv6_dtls_traces": traces, "wrong_key_result": refusal, "state_limit_bytes": 64, "patch_format": "fixture octet-stream: PATCH +suffix; IPATCH =replacement"}
 
 
 def main():
@@ -388,7 +403,8 @@ def main():
 
     for transport, family, label in (("udp", "ipv4", "methods-udp"),
                                      ("dtls", "ipv4", "methods-dtls"),
-                                     ("udp", "ipv6", "methods-ipv6-udp")):
+                                     ("udp", "ipv6", "methods-ipv6-udp"),
+                                     ("dtls", "ipv6", "methods-ipv6-dtls")):
         for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
             if transport == "dtls" and args.libcoap_udp_only and "libcoap" in (client, server):
                 continue
@@ -412,16 +428,9 @@ def main():
             continue
         def ipv6_dtls(client=client, server=server):
             with Server(peers[server], "dtls", family="ipv6") as service:
-                # New relay per session: qualify IPv6 transport without assuming
-                # a peer's same-endpoint replacement-handshake policy.
                 traces = []
                 def exchange(**kwargs):
-                    with Proxy(service.number, "dtls-reconnect", family="ipv6") as relay:
-                        result = request(peers[client], "dtls", relay.number, family="ipv6", **kwargs)
-                    if not any(row["direction"] == "request" for row in relay.trace):
-                        raise AssertionError("no IPv6 request datagrams")
-                    traces.append(relay.trace)
-                    return result
+                    return ipv6_dtls_request(peers[client], service.number, traces, **kwargs)
                 expect(exchange())
                 expect(exchange(path="missing"), 132, None)
                 expect(exchange(path="large"), 69, LARGE)

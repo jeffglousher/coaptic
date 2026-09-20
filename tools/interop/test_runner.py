@@ -2,7 +2,7 @@
 import socket
 import unittest
 from unittest.mock import patch
-from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests
+from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests, ipv6_dtls_request
 
 
 class RunnerTests(unittest.TestCase):
@@ -38,6 +38,29 @@ class RunnerTests(unittest.TestCase):
             server.assert_called_once_with("server", "udp", family="ipv6")
             probe.assert_called_once_with(1234)
             request.assert_not_called()
+
+    def test_ipv6_dtls_requires_real_request_datagrams(self):
+        with patch("run.Proxy") as proxy, patch("run.request") as request:
+            proxy.return_value.__enter__.return_value.trace = []
+            with self.assertRaises(AssertionError):
+                ipv6_dtls_request("client", 1234, [])
+            proxy.assert_called_once_with(1234, "dtls-reconnect", family="ipv6")
+            self.assertEqual(request.call_args.kwargs["family"], "ipv6")
+
+    def test_ipv6_dtls_methods_use_relay_and_refuse_wrong_key_success(self):
+        with patch("run.Server") as server, patch("run.ipv6_dtls_request") as exchange, patch("run.ipv6_probe") as probe:
+            server.return_value.__enter__.return_value.number = 1234
+            exchange.side_effect = [
+                {"exit_code": 0, "code": 132, "payload_hex": ""},
+                {"exit_code": 0, "code": 65, "payload_hex": ""},
+                {"exit_code": 0, "code": 68, "payload_hex": ""},
+            ]
+            with self.assertRaises(AssertionError):
+                method_workflow("client", "server", "dtls", "ipv6")
+            probe.assert_not_called()
+            self.assertEqual(exchange.call_count, 3)
+            self.assertEqual(exchange.call_args.kwargs["key"], "incorrect")
+            self.assertEqual(exchange.call_args.kwargs["method"], "PUT")
 
     def test_method_workflow_rejects_wrong_key_success(self):
         with patch("run.Server") as server, patch("run.request") as request:
