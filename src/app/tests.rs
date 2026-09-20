@@ -5227,3 +5227,304 @@ fn invalid_handler_response_releases_assembled_upload_body() {
         }
     }
 }
+
+#[test]
+fn client_snapshot_retains_location_max_age_echo_and_unknown_options() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.post("create").to(peer).send(0).unwrap();
+    let mid = decode(&app.transport().sends[0][..app.transport().send_lens[0]])
+        .unwrap()
+        .message_id();
+    let max_age = encode_uint(0);
+    let options = [
+        Opt::etag(b"version"),
+        Opt::location_path(""),
+        Opt::location_path("a/b"),
+        Opt::location_path(""),
+        Opt::max_age(&max_age),
+        Opt::location_query(""),
+        Opt::location_query("x=é&y"),
+        Opt::echo(b"challenge"),
+        Opt::new(OptionNumber::new(2048), b"opaque"),
+    ];
+    let msg = Message::new(Type::Acknowledgement, Code::CREATED, mid)
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"created");
+    let mut wire = [0; WIRE];
+    let n = encode(&msg, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    let response = app.take_response(call).unwrap().unwrap();
+    assert_eq!(response.location_paths(), &["", "a/b", ""]);
+    assert_eq!(response.location_queries(), &["", "x=é&y"]);
+    assert_eq!(response.max_age_secs(), Some(0));
+    assert_eq!(
+        response.echo_option(),
+        Some(EchoOpt::new(b"challenge").unwrap())
+    );
+    assert_eq!(response.etag_bytes(), Some(&b"version"[..]));
+    assert_eq!(response.payload(), b"created");
+    assert!(response.received_options().eq(options));
+    assert_eq!(response.validate(), Ok(()));
+}
+
+#[test]
+fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply() {
+    for mode in 0..8 {
+        let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+        let mut app = App::profile::<profiles::Default>()
+            .block_wise::<false>()
+            .bind(WideLoopback::default())
+            .unwrap();
+        let call = app.get("value").to(peer).send(0).unwrap();
+        let request = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+        let mut options = OptionsBuilder::<25>::new();
+        let bytes = [0x5a; 512];
+        match mode {
+            0 | 1 => {
+                // Exact retained header bound, followed by one byte over it.
+                // Header + actual Token + option delta/length extension bytes.
+                let overhead = 4 + call.token().len() + 5;
+                let len = super::RESPONSE_OPTION_BYTES - overhead + mode;
+                options
+                    .push(Opt::new(OptionNumber::new(2048), &bytes[..len]))
+                    .unwrap();
+            }
+            2 | 3 => {
+                for index in 0..(super::RESPONSE_OPTION_COUNT + mode - 2) {
+                    options
+                        .push(Opt::new(OptionNumber::new(2048 + 2 * index as u16), &[]))
+                        .unwrap();
+                }
+            }
+            _ => {
+                for _ in 0..(super::LOCATION_MAX + mode % 2) {
+                    options
+                        .push(if mode < 6 {
+                            Opt::location_path("")
+                        } else {
+                            Opt::location_query("")
+                        })
+                        .unwrap();
+                }
+            }
+        }
+        let msg = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(call.token())
+            .with_options(options.as_slice());
+        let mut wire = [0; WIRE];
+        let n = encode(&msg, &mut wire).unwrap();
+        if mode <= 1 {
+            assert_eq!(n, super::RESPONSE_OPTION_BYTES + mode);
+        }
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(1).unwrap();
+        let result = app.take_response(call).unwrap();
+        if mode % 2 == 0 {
+            let response = result.unwrap();
+            assert!(
+                response
+                    .received_options()
+                    .eq(options.as_slice().iter().copied())
+            );
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                crate::CallFailure::ResponseMetadataBounds
+            );
+        }
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert!(app.get("next").to(peer).send(2).is_ok());
+    }
+}
+
+#[test]
+fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("value").to(peer).observe().send(0).unwrap();
+    for num in 0..2 {
+        let index = app.transport().send_n - 1;
+        let mid = decode(&app.transport().sends[index][..app.transport().send_lens[index]])
+            .unwrap()
+            .message_id();
+        let block = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<8>::new();
+        options.push(Opt::etag(b"body")).unwrap();
+        if num == 0 {
+            options.push(Opt::observe_register()).unwrap();
+            options.push(Opt::location_path("first")).unwrap();
+            options
+                .push(Opt::new(OptionNumber::CONTENT_FORMAT, &[0]))
+                .unwrap();
+            options.push(Opt::new(OptionNumber::MAX_AGE, &[5])).unwrap();
+        }
+        options.push(Opt::block2(&block)).unwrap();
+        let msg = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+            .with_token(call.token())
+            .with_options(options.as_slice())
+            .with_payload(if num == 0 {
+                b"abcdefghijklmnop"
+            } else {
+                b"qrstuvwx"
+            });
+        let mut wire = [0; WIRE];
+        let n = encode(&msg, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num) + 1).unwrap();
+        if num == 0 {
+            assert!(app.take_response(call).is_none());
+        }
+    }
+    let response = app.take_response(call).unwrap().unwrap();
+    assert_eq!(response.body(), Some(&b"abcdefghijklmnopqrstuvwx"[..]));
+    assert_eq!(response.location_paths(), &["first"]);
+    assert_eq!(response.max_age_secs(), Some(5));
+    assert_eq!(response.received_at_ms(), Some(1));
+    assert_eq!(response.observe_seq(), Some(0));
+    assert_eq!(response.format(), Some(ContentFormat::TEXT_PLAIN));
+    assert!(observe_live(&app, peer, call.token()));
+    assert!(app.cancel(call));
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+}
+
+#[test]
+fn four_untaken_response_metadata_snapshots_remain_distinct_and_bounded() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let names = ["one", "two", "three", "four"];
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut calls = [None; 4];
+    for (index, name) in names.iter().enumerate() {
+        let call = app.get("value").to(peer).non().send(0).unwrap();
+        calls[index] = Some(call);
+        let options = [Opt::location_path(name)];
+        let msg = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(100 + index as u16),
+        )
+        .with_token(call.token())
+        .with_options(&options);
+        let mut wire = [0; WIRE];
+        let n = encode(&msg, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(1).unwrap();
+    }
+    assert_eq!(app.get("overflow").to(peer).send(2), Err(Error::Saturated));
+    for index in [2, 0, 3, 1] {
+        let response = app.take_response(calls[index].unwrap()).unwrap().unwrap();
+        assert_eq!(response.location_paths(), &[names[index]]);
+        assert_eq!(response.received_options().count(), 1);
+    }
+    app.transport_mut().send_n = 0;
+    assert!(app.get("next").to(peer).send(3).is_ok());
+}
+
+#[test]
+fn block2_metadata_overflow_reclaims_partial_body_and_call() {
+    use crate::storage::SlotId;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    for num in 0..2 {
+        let index = app.transport().send_n - 1;
+        let mid = decode(&app.transport().sends[index][..app.transport().send_lens[index]])
+            .unwrap()
+            .message_id();
+        let block = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<3>::new();
+        options.push(Opt::etag(b"body")).unwrap();
+        options.push(Opt::block2(&block)).unwrap();
+        let huge = [1; 600];
+        if num == 1 {
+            options
+                .push(Opt::new(OptionNumber::new(2048), &huge))
+                .unwrap();
+        }
+        let msg = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+            .with_token(call.token())
+            .with_options(options.as_slice())
+            .with_payload(if num == 0 {
+                b"abcdefghijklmnop"
+            } else {
+                b"qrstuvwx"
+            });
+        let mut wire = [0; WIRE];
+        let n = encode(&msg, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num) + 1).unwrap();
+        if num == 0 {
+            assert!(app.take_response(call).is_none());
+        }
+    }
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ResponseMetadataBounds
+    );
+    for index in 0..app.engine.capacities().rx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .rx_body_transfer(SlotId::from_index(index))
+                .is_none()
+        );
+    }
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert!(app.get("next").to(peer).send(3).is_ok());
+}
+
+#[test]
+fn malformed_elective_response_values_remain_raw_without_creating_observe() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("value").to(peer).observe().send(0).unwrap();
+    let mid = decode(&app.transport().sends[0][..app.transport().send_lens[0]])
+        .unwrap()
+        .message_id();
+    let options = [
+        Opt::etag(&[]),
+        Opt::new(OptionNumber::OBSERVE, &[1; 4]),
+        Opt::new(OptionNumber::LOCATION_PATH, &[0xff]),
+        Opt::location_path(".."),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[1; 3]),
+        Opt::new(OptionNumber::MAX_AGE, &[1; 5]),
+        Opt::echo(&[]),
+    ];
+    let msg = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"ok");
+    let mut wire = [0; WIRE];
+    let n = encode(&msg, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    let response = app.take_response(call).unwrap().unwrap();
+    assert_eq!(response.etag_bytes(), None);
+    assert_eq!(response.format(), None);
+    assert_eq!(response.observe_seq(), None);
+    assert_eq!(response.max_age_secs(), None);
+    assert_eq!(response.echo_option(), None);
+    assert!(response.location_paths().is_empty());
+    assert!(response.received_options().eq(options));
+    assert!(!observe_live(&app, peer, call.token()));
+}

@@ -106,7 +106,7 @@ use crate::storage::{
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
-pub use client::{Call, CallFailure, Outgoing};
+pub use client::{Call, CallFailure, Outgoing, RESPONSE_OPTION_BYTES, RESPONSE_OPTION_COUNT};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
 pub use response::{
     AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,

@@ -23,6 +23,9 @@ const ASSEMBLED_HOLD_PAD: usize = 64;
 // and metadata each. Account explicitly for this bounded protocol state;
 // the remaining overhead must still be smaller than an assembled body.
 const RETAINED_QUERY_BUDGET: usize = 4 * (256 + 16 + 16);
+// Four pending/completed headers and one borrowed-reply hold. The hold also
+// retains an inline payload and endpoint; no assembled-body buffer is hidden here.
+const RETAINED_RESPONSE_BUDGET: usize = 5 * coaptic::app::RESPONSE_OPTION_BYTES + 192;
 
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
@@ -40,8 +43,8 @@ fn assert_datagram_omits_assembled(
     );
     let overhead = datagram_app.saturating_sub(datagram_mem);
     assert!(
-        overhead < RESPONSE_BODY + RETAINED_QUERY_BUDGET,
-        "datagram App must not carry an assembled body beyond its bounded query state (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
+        overhead < RESPONSE_BODY + RETAINED_QUERY_BUDGET + RETAINED_RESPONSE_BUDGET,
+        "datagram App must not carry an assembled body beyond its bounded query/response metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
     let app_delta = block_wise_app - datagram_app;
