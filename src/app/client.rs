@@ -414,6 +414,7 @@ struct LiveCall {
     code: Code,
     ty: Type,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     observe: OutgoingObserve,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
@@ -540,6 +541,7 @@ where
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -619,6 +621,7 @@ where
             path: path_from_into(path),
             payload: &[],
             content_format: None,
+            echo: None,
             accept: None,
             request_tag: BodyTag::ABSENT,
             etag: None,
@@ -718,6 +721,7 @@ where
             path: self.path,
             payload: self.payload,
             content_format: self.content_format,
+            echo: self.echo,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -757,6 +761,20 @@ where
     #[must_use]
     pub const fn content_format(mut self, format: ContentFormat) -> Self {
         self.content_format = Some(format);
+        self
+    }
+
+    /// Echo a server-provided freshness challenge (RFC 9175).
+    ///
+    /// The caller must use this only for the endpoint that supplied the Echo,
+    /// and preserve its security context and Inner/Outer protection class.
+    /// App retains the value on every upload fragment and download continuation.
+    /// Use [`Response::echo_option`] after a 4.01 response or preemptive challenge;
+    /// retries are explicit so the caller can decide whether an unsafe operation
+    /// is still fresh. This setter does not authenticate a challenge or retry a call.
+    #[must_use]
+    pub const fn echo(mut self, echo: crate::message::Echo) -> Self {
+        self.echo = Some(echo);
         self
     }
 
@@ -934,6 +952,7 @@ where
             path: path.segments(),
             payload: self.payload,
             content_format: self.content_format,
+            echo: self.echo,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -962,6 +981,7 @@ where
             code: self.code,
             ty: self.ty,
             content_format: self.content_format,
+            echo: self.echo,
             observe,
             deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
@@ -998,6 +1018,7 @@ struct ClientSend<'a> {
     path: &'a [&'a str],
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -1072,6 +1093,9 @@ where
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
+        if let Some(echo) = spec.echo.as_ref() {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
         if let Some(tag) = spec.request_tag.as_slice() {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
@@ -1118,6 +1142,7 @@ where
                 spec.payload,
                 spec.request_tag,
                 spec.content_format,
+                spec.echo,
                 spec.q_block1,
                 tx,
             )
@@ -1146,6 +1171,7 @@ fn send_client_block1<Mem, T>(
     payload: &[u8],
     request_tag: BodyTag,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     q_block1: bool,
     tx: SlotId,
 ) -> Result<Call, Error<T::Error>>
@@ -1187,6 +1213,7 @@ where
             queries,
             accept,
             content_format,
+            echo,
             body,
             Some(tx),
             None,
@@ -1207,6 +1234,7 @@ where
             queries,
             accept,
             content_format,
+            echo,
             body,
             Some(tx),
         )
@@ -1666,6 +1694,9 @@ where
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
+        if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
         if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
@@ -1728,6 +1759,7 @@ where
     let code = live.map(|live| live.code).unwrap_or(Code::PUT);
     let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
+    let echo = live.and_then(|live| live.echo);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
     let mut query_n = 0;
@@ -1755,6 +1787,7 @@ where
                 &queries[..query_n],
                 accept,
                 content_format,
+                echo,
                 body,
                 None,
             )
@@ -1777,6 +1810,7 @@ where
                 &queries[..query_n],
                 accept,
                 content_format,
+                echo,
                 body,
                 None,
                 Some((parsed.token(), peer)),
@@ -1802,6 +1836,7 @@ fn issue_block1<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     body: SlotId,
     tx: Option<SlotId>,
 ) -> Result<(), Error<T::Error>>
@@ -1824,6 +1859,7 @@ where
         queries,
         accept,
         content_format,
+        echo,
         issued,
         false,
         tx,
@@ -1845,6 +1881,7 @@ fn issue_q_block1_window<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     body: SlotId,
     mut tx: Option<SlotId>,
     take_first: Option<(Token, Endpoint)>,
@@ -1885,6 +1922,7 @@ where
             queries,
             accept,
             content_format,
+            echo,
             issued,
             true,
             tx.take(),
@@ -1912,6 +1950,7 @@ fn send_block1_issued<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
     issued: OutgoingBlock,
     q_block1: bool,
     tx: Option<SlotId>,
@@ -1960,6 +1999,9 @@ where
         }
         if let Some(ref encoded) = size {
             push_opt(&mut opts, Opt::size1(encoded))?;
+        }
+        if let Some(echo) = echo.as_ref() {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
         }
         if let Some(tag) = tag.as_slice() {
             push_opt(&mut opts, Opt::request_tag(tag))?;
