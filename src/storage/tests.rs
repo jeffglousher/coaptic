@@ -4627,3 +4627,122 @@ fn observe_role_keys_and_client_refusal_are_distinct() {
         ObserveResource::from_path(&[""])
     );
 }
+
+#[test]
+fn incoming_request_and_response_bodies_with_the_same_key_are_isolated() {
+    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+        for upload_first in [false, true] {
+            for q_upload in [false, true] {
+                for q_download in [false, true] {
+                    let mut engine = build();
+                    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+                    let token = sample_token(b"same");
+                    let mut bodies = [None; 2];
+                    for phase in 0..6 {
+                        let upload = (phase % 2 == 0) == upload_first;
+                        let index = usize::from(upload);
+                        let q = if upload { q_upload } else { q_download };
+                        let num = u32::from(phase >= 2);
+                        let bad = (2..4).contains(&phase);
+                        let block = BlockValue::from_size(num, num == 0, if bad { 32 } else { 16 })
+                            .unwrap()
+                            .encode();
+                        let size = encode_uint(24);
+                        let mut opts = crate::message::OptionsBuilder::<4>::new();
+                        if upload {
+                            opts.push(Opt::uri_path("upload")).unwrap();
+                            opts.push(if q {
+                                Opt::q_block1(&block)
+                            } else {
+                                Opt::block1(&block)
+                            })
+                            .unwrap();
+                            opts.push(Opt::size1(&size)).unwrap();
+                            opts.push(Opt::request_tag(b"shared")).unwrap();
+                        } else {
+                            opts.push(Opt::etag(b"shared")).unwrap();
+                            opts.push(if q {
+                                Opt::q_block2(&block)
+                            } else {
+                                Opt::block2(&block)
+                            })
+                            .unwrap();
+                            opts.push(Opt::size2(&size)).unwrap();
+                        }
+                        let body = if upload { &[b'U'; 24] } else { &[b'D'; 24] };
+                        let message = Message::new(
+                            Type::NonConfirmable,
+                            if upload { Code::PUT } else { Code::CONTENT },
+                            MessageId::new(100 + phase),
+                        )
+                        .with_token(token)
+                        .with_options(opts.as_slice())
+                        .with_payload(if num == 0 {
+                            &body[..16]
+                        } else {
+                            &body[16..]
+                        });
+                        let mut wire = [0; 128];
+                        let n = encode(&message, &mut wire).unwrap();
+                        let rx = engine.acquire_rx().unwrap();
+                        engine.write_rx(rx, &wire[..n], peer).unwrap();
+                        let before = bodies.map(|id| id.and_then(|id| engine.rx_body_transfer(id)));
+                        let result = match (upload, q) {
+                            (true, true) => engine.apply_q_block1_rx(rx),
+                            (true, false) => engine.apply_block1_rx(rx),
+                            (false, true) => engine.apply_q_block2_rx(rx),
+                            (false, false) => engine.apply_block2_rx(rx),
+                        };
+                        engine.release_rx(rx).unwrap();
+                        if bad {
+                            assert_eq!(result, Err(BlockTransferError::SzxMismatch));
+                            assert_eq!(
+                                bodies.map(|id| id.and_then(|id| engine.rx_body_transfer(id))),
+                                before
+                            );
+                        } else {
+                            let progress = result.unwrap();
+                            if num == 0 {
+                                bodies[index] = Some(progress.id());
+                            }
+                            assert_eq!(bodies[index], Some(progress.id()));
+                            assert_eq!(progress.complete(), num == 1);
+                            assert_eq!(
+                                engine.rx_body_payload(progress.id()),
+                                Some(if num == 0 {
+                                    &body[..16]
+                                } else {
+                                    body.as_slice()
+                                })
+                            );
+                            let other = 1 - index;
+                            assert_eq!(
+                                bodies[other].and_then(|id| engine.rx_body_transfer(id)),
+                                before[other]
+                            );
+                        }
+                    }
+                    assert_ne!(bodies[0], bodies[1]);
+                    engine.release_rx_body(bodies[0].unwrap()).unwrap();
+                    assert_eq!(
+                        engine.rx_body_payload(bodies[1].unwrap()),
+                        Some(&[b'U'; 24][..])
+                    );
+                    engine.release_rx_body(bodies[1].unwrap()).unwrap();
+                }
+            }
+        }
+    }
+    exercise(build_default_bodies);
+    #[cfg(feature = "alloc")]
+    exercise(|| {
+        EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(
+                Capacities::from_profile::<profiles::Default>()
+                    .with_block_wise::<profiles::Default>(),
+            )
+            .unwrap()
+    });
+}

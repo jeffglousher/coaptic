@@ -949,6 +949,17 @@ impl AllocBodyPool {
         })
     }
 
+    /// Occupied body with the exact key and transfer role.
+    #[must_use]
+    fn lookup_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..self.occ.slot_count()).find_map(|i| {
+            let id = SlotId::from_index(i);
+            self.transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
+        })
+    }
+
     fn lookup_identity(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
         if key.identity().is_absent() {
             return None;
@@ -1046,7 +1057,10 @@ impl AllocBodyPool {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        if let Some(id) = self.lookup(key).or_else(|| self.lookup_identity(key, role)) {
+        if let Some(id) = self
+            .lookup_role(key, role)
+            .or_else(|| self.lookup_identity(key, role))
+        {
             let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
             if role.is_q_block() && transfer.expected_len() != expected_len {
                 return Err(BlockTransferError::LengthInconsistent);

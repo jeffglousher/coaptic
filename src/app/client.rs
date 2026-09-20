@@ -16,6 +16,8 @@
 //! App holds at most four live client requests, including Observe
 //! subscriptions and replies waiting for `take_response`. Resource-specific
 //! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! Upload continuation and cleanup select request-body roles separately from
+//! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
 //! continuation identity. This bounded state adds about 1.1 KiB per App on
 //! 64-bit hosts; it is separate from the optional assembled-body storage.
@@ -1622,7 +1624,7 @@ where
         let _ = engine.release_tx(tx);
     }
 
-    if let Some(body) = engine.lookup_tx_body(lives.upload_key(Call::new(parsed.token(), peer))) {
+    if let Some(body) = upload_body(engine, lives.upload_key(Call::new(parsed.token(), peer))) {
         if let Some(transfer) = engine.tx_body_transfer(body) {
             if matches!(
                 transfer.role(),
@@ -2365,7 +2367,7 @@ where
     if live.ty != Type::Confirmable {
         return Ok(());
     }
-    let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) else {
+    let Some(body) = upload_body(engine, lives.upload_key(call)) else {
         return Ok(());
     };
     let Some(transfer) = engine.tx_body_transfer(body) else {
@@ -2816,6 +2818,12 @@ fn copy_tx_range<Mem: Storage + BodySlots>(
     Ok(issued.len())
 }
 
+fn upload_body<Mem: Storage + BodySlots>(engine: &Engine<Mem>, key: BlockKey) -> Option<SlotId> {
+    engine
+        .lookup_tx_body_role(key, BlockRole::OutgoingBlock1)
+        .or_else(|| engine.lookup_tx_body_role(key, BlockRole::OutgoingQBlock1))
+}
+
 fn rx_body_payload<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) -> Option<&[u8]> {
     engine.rx_body_payload(id)
 }
@@ -2969,7 +2977,7 @@ fn fail_call<Mem>(
             let _ = engine.release_rx_body(id);
         }
     }
-    if let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) {
+    if let Some(body) = upload_body(engine, lives.upload_key(call)) {
         if engine.tx_body_transfer(body).is_some_and(|transfer| {
             matches!(
                 transfer.role(),
