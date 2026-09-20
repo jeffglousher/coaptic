@@ -59,6 +59,19 @@ the commands, compiler identity, counters and results and refuses missing tests.
 These campaigns establish their named invariants; coverage-guided fuzzing,
 line/branch coverage and compound network/lifecycle soak remain open in #202.
 
+## Windows and macOS host execution
+
+PR CI runs the library unit, integration and rustdoc tests on Windows and macOS
+with pinned Rust 1.97.1 in core, all, alloc, oscore, alloc+oscore and std modes.
+`python tools/qualification/host.py --output PATH` reproduces these checks and
+retains source/compiler/platform identity, commands, output, executed/ignored
+counts and failures. Empty test runs cannot pass. Failure or timeout in one mode
+does not suppress evidence from the remaining modes.
+
+These jobs qualify their library test surface on the recorded host architecture.
+They do not run the independent process/DTLS adapter matrix, establish host MSRV,
+or replace MCU execution, target stack or complete requirements coverage in #202.
+
 ## Packaging and release
 
 Only `coaptic` is published; harnesses and peers are test-only. Packaging checks
