@@ -34,6 +34,11 @@
 //! the same socket. Continues reuse the path recorded at
 //! [`Outgoing::send`]. Observe subscribe ([`Outgoing::observe`]) keeps the
 //! same [`Call`] after the Exchange is cleared.
+//! FETCH retains its encoded selection request (at most 512 bytes excluding
+//! Token, Observe and ETag) in the existing per-call identity buffer. Block2
+//! and Q-Block2 follow-ups preserve its body, Content-Format and conditions.
+//! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
+//! use caller-managed Engine transfers for larger selection bodies.
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
@@ -427,7 +432,7 @@ impl RetainedQueries {
     }
 }
 
-/// Exact canonical request identity for explicit Observe cancellation.
+/// Exact canonical request identity for Observe cancellation and FETCH follow-ups.
 /// Fixed header/Token; Observe and ETag are omitted. Includes the FETCH body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ObserveRequest {
@@ -449,7 +454,7 @@ struct LiveCall {
     no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
     observed: Option<(u32, u64)>,
-    observe_request: Option<ObserveRequest>,
+    request_identity: Option<ObserveRequest>,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
@@ -548,7 +553,7 @@ impl ClientLives {
                 && live.observe == OutgoingObserve::Register
                 && live.due_ms != 0
                 && is_live(live.call)
-                && live.observe_request == Some(identity)
+                && live.request_identity == Some(identity)
                 && target.is_none_or(|call| live.call == call)
         });
         let call = matches
@@ -1100,11 +1105,14 @@ where
             block2: self.block2,
             observe,
         };
-        let observe_request = if observe == OutgoingObserve::Off {
+        let request_identity = if observe == OutgoingObserve::Off && self.code != Code::FETCH {
             None
         } else {
             Some(
-                observe_request_identity(&spec).map_err(|error| match error {
+                request_identity_identity(&spec).map_err(|error| match error {
+                    EncodeError::BufferTooSmall if observe == OutgoingObserve::Off => {
+                        Error::FetchRequestTooLarge
+                    }
                     EncodeError::BufferTooSmall => Error::ObserveRequestTooLarge,
                     other => Error::Message(SlotMessageError::Encode(other)),
                 })?,
@@ -1115,7 +1123,7 @@ where
                 .lives
                 .observe_call::<T::Error>(
                     dest,
-                    observe_request.expect("Observe identity"),
+                    request_identity.expect("Observe identity"),
                     self.observe_target,
                     |call| {
                         !self.app.inbox.contains(call)
@@ -1187,7 +1195,7 @@ where
             no_response: self.no_response,
             observe,
             observed: None,
-            observe_request,
+            request_identity,
             deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
@@ -1317,7 +1325,7 @@ fn with_client_options<R>(
     Ok(use_options(opts.as_slice()))
 }
 
-fn observe_request_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
+fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
     with_client_options(spec, true, |options| {
         let mut identity = ObserveRequest {
             bytes: [0; OBSERVE_REQUEST_BYTES],
@@ -2098,7 +2106,31 @@ where
     for (encoded, block) in q2.iter_mut().zip(q_block2) {
         *encoded = block.encode();
     }
+    let fetch = live
+        .as_ref()
+        .filter(|live| live.code == Code::FETCH)
+        .and_then(|live| live.request_identity.as_ref())
+        .map(|identity| {
+            crate::message::decode(&identity.bytes[..identity.len])
+                .expect("encoded request identity")
+        });
+    let cf = fetch
+        .as_ref()
+        .and_then(|request| request.content_format())
+        .and_then(Result::ok)
+        .map(ContentFormat::encode);
     let filled = (|| -> Result<(), EncodeError> {
+        if let Some(request) = fetch.as_ref() {
+            for tag in request.if_match() {
+                push_opt(&mut opts, Opt::if_match(tag))?;
+            }
+            if request.if_none_match() {
+                push_opt(&mut opts, Opt::if_none_match())?;
+            }
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
         if let Some(live) = live.as_ref() {
             if live.observe == OutgoingObserve::Register && recovery_ty.is_none() {
                 push_opt(&mut opts, Opt::observe_register())?;
@@ -2138,7 +2170,13 @@ where
     let mid = ids.next_for(engine, now_ms)?;
     let msg = Message::new(ty, code, mid)
         .with_token(token)
-        .with_options(opts.as_slice());
+        .with_options(opts.as_slice())
+        .with_payload(
+            fetch
+                .as_ref()
+                .map(|request| request.payload())
+                .unwrap_or(&[]),
+        );
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
