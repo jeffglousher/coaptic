@@ -7399,3 +7399,233 @@ fn terminal_notification_give_up_reclaims_delivery_and_unblocks_other_observers(
         1
     );
 }
+
+#[test]
+fn failed_classic_continuations_retire_calls_and_bodies_immediately() {
+    struct FaultIo {
+        inbox: Option<(Endpoint, [u8; WIRE], usize)>,
+        last: [u8; WIRE],
+        len: usize,
+        fail: bool,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Ok(self.inbox.take().map(|(peer, wire, n)| {
+                bytes[..n].copy_from_slice(&wire[..n]);
+                (n, peer)
+            }))
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                return if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("continuation failure")
+                };
+            }
+            self.last[..bytes.len()].copy_from_slice(bytes);
+            self.len = bytes.len();
+            Ok(bytes.len())
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for upload in [false, true] {
+        for non in [false, true] {
+            for short in [false, true] {
+                let mut app = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .bind(FaultIo {
+                        inbox: None,
+                        last: [0; WIRE],
+                        len: 0,
+                        fail: false,
+                        short,
+                    })
+                    .unwrap();
+                let other = app
+                    .get("other")
+                    .to(Endpoint::v4([192, 0, 2, 3], 5683))
+                    .send(0)
+                    .unwrap();
+                for now in 1..=12 {
+                    app.transport_mut().fail = false;
+                    let request = if upload {
+                        app.put("value").payload(&[7; 3000])
+                    } else {
+                        app.get("value")
+                    };
+                    let request = if non { request.non() } else { request };
+                    let call = request.to(peer).send(now).unwrap();
+                    let parsed = decode(&app.transport().last[..app.transport().len]).unwrap();
+                    let block = if upload {
+                        parsed.block1().unwrap().unwrap()
+                    } else {
+                        BlockValue::from_size(0, true, 16).unwrap()
+                    }
+                    .encode();
+                    let opts = [if upload {
+                        Opt::block1(&block)
+                    } else {
+                        Opt::block2(&block)
+                    }];
+                    let msg = Message::new(
+                        if non {
+                            Type::NonConfirmable
+                        } else {
+                            Type::Acknowledgement
+                        },
+                        if upload {
+                            Code::CONTINUE
+                        } else {
+                            Code::CONTENT
+                        },
+                        parsed.message_id(),
+                    )
+                    .with_token(call.token())
+                    .with_options(&opts)
+                    .with_payload(if upload { &[][..] } else { &[5; 16][..] });
+                    let mut wire = [0; WIRE];
+                    let n = encode(&msg, &mut wire).unwrap();
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.transport_mut().fail = true;
+                    assert!(app.poll(now).is_err());
+                    assert_eq!(
+                        app.take_response(call).unwrap().unwrap_err(),
+                        crate::CallFailure::ContinuationFailed
+                    );
+                    assert!(app.take_response(call).is_none());
+                    assert!(app.take_response(other).is_none());
+                    assert_eq!(app.engine.tx_occupied(), 1);
+                    assert_eq!(app.engine.rx_occupied(), 0);
+                    for i in 0..app.engine.capacities().rx_body_slots.unwrap() {
+                        assert!(
+                            app.engine
+                                .rx_body_transfer(crate::storage::SlotId::from_index(i))
+                                .is_none()
+                        );
+                    }
+                    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                        assert!(
+                            app.engine
+                                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                                .is_none()
+                        );
+                    }
+                }
+                app.transport_mut().fail = false;
+                assert!(app.cancel(other));
+                assert!(app.get("recovered").to(peer).send(20).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn failed_qblock2_window_continuations_retire_partial_representation() {
+    struct FaultIo {
+        inbox: Option<(Endpoint, [u8; WIRE], usize)>,
+        last: [u8; WIRE],
+        len: usize,
+        fail: bool,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Ok(self.inbox.take().map(|(peer, wire, n)| {
+                bytes[..n].copy_from_slice(&wire[..n]);
+                (n, peer)
+            }))
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                return if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("continuation failure")
+                };
+            }
+            self.last[..bytes.len()].copy_from_slice(bytes);
+            self.len = bytes.len();
+            Ok(bytes.len())
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for non in [false, true] {
+        for short in [false, true] {
+            let mut app = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .bind(FaultIo {
+                    inbox: None,
+                    last: [0; WIRE],
+                    len: 0,
+                    fail: false,
+                    short,
+                })
+                .unwrap();
+            let other = app
+                .get("other")
+                .to(Endpoint::v4([192, 0, 2, 3], 5683))
+                .send(0)
+                .unwrap();
+            for now in 1..=12 {
+                app.transport_mut().fail = false;
+                let request = app.get("value").q_block2();
+                let request = if non { request.non() } else { request };
+                let call = request.to(peer).send(now).unwrap();
+                for num in 0..10 {
+                    let block = BlockValue::from_size(num, true, 16).unwrap().encode();
+                    let size = crate::message::encode_uint(200);
+                    let opts = [Opt::etag(b"repr"), Opt::size2(&size), Opt::q_block2(&block)];
+                    let msg = Message::new(
+                        Type::NonConfirmable,
+                        Code::CONTENT,
+                        MessageId::new(500 + num as u16),
+                    )
+                    .with_token(call.token())
+                    .with_options(&opts)
+                    .with_payload(&[5; 16]);
+                    let mut wire = [0; WIRE];
+                    let n = encode(&msg, &mut wire).unwrap();
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.transport_mut().fail = num == 9;
+                    if num == 9 {
+                        assert!(app.poll(now).is_err());
+                    } else {
+                        app.poll(now).unwrap();
+                        assert!(app.take_response(call).is_none());
+                    }
+                }
+                assert_eq!(
+                    app.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::ContinuationFailed
+                );
+                assert!(app.take_response(call).is_none());
+                assert!(app.take_response(other).is_none());
+                assert_eq!(app.engine.tx_occupied(), 1);
+                assert_eq!(app.engine.rx_occupied(), 0);
+                for i in 0..app.engine.capacities().rx_body_slots.unwrap() {
+                    assert!(
+                        app.engine
+                            .rx_body_transfer(crate::storage::SlotId::from_index(i))
+                            .is_none()
+                    );
+                }
+                for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                    assert!(
+                        app.engine
+                            .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                            .is_none()
+                    );
+                }
+            }
+            app.transport_mut().fail = false;
+            assert!(app.cancel(other));
+            assert!(app.get("recovered").to(peer).send(20).is_ok());
+        }
+    }
+}
