@@ -7139,3 +7139,263 @@ fn observe_route_identity_keeps_literal_slashes_and_segments_distinct() {
         0
     );
 }
+
+#[test]
+fn delete_queues_reliable_terminal_notifications_and_preserves_endpoint_nstart() {
+    fn remove(_: Request<'_>) -> Response<'static> {
+        Response::deleted()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("x", get(get_obs).delete(remove))
+        .route("other", get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (i, path) in ["x", "x", "other"].into_iter().enumerate() {
+        let token = Token::new(&[i as u8 + 1]).unwrap();
+        let (wire, n) = encode_wide_token(
+            Code::GET,
+            &[path],
+            &[Opt::observe_register()],
+            100 + i as u16,
+            token,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(i as u64).unwrap();
+    }
+    app.transport_mut().send_n = 0;
+    let (wire, n) = encode_wide_token(Code::DELETE, &["x"], &[], 200, Token::new(&[99]).unwrap());
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(10).unwrap();
+    assert_eq!(last_wide(&app).code(), Code::DELETED);
+    assert!(observe_live(&app, peer, Token::new(&[1]).unwrap()));
+    assert!(observe_live(&app, peer, Token::new(&[2]).unwrap()));
+    app.transport_mut().send_n = 0;
+    app.poll(11).unwrap();
+    let first_mid = last_wide(&app).message_id();
+    let first_token = last_wide(&app).token();
+    assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert!(last_wide(&app).observe().is_none());
+    assert!(!observe_live(&app, peer, first_token));
+    let first_wire = app.transport().sends[0];
+    let first_len = app.transport().send_lens[0];
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            12,
+            &["other"],
+            Response::content(b"wait").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        0
+    );
+    app.poll(2010).unwrap();
+    assert_eq!(app.transport().send_n, 0);
+    app.poll(2011).unwrap();
+    assert_eq!(
+        &app.transport().sends[0][..app.transport().send_lens[0]],
+        &first_wire[..first_len]
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    app.transport_mut().send_n = 0;
+    let ack = Message::new(Type::Acknowledgement, Code::EMPTY, first_mid);
+    let mut wire = [0; WIRE];
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2012).unwrap();
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "ACK permits exactly one next terminal CON"
+    );
+    let second_mid = last_wide(&app).message_id();
+    assert_ne!(last_wide(&app).token(), first_token);
+    assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
+    assert!(last_wide(&app).observe().is_none());
+    assert_eq!(
+        app.notify(
+            2012,
+            &["other"],
+            Response::content(b"wait").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        0
+    );
+    let ack = Message::new(Type::Acknowledgement, Code::EMPTY, second_mid);
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2013).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.notify(
+            2014,
+            &["other"],
+            Response::content(b"alive").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).token(), Token::new(&[3]).unwrap());
+}
+
+#[test]
+fn deleted_observer_survives_local_send_failures_until_terminal_delivery() {
+    fn remove(_: Request<'_>) -> Response<'static> {
+        Response::deleted()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("x", get(get_obs).delete(remove))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (time, code, options) in [
+        (0, Code::GET, &[Opt::observe_register()][..]),
+        (1, Code::DELETE, &[][..]),
+    ] {
+        let (wire, n) = encode_wide_token(code, &["x"], options, 100 + time as u16, token);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(time).unwrap();
+    }
+    let key = ObserveKey::new(token, peer);
+    let id = app.engine.lookup_observe(key).unwrap();
+    let mut held = [None; profiles::Default::TX_DATAGRAM_SLOTS];
+    for slot in &mut held {
+        *slot = app.engine.acquire_tx();
+    }
+    assert_eq!(app.poll(2), Err(Error::Saturated));
+    for slot in held.into_iter().flatten() {
+        app.engine.release_tx(slot).unwrap();
+    }
+    app.transport_mut().send_n = 4; // Transport injects its explicit send error.
+    for time in 3..15 {
+        assert!(matches!(app.poll(time), Err(Error::Io(_))));
+        let row = app.engine.observe_interest(id).unwrap();
+        assert!(row.is_deleted() && row.is_pending());
+        assert_eq!(row.seq(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+    app.transport_mut().send_n = 0;
+    app.poll(15).unwrap();
+    assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
+    assert!(last_wide(&app).observe().is_none());
+    assert!(app.engine.lookup_observe(key).is_none());
+    assert_eq!(
+        app.engine_mut().tx_occupied(),
+        1,
+        "terminal CON retains only delivery state"
+    );
+}
+
+#[test]
+fn failed_delete_keeps_observers_and_pending_non_hold_delays_successful_delete_notice() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static ALLOW: AtomicBool = AtomicBool::new(false);
+    fn remove(_: Request<'_>) -> Response<'static> {
+        if ALLOW.load(Ordering::SeqCst) {
+            Response::deleted()
+        } else {
+            Response::new(Code::FORBIDDEN)
+        }
+    }
+    ALLOW.store(false, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("x", get(get_obs).delete(remove))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(Code::GET, &["x"], &[Opt::observe_register()], 100, token);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    let (wire, n) = encode_wide_token(Code::DELETE, &["x"], &[], 101, token);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert_eq!(last_wide(&app).code(), Code::FORBIDDEN);
+    assert_eq!(
+        app.notify(
+            2,
+            &["x"],
+            Response::content(b"still there").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    ALLOW.store(true, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let (wire, n) = encode_wide_token(Code::DELETE, &["x"], &[], 102, token);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(3).unwrap();
+    app.transport_mut().send_n = 0;
+    app.poll(4).unwrap();
+    assert_eq!(
+        app.transport().send_n,
+        0,
+        "deletion does not discard prior NON pacing hold"
+    );
+    app.poll(10_000).unwrap();
+    assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+}
+
+#[test]
+fn terminal_notification_give_up_reclaims_delivery_and_unblocks_other_observers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("x", get(get_obs))
+        .route("other", get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (i, path) in ["x", "other"].into_iter().enumerate() {
+        let (wire, n) = encode_wide_token(
+            Code::GET,
+            &[path],
+            &[Opt::observe_register()],
+            100 + i as u16,
+            Token::new(&[i as u8 + 1]).unwrap(),
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(i as u64).unwrap();
+    }
+    app.transport_mut().send_n = 0;
+    assert_eq!(app.notify(10, &["x"], Response::not_found()).unwrap(), 1);
+    assert!(!observe_live(&app, peer, Token::new(&[1]).unwrap()));
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    for time in [2010, 6010, 14010, 30010] {
+        app.transport_mut().send_n = 0;
+        app.poll(time).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
+        assert_eq!(
+            app.notify(
+                time,
+                &["other"],
+                Response::content(b"wait").content_format(ContentFormat::TEXT_PLAIN)
+            )
+            .unwrap(),
+            0
+        );
+    }
+    app.transport_mut().send_n = 0;
+    app.poll(62010).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.transport().send_n, 0);
+    assert_eq!(
+        app.notify(
+            62010,
+            &["other"],
+            Response::content(b"available").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+}

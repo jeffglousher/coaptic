@@ -585,6 +585,10 @@ where
     /// Max-Age expiry only makes representation data stale; it does not
     /// remove client or server Observe relations. CON notification retry
     /// exhaustion removes the server relation independently of Max-Age.
+    /// Successful DELETE queues a terminal 4.04 CON for each server observer,
+    /// preserving notification holds and retrying local send failures. Poll
+    /// delivers these without requiring an ObserveSource. Each observer is
+    /// removed after sending; pending CON delivery remains until ACK/give-up.
     ///
     /// **Outbound.** Token + peer match a [`Call`]; [`Self::take_response`]
     /// is the [`Response`]. Non-Block [`Response::payload`] copies at most
@@ -633,6 +637,8 @@ where
     /// Content-Format, including its absence. A mismatch sends 4.06 without
     /// Observe and ends that relation. Non-success responses also omit Observe
     /// and end the relation after successful transmission (RFC 7641 §4.2).
+    /// Terminal responses use CON delivery. Pending CONs still count toward
+    /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
         &mut self,
         now_ms: u64,
@@ -731,17 +737,25 @@ where
     if let Some(id) = progress.observe_notify() {
         if let Some(interest) = engine.observe_interest(id) {
             let seq = interest.seq();
-            match site.observe_source(interest.resource()) {
-                Some(source) => {
-                    let response = source();
+            if observe_endpoint_held(engine, interest.endpoint(), now_ms)
+                >= usize::from(Transmission::NSTART)
+            {
+                let _ = engine.restore_observe_due(id, seq);
+            } else {
+                let response = if interest.is_deleted() {
+                    Some(Response::not_found())
+                } else {
+                    site.observe_source(interest.resource())
+                        .map(|source| source())
+                };
+                if let Some(response) = response {
                     if let Err(e) =
                         send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
                     {
                         let _ = engine.restore_observe_due(id, seq);
                         return Err(e);
                     }
-                }
-                None => {
+                } else {
                     let _ = engine.restore_observe_due(id, seq);
                 }
             }
@@ -1310,7 +1324,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots>(
         }
     }
     if plan.delete && response.code().is_success() {
-        let _ = engine.take_observe_resource(plan.resource);
+        let _ = engine.mark_observe_resource_deleted(plan.resource);
     }
     response
 }
@@ -1369,7 +1383,8 @@ where
 
 /// Per-endpoint notification NSTART counts for one [`notify_engine`] pass.
 ///
-/// One O(n) occupancy scan instead of `observe_endpoint_held` per observer.
+/// Bounded scans of Observe and pending-CON tables, including terminal
+/// delivery whose observer row is already removed, without double-counting.
 /// Shipped profiles have ≤4 observe entries; the table covers 8 unique
 /// endpoints and falls back to a full scan if that overflows (alloc backend).
 const NOTIFY_HELD_CACHE: usize = 8;
@@ -1381,7 +1396,10 @@ struct NotifyHeldCache {
 }
 
 impl NotifyHeldCache {
-    fn from_engine<S: Storage + ObserveSlots>(engine: &Engine<S>, now_ms: u64) -> Self {
+    fn from_engine<S: Storage + ObserveSlots + PendingCons>(
+        engine: &Engine<S>,
+        now_ms: u64,
+    ) -> Self {
         let mut cache = Self {
             endpoints: [None; NOTIFY_HELD_CACHE],
             held: [0; NOTIFY_HELD_CACHE],
@@ -1394,6 +1412,13 @@ impl NotifyHeldCache {
             };
             if !row.key().is_client() && row.is_notify_held(now_ms) {
                 cache.add(row.endpoint());
+            }
+        }
+        for i in 0..engine.capacities().tx_datagram_slots {
+            if let Some(pending) = engine.pending_con(SlotId::from_index(i)) {
+                if !pending_has_observe_hold(engine, pending, now_ms) {
+                    cache.add(pending.endpoint());
+                }
             }
         }
         cache
@@ -1416,7 +1441,7 @@ impl NotifyHeldCache {
         self.endpoints.iter().position(|row| *row == Some(endpoint))
     }
 
-    fn count<S: Storage + ObserveSlots>(
+    fn count<S: Storage + ObserveSlots + PendingCons>(
         &self,
         engine: &Engine<S>,
         endpoint: Endpoint,
@@ -1432,13 +1457,13 @@ impl NotifyHeldCache {
     }
 }
 
-fn observe_endpoint_held<S: Storage + ObserveSlots>(
+fn observe_endpoint_held<S: Storage + ObserveSlots + PendingCons>(
     engine: &Engine<S>,
     endpoint: Endpoint,
     now_ms: u64,
 ) -> usize {
     let n = engine.capacities().observe_entries;
-    (0..n)
+    let interests = (0..n)
         .filter(|&i| {
             engine
                 .observe_interest(SlotId::from_index(i))
@@ -1448,7 +1473,38 @@ fn observe_endpoint_held<S: Storage + ObserveSlots>(
                         && row.is_notify_held(now_ms)
                 })
         })
-        .count()
+        .count();
+    interests
+        + (0..engine.capacities().tx_datagram_slots)
+            .filter(|&i| {
+                engine
+                    .pending_con(SlotId::from_index(i))
+                    .is_some_and(|pending| {
+                        pending.endpoint() == endpoint
+                            && !pending_has_observe_hold(engine, pending, now_ms)
+                    })
+            })
+            .count()
+}
+
+fn pending_has_observe_hold<S: Storage + ObserveSlots>(
+    engine: &Engine<S>,
+    pending: crate::storage::PendingCon,
+    now_ms: u64,
+) -> bool {
+    (0..engine.capacities().observe_entries).any(|i| {
+        engine
+            .observe_interest(SlotId::from_index(i))
+            .is_some_and(|row| {
+                !row.key().is_client()
+                    && row.endpoint() == pending.endpoint()
+                    && row.is_notify_held(now_ms)
+                    && (row.notify_hold().and_then(|hold| hold.con_mid())
+                        == Some(pending.message_id())
+                        || row.lifetime().and_then(|life| life.con_mid())
+                            == Some(pending.message_id()))
+            })
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1467,18 +1523,20 @@ where
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
-    let ty = if interest.must_confirm(now_ms) {
+    let mut notify = if interest.is_deleted() {
+        Response::not_found()
+    } else if response.code().is_success() && response.format() != interest.content_format() {
+        Response::new(Code::NOT_ACCEPTABLE)
+    } else {
+        *response
+    };
+    // Terminal delivery remains tracked even after removing the observer row.
+    let ty = if !notify.code().is_success() || interest.must_confirm(now_ms) {
         Type::Confirmable
     } else {
         Type::NonConfirmable
     };
     let mid = ids.next_for(engine, now_ms)?;
-    let mut notify =
-        if response.code().is_success() && response.format() != interest.content_format() {
-            Response::new(Code::NOT_ACCEPTABLE)
-        } else {
-            *response
-        };
     if notify.code().is_success() {
         notify.set_observe(seq);
     } else {
