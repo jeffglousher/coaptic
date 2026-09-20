@@ -2128,6 +2128,7 @@ fn protected_partial_upload_failure_releases_all_request_state() {
                 let request = app.put("value").to(peer).payload(&[9; 3000]);
                 let request = if qblock {
                     request
+                        .non()
                         .q_block1()
                         .request_tag(BodyTag::new(b"upload").unwrap())
                 } else {
@@ -3508,6 +3509,138 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
         client.transport_mut().inbox = Some((peer, replies[1].clone()));
         client.poll(due + 1).unwrap();
         assert!(client.take_response(call).is_none());
+        assert!(client.transport().sent.is_empty());
+    }
+}
+
+#[test]
+fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
+    use crate::{App, Response, profiles, put};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.store(0, Ordering::SeqCst);
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(
+            "upload",
+            put(|request| {
+                assert_eq!(request.body(), Some(LARGE.as_slice()));
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                Response::changed()
+            }),
+        )
+        .bind(QWire::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    for iteration in 0..6 {
+        let now = iteration * 10000;
+        client.transport_mut().sent.clear();
+        server.transport_mut().sent.clear();
+        let call = client
+            .put("upload")
+            .q_block1()
+            .request_tag(crate::storage::BodyTag::new(&[iteration as u8]).unwrap())
+            .payload(&LARGE)
+            .to(server_ep)
+            .send(now)
+            .unwrap();
+        assert_eq!(client.transport().sent.len(), 1);
+        let first = client.transport_mut().sent.remove(0);
+        assert_eq!(decode(&first).unwrap().ty(), Type::Confirmable);
+        server.transport_mut().inbox = Some((client_ep, first.clone()));
+        server.poll(now).unwrap();
+        assert!(
+            decode(&server.transport_mut().sent.remove(0))
+                .unwrap()
+                .is_empty_ack()
+        );
+        // Lose that ACK, then require byte-identical protected retransmission.
+        client.poll(now + 3000).unwrap();
+        assert_eq!(client.transport().sent.len(), 1);
+        let retry = client.transport_mut().sent.remove(0);
+        assert_eq!(retry, first);
+        server.transport_mut().inbox = Some((client_ep, retry));
+        server.poll(now + 3001).unwrap();
+        let ack = server.transport_mut().sent.remove(0);
+        assert!(decode(&ack).unwrap().is_empty_ack());
+        client.transport_mut().inbox = Some((server_ep, ack));
+        client.poll(now + 3002).unwrap();
+        assert_eq!(client.transport().sent.len(), 1);
+        let last = client.transport_mut().sent.remove(0);
+        assert_eq!(decode(&last).unwrap().ty(), Type::Confirmable);
+        assert_ne!(
+            decode(&last).unwrap().message_id(),
+            decode(&first).unwrap().message_id()
+        );
+        server.transport_mut().inbox = Some((client_ep, last));
+        server.poll(now + 3003).unwrap();
+        assert_eq!(server.transport().sent.len(), 1);
+        let reply = server.transport_mut().sent.remove(0);
+        assert!(decode(&reply).unwrap().oscore().is_some());
+        client.transport_mut().inbox = Some((server_ep, reply));
+        client.poll(now + 3004).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().code(),
+            Code::CHANGED
+        );
+        assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+        assert_eq!(CALLS.load(Ordering::SeqCst), iteration as usize + 1);
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        for index in 0..client.engine().capacities().tx_body_slots.unwrap() {
+            assert!(
+                client
+                    .engine()
+                    .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn app_oscore_confirmable_qupload_failed_continuation_retires_binding() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    for now in 0..12 {
+        let call = client
+            .put("upload")
+            .q_block1()
+            .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
+            .payload(&LARGE)
+            .to(peer)
+            .send(now)
+            .unwrap();
+        let sent = client.transport_mut().sent.remove(0);
+        let mid = decode(&sent).unwrap().message_id();
+        let sequence = client.oscore().unwrap().sender_seq();
+        let mut wire = [0; WIRE];
+        let n = encode(&Message::empty_ack(mid), &mut wire).unwrap();
+        client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+        client.transport_mut().fail_send = true;
+        assert!(client.poll(now).is_err());
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::ContinuationFailed
+        );
+        assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+        assert!(client.oscore().unwrap().sender_seq() > sequence);
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
         assert!(client.transport().sent.is_empty());
     }
 }

@@ -977,6 +977,9 @@ where
 
     /// Send a large body with Q-Block1 (windowed) instead of classic Block1.
     /// Requires [`Self::request_tag`]; absent tags are refused before I/O.
+    /// CON uploads keep one payload outstanding and advance on its matching
+    /// empty ACK. [`Self::non`] keeps each payload NON and sends bounded sets.
+    /// This per-upload limit does not establish endpoint-wide congestion control.
     #[must_use]
     pub const fn q_block1(mut self) -> Self {
         self.q_block1 = true;
@@ -1588,7 +1591,16 @@ where
             ) {
                 if parsed.code() == Code::CONTINUE {
                     let outcome = continue_block1_tx(
-                        engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
+                        engine,
+                        io,
+                        lives,
+                        ids,
+                        oscore,
+                        now_ms,
+                        parsed.token(),
+                        parsed.q_block1().and_then(Result::ok),
+                        peer,
+                        body,
                     );
                     if outcome.is_err() {
                         abandon_send(engine, oscore, parsed.token(), peer);
@@ -2054,6 +2066,79 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn continue_qblock1_ack<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field,
+    now_ms: u64,
+    mid: MessageId,
+    peer: Endpoint,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    // Called only after a matching pending CON was taken. Duplicate/wrong
+    // endpoint/MID ACKs cannot drive the next payload.
+    let Some(entry) = exchange_for_mid(engine, mid, peer) else {
+        return Ok(());
+    };
+    let call = Call::new(entry.token(), peer);
+    let Some(live) = lives.get(call) else {
+        return Ok(());
+    };
+    if live.ty != Type::Confirmable {
+        return Ok(());
+    }
+    let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) else {
+        return Ok(());
+    };
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return Ok(());
+    };
+    if transfer.role() != BlockRole::OutgoingQBlock1 || transfer.is_complete() {
+        return Ok(());
+    }
+    let outcome = (|| {
+        if transfer.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1 {
+            // Every earlier payload was individually ACKed before the next
+            // was issued, so this ACK confirms the entire current set.
+            engine
+                .ack_q_block1(body, transfer.num())
+                .map_err(Error::Block)?;
+        }
+        continue_block1_tx(
+            engine,
+            io,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            call.token(),
+            None,
+            peer,
+            body,
+        )
+    })();
+    if outcome.is_err() {
+        abandon_send(engine, oscore, call.token(), peer);
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
 fn continue_block1_tx<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -2061,7 +2146,8 @@ fn continue_block1_tx<Mem, T>(
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
-    parsed: &ParsedMessage<'_>,
+    token: Token,
+    q_ack: Option<BlockValue>,
     peer: Endpoint,
     body: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -2075,7 +2161,7 @@ where
     if transfer.is_complete() {
         return Ok(());
     }
-    let live = lives.get(Call::new(parsed.token(), peer));
+    let live = lives.get(Call::new(token, peer));
     let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
     let code = live.map(|live| live.code).unwrap_or(Code::PUT);
     let path = live.map(|live| live.path);
@@ -2093,7 +2179,7 @@ where
     let accept = live.and_then(|live| live.accept);
     match transfer.role() {
         BlockRole::OutgoingBlock1 => {
-            take_exchange(engine, parsed, peer);
+            let _ = engine.take_exchange(ExchangeKey::new(token, peer));
             issue_block1(
                 engine,
                 io,
@@ -2103,7 +2189,7 @@ where
                 peer,
                 ty,
                 code,
-                parsed.token(),
+                token,
                 segments,
                 &queries[..query_n],
                 accept,
@@ -2114,7 +2200,7 @@ where
             )
         }
         BlockRole::OutgoingQBlock1 => {
-            if let Some(Ok(q)) = parsed.q_block1() {
+            if let Some(q) = q_ack {
                 engine.ack_q_block1(body, q.num()).map_err(Error::Block)?;
             }
             issue_q_block1_window(
@@ -2126,7 +2212,7 @@ where
                 peer,
                 ty,
                 code,
-                parsed.token(),
+                token,
                 segments,
                 &queries[..query_n],
                 accept,
@@ -2134,7 +2220,7 @@ where
                 echo,
                 body,
                 None,
-                Some((parsed.token(), peer)),
+                Some((token, peer)),
             )
             .map(|_| ())
         }
@@ -2212,7 +2298,6 @@ where
     T: DatagramIo,
 {
     let mut sent = false;
-    let mut extra = 0u16;
     loop {
         let issued = match engine.next_q_block1(body) {
             Ok(issued) => issued,
@@ -2224,11 +2309,7 @@ where
                 let _ = engine.take_exchange(ExchangeKey::new(tok, ep));
             }
         }
-        let ty = if extra == 0 {
-            first_ty
-        } else {
-            Type::NonConfirmable
-        };
+        let ty = first_ty;
         send_block1_issued(
             engine,
             io,
@@ -2249,8 +2330,9 @@ where
             tx.take(),
         )?;
         sent = true;
-        extra = extra.saturating_add(1);
-        if issued.complete() {
+        // CON uploads have one outstanding payload; the matching empty ACK
+        // opens the next send. NON retains its bounded payload-set burst.
+        if first_ty == Type::Confirmable || issued.complete() {
             return Ok(true);
         }
     }
