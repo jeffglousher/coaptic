@@ -292,26 +292,39 @@ def measure_requests(iterations, request_fn):
     return result
 
 
+def replay_envelope(data):
+    if len(data) < 5 or data[0] >> 6 != 1 or not 1 <= data[0] & 15 <= 8 or len(data) <= 4 + (data[0] & 15):
+        raise AssertionError("missing token-bearing protected request bytes")
+    replay = bytearray(data)
+    replay[2] ^= 0x40
+    replay[4] ^= 0x80
+    return bytes(replay)
+
+
 def oscore_fault_workflow(client, server):
     with Server(server, "oscore") as service:
         with Proxy(service.number, "dtls-reconnect") as relay:
             accepted = request(client, "oscore", relay.number, sequence=0, path="counter", method="POST")
-        expect(accepted, 68, b"")
-        expect(request(client, "oscore", service.number, sequence=1, path="counter"), 69, b"1")
-        captured = next(bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request")
-        # Preserve the OSCORE option/ciphertext but change the outer MID and
-        # source port, preventing ordinary CoAP duplicate-cache replay.
-        replay = bytearray(captured)
-        if len(replay) < 5:
-            raise AssertionError("missing protected request bytes")
-        replay[2] ^= 0x40
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(.5)
-            sock.sendto(replay, ("127.0.0.1", service.number))
-            try:
-                replay_reply = sock.recvfrom(4096)[0].hex()
-            except socket.timeout:
-                replay_reply = None
+            expect(accepted, 68, b"")
+            expect(request(client, "oscore", service.number, sequence=1, path="counter"), 69, b"1")
+            captured = next(bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request")
+            # RFC 8613 leaves outer MID/Token outside integrity protection.
+            # Change both; preserve every option/ciphertext byte. Keep the
+            # first relay bound so a new socket cannot reuse its source port.
+            replay = replay_envelope(captured)
+            accepted_source = relay.back.getsockname()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                replay_source = sock.getsockname()
+                if replay_source == accepted_source:
+                    raise AssertionError("replay did not change source endpoint")
+                sock.settimeout(.5)
+                if sock.sendto(replay, ("127.0.0.1", service.number)) != len(replay):
+                    raise AssertionError("replay datagram was not completely sent")
+                try:
+                    replay_reply = sock.recvfrom(4096)[0].hex()
+                except socket.timeout:
+                    replay_reply = None
         expect(request(client, "oscore", service.number, sequence=2, path="counter"), 69, b"1")
         # A forged far-future request cannot advance the recipient window.
         with Proxy(service.number, "corrupt-request") as corrupted:
@@ -324,7 +337,7 @@ def oscore_fault_workflow(client, server):
         expect(request(client, "oscore", service.number, sequence=1000, path="counter", method="POST"), 68, b"")
         final = request(client, "oscore", service.number, sequence=1001, path="counter")
         expect(final, 69, b"2")
-        return {"accepted_trace": relay.trace, "replayed_hex": replay.hex(), "replay_reply_hex": replay_reply,
+        return {"accepted_trace": relay.trace, "accepted_source": accepted_source, "replay_source": replay_source, "replayed_hex": replay.hex(), "replay_reply_hex": replay_reply,
                 "corrupted_trace": corrupted.trace, "refused": refused, "final": final,
                 "verified": ["replayed ciphertext cannot repeat POST effect", "bad-tag future request cannot consume replay window", "valid sequence remains usable after refusal"],
                 "scope": "IPv4 UDP public C.1 context; sequential bounded counter fixture; not persistent or concurrent security qualification"}

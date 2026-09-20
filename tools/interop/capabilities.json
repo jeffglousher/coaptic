@@ -2146,7 +2146,7 @@
         "final counter equals two accepted POSTs"
       ],
       "failure_proof": [
-        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "same ciphertext with changed outer MID/Token/source endpoint cannot repeat POST effect",
         "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
       ],
       "executable": "tools/interop/run.py:oscore_fault_workflow"
@@ -2177,7 +2177,7 @@
         "final counter equals two accepted POSTs"
       ],
       "failure_proof": [
-        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "same ciphertext with changed outer MID/Token/source endpoint cannot repeat POST effect",
         "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
       ],
       "executable": "tools/interop/run.py:oscore_fault_workflow"
@@ -2208,7 +2208,7 @@
         "final counter equals two accepted POSTs"
       ],
       "failure_proof": [
-        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "same ciphertext with changed outer MID/Token/source endpoint cannot repeat POST effect",
         "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
       ],
       "executable": "tools/interop/run.py:oscore_fault_workflow"
