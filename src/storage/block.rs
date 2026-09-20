@@ -1345,8 +1345,10 @@ impl BlockTransfer {
 
     /// Advance the outgoing Q-Block window after a peer window ACK.
     ///
-    /// Empty ACK (code 0.00) is not a window ACK. This method does not inspect
-    /// response codes; the caller supplies the RFC 9177 NUM:
+    /// An individual empty ACK (code 0.00) is not a window ACK. A caller
+    /// tracking every CON payload may advance once the whole set is confirmed.
+    /// This method does not inspect response codes; otherwise the caller supplies
+    /// the RFC 9177 NUM:
     ///
     /// - [`BlockRole::OutgoingQBlock1`]: `num` is the Q-Block1 NUM from a
     ///   Continue (RFC 9177 §4.3: all blocks through `num` received). Advances

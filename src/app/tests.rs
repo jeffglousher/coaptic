@@ -6048,7 +6048,7 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
     for qblock in [false, true] {
         for confirmable in [false, true] {
             for short in [false, true] {
-                for fail_at in 1..=if qblock { 3 } else { 1 } {
+                for fail_at in 1..=if qblock && !confirmable { 3 } else { 1 } {
                     let mut app = App::profile::<profiles::Default>()
                         .deterministic_for_tests()
                         .block_wise::<true>()
@@ -8509,4 +8509,217 @@ fn qblock2_give_up_retires_call_and_preserves_other_calls_and_reused_body() {
         assert_eq!(app.engine_mut().rx_occupied(), 0);
         assert_eq!(app.engine_mut().tx_occupied(), 0);
     }
+}
+
+#[test]
+fn qblock1_confirmable_upload_waits_for_matching_ack_between_payloads() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app
+        .put("upload")
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"qcon").unwrap())
+        .payload(&LARGE)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    assert_eq!(app.transport().send_n, 1, "one outstanding CON payload");
+    let first = last_wide(&app);
+    assert_eq!(first.ty(), Type::Confirmable);
+    assert_eq!(first.q_block1().unwrap().unwrap().num(), 0);
+    assert_eq!(first.payload(), &LARGE[..1024]);
+    let mid = first.message_id();
+    let mut final_mid = mid;
+    for (from, ack_mid, advances) in [
+        (Endpoint::v4([192, 0, 2, 9], 5683), mid, false),
+        (peer, MessageId::new(mid.get().wrapping_add(10)), false),
+        (peer, mid, true),
+        (peer, mid, false),
+    ] {
+        app.transport_mut().send_n = 0;
+        let mut wire = [0; WIRE];
+        let n = encode(&Message::empty_ack(ack_mid), &mut wire).unwrap();
+        app.transport_mut().inbox = Some((from, wire, n));
+        app.poll(1).unwrap();
+        assert_eq!(app.transport().send_n, usize::from(advances));
+        if advances {
+            let next = last_wide(&app);
+            assert_eq!(next.ty(), Type::Confirmable);
+            assert_ne!(next.message_id(), mid);
+            final_mid = next.message_id();
+            assert_eq!(next.q_block1().unwrap().unwrap().num(), 1);
+            assert!(!next.q_block1().unwrap().unwrap().more());
+            assert_eq!(next.payload(), &LARGE[1024..]);
+        }
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine_mut().tx_occupied(), 1);
+    }
+    let final_reply =
+        Message::new(Type::Acknowledgement, Code::CHANGED, final_mid).with_token(call.token());
+    let mut wire = [0; WIRE];
+    let n = encode(&final_reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
+    struct FaultIo {
+        pipe: WideLoopback,
+        fail: bool,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.pipe.recv(out)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("injected continuation failure")
+                }
+            } else {
+                self.pipe.send(peer, bytes)
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for short in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(FaultIo {
+                pipe: WideLoopback::default(),
+                fail: false,
+                short,
+            })
+            .unwrap();
+        let other = app
+            .get("other")
+            .to(Endpoint::v4([192, 0, 2, 9], 5683))
+            .send(0)
+            .unwrap();
+        for now in 1..13 {
+            app.transport_mut().pipe.send_n = 0;
+            app.transport_mut().fail = false;
+            let call = app
+                .put("upload")
+                .q_block1()
+                .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
+                .payload(&LARGE)
+                .to(peer)
+                .send(now)
+                .unwrap();
+            let mid = decode(&app.transport().pipe.sends[0][..app.transport().pipe.send_lens[0]])
+                .unwrap()
+                .message_id();
+            let mut wire = [0; WIRE];
+            let n = encode(&Message::empty_ack(mid), &mut wire).unwrap();
+            app.transport_mut().pipe.inbox = Some((peer, wire, n));
+            app.transport_mut().fail = true;
+            assert!(app.poll(now).is_err());
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap_err(),
+                crate::CallFailure::ContinuationFailed
+            );
+            assert!(app.take_response(other).is_none());
+            assert_eq!(app.engine_mut().tx_occupied(), 1);
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
+    struct LargeUpload;
+    impl MemoryProfile for LargeUpload {
+        const RX_DATAGRAM_SLOTS: usize = 4;
+        const RX_DATAGRAM_BYTES: usize = WIRE;
+        const TX_DATAGRAM_SLOTS: usize = 4;
+        const TX_DATAGRAM_BYTES: usize = WIRE;
+        const DEDUP_ENTRIES: usize = 8;
+        const OBSERVE_ENTRIES: usize = 4;
+        const RX_BODY_SLOTS: usize = 2;
+        const RX_BODY_BYTES: usize = 4096;
+        const TX_BODY_SLOTS: usize = 2;
+        const TX_BODY_BYTES: usize = 12288;
+        type RxDatagram = <profiles::Default as MemoryProfile>::RxDatagram;
+        type TxDatagram = <profiles::Default as MemoryProfile>::TxDatagram;
+        type RxBody = <profiles::Default as MemoryProfile>::RxBody;
+        type TxBody = crate::storage::BodyPool<2, 12288>;
+        type Dedup = <profiles::Default as MemoryProfile>::Dedup;
+        type Observe = <profiles::Default as MemoryProfile>::Observe;
+        type Exchange = <profiles::Default as MemoryProfile>::Exchange;
+        type RxScratch = <profiles::Default as MemoryProfile>::RxScratch;
+        type TxScratch = <profiles::Default as MemoryProfile>::TxScratch;
+    }
+    static BODY: [u8; 11000] = [b'Q'; 11000];
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<LargeUpload>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app
+        .put("upload")
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
+        .payload(&BODY)
+        .to(peer)
+        .send(0)
+        .unwrap();
+    for num in 0..11 {
+        assert_eq!(app.transport().send_n, 1);
+        assert_eq!(app.engine_mut().tx_occupied(), 1);
+        let request = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+        assert_eq!(request.ty(), Type::Confirmable);
+        assert_eq!(request.q_block1().unwrap().unwrap().num(), num);
+        let offset = num as usize * 1024;
+        assert_eq!(
+            request.payload(),
+            &BODY[offset..(offset + 1024).min(BODY.len())]
+        );
+        let message = if num == 10 {
+            Message::new(Type::Acknowledgement, Code::CHANGED, request.message_id())
+                .with_token(call.token())
+        } else {
+            Message::empty_ack(request.message_id())
+        };
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().send_n = 0;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num) + 1).unwrap();
+    }
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
