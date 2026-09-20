@@ -18,8 +18,13 @@
 //! 1. Provision the Master Secret (and optional salt / ID Context) out of
 //!    band. This crate does not mint secrets or call an OS RNG.
 //! 2. Give each endpoint distinct Sender / Recipient IDs (they are mirrors).
-//! 3. Persist or advance [`SecurityContext::sender_seq`] so a reboot does
-//!    not reuse Partial IVs. See `knowledge/rfcs/rfc8613.txt` Appendix B.
+//! 3. Durably reserve sender sequences before use and restore recipient replay
+//!    protection before accepting traffic with reused keys. See
+//!    [`SecurityContext::set_sender_seq`], [`ReplayCheckpoint`] and
+//!    [`SecurityContext::restore_replay`]. Checkpoint storage, context identity,
+//!    freshness and commit-before-effects are caller responsibilities. App has
+//!    no durable pre-handler checkpoint barrier. If state recovery is uncertain,
+//!    establish a fresh cryptographic context (RFC 8613 section 7.5 / Appendix B).
 //! 4. Keep the context for the lifetime of the pairwise association. App
 //!    holds it only if you call [`crate::App::set_oscore`].
 //! 5. At most [`LIVE_REQUESTS`] (4) in-flight Token→[`RequestRef`] rows.
@@ -114,7 +119,7 @@ mod protect;
 #[cfg(test)]
 mod tests;
 
-pub use context::{DeriveParams, RequestRef, SecurityContext};
+pub use context::{DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext};
 pub use error::Error;
 pub use header::{OscoreHeader, PartialIv};
 pub use protect::{
