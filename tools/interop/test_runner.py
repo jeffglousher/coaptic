@@ -148,6 +148,18 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Proxy(1234, "dtls-reconnect", family="invented")
 
+    def test_corruption_changes_actual_forwarded_datagram(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            server.bind(("127.0.0.1", 0))
+            server.settimeout(1)
+            with Proxy(server.getsockname()[1], "corrupt-request") as relay:
+                for payload in (b"tag\x00", b"tag\xff"):
+                    client.sendto(payload, ("127.0.0.1", relay.number))
+                    observed = server.recvfrom(100)[0]
+                    self.assertEqual(observed, payload[:-1] + bytes([payload[-1] ^ 0x80]))
+            self.assertEqual(len(relay.trace), 2)
+            self.assertTrue(all(row["action"] == "corrupt" and row["hex"] != row["forwarded_hex"] for row in relay.trace))
+
     def test_duplicate_and_drop_are_real_datagrams(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
             server.bind(("127.0.0.1",0))

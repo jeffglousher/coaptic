@@ -2121,6 +2121,97 @@
         "plaintext PUT receives 4.01 and cannot change state"
       ],
       "executable": "tools/interop/run.py:main.oscore_state"
+    },
+    {
+      "id": "oscore-faults:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "oscore",
+        "replay",
+        "authenticated-corruption",
+        "counter-state"
+      ],
+      "positive_proof": [
+        "valid protected POST increments counter once",
+        "valid low sequence and retried high sequence work after forged future request",
+        "final counter equals two accepted POSTs"
+      ],
+      "failure_proof": [
+        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
+      ],
+      "executable": "tools/interop/run.py:oscore_fault_workflow"
+    },
+    {
+      "id": "oscore-faults:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "replay",
+        "authenticated-corruption",
+        "counter-state"
+      ],
+      "positive_proof": [
+        "valid protected POST increments counter once",
+        "valid low sequence and retried high sequence work after forged future request",
+        "final counter equals two accepted POSTs"
+      ],
+      "failure_proof": [
+        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
+      ],
+      "executable": "tools/interop/run.py:oscore_fault_workflow"
+    },
+    {
+      "id": "oscore-faults:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "replay",
+        "authenticated-corruption",
+        "counter-state"
+      ],
+      "positive_proof": [
+        "valid protected POST increments counter once",
+        "valid low sequence and retried high sequence work after forged future request",
+        "final counter equals two accepted POSTs"
+      ],
+      "failure_proof": [
+        "same ciphertext with changed outer MID/source endpoint cannot repeat POST effect",
+        "actual bad-tag request with sequence 1000 cannot advance replay window or mutate state"
+      ],
+      "executable": "tools/interop/run.py:oscore_fault_workflow"
     }
   ],
   "gaps": [
@@ -2184,7 +2275,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Three initial process cases qualify exact GET and PUT/readback plus wrong-key/plaintext state preservation with public C.1 keys. Independent replay/corruption, protected Observe/block/Q transfer, context lifecycle and persistent sequence recovery remain unqualified.",
+      "reason": "Initial independent process cases qualify GET/PUT state, wrong-key/plaintext refusal, replayed counter POST ciphertext and forged-future bad-tag refusal without replay-window poisoning. Protected Observe/block/Q, concurrent contexts and persistent sequence recovery remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },
