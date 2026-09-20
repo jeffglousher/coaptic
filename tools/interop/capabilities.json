@@ -1090,7 +1090,7 @@
       "executable_cases": []
     },
     {
-      "feature": "ipv6-and-compound-network-faults",
+      "feature": "scoped-ipv6-and-compound-network-faults",
       "status": "unqualified",
       "role": "both",
       "transport_security": "all",
@@ -1101,9 +1101,15 @@
         "macos",
         "embedded"
       ],
-      "reason": "Process runner binds IPv4 loopback; IPv6, alternative server fault directions, DTLS faults, reordering/delay/MTU and combined schedules are absent.",
+      "reason": "IPv6 UDP loopback GET/404/Block2 is exercised by five cases. Scoped/link-local IPv6, IPv6 DTLS, alternative server fault directions, reordering/delay/MTU and combined schedules remain absent.",
       "issue": 200,
-      "executable_cases": []
+      "executable_cases": [
+        "ipv6-udp:coaptic->coaptic",
+        "ipv6-udp:coaptic->coap-rs",
+        "ipv6-udp:coap-rs->coaptic",
+        "ipv6-udp:coaptic->libcoap",
+        "ipv6-udp:libcoap->coaptic"
+      ]
     },
     {
       "feature": "concurrency-saturation-and-soak",
