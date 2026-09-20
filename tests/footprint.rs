@@ -178,3 +178,15 @@ fn protected_recovery_reference_has_a_fixed_sidecar_budget() {
 fn observe_format_retention_has_a_small_explicit_bound() {
     assert!(size_of::<Option<Option<coaptic::message::ContentFormat>>>() <= 4);
 }
+
+#[cfg(feature = "oscore")]
+#[test]
+fn observe_and_download_security_bindings_remain_bounded() {
+    let bytes = size_of::<coaptic::oscore::SecurityContext>();
+    println!("SecurityContext with four registration/download pairs: {bytes} bytes");
+    assert!(size_of::<Option<coaptic::oscore::RequestRef>>() <= 16);
+    assert!(
+        bytes <= 512,
+        "pairwise context exceeded its explicit binding budget: {bytes}"
+    );
+}
