@@ -429,6 +429,7 @@ impl ObserveNotifyHold {
 pub struct ObserveInterest {
     key: ObserveKey,
     resource: ObserveResource,
+    content_format: Option<crate::message::ContentFormat>,
     seq: u32,
     pending: bool,
     lifetime: Option<ObserveLifetime>,
@@ -447,6 +448,7 @@ impl ObserveInterest {
         Self {
             key: ObserveKey::new(token, endpoint),
             resource: ObserveResource::NONE,
+            content_format: None,
             seq: 0,
             pending: false,
             lifetime: None,
@@ -485,6 +487,24 @@ impl ObserveInterest {
     #[must_use]
     pub const fn with_resource(self, resource: ObserveResource) -> Self {
         Self { resource, ..self }
+    }
+
+    /// Content-Format of the initial representation, retained for notifications.
+    #[must_use]
+    pub const fn content_format(self) -> Option<crate::message::ContentFormat> {
+        self.content_format
+    }
+
+    /// Retain the initial representation's Content-Format, including absence.
+    #[must_use]
+    pub const fn with_content_format(
+        self,
+        content_format: Option<crate::message::ContentFormat>,
+    ) -> Self {
+        Self {
+            content_format,
+            ..self
+        }
     }
 
     /// OSCORE request binding for protected notifications, if any.
