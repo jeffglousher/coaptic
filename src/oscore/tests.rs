@@ -2859,6 +2859,11 @@ fn replay_checkpoint_validates_bounds_and_refuses_live_rollback() {
         context.replay_accept(seq);
     }
     let latest = context.replay_checkpoint();
+    for invalid in [end, u64::MAX] {
+        assert!(!context.replay_fresh(invalid));
+        context.replay_accept(invalid);
+        assert_eq!(context.replay_checkpoint(), latest);
+    }
     assert_eq!(context.restore_replay(initial), Err(Error::ReplayRollback));
     assert_eq!(context.replay_checkpoint(), latest);
     let dropping_seen = ReplayCheckpoint::from_parts(20, (1 << 11) | (1 << 12)).unwrap();
@@ -2918,7 +2923,7 @@ fn restored_recipient_checkpoint_refuses_old_authenticated_requests() {
 
 #[test]
 fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
-    let mut random = 0x8613_7500_32u64;
+    let mut random = 0x0086_1375_0032_u64;
     for _ in 0..256 {
         let mut context = server_c1();
         for _ in 0..8 {
