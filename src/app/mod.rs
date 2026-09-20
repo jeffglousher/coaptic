@@ -622,7 +622,9 @@ where
         )
     }
 
-    /// Send the current representation to every observer of `path`.
+    /// Send the current representation to server-side observers of `path`.
+    /// Exact registered path segments select the route. Client subscriptions
+    /// are separate, even when the peer and Token match an incoming observer.
     ///
     /// Honors notification NSTART. CON when the row
     /// [`ObserveInterest::must_confirm`]; otherwise NON. Returns how many
@@ -637,7 +639,7 @@ where
         path: &[&str],
         response: Response<'static>,
     ) -> Result<usize, Error<T::Error>> {
-        let resource = ObserveResource::from_path(path);
+        let resource = self.site.observe_resource(path);
         notify_engine(
             &mut self.engine,
             &mut self.io,
@@ -655,7 +657,7 @@ where
     /// Returns how many rows were marked. Use [`Self::notify`] when you
     /// already have the [`Response`].
     pub fn signal(&mut self, path: &[&str]) -> usize {
-        let resource = ObserveResource::from_path(path);
+        let resource = self.site.observe_resource(path);
         self.engine.signal_observe_resource(resource)
     }
 }
@@ -1271,7 +1273,7 @@ impl ObservePlan {
             delete: request.method() == Some(Method::Delete),
             has_source: site.has_observe_source(request.path()),
             token: request.token(),
-            resource: ObserveResource::from_path(request.path()),
+            resource: site.observe_resource(request.path()),
         }
     }
 }
@@ -1338,7 +1340,7 @@ where
         let Some(interest) = engine.observe_interest(id) else {
             continue;
         };
-        if interest.resource() != resource {
+        if interest.key().is_client() || interest.resource() != resource {
             continue;
         }
         if held.count(engine, interest.endpoint(), now_ms)
@@ -1390,7 +1392,7 @@ impl NotifyHeldCache {
             let Some(row) = engine.observe_interest(SlotId::from_index(i)) else {
                 continue;
             };
-            if row.is_notify_held(now_ms) {
+            if !row.key().is_client() && row.is_notify_held(now_ms) {
                 cache.add(row.endpoint());
             }
         }
@@ -1440,7 +1442,11 @@ fn observe_endpoint_held<S: Storage + ObserveSlots>(
         .filter(|&i| {
             engine
                 .observe_interest(SlotId::from_index(i))
-                .is_some_and(|row| row.endpoint() == endpoint && row.is_notify_held(now_ms))
+                .is_some_and(|row| {
+                    !row.key().is_client()
+                        && row.endpoint() == endpoint
+                        && row.is_notify_held(now_ms)
+                })
         })
         .count()
 }

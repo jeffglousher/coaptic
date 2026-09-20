@@ -43,7 +43,7 @@ use crate::message::{
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
     ExchangeEntry, ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey,
-    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
 use super::identity::AppIds;
@@ -1519,7 +1519,7 @@ where
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
     let via_observe = engine
-        .lookup_observe(ObserveKey::new(parsed.token(), peer))
+        .lookup_observe(ObserveKey::new_client(parsed.token(), peer))
         .is_some();
     if via_exchange.is_none() && !via_observe {
         let outcome = if parsed.ty() == Type::Confirmable {
@@ -2429,7 +2429,7 @@ fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotI
 }
 
 fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
-    let key = ObserveKey::new(call.token(), call.peer());
+    let key = ObserveKey::new_client(call.token(), call.peer());
     engine.lookup_observe(key).is_some()
 }
 
@@ -2443,7 +2443,7 @@ fn accept_client_observe<Mem>(
 ) where
     Mem: Storage + ObserveSlots,
 {
-    let key = ObserveKey::new(parsed.token(), peer);
+    let key = ObserveKey::new_client(parsed.token(), peer);
     let live = lives.get(Call::new(parsed.token(), peer));
     if live.is_some_and(|live| live.observe == OutgoingObserve::Deregister) {
         let _ = engine.take_observe(key);
@@ -2452,11 +2452,7 @@ fn accept_client_observe<Mem>(
     let subscribed = live.is_some_and(|live| live.observe == OutgoingObserve::Register)
         || engine.lookup_observe(key).is_some();
     if subscribed && parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
-        let resource = live
-            .map(|live| ObserveResource::from_path(live.path.segments()))
-            .unwrap_or(ObserveResource::NONE);
-        let _ = engine
-            .insert_observe(ObserveInterest::new(parsed.token(), peer).with_resource(resource));
+        let _ = engine.insert_observe(ObserveInterest::new_client(parsed.token(), peer));
         let max_age = parsed
             .max_age()
             .and_then(Result::ok)
@@ -2535,7 +2531,7 @@ fn fail_call<Mem>(
             }
         }
     }
-    let _ = engine.take_observe(ObserveKey::new(call.token(), call.peer()));
+    let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer()));
     if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
         let _ = engine.release_rx_body(body);
     }

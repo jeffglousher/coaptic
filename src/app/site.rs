@@ -229,25 +229,32 @@ impl<const N: usize> Site<N> {
         Response::problem(Code::NOT_FOUND).title("Not Found")
     }
 
-    /// Snapshot fn for `resource`, if the matching route registered one.
-    #[must_use]
-    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<ObserveSource> {
-        if resource.is_none() {
-            return None;
-        }
-        for entry in self.entries.iter().flatten() {
-            if ObserveResource::from_path(entry.path.segments()) == resource {
-                return entry.methods.observe_source();
-            }
-        }
-        None
+    /// Stable local identity, selected by exact segment comparison.
+    pub(crate) fn observe_resource(&self, segments: &[&str]) -> ObserveResource {
+        self.entries
+            .iter()
+            .enumerate()
+            .find_map(|(index, entry)| {
+                entry
+                    .as_ref()
+                    .filter(|entry| entry.path.matches(segments))
+                    .map(|_| ObserveResource::app_route(index))
+            })
+            .unwrap_or(ObserveResource::NONE)
     }
 
-    /// Whether this path has an Observe snapshot or is otherwise observable
-    /// only via a handler that returns Observe on the response.
-    #[must_use]
+    /// Snapshot fn for an opaque App route identity.
+    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<ObserveSource> {
+        self.entries.iter().enumerate().find_map(|(index, entry)| {
+            entry
+                .as_ref()
+                .filter(|_| ObserveResource::app_route(index) == resource)
+                .and_then(|entry| entry.methods.observe_source())
+        })
+    }
+
     pub(crate) fn has_observe_source(&self, segments: &[&str]) -> bool {
-        self.observe_source(ObserveResource::from_path(segments))
+        self.observe_source(self.observe_resource(segments))
             .is_some()
     }
 }

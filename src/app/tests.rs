@@ -3377,7 +3377,7 @@ fn echo_obs_app() -> App<profiles::Default, Echo> {
 }
 
 fn client_observe_live(app: &App<profiles::Default, Echo>, call: crate::Call) -> bool {
-    let key = ObserveKey::new(call.token(), call.peer());
+    let key = ObserveKey::new_client(call.token(), call.peer());
     app.engine().lookup_observe(key).is_some()
 }
 
@@ -5511,7 +5511,11 @@ fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
     assert_eq!(response.received_at_ms(), Some(1));
     assert_eq!(response.observe_seq(), Some(0));
     assert_eq!(response.format(), Some(ContentFormat::TEXT_PLAIN));
-    assert!(observe_live(&app, peer, call.token()));
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new_client(call.token(), peer))
+            .is_some()
+    );
     assert!(app.cancel(call));
     assert_eq!(
         app.take_response(call).unwrap().unwrap_err(),
@@ -5943,7 +5947,7 @@ fn client_observe_serial_order_wrap_and_time_boundary() {
                 }
                 let interest = app
                     .engine
-                    .lookup_observe(ObserveKey::new(call.token(), peer))
+                    .lookup_observe(ObserveKey::new_client(call.token(), peer))
                     .unwrap();
                 let lifetime = app
                     .engine
@@ -6050,7 +6054,7 @@ fn client_observe_survives_stale_data_then_ends_on_final_response() {
             app.poll(now + 1).unwrap();
             assert!(
                 app.engine
-                    .lookup_observe(ObserveKey::new(call.token(), peer))
+                    .lookup_observe(ObserveKey::new_client(call.token(), peer))
                     .is_some()
             );
             assert!(app.take_response(call).is_none());
@@ -6068,7 +6072,7 @@ fn client_observe_survives_stale_data_then_ends_on_final_response() {
         assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
         assert!(
             app.engine
-                .lookup_observe(ObserveKey::new(call.token(), peer))
+                .lookup_observe(ObserveKey::new_client(call.token(), peer))
                 .is_none()
         );
         app.transport_mut().sent_n = 0;
@@ -6102,7 +6106,7 @@ fn unsolicited_observe_option_does_not_create_subscription() {
         );
         assert!(
             app.engine
-                .lookup_observe(ObserveKey::new(call.token(), peer))
+                .lookup_observe(ObserveKey::new_client(call.token(), peer))
                 .is_none()
         );
     }
@@ -7020,5 +7024,118 @@ fn observe_cancellation_cannot_select_an_unread_terminal_response() {
     assert_eq!(
         app.take_response(call).unwrap().unwrap().code(),
         Code::NOT_FOUND
+    );
+}
+
+#[test]
+fn observe_client_and_server_roles_do_not_overwrite_or_cancel_each_other() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = echo_obs_app();
+    let call = app.get("sensors/temp").observe().to(peer).send(0).unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    let server_key = ObserveKey::new(call.token(), peer);
+    let client_key = ObserveKey::new_client(call.token(), peer);
+    let server = app.engine.lookup_observe(server_key).unwrap();
+    let client = app.engine.lookup_observe(client_key).unwrap();
+    assert_ne!(server, client);
+    assert!(
+        app.engine
+            .observe_interest(client)
+            .unwrap()
+            .resource()
+            .is_none()
+    );
+    assert_eq!(
+        app.notify(
+            1,
+            &["sensors", "temp"],
+            Response::content(b"one notification").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    app.poll(1).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().payload(),
+        b"one notification"
+    );
+    assert!(app.cancel(call));
+    assert!(app.engine.lookup_observe(client_key).is_none());
+    assert!(
+        app.engine.lookup_observe(server_key).is_some(),
+        "local cancellation must not remove the independent observer"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    // The peer's existing server relation terminates when its CON is reset.
+    app.notify(
+        86_400_002,
+        &["sensors", "temp"],
+        Response::content(b"late").content_format(ContentFormat::TEXT_PLAIN),
+    )
+    .unwrap();
+    app.poll(86_400_002).unwrap();
+    app.poll(86_400_002).unwrap();
+    assert!(app.engine.lookup_observe(server_key).is_none());
+}
+
+#[test]
+fn observe_route_identity_keeps_literal_slashes_and_segments_distinct() {
+    fn slash() -> Response<'static> {
+        Response::content(b"literal").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    fn segments() -> Response<'static> {
+        Response::content(b"segments").content_format(ContentFormat::TEXT_PLAIN)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["a/b"], get(get_obs).observe(slash))
+        .route(&["a", "b"], get(get_obs).observe(segments))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let paths: [&[&str]; 2] = [&["a/b"], &["a", "b"]];
+    let tokens = [Token::new(&[1]).unwrap(), Token::new(&[2]).unwrap()];
+    for (i, path) in paths.iter().enumerate() {
+        let (wire, n) = encode_wide_token(
+            Code::GET,
+            path,
+            &[Opt::observe_register()],
+            100 + i as u16,
+            tokens[i],
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(i as u64).unwrap();
+    }
+    assert_ne!(
+        app.site.observe_resource(paths[0]),
+        app.site.observe_resource(paths[1])
+    );
+    assert!(app.site.observe_resource(&["missing"]).is_none());
+    for (i, path) in paths.iter().enumerate() {
+        app.transport_mut().send_n = 0;
+        assert_eq!(app.signal(path), 1);
+        app.poll(10_000 * (i as u64 + 1)).unwrap();
+        let note = last_wide(&app);
+        assert_eq!(note.token(), tokens[i]);
+        assert_eq!(
+            note.payload(),
+            if i == 0 {
+                b"literal".as_slice()
+            } else {
+                b"segments".as_slice()
+            }
+        );
+        assert_eq!(app.transport().send_n, 1);
+    }
+    assert_eq!(app.signal(&["missing"]), 0);
+    assert_eq!(
+        app.notify(30_000, &["missing"], Response::content(b"no"))
+            .unwrap(),
+        0
     );
 }
