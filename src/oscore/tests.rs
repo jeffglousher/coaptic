@@ -3189,3 +3189,58 @@ fn app_oscore_qblock2_accepts_one_no_piv_response_then_fresh_piv() {
     );
     assert!(client.oscore().unwrap().lookup(call.token()).is_none());
 }
+
+#[test]
+fn app_oscore_repeated_qblock2_selection_preserves_inner_ranges_and_distinct_pivs() {
+    use crate::{App, Request, Response, get, profiles};
+    static BODY: [u8; 184] = [b'Q'; 184];
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut sender = client_c1();
+    let options = [
+        Opt::uri_path("large"),
+        Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &[0x78]),
+        Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &[0x80]),
+        Opt::opaque(crate::message::OptionNumber::Q_BLOCK2, &[0x90]),
+    ];
+    let token = Token::new(&[7]).unwrap();
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(token)
+        .with_options(&options);
+    let mut wire = [0; WIRE];
+    let n = sender.protect_request(&request, &mut wire).unwrap();
+    let request_ref = sender.lookup(token).unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(body))
+        .bind(QWire::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    server.poll(0).unwrap();
+    assert_eq!(server.transport().sent.len(), 3);
+    for (index, bytes) in server.transport().sent.iter().enumerate() {
+        let outer = decode(bytes).unwrap();
+        assert!(outer.q_block2().next().is_none());
+        assert_eq!(
+            header::OscoreHeader::parse(outer.oscore().unwrap())
+                .unwrap()
+                .piv
+                .unwrap()
+                .seq(),
+            index as u64
+        );
+        let mut plain = [0; WIRE];
+        let inner = sender
+            .unprotect_response(&outer, request_ref, &mut plain)
+            .unwrap();
+        let block = inner.q_block2().next().unwrap().unwrap();
+        assert_eq!(block.num(), 7 + index as u32);
+        assert_eq!(inner.payload(), &BODY[(7 + index) * 16..(8 + index) * 16]);
+        assert_eq!(inner.size2(), Some(Ok(184)));
+        assert_eq!(inner.etag().next(), Some(&b"v1"[..]));
+    }
+}
