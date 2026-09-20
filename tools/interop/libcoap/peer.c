@@ -113,7 +113,10 @@ static coap_response_t response_handler(coap_session_t *session,
 }
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
-  if(argc!=8){failure("invalid arguments");return 2;}
+  if(argc!=8 && argc!=9){failure("invalid arguments");return 2;}
+  const char *family = argc == 9 ? argv[8] : "ipv4";
+  if(strcmp(family,"ipv4") && strcmp(family,"ipv6")){failure("invalid address family");return 2;}
+  const int ipv6 = strcmp(family,"ipv6")==0;
   const int server=strcmp(argv[1],"server")==0,dtls=strcmp(argv[2],"dtls")==0;
   if ((!server && strcmp(argv[1],"client")) || (!dtls && strcmp(argv[2],"udp"))) {failure("invalid mode");return 2;}
   char *end=NULL;long port=strtol(argv[3],&end,10);
@@ -131,7 +134,14 @@ int main(int argc,char **argv) {
   if(!ctx){failure("context failed");coap_cleanup();return 1;}
   coap_context_set_block_mode(ctx,COAP_BLOCK_USE_LIBCOAP|COAP_BLOCK_SINGLE_BODY);
   coap_address_t addr;coap_address_init(&addr);
-  addr.addr.sin.sin_family=AF_INET;addr.addr.sin.sin_addr.s_addr=htonl(INADDR_LOOPBACK);addr.addr.sin.sin_port=htons((uint16_t)port);addr.size=sizeof(addr.addr.sin);
+  if(ipv6) {
+    addr.addr.sin6.sin6_family=AF_INET6;
+    addr.addr.sin6.sin6_addr.s6_addr[15]=1;
+    addr.addr.sin6.sin6_port=htons((uint16_t)port);
+    addr.size=sizeof(addr.addr.sin6);
+  } else {
+    addr.addr.sin.sin_family=AF_INET;addr.addr.sin.sin_addr.s_addr=htonl(INADDR_LOOPBACK);addr.addr.sin.sin_port=htons((uint16_t)port);addr.size=sizeof(addr.addr.sin);
+  }
   coap_proto_t proto=dtls?COAP_PROTO_DTLS:COAP_PROTO_UDP;
   int status=0;
   if(server) {

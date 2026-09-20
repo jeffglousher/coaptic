@@ -78,7 +78,9 @@ async fn run() -> Result<(), Error> {
         let socket = UdpSocket::bind(if a.server {
             a.address()
         } else {
-            ([127, 0, 0, 1], 0).into()
+            let mut address = a.address();
+            address.set_port(0);
+            address
         })?;
         socket.set_nonblocking(true)?;
         Io::Udp(socket)

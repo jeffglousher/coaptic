@@ -786,6 +786,146 @@
         "stale counter or unavailable service fails; no durability guarantee"
       ],
       "executable": "tools/interop/run.py:main.restart"
+    },
+    {
+      "id": "ipv6-udp:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found"
+      ],
+      "positive_proof": [
+        "IPv6 exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "successful GET after refusal",
+        "independent IPv6 socket probe from ::1"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_matrix"
+    },
+    {
+      "id": "ipv6-udp:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found"
+      ],
+      "positive_proof": [
+        "IPv6 exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "successful GET after refusal",
+        "independent IPv6 socket probe from ::1"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_matrix"
+    },
+    {
+      "id": "ipv6-udp:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found"
+      ],
+      "positive_proof": [
+        "IPv6 exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "successful GET after refusal",
+        "independent IPv6 socket probe from ::1"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_matrix"
+    },
+    {
+      "id": "ipv6-udp:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found"
+      ],
+      "positive_proof": [
+        "IPv6 exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "successful GET after refusal",
+        "independent IPv6 socket probe from ::1"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_matrix"
+    },
+    {
+      "id": "ipv6-udp:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found"
+      ],
+      "positive_proof": [
+        "IPv6 exact GET bytes",
+        "exact 2000-byte Block2 assembly",
+        "successful GET after refusal",
+        "independent IPv6 socket probe from ::1"
+      ],
+      "failure_proof": [
+        "4.04 for missing resource"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_matrix"
     }
   ],
   "gaps": [
@@ -950,7 +1090,7 @@
       "executable_cases": []
     },
     {
-      "feature": "ipv6-and-compound-network-faults",
+      "feature": "scoped-ipv6-and-compound-network-faults",
       "status": "unqualified",
       "role": "both",
       "transport_security": "all",
@@ -961,7 +1101,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Process runner binds IPv4 loopback; IPv6, alternative server fault directions, DTLS faults, reordering/delay/MTU and combined schedules are absent.",
+      "reason": "IPv6 UDP loopback GET/404/Block2 is exercised by five cases. Scoped/link-local IPv6, IPv6 DTLS, alternative server fault directions, reordering/delay/MTU and combined schedules remain absent.",
       "issue": 200,
       "executable_cases": []
     },
