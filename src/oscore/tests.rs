@@ -3020,8 +3020,13 @@ fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
             let request = client.transport_mut().sent.remove(0);
             server.transport_mut().inbox = Some((client_ep, request));
             server.poll(now).unwrap();
-            let responses = core::mem::take(&mut server.transport_mut().sent);
-            assert_eq!(responses.len(), 2);
+            let mut responses = core::mem::take(&mut server.transport_mut().sent);
+            assert_eq!(responses.len(), 3);
+            let ack = responses.remove(0);
+            assert!(decode(&ack).unwrap().is_empty_ack());
+            client.transport_mut().inbox = Some((server_ep, ack));
+            client.poll(now).unwrap();
+            assert!(client.take_response(call).is_none());
             for (index, wire) in responses.iter().enumerate() {
                 let outer = decode(wire).unwrap();
                 assert!(outer.q_block2().next().is_none(), "Q option remains Inner");
@@ -3103,7 +3108,12 @@ fn app_oscore_qblock2_sequence_exhaustion_releases_body_without_plaintext_fallba
         server.poll(0),
         Err(crate::app::Error::Oscore(Error::SequenceExhausted))
     );
-    assert_eq!(server.transport().sent.len(), 1);
+    assert_eq!(server.transport().sent.len(), 2);
+    assert!(
+        decode(&server.transport_mut().sent.remove(0))
+            .unwrap()
+            .is_empty_ack()
+    );
     let first = decode(&server.transport().sent[0]).unwrap();
     assert_eq!(
         header::OscoreHeader::parse(first.oscore().unwrap())
@@ -3226,7 +3236,12 @@ fn app_oscore_repeated_qblock2_selection_preserves_inner_ranges_and_distinct_piv
     server.set_oscore(server_c1());
     server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
     server.poll(0).unwrap();
-    assert_eq!(server.transport().sent.len(), 3);
+    assert_eq!(server.transport().sent.len(), 4);
+    assert!(
+        decode(&server.transport_mut().sent.remove(0))
+            .unwrap()
+            .is_empty_ack()
+    );
     for (index, bytes) in server.transport().sent.iter().enumerate() {
         let outer = decode(bytes).unwrap();
         assert!(outer.q_block2().next().is_none());
@@ -3643,4 +3658,55 @@ fn app_oscore_confirmable_qupload_failed_continuation_retires_binding() {
         assert_eq!(client.engine_mut().rx_occupied(), 0);
         assert!(client.transport().sent.is_empty());
     }
+}
+
+#[test]
+fn app_oscore_qblock2_failed_empty_ack_replays_without_reentering_handler() {
+    use crate::{App, Response, get, profiles};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.store(0, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut sender = client_c1();
+    let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
+    let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(55))
+        .with_token(Token::new(&[9]).unwrap())
+        .with_options(&opts);
+    let mut wire = [0; WIRE];
+    let n = sender.protect_request(&request, &mut wire).unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(
+            "large",
+            get(|_| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                Response::content(&LARGE).etag(b"v1")
+            }),
+        )
+        .bind(QWire::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    server.transport_mut().fail_send = true;
+    assert!(server.poll(0).is_err());
+    assert!(server.transport().sent.is_empty());
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    for index in 0..server.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            server
+                .engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+    server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    server.poll(1).unwrap();
+    assert_eq!(server.transport().sent.len(), 1);
+    let ack = decode(&server.transport().sent[0]).unwrap();
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), MessageId::new(55));
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(server.oscore().unwrap().sender_seq(), 0);
 }

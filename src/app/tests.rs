@@ -2292,6 +2292,24 @@ fn large_get_without_body_pools_fails_clearly() {
     );
 }
 
+// Consume the independently checked empty ACK so range-focused tests can
+// inspect just the subsequent NON payload transcript.
+fn consume_q_empty_ack(
+    app: &mut App<profiles::Default, WideLoopback, DEFAULT_ROUTES, true>,
+    mid: MessageId,
+) {
+    assert!(app.transport().send_n > 0);
+    let ack = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    assert!(ack.is_empty_ack());
+    assert_eq!(ack.message_id(), mid);
+    let io = app.transport_mut();
+    for index in 1..io.send_n {
+        io.sends[index - 1] = io.sends[index];
+        io.send_lens[index - 1] = io.send_lens[index];
+    }
+    io.send_n -= 1;
+}
+
 #[test]
 fn large_get_q_block2_issues_a_window() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
@@ -2308,10 +2326,11 @@ fn large_get_q_block2_issues_a_window() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
+    consume_q_empty_ack(&mut app, MessageId::new(0x1001));
     assert_eq!(app.transport().send_n, 2);
 
     let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).expect("first");
-    assert_eq!(first.ty(), Type::Acknowledgement);
+    assert_eq!(first.ty(), Type::NonConfirmable);
     let q0 = first.q_block2().next().expect("Q-Block2").expect("val");
     assert_eq!(q0.num(), 0);
     assert!(q0.more());
@@ -2351,10 +2370,11 @@ fn qblock2_single_selection_honors_num_and_reclaims_temporary_snapshots() {
         app.transport_mut().inbox = Some((peer, wire, n));
         app.transport_mut().send_n = 0;
         app.poll(u64::from(cycle)).unwrap();
+        consume_q_empty_ack(&mut app, MessageId::new(0x3400 + cycle));
         assert_eq!(app.transport().send_n, 1);
         let response = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
-        assert_eq!(response.ty(), Type::Acknowledgement);
-        assert_eq!(response.message_id(), MessageId::new(0x3400 + cycle));
+        assert_eq!(response.ty(), Type::NonConfirmable);
+        assert_ne!(response.message_id(), MessageId::new(0x3400 + cycle));
         assert_eq!(response.token(), Token::new(&[0xa1]).unwrap());
         let block = response.q_block2().next().unwrap().unwrap();
         assert_eq!(block.num(), u32::from(num));
@@ -2416,6 +2436,7 @@ fn qblock2_missing_tail_reissues_only_selected_blocks_without_advancing_window()
         );
         app.transport_mut().inbox = Some((peer, wire, n));
         app.poll(0).unwrap();
+        consume_q_empty_ack(&mut app, MessageId::new(0x3500));
         assert_eq!(app.transport().send_n, 2);
         for index in 0..2 {
             let response =
@@ -2443,6 +2464,7 @@ fn qblock2_missing_tail_reissues_only_selected_blocks_without_advancing_window()
             app.transport_mut().send_n = 0;
             app.transport_mut().inbox = Some((peer, wire, n));
             app.poll(1).unwrap();
+            consume_q_empty_ack(&mut app, MessageId::new(0x3501));
             assert_eq!(app.transport().send_n, 1);
             assert_eq!(app.engine.tx_body_transfer(id), Some(before));
             let response =
@@ -5349,6 +5371,7 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
             assert_eq!(app.transport().send_n, 0);
         } else {
             app.poll(2).unwrap();
+            consume_q_empty_ack(&mut app, MessageId::new(0x1302));
             assert_eq!(app.transport().send_n, 1);
             let reply = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
             assert_eq!(reply.etag().next(), Some(&b"body"[..]));
@@ -6859,22 +6882,16 @@ fn response_non_and_qblock_window_use_shared_local_mid_space() {
         let n = encode(&request, &mut wire).unwrap();
         app.transport_mut().inbox = Some((peer, wire, n));
         app.poll(0).unwrap();
+        if ty == Type::Confirmable {
+            consume_q_empty_ack(&mut app, MessageId::new(500));
+        }
         assert_eq!(app.transport().send_n, 2);
         let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
         let second = decode(&app.transport().sends[1][..app.transport().send_lens[1]]).unwrap();
-        assert_eq!(
-            first.message_id().get(),
-            if ty == Type::Confirmable { 500 } else { 1 }
-        );
-        assert_eq!(
-            second.message_id().get(),
-            if ty == Type::Confirmable { 1 } else { 2 }
-        );
+        assert_eq!(first.message_id().get(), 1);
+        assert_eq!(second.message_id().get(), 2);
         app.get("other").to(peer).non().send(1).unwrap();
-        assert_eq!(
-            last_wide(&app).message_id().get(),
-            if ty == Type::Confirmable { 2 } else { 3 }
-        );
+        assert_eq!(last_wide(&app).message_id().get(), 3);
     }
 }
 
@@ -7885,6 +7902,7 @@ fn qblock2_repeated_selections_send_the_union_once() {
             let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3700);
             app.transport_mut().inbox = Some((peer, wire, n));
             app.poll(0).unwrap();
+            consume_q_empty_ack(&mut app, MessageId::new(0x3700));
             assert_eq!(app.transport().send_n, expected.len());
             for (index, &num) in expected.iter().enumerate() {
                 let reply =
@@ -8722,4 +8740,71 @@ fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
         Code::CHANGED
     );
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn qblock2_confirmable_request_gets_empty_ack_then_all_non_payloads() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn body(_: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::content(&LARGE).etag(b"v1")
+    }
+    fn separate_body(request: Request<'_>) -> Response<'static> {
+        body(request).separate()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for (non, separate) in [(false, false), (true, false), (false, true), (true, true)] {
+        CALLS.store(0, Ordering::SeqCst);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "large",
+                if separate {
+                    get(separate_body)
+                } else {
+                    get(body)
+                },
+            )
+            .bind(WideLoopback::default())
+            .unwrap();
+        let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
+        let (mut wire, n) = encode_wide(Code::GET, &["large"], &[Opt::q_block2(&q)], 0x1234);
+        if non {
+            wire[0] |= 0x10;
+        }
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        let skip = usize::from(!non);
+        assert_eq!(app.transport().send_n, 2 + skip);
+        if !non {
+            let ack = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+            assert!(ack.is_empty_ack());
+            assert_eq!(ack.message_id(), MessageId::new(0x1234));
+        }
+        for index in 0..2 {
+            let response = decode(
+                &app.transport().sends[index + skip][..app.transport().send_lens[index + skip]],
+            )
+            .unwrap();
+            assert_eq!(response.ty(), Type::NonConfirmable);
+            assert_eq!(
+                response.q_block2().next().unwrap().unwrap().num(),
+                index as u32
+            );
+            assert_eq!(
+                response.payload(),
+                &LARGE[index * 1024..((index + 1) * 1024).min(LARGE.len())]
+            );
+        }
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        if !non {
+            app.transport_mut().send_n = 0;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(1).unwrap();
+            assert_eq!(app.transport().send_n, 1);
+            assert!(last_wide(&app).is_empty_ack());
+            assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        }
+    }
 }
