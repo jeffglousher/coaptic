@@ -72,6 +72,24 @@ These jobs qualify their library test surface on the recorded host architecture.
 They do not run the independent process/DTLS adapter matrix, establish host MSRV,
 or replace MCU execution, target stack or complete requirements coverage in #202.
 
+## Source coverage evidence
+
+Install `llvm-tools` for Rust 1.97.1, then run
+`python tools/qualification/coverage.py --work-root BUILD_PARENT --output REPORT.json`.
+Each run uses a fresh instrumented build/profile directory and archives source,
+compiler, commands, test counts, executable hashes, per-file counters and full
+LLVM export. Linux CI retains the report and export. Local build/profile work
+is retained at the recorded directory for inspection.
+
+The denominator is compiled `src/` code in the all-feature configuration,
+including inline and dedicated unit-test modules. Integration test execution
+contributes hits; dependency and external integration-test files do not contribute
+to these totals. Rustdoc and other feature configurations are outside this run.
+Line, region and function percentages are not branch/condition or RFC requirement
+coverage. No minimum percentage is claimed as acceptance; missing tests, profiles,
+source files or invalid counters fail the evidence job. Requirement mapping and
+branch qualification remain #202.
+
 ## Packaging and release
 
 Only `coaptic` is published; harnesses and peers are test-only. Packaging checks

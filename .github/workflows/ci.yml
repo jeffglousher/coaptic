@@ -55,6 +55,25 @@ jobs:
           path: ${{ runner.temp }}/host-qualification.json
           if-no-files-found: error
 
+  source-coverage:
+    name: source coverage evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools
+      - run: python3 -m unittest discover -s tools/qualification -p 'test_*.py'
+      - run: python3 tools/qualification/coverage.py --work-root "${{ runner.temp }}/coverage-build" --output "${{ runner.temp }}/coverage/source-coverage.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: source-coverage
+          path: ${{ runner.temp }}/coverage/
+          if-no-files-found: error
+
   cross-build:
     name: no_std code generation (${{ matrix.target }})
     runs-on: ubuntu-latest
