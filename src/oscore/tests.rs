@@ -1797,8 +1797,8 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
             .bind(Loopback::default())
             .unwrap();
         app.set_oscore(server_c1());
-        // Seed the same incomplete body state produced by authenticated
-        // ingress; exercise timed App recovery, including its wire boundary.
+        // Advanced Engine injection deliberately omits authenticated request
+        // references; timed App recovery must still refuse plaintext.
         for (num, payload) in [(0, &b"0123456789abcdef"[..]), (2, &b"01234567"[..])] {
             let block = BlockValue::from_size(num, num == 0, 16).unwrap();
             if incoming_request {
@@ -4583,4 +4583,248 @@ fn protected_qblock2_aligned_reselection_preserves_windows_and_uses_fresh_pivs()
         assert_eq!(server.engine_mut().rx_occupied(), 0);
         assert_eq!(server.engine_mut().tx_occupied(), 0);
     }
+}
+
+#[test]
+fn protected_qblock1_timed_reports_bind_latest_request_and_reclaim_state() {
+    use crate::storage::{BlockRole, SlotId};
+    use crate::{App, Request, Response, profiles, put};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static BODY: &[u8] = b"0123456789abcdefABCDEFGHIJKLMNOPqrstuvwxyz012345";
+    fn upload(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.body(), Some(BODY));
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Response::changed()
+    }
+    fn packet(
+        sender: &mut SecurityContext,
+        num: u32,
+        different_tokens: bool,
+        mid: u16,
+    ) -> (std::vec::Vec<u8>, RequestRef) {
+        let token = Token::new(&[if different_tokens { num as u8 } else { 9 }]).unwrap();
+        let q = BlockValue::from_size(num, num < 2, 16).unwrap().encode();
+        let size = encode_uint(48);
+        let opts = [
+            Opt::uri_path("upload"),
+            Opt::q_block1(&q),
+            Opt::size1(&size),
+            Opt::request_tag(b"body"),
+        ];
+        let request = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(mid))
+            .with_token(token)
+            .with_options(&opts)
+            .with_payload(&BODY[num as usize * 16..(num as usize + 1) * 16]);
+        let mut wire = [0; WIRE];
+        let n = sender.protect_request(&request, &mut wire).unwrap();
+        (wire[..n].to_vec(), sender.lookup(token).unwrap())
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for expire in [false, true] {
+        for fail_send in [false, true] {
+            for different_tokens in [false, true] {
+                CALLS.store(0, Ordering::SeqCst);
+                let mut sender = client_c1();
+                let mut server = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .route("upload", put(upload))
+                    .bind(QWire::default())
+                    .unwrap();
+                server.set_oscore(server_c1());
+                let (zero, _) = packet(&mut sender, 0, different_tokens, 100);
+                let (two, _) = packet(&mut sender, 2, different_tokens, 101);
+                let (duplicate, latest) = packet(&mut sender, 2, different_tokens, 102);
+                // A freshly protected duplicate updates the report reference;
+                // the reordered older request must not replace it.
+                for wire in [two, duplicate, zero] {
+                    server.transport_mut().inbox = Some((peer, wire));
+                    server.poll(0).unwrap();
+                }
+                assert!(server.transport().sent.is_empty());
+                let id = (0..2)
+                    .map(SlotId::from_index)
+                    .find(|id| server.engine().rx_body_transfer(*id).is_some())
+                    .unwrap();
+                let before = server.engine().rx_body_transfer(id).unwrap();
+                assert_eq!(before.role(), BlockRole::IncomingQBlock1);
+                let checkpoint = server.oscore().unwrap().replay_checkpoint();
+                let (mut corrupt, _) = packet(&mut sender, 1, different_tokens, 103);
+                *corrupt.last_mut().unwrap() ^= 1;
+                server.transport_mut().inbox = Some((peer, corrupt));
+                server.poll(1).unwrap();
+                assert_eq!(server.engine().rx_body_transfer(id), Some(before));
+                assert_eq!(server.oscore().unwrap().replay_checkpoint(), checkpoint);
+                let mut now = before.q_receive().unwrap().next_timeout_ms();
+                if fail_send {
+                    server.transport_mut().fail_send = true;
+                    assert!(server.poll(now).is_err());
+                    assert!(server.transport().sent.is_empty());
+                    assert!(server.engine().rx_body_transfer(id).is_some());
+                    now = server
+                        .engine()
+                        .rx_body_transfer(id)
+                        .unwrap()
+                        .q_receive()
+                        .unwrap()
+                        .next_timeout_ms();
+                }
+                server.poll(now).unwrap();
+                let mut last_sequence = None;
+                let check_report =
+                    |wire: &[u8], sender: &mut SecurityContext, last: &mut Option<u64>| {
+                        let outer = decode(wire).unwrap();
+                        assert_eq!(outer.ty(), Type::NonConfirmable);
+                        assert_eq!(
+                            outer.token(),
+                            Token::new(&[if different_tokens { 2 } else { 9 }]).unwrap()
+                        );
+                        let sequence = header::OscoreHeader::parse(outer.oscore().unwrap())
+                            .unwrap()
+                            .piv
+                            .unwrap()
+                            .seq();
+                        assert!(last.is_none_or(|old| sequence > old));
+                        *last = Some(sequence);
+                        let mut plain = [0; WIRE];
+                        let report = sender
+                            .unprotect_response(&outer, latest, &mut plain)
+                            .unwrap();
+                        assert_eq!(report.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+                        assert_eq!(
+                            report.content_format(),
+                            Some(Ok(ContentFormat::MISSING_BLOCKS))
+                        );
+                        assert_eq!(report.payload(), &[1]); // CBOR sequence containing missing NUM=1.
+                    };
+                assert_eq!(server.transport().sent.len(), 1);
+                check_report(
+                    &server.transport_mut().sent.remove(0),
+                    &mut sender,
+                    &mut last_sequence,
+                );
+                if expire {
+                    for _ in 0..=crate::message::QBlockTransmission::NON_MAX_RETRANSMIT {
+                        let Some(transfer) = server.engine().rx_body_transfer(id) else {
+                            break;
+                        };
+                        now = transfer.q_receive().unwrap().next_timeout_ms();
+                        server.poll(now).unwrap();
+                        for report in server.transport_mut().sent.drain(..) {
+                            check_report(&report, &mut sender, &mut last_sequence);
+                        }
+                    }
+                    assert!(server.engine().rx_body_transfer(id).is_none());
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                    // Reuse the reclaimed body slot and tag with a fresh upload.
+                    for num in [0, 2] {
+                        let (wire, _) =
+                            packet(&mut sender, num, different_tokens, 200 + num as u16);
+                        server.transport_mut().inbox = Some((peer, wire));
+                        server.poll(now + 1).unwrap();
+                    }
+                }
+                let (wire, final_ref) = packet(&mut sender, 1, different_tokens, 210);
+                server.transport_mut().inbox = Some((peer, wire));
+                server.poll(now + 2).unwrap();
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                assert_eq!(server.transport().sent.len(), 1);
+                let outer = decode(&server.transport().sent[0]).unwrap();
+                let mut plain = [0; WIRE];
+                assert_eq!(
+                    sender
+                        .unprotect_response(&outer, final_ref, &mut plain)
+                        .unwrap()
+                        .code(),
+                    Code::CHANGED
+                );
+                assert!(server.engine().rx_body_transfer(id).is_none());
+                assert_eq!(server.engine_mut().rx_occupied(), 0);
+                assert_eq!(server.engine_mut().tx_occupied(), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn protected_qblock1_report_sequence_exhaustion_never_sends_plaintext() {
+    use crate::storage::SlotId;
+    use crate::{App, profiles, put};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut sender = client_c1();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(
+            "upload",
+            put(|_| panic!("incomplete upload reached handler")),
+        )
+        .bind(QWire::default())
+        .unwrap();
+    let mut context = server_c1();
+    context.set_sender_seq((1u64 << 40) - 1).unwrap();
+    server.set_oscore(context);
+    for num in [0, 2] {
+        let q = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+        let size = encode_uint(48);
+        let opts = [
+            Opt::uri_path("upload"),
+            Opt::q_block1(&q),
+            Opt::size1(&size),
+            Opt::request_tag(b"body"),
+        ];
+        let request = Message::new(
+            Type::NonConfirmable,
+            Code::PUT,
+            MessageId::new(100 + num as u16),
+        )
+        .with_token(Token::new(b"q").unwrap())
+        .with_options(&opts)
+        .with_payload(&[b'Q'; 16]);
+        let mut wire = [0; WIRE];
+        let n = sender.protect_request(&request, &mut wire).unwrap();
+        server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+        server.poll(0).unwrap();
+    }
+    let id = (0..2)
+        .map(SlotId::from_index)
+        .find(|id| server.engine().rx_body_transfer(*id).is_some())
+        .unwrap();
+    let due = server
+        .engine()
+        .rx_body_transfer(id)
+        .unwrap()
+        .q_receive()
+        .unwrap()
+        .next_timeout_ms();
+    server.poll(due).unwrap();
+    let bytes = server.transport_mut().sent.remove(0);
+    let outer = decode(&bytes).unwrap();
+    assert_eq!(
+        header::OscoreHeader::parse(outer.oscore().unwrap())
+            .unwrap()
+            .piv
+            .unwrap()
+            .seq(),
+        (1u64 << 40) - 1
+    );
+    let mut refused = 0;
+    for _ in 0..=crate::message::QBlockTransmission::NON_MAX_RETRANSMIT {
+        let Some(transfer) = server.engine().rx_body_transfer(id) else {
+            break;
+        };
+        let result = server.poll(transfer.q_receive().unwrap().next_timeout_ms());
+        if server.engine().rx_body_transfer(id).is_some() {
+            assert_eq!(result, Err(crate::Error::Oscore(Error::SequenceExhausted)));
+            refused += 1;
+        } else {
+            result.unwrap();
+        }
+        assert!(server.transport().sent.is_empty());
+        assert_eq!(server.engine_mut().tx_occupied(), 0);
+    }
+    assert!(refused > 0);
+    assert!(server.engine().rx_body_transfer(id).is_none());
+    assert_eq!(server.oscore().unwrap().sender_seq(), 1u64 << 40);
 }
