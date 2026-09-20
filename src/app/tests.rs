@@ -9567,3 +9567,46 @@ fn client_fetch_requires_format_without_consuming_call_capacity() {
     );
     assert!(app.cancel(call));
 }
+
+#[test]
+fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("value").observe().to(peer).send(0).unwrap();
+    let mid = last_wide(&app).message_id();
+    let mut wire = [0; WIRE];
+    for step in 0..4 {
+        let sequence = encode_uint(if step == 0 { 0 } else { 1 });
+        let opts = [Opt::observe(&sequence)];
+        let ty = if step == 3 {
+            Type::NonConfirmable
+        } else {
+            Type::Acknowledgement
+        };
+        let id = if step == 1 {
+            MessageId::new(mid.get().wrapping_add(1))
+        } else {
+            mid
+        };
+        let message = Message::new(ty, Code::CONTENT, id)
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(b"value");
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(step).unwrap();
+        if step == 1 || step == 2 {
+            assert!(app.take_response(call).is_none());
+        } else {
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap().payload(),
+                b"value"
+            );
+        }
+    }
+    assert!(app.cancel(call));
+}
