@@ -13,7 +13,7 @@
 #include <time.h>
 #endif
 
-static unsigned counter;
+static unsigned counter, upload_accepted, upload_calls;
 static uint8_t method_body[64];
 static size_t method_length;
 static int method_exists;
@@ -142,6 +142,29 @@ static void method_resource(coap_resource_t *resource, coap_session_t *session,
   } else code = 133;
   coap_pdu_set_code(response, (coap_pdu_code_t)code);
 }
+static void upload_resource(coap_resource_t *resource, coap_session_t *session,
+    const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
+  (void)resource; (void)session; (void)query;
+  if(coap_pdu_get_code(request) == COAP_REQUEST_CODE_GET) {
+    char counts[48];
+    int n = snprintf(counts, sizeof(counts), "%u:%u", upload_accepted, upload_calls);
+    coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
+    coap_add_data(response, (size_t)n, (const uint8_t *)counts);
+    return;
+  }
+  upload_calls++;
+  size_t length = 0; const uint8_t *data = NULL;
+  coap_get_data(request, &length, &data);
+  coap_opt_iterator_t it;
+  coap_opt_t *format = coap_check_option(request, COAP_OPTION_CONTENT_FORMAT, &it);
+  if(!format || coap_opt_length(format) > 2 || coap_decode_var_bytes(coap_opt_value(format), coap_opt_length(format)) != 42) {
+    coap_pdu_set_code(response, COAP_RESPONSE_CODE_UNSUPPORTED_CONTENT_FORMAT); return;
+  }
+  if(length != 2000 && length != 4096) { coap_pdu_set_code(response, COAP_RESPONSE_CODE_BAD_REQUEST); return; }
+  for(size_t i=0;i<length;i++) if(data[i] != i % 251) { coap_pdu_set_code(response, COAP_RESPONSE_CODE_BAD_REQUEST); return; }
+  upload_accepted++;
+  coap_pdu_set_code(response, COAP_RESPONSE_CODE_CREATED);
+}
 static int hex_digit(char c) {
   if(c >= '0' && c <= '9') return c - '0';
   if(c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -188,14 +211,14 @@ int main(int argc,char **argv) {
   if(*end || port<1 || port>65535){failure("invalid port");return 2;}
   long timeout=strtol(argv[7],&end,10);
   if(*end || timeout<100 || timeout>30000){failure("invalid timeout");return 2;}
-  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods")){failure("unsupported path");return 2;}
+  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods") && strcmp(argv[5],"upload")){failure("unsupported path");return 2;}
   const char *methods[] = {"GET", "POST", "PUT", "DELETE", "FETCH", "PATCH", "IPATCH"};
   unsigned method = 0;
   for(unsigned i = 0; i < 7; i++) if(!strcmp(argv[6], methods[i])) method = i + 1;
   if(!method) { failure("unsupported method"); return 2; }
   const char *hex = argc >= 10 ? argv[9] : "";
   size_t payload_length = strlen(hex) / 2;
-  uint8_t payload[256];
+  uint8_t payload[4096];
   if(strlen(hex) % 2 || payload_length > sizeof(payload)) { failure("invalid bounded payload hex"); return 2; }
   for(size_t i = 0; i < payload_length; i++) {
     int hi = hex_digit(hex[i*2]), lo = hex_digit(hex[i*2+1]);
@@ -244,6 +267,10 @@ int main(int argc,char **argv) {
     coap_resource_t *methods_resource = coap_resource_init(coap_make_str_const("methods"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
     for(unsigned i = 1; i <= 7; i++) coap_register_handler(methods_resource, (coap_request_t)i, method_resource);
     coap_add_resource(ctx, methods_resource);
+    coap_resource_t *upload = coap_resource_init(coap_make_str_const("upload"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
+    coap_register_handler(upload, COAP_REQUEST_GET, upload_resource);
+    coap_register_handler(upload, COAP_REQUEST_POST, upload_resource);
+    coap_add_resource(ctx, upload);
     printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,oscore?"oscore":dtls?"dtls":"udp");
     while(coap_io_process(ctx,100)>=0) {}
     status=1;
@@ -255,11 +282,11 @@ int main(int argc,char **argv) {
     if(!pdu){failure("PDU allocation failed");coap_session_release(session);status=1;goto done;}
     uint8_t token[8];size_t token_len=sizeof(token);coap_session_new_token(session,&token_len,token);
     if(!coap_add_token(pdu,token_len,token)||!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
-    if(!strcmp(argv[5], "methods") && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
+    if((!strcmp(argv[5], "methods") || !strcmp(argv[5], "upload")) && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
       const uint8_t format = 42;
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
     }
-    if(payload_length && !coap_add_data(pdu, payload_length, payload)) { coap_delete_pdu(pdu); failure("payload failed"); coap_session_release(session); status=1; goto done; }
+    if(payload_length && !coap_add_data_large_request(session, pdu, payload_length, payload, NULL, NULL)) { coap_delete_pdu(pdu); failure("payload failed"); coap_session_release(session); status=1; goto done; }
     if(coap_send(session,pdu)==COAP_INVALID_MID){failure("send failed");status=1;} else {
       while(!complete) {if(elapsed_ns()>=(uint64_t)timeout*1000000ULL)break;if(coap_io_process(ctx,10)<0)break;}
       if(!complete){failure("request timed out");status=1;}
