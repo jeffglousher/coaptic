@@ -51,7 +51,7 @@ use super::response::{AppAssembled, INLINE_PAYLOAD, Response};
 use super::{App, Error, Method, push_opt};
 
 /// Option slots for an outbound request (path + query + Table 4 extras).
-const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
+const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 
 /// Outstanding client exchange (Token + destination).
 ///
@@ -415,6 +415,7 @@ struct LiveCall {
     ty: Type,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
@@ -542,6 +543,7 @@ where
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -622,6 +624,7 @@ where
             payload: &[],
             content_format: None,
             echo: None,
+            no_response: None,
             accept: None,
             request_tag: BodyTag::ABSENT,
             etag: None,
@@ -722,6 +725,7 @@ where
             payload: self.payload,
             content_format: self.content_format,
             echo: self.echo,
+            no_response: self.no_response,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -761,6 +765,20 @@ where
     #[must_use]
     pub const fn content_format(mut self, format: ContentFormat) -> Self {
         self.content_format = Some(format);
+        self
+    }
+
+    /// Express disinterest in selected response classes (RFC 7967).
+    ///
+    /// An explicit zero bitmap is retained on the wire. Server suppression is
+    /// optional: returned responses remain observable. Silence is never reported
+    /// as success; use [`Self::deadline`] for a partial mask, or [`App::cancel`]
+    /// to cease listening when suppressing all classes. Empty ACKs only stop RTO.
+    /// Fragmented uploads and suppressed Observe registration are explicit App
+    /// boundaries; use Engine for caller-managed interactions in those cases.
+    #[must_use]
+    pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
+        self.no_response = Some(value);
         self
     }
 
@@ -911,6 +929,14 @@ where
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
         let observe = self.observe;
+        if self.no_response.is_some() && self.q_block1 {
+            return Err(Error::NoResponseUploadUnsupported);
+        }
+        if self.no_response.is_some_and(|value| value.get() != 0)
+            && observe == OutgoingObserve::Register
+        {
+            return Err(Error::NoResponseObserveUnsupported);
+        }
         let token = match observe {
             OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest),
             OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token(),
@@ -953,6 +979,7 @@ where
             payload: self.payload,
             content_format: self.content_format,
             echo: self.echo,
+            no_response: self.no_response,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -982,6 +1009,7 @@ where
             ty: self.ty,
             content_format: self.content_format,
             echo: self.echo,
+            no_response: self.no_response,
             observe,
             deadline_ms: self.deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
@@ -1019,6 +1047,7 @@ struct ClientSend<'a> {
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -1048,6 +1077,7 @@ where
     }
     let mid = ids.next();
     let cf = spec.content_format.map(ContentFormat::encode);
+    let no_response = spec.no_response.map(crate::message::NoResponse::encode);
     let acc = spec.accept.map(ContentFormat::encode);
     let q2 = spec
         .q_block2
@@ -1093,6 +1123,9 @@ where
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
+        }
         if let Some(echo) = spec.echo.as_ref() {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
         }
@@ -1115,6 +1148,10 @@ where
         Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
             .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+            if spec.no_response.is_some() {
+                let _ = engine.release_tx(tx);
+                return Err(Error::NoResponseUploadUnsupported);
+            }
             // These conditions cannot be dropped while changing to Block1.
             // Until the App retains their transfer-specific semantics, refuse
             // fragmentation instead of turning a conditional write into an
@@ -1669,6 +1706,9 @@ where
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
+    let no_response = live
+        .and_then(|live| live.no_response)
+        .map(crate::message::NoResponse::encode);
     let b2 = block2.map(BlockValue::encode);
     let q2 = q_block2.map(BlockValue::encode);
     let filled = (|| -> Result<(), EncodeError> {
@@ -1693,6 +1733,9 @@ where
         }
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
+        }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
         }
         if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
