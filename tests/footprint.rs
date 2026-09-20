@@ -136,3 +136,14 @@ fn well_known_core_scratch_is_not_4kib() {
         "N=16 scratch {n16} should be ~384, not 4KiB"
     );
 }
+
+#[test]
+fn block_request_identity_sidecar_has_an_explicit_bound() {
+    use coaptic::storage::BlockTransfer;
+    let bytes = size_of::<BlockTransfer>();
+    println!(
+        "BlockTransfer sidecar: {bytes} bytes; request identity budget: {}",
+        BlockTransfer::REQUEST_IDENTITY_BYTES
+    );
+    assert!(bytes <= BlockTransfer::REQUEST_IDENTITY_BYTES + 192);
+}

@@ -4547,3 +4547,25 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
         assert_eq!(app.engine_mut().rx_occupied(), 0);
     }
 }
+
+#[test]
+fn disabled_block_assembly_refuses_before_handler_dispatch() {
+    let (wire, n) = encode_req_block1(Code::PUT, &["upload"], &[0x11; 16], 0, true, 16, 0x7111);
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(
+            "upload",
+            put(|_: Request<'_>| -> Response<'static> {
+                panic!("fragment reached non-block handler")
+            }),
+        )
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            ..Loopback::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(last_reply(&app).code, Code::BAD_OPTION);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}

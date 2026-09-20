@@ -27,6 +27,7 @@ use super::SlotId;
 use super::Storage;
 use super::block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockRecover,
+    RequestBinding, same_body_identity,
 };
 use super::pending::outstanding_pending;
 use crate::error::{BlockTransferError, SlotMessageError, ValueError};
@@ -1232,7 +1233,11 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
     /// separate). Request-Tag, when present, is stored on the body sidecar.
-    /// Missing Block1 is [`BlockTransferError::MissingBlock`].
+    /// Missing Block1 is [`BlockTransferError::MissingBlock`]. Method and
+    /// cache-key options are retained exactly, bounded by
+    /// [`BlockTransfer::REQUEST_IDENTITY_BYTES`]. A changed operation is refused
+    /// before body mutation; integer leading-zero encodings compare equally.
+    /// Direct range APIs require the caller to enforce operation matchability.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1342,6 +1347,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Identity is Token + Endpoint plus Request-Tag when present (RFC 9175 /
     /// RFC 9177). Missing Q-Block1 is [`BlockTransferError::MissingBlock`].
+    ///
+    /// Retains the same bounded request matchability context as
+    /// [`Self::apply_block1_rx`]; a mismatching continuation cannot mutate it.
     pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1939,7 +1947,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         // Profile-sized copy so Constrained does not stack Default 1472.
         let mut tmp = S::RxScratch::default();
-        let (token, block, expected, identity, n) = {
+        let (token, block, expected, identity, binding, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
@@ -1961,20 +1969,67 @@ impl<S: Storage + BodySlots> Engine<S> {
                 }
             };
             let identity = which.read_identity(&parsed)?;
+            let binding = if which.uses_size1() {
+                Some(RequestBinding::from_message(&parsed)?)
+            } else {
+                None
+            };
             let payload = parsed.payload();
             if payload.len() > tmp.as_ref().len() {
                 return Err(BlockTransferError::PayloadLength);
             }
             tmp.as_mut()[..payload.len()].copy_from_slice(payload);
-            (parsed.token(), block, expected, identity, payload.len())
+            (
+                parsed.token(),
+                block,
+                expected,
+                identity,
+                binding,
+                payload.len(),
+            )
         };
         let key = BlockKey::new(token, endpoint).with_identity(identity);
-        match which {
+        if let Some(binding) = binding {
+            let role = if matches!(which, RxBlockOpt::Block1) {
+                BlockRole::IncomingBlock1
+            } else {
+                BlockRole::IncomingQBlock1
+            };
+            let existing = self.storage.lookup_rx_body(key).or_else(|| {
+                (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
+                    let id = SlotId::from_index(i);
+                    let transfer = self.storage.rx_body_transfer(id)?;
+                    same_body_identity(transfer, key, role).then_some(id)
+                })
+            });
+            if let Some(id) = existing {
+                let transfer = self
+                    .storage
+                    .rx_body_transfer(id)
+                    .ok_or(BlockTransferError::NoTransfer)?;
+                if transfer.request_binding != Some(binding) {
+                    return Err(BlockTransferError::IdentityMismatch);
+                }
+            }
+        }
+        let progress = match which {
             RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
             RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
             RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected),
             RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected),
+        }?;
+        if let Some(binding) = binding {
+            let mut transfer = self
+                .storage
+                .rx_body_transfer(progress.id())
+                .ok_or(BlockTransferError::NoTransfer)?;
+            transfer.request_binding = Some(binding);
+            if let Err(error) = self.storage.set_rx_body_transfer(progress.id(), transfer) {
+                let _ = self.release_rx_body(progress.id());
+                return Err(error.into());
+            }
         }
+        Ok(progress)
     }
 
     fn finish_outgoing_tx(

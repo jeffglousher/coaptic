@@ -718,7 +718,7 @@ where
 enum InboundBody {
     None,
     Continue,
-    IncompleteEntity,
+    Refused(Code),
     Complete(SlotId),
 }
 
@@ -741,10 +741,12 @@ where
             Err(BlockTransferError::Overlap | BlockTransferError::AlreadyComplete) => {
                 InboundBody::Continue
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
-                InboundBody::None
+            Err(BlockTransferError::MissingBlock) => InboundBody::None,
+            Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
+            Err(BlockTransferError::Overflow) => {
+                InboundBody::Refused(Code::REQUEST_ENTITY_TOO_LARGE)
             }
-            Err(_) => InboundBody::IncompleteEntity,
+            Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
     if parsed.q_block1().is_some() {
@@ -757,10 +759,12 @@ where
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 InboundBody::Continue
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {
-                InboundBody::None
+            Err(BlockTransferError::MissingBlock) => InboundBody::None,
+            Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
+            Err(BlockTransferError::Overflow) => {
+                InboundBody::Refused(Code::REQUEST_ENTITY_TOO_LARGE)
             }
-            Err(_) => InboundBody::IncompleteEntity,
+            Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
     InboundBody::None
@@ -1104,7 +1108,7 @@ where
             let _ = engine.release_rx(rx);
             return outcome;
         }
-        InboundBody::IncompleteEntity => {
+        InboundBody::Refused(code) => {
             // Apply errors (gap, SZX mismatch, overflow, Q-Block duplicate, …).
             // Classic Overlap / AlreadyComplete replay 2.31 above.
             // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
@@ -1112,8 +1116,11 @@ where
                 engine,
                 io,
                 meta,
-                &Response::problem(Code::REQUEST_ENTITY_INCOMPLETE)
-                    .title("Request Entity Incomplete"),
+                &Response::problem(code).title(match code {
+                    Code::REQUEST_ENTITY_INCOMPLETE => "Request Entity Incomplete",
+                    Code::REQUEST_ENTITY_TOO_LARGE => "Request Entity Too Large",
+                    _ => "Block Transfer Rejected",
+                }),
                 now_ms,
                 oscore,
                 dedup_closed,
@@ -1128,7 +1135,7 @@ where
     let (response, plan) = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
-            InboundBody::None | InboundBody::Continue | InboundBody::IncompleteEntity => None,
+            InboundBody::None | InboundBody::Continue | InboundBody::Refused(_) => None,
         };
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
