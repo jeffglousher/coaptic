@@ -73,7 +73,8 @@
 //! [`App::notify`]. Server re-registration with the same peer, Token and route
 //! advances the retained 24-bit sequence while replacing scheduling and OSCORE
 //! request state. Sequence continuity after removal or restart is not retained.
-//! Client subscribe is [`Outgoing::observe`] /
+//! Client subscribe/refresh uses [`Outgoing::observe`] /
+//! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
 //! (RFC 9175 4.01) is caller-owned through [`AppBuilder::echo_policy`]. Pairwise OSCORE
 //! (feature `oscore`) is `App::set_oscore`.
@@ -3470,6 +3471,8 @@ pub enum Error<E> {
     NoResponseObserveUnsupported,
     /// No live subscription matches the cancellation's request identity/Call.
     ObserveCancellationMismatch,
+    /// No live subscription matches the refresh request identity and Call.
+    ObserveRefreshMismatch,
     /// Multiple subscriptions match; select one with `deregister_call`.
     ObserveCancellationAmbiguous,
     /// Observe request identity exceeds the App's 512 encoded-byte bound.
@@ -3528,6 +3531,9 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            Self::ObserveRefreshMismatch => {
+                f.write_str("Observe refresh does not match a live subscription")
+            }
             Self::ObserveCancellationMismatch => {
                 f.write_str("Observe cancellation does not match a live request")
             }
@@ -3574,6 +3580,7 @@ where
             | Self::ConditionalUploadUnsupported
             | Self::NoResponseUploadUnsupported
             | Self::NoResponseObserveUnsupported
+            | Self::ObserveRefreshMismatch
             | Self::ObserveCancellationMismatch
             | Self::ObserveCancellationAmbiguous
             | Self::FetchContentFormatRequired

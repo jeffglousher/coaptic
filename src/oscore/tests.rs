@@ -4924,3 +4924,109 @@ fn protected_observe_reregistration_continues_sequence_and_replaces_request_bind
         }
     }
 }
+
+#[test]
+fn protected_client_reregistration_rebinds_and_reports_send_failure() {
+    use crate::{App, Request, Response, get, profiles};
+    fn value(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    for fail in [false, true] {
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route("obs", get(value))
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        for iteration in 0..8u64 {
+            let now = iteration * 10_000;
+            let call = client.get("obs").observe().to(server_ep).send(now).unwrap();
+            let request = client.transport_mut().sent.remove(0);
+            server.transport_mut().inbox = Some((client_ep, request));
+            server.poll(now).unwrap();
+            client.transport_mut().inbox = Some((server_ep, server.transport_mut().sent.remove(0)));
+            client.poll(now + 1).unwrap();
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap().payload(),
+                b"initial"
+            );
+            assert_eq!(
+                server
+                    .notify(now + 2, &["obs"], Response::content(b"old"))
+                    .unwrap(),
+                1
+            );
+            let delayed = server.transport_mut().sent.remove(0);
+            let old_reference = client.oscore().unwrap().lookup(call.token()).unwrap();
+            client.transport_mut().fail_send = fail;
+            let outcome = client
+                .get("obs")
+                .reregister_call(call)
+                .to(server_ep)
+                .send(now + 3);
+            if fail {
+                assert!(matches!(outcome, Err(crate::app::Error::Io(_))));
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::ReregistrationFailed
+                );
+                assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+            } else {
+                assert_eq!(outcome.unwrap(), call);
+                let new_reference = client.oscore().unwrap().lookup(call.token()).unwrap();
+                assert!(new_reference.piv().seq() > old_reference.piv().seq());
+                let refreshed = client.transport_mut().sent.remove(0);
+                client.transport_mut().inbox = Some((server_ep, delayed));
+                client.poll(now + 4).unwrap();
+                assert!(
+                    client.take_response(call).is_none(),
+                    "old binding must not deliver after refresh"
+                );
+                server.transport_mut().inbox = Some((client_ep, refreshed));
+                server.poll(now + 5).unwrap();
+                client.transport_mut().inbox =
+                    Some((server_ep, server.transport_mut().sent.remove(0)));
+                client.poll(now + 6).unwrap();
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap().payload(),
+                    b"initial"
+                );
+                assert_eq!(
+                    server
+                        .notify(now + 7, &["obs"], Response::content(b"new"))
+                        .unwrap(),
+                    1
+                );
+                client.transport_mut().inbox =
+                    Some((server_ep, server.transport_mut().sent.remove(0)));
+                client.poll(now + 8).unwrap();
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap().payload(),
+                    b"new"
+                );
+                assert!(client.cancel(call));
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::Cancelled
+                );
+            }
+            // Remove the remote relation so each iteration proves local capacity
+            // reuse without exhausting the independent server's observer table.
+            server
+                .engine_mut()
+                .take_observe(crate::storage::ObserveKey::new(call.token(), client_ep))
+                .unwrap();
+            assert_eq!(client.engine_mut().tx_occupied(), 0);
+            assert_eq!(client.engine_mut().rx_occupied(), 0);
+        }
+    }
+}
