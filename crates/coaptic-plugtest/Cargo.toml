@@ -17,6 +17,7 @@ dtls = ["dep:async-trait", "dep:webrtc-dtls", "dep:webrtc-util", "dep:rustls"]
 oscore = ["coaptic/oscore"]
 
 [dependencies]
+getrandom = "=0.3.4"
 coaptic = { path = "../..", features = ["std"] }
 coap = { version = "0.28", default-features = false }
 coap-lite = "0.13"

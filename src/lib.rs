@@ -40,6 +40,7 @@
 //! }
 //!
 //! let mut app = App::profile::<profiles::Default>()
+//!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .bind(NullIo)
@@ -74,8 +75,10 @@
 //! [`App::poll`]), the destination of an outbound request, any domain
 //! state that outlives a request, and — when the `oscore` feature is on —
 //! the OSCORE `SecurityContext` (Master Secret, Sender/Recipient IDs,
-//! replay window; feature `oscore`). There is no global App State. Tokens
-//! and Message IDs are App counters — this crate does not call an OS RNG.
+//! replay window; feature `oscore`). There is no global App State. Supply
+//! cryptographically secure entropy through [`app::AppBuilder::randomness`]
+//! for Tokens, the initial Message ID and retransmission jitter. The library
+//! itself does not call an OS RNG.
 //!
 //! # Modules
 //!
