@@ -8358,3 +8358,155 @@ fn observe_signal_survives_unrelated_ingress_response_send_failure() {
     assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
     assert_eq!(last_wide(&app).payload(), b"obs-snap");
 }
+
+#[test]
+fn qblock1_last_hole_at_give_up_deadline_completes_before_reclamation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for arrival in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(LED_PATH, put(put_body))
+            .bind(Loopback::default())
+            .unwrap();
+        for (num, payload) in [(0, &[b'A'; 16][..]), (2, &[b'A'; 8][..])] {
+            let (mut wire, n) =
+                encode_block_req(q_block1(payload, num, num == 0, 100 + num as u16, 40));
+            wire[0] |= 0x10;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(0).unwrap();
+        }
+        let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+            .with_identity(crate::storage::BodyTag::new(b"upload-1").unwrap());
+        let id = app.engine().lookup_rx_body(key).unwrap();
+        for _ in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+            let due = app
+                .engine()
+                .rx_body_transfer(id)
+                .unwrap()
+                .q_receive()
+                .unwrap()
+                .next_timeout_ms();
+            app.poll(due).unwrap();
+            assert_eq!(last_reply(&app).code, Code::REQUEST_ENTITY_INCOMPLETE);
+        }
+        let due = app
+            .engine()
+            .rx_body_transfer(id)
+            .unwrap()
+            .q_receive()
+            .unwrap()
+            .next_timeout_ms();
+        app.transport_mut().last_send = None;
+        if arrival {
+            let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 1, true, 101, 40));
+            wire[0] |= 0x10;
+            app.transport_mut().inbox = Some((peer, wire, n));
+        }
+        app.poll(due).unwrap();
+        if arrival {
+            let reply = last_reply(&app);
+            assert_eq!(reply.code, Code::CHANGED);
+            assert_eq!(&reply.payload[..reply.payload_len], &[b'A'; 40]);
+        } else {
+            assert!(app.transport().last_send.is_none());
+        }
+        assert!(app.engine().lookup_rx_body(key).is_none());
+    }
+}
+
+#[test]
+fn qblock2_give_up_retires_call_and_preserves_other_calls_and_reused_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for arrival in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(WideLoopback::default())
+            .unwrap();
+        let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
+        let other = app.get("other").q_block2().non().to(peer).send(0).unwrap();
+        for num in [0, 2] {
+            let q = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+            let size = encode_uint(48);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&q)];
+            let message = Message::new(
+                Type::NonConfirmable,
+                Code::CONTENT,
+                MessageId::new(100 + num as u16),
+            )
+            .with_token(call.token())
+            .with_options(&opts)
+            .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(0).unwrap();
+        }
+        let id = (0..app.engine().capacities().rx_body_slots.unwrap())
+            .map(crate::storage::SlotId::from_index)
+            .find(|id| app.engine().rx_body_transfer(*id).is_some())
+            .unwrap();
+        for _ in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+            let due = app
+                .engine()
+                .rx_body_transfer(id)
+                .unwrap()
+                .q_receive()
+                .unwrap()
+                .next_timeout_ms();
+            app.transport_mut().send_n = 0;
+            app.poll(due).unwrap();
+            assert_eq!(app.transport().send_n, 1);
+            assert!(app.take_response(call).is_none());
+        }
+        let due = app
+            .engine()
+            .rx_body_transfer(id)
+            .unwrap()
+            .q_receive()
+            .unwrap()
+            .next_timeout_ms();
+        app.transport_mut().send_n = 0;
+        if arrival {
+            let q = BlockValue::from_size(1, true, 16).unwrap().encode();
+            let size = encode_uint(48);
+            let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&q)];
+            let message = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(101))
+                .with_token(call.token())
+                .with_options(&opts)
+                .with_payload(&[b'A'; 16]);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+        }
+        app.poll(due).unwrap();
+        assert_eq!(app.transport().send_n, 0);
+        assert!(app.take_response(other).is_none());
+        // Complete another body before consuming the old call's outcome.
+        let q = BlockValue::from_size(0, false, 16).unwrap().encode();
+        let size = encode_uint(16);
+        let opts = [Opt::etag(b"v2"), Opt::size2(&size), Opt::q_block2(&q)];
+        let message = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(200))
+            .with_token(other.token())
+            .with_options(&opts)
+            .with_payload(&[b'B'; 16]);
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(due + 1).unwrap();
+        let outcome = app.take_response(call).expect("terminal outcome");
+        if arrival {
+            assert_eq!(outcome.unwrap().body(), Some(&[b'A'; 48][..]));
+        } else {
+            assert_eq!(outcome.unwrap_err(), crate::CallFailure::TimedOut);
+        }
+        assert_eq!(
+            app.take_response(other).unwrap().unwrap().body(),
+            Some(&[b'B'; 16][..])
+        );
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
