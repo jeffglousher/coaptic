@@ -1898,3 +1898,144 @@ fn app_client_no_response_stays_inner_and_unsuppressed_error_is_delivered() {
         Code::NOT_FOUND
     );
 }
+
+#[test]
+fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
+    use crate::{App, profiles};
+    struct FailSend {
+        fail: bool,
+        short: bool,
+        last_token: Option<Token>,
+    }
+    impl DatagramIo for FailSend {
+        type Error = &'static str;
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            self.last_token = Some(decode(bytes).unwrap().token());
+            if self.fail {
+                Err("injected send failure")
+            } else if self.short {
+                Ok(bytes.len() - 1)
+            } else {
+                Ok(bytes.len())
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for confirmable in [false, true] {
+        for short in [false, true] {
+            let mut app = App::profile::<profiles::Default>()
+                .block_wise::<false>()
+                .bind(FailSend {
+                    fail: !short,
+                    short,
+                    last_token: None,
+                })
+                .unwrap();
+            app.set_oscore(client_c1());
+            for i in 0..12 {
+                let request = app.get("value").to(peer);
+                let request = if confirmable { request } else { request.non() };
+                assert!(request.send(i).is_err());
+                let token = app.transport().last_token.unwrap();
+                assert!(
+                    app.oscore().unwrap().lookup(token).is_none(),
+                    "failed send retained binding"
+                );
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+                assert_eq!(app.oscore().unwrap().sender_seq(), i + 1);
+            }
+            app.transport_mut().fail = false;
+            app.transport_mut().short = false;
+            let call = app.get("value").to(peer).send(12).unwrap();
+            assert!(app.oscore().unwrap().lookup(call.token()).is_some());
+            assert!(app.cancel(call));
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap_err(),
+                crate::CallFailure::Cancelled
+            );
+            assert_eq!(app.oscore().unwrap().sender_seq(), 13);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn protected_partial_upload_failure_releases_all_request_state() {
+    use crate::storage::{BodyTag, SlotId};
+    use crate::{App, profiles};
+    struct FailNth {
+        sends: usize,
+        nth: usize,
+        token: Option<Token>,
+    }
+    impl DatagramIo for FailNth {
+        type Error = &'static str;
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            self.sends += 1;
+            let outer = decode(bytes).unwrap();
+            assert!(outer.oscore().is_some());
+            self.token = Some(outer.token());
+            if self.sends == self.nth {
+                Err("injected failure")
+            } else {
+                Ok(bytes.len())
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        for nth in 1..=if qblock { 3 } else { 1 } {
+            let mut app = App::profile::<profiles::Default>()
+                .block_wise::<true>()
+                .bind(FailNth {
+                    sends: 0,
+                    nth,
+                    token: None,
+                })
+                .unwrap();
+            app.set_oscore(client_c1());
+            for i in 0..12 {
+                let before = app.oscore().unwrap().sender_seq();
+                app.transport_mut().sends = 0;
+                let request = app.put("value").to(peer).payload(&[9; 3000]);
+                let request = if qblock {
+                    request
+                        .q_block1()
+                        .request_tag(BodyTag::new(b"upload").unwrap())
+                } else {
+                    request
+                };
+                assert!(request.send(i).is_err());
+                assert_eq!(app.transport().sends, nth);
+                assert!(
+                    app.oscore()
+                        .unwrap()
+                        .lookup(app.transport().token.unwrap())
+                        .is_none()
+                );
+                assert!(app.oscore().unwrap().sender_seq() > before);
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+                for index in 0..app.engine_mut().capacities().tx_body_slots.unwrap() {
+                    assert!(
+                        app.engine_mut()
+                            .tx_body_transfer(SlotId::from_index(index))
+                            .is_none()
+                    );
+                }
+            }
+            app.transport_mut().nth = usize::MAX;
+            let call = app.get("value").to(peer).send(12).unwrap();
+            assert!(app.cancel(call));
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap_err(),
+                crate::CallFailure::Cancelled
+            );
+        }
+    }
+}

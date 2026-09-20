@@ -920,6 +920,11 @@ where
     /// App counters — this crate does not call an OS RNG. A payload that does
     /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
     ///
+    /// On failure, local request state is retired, including any partial
+    /// upload and OSCORE request binding. An error does not prove that the
+    /// peer received no datagrams or performed no action; retry policy must
+    /// account for that uncertainty. Security sequence numbers are not reset.
+    ///
     /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
     /// lives cap) and this Token is not one of them.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
@@ -998,7 +1003,14 @@ where
             &mut self.app.oscore,
             now_ms,
             spec,
-        )?;
+        );
+        let call = match call {
+            Ok(call) => call,
+            Err(error) => {
+                abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
+                return Err(error);
+            }
+        };
         self.app.lives.insert(LiveCall {
             call,
             queries: retained_queries,
@@ -2098,6 +2110,48 @@ where
             Err(e)
         }
     }
+}
+
+// A send can fail after earlier Q-Block datagrams went out. No Call is
+// returned, so retire all local state owned by this request. Never rewind
+// OSCORE sequence numbers: a transport error does not prove non-delivery.
+fn abandon_send<Mem>(
+    engine: &mut Engine<Mem>,
+    oscore: &mut super::oscore::Field,
+    token: Token,
+    peer: Endpoint,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+{
+    let _ = engine.take_exchange(ExchangeKey::new(token, peer));
+    for i in 0..engine.capacities().tx_datagram_slots {
+        let id = SlotId::from_index(i);
+        let Some(pending) = engine.pending_con(id) else {
+            continue;
+        };
+        if engine.tx_endpoint(id) == Some(peer)
+            && engine
+                .decode_tx(id)
+                .is_ok_and(|message| message.token() == token)
+        {
+            let _ = engine.take_pending_con(pending.message_id(), peer);
+            let _ = engine.release_tx(id);
+        }
+    }
+    for i in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(i);
+        if engine.tx_body_transfer(id).is_some_and(|transfer| {
+            transfer.key().token() == token
+                && transfer.key().endpoint() == peer
+                && matches!(
+                    transfer.role(),
+                    BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+                )
+        }) {
+            let _ = engine.release_tx_body(id);
+        }
+    }
+    super::oscore::cancel(oscore, token);
 }
 
 fn drop_exchange_for_tx<Mem: Storage + Exchanges>(engine: &mut Engine<Mem>, tx: SlotId) {

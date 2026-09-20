@@ -5695,3 +5695,83 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
         crate::CallFailure::Cancelled
     );
 }
+
+#[test]
+fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
+    use crate::storage::{BodyTag, SlotId};
+    struct FaultIo {
+        sends: usize,
+        fail_at: usize,
+        short: bool,
+    }
+    impl DatagramIo for FaultIo {
+        type Error = &'static str;
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            self.sends += 1;
+            if self.sends == self.fail_at {
+                if self.short {
+                    Ok(bytes.len() - 1)
+                } else {
+                    Err("injected upload failure")
+                }
+            } else {
+                Ok(bytes.len())
+            }
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let other = Endpoint::v4([192, 0, 2, 3], 5683);
+    for qblock in [false, true] {
+        for confirmable in [false, true] {
+            for short in [false, true] {
+                for fail_at in 1..=if qblock { 3 } else { 1 } {
+                    let mut app = App::profile::<profiles::Default>()
+                        .block_wise::<true>()
+                        .bind(FaultIo {
+                            sends: 0,
+                            fail_at: usize::MAX,
+                            short,
+                        })
+                        .unwrap();
+                    let other_call = app.get("other").to(other).send(0).unwrap();
+                    for iteration in 0..12 {
+                        app.transport_mut().sends = 0;
+                        app.transport_mut().fail_at = fail_at;
+                        let request = app.put("value").to(peer).payload(&[7; 3000]);
+                        let request = if qblock {
+                            request
+                                .q_block1()
+                                .request_tag(BodyTag::new(b"upload").unwrap())
+                        } else {
+                            request
+                        };
+                        let request = if confirmable { request } else { request.non() };
+                        assert!(request.send(iteration).is_err());
+                        assert_eq!(app.transport().sends, fail_at);
+                        assert_eq!(
+                            app.engine.tx_occupied(),
+                            1,
+                            "only the unrelated CON may remain"
+                        );
+                        for index in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                            assert!(
+                                app.engine
+                                    .tx_body_transfer(SlotId::from_index(index))
+                                    .is_none()
+                            );
+                        }
+                        assert!(app.take_response(other_call).is_none());
+                    }
+                    app.transport_mut().fail_at = usize::MAX;
+                    let call = app.get("value").to(peer).send(12).unwrap();
+                    assert!(app.cancel(call));
+                    assert!(app.cancel(other_call));
+                    assert_eq!(app.engine.tx_occupied(), 0);
+                }
+            }
+        }
+    }
+}
