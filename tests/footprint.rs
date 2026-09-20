@@ -33,6 +33,8 @@ const OBSERVE_REQUEST_BUDGET: usize = 4 * (coaptic::app::OBSERVE_REQUEST_BYTES +
 
 // Two 9-byte optional tags and If-None-Match per Call, with alignment.
 const RETAINED_CONDITIONS_BUDGET: usize = 4 * 24;
+// Four three-state Observe format values, including potential alignment.
+const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
@@ -55,7 +57,8 @@ fn assert_datagram_omits_assembled(
                 + RETAINED_QUERY_BUDGET
                 + RETAINED_RESPONSE_BUDGET
                 + OBSERVE_REQUEST_BUDGET
-                + RETAINED_CONDITIONS_BUDGET,
+                + RETAINED_CONDITIONS_BUDGET
+                + OBSERVE_FORMAT_BUDGET,
         "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
@@ -169,4 +172,9 @@ fn protected_recovery_reference_has_a_fixed_sidecar_budget() {
     let bytes = size_of::<Option<(coaptic::message::Token, coaptic::oscore::RequestRef)>>();
     println!("protected recovery reference: {bytes} bytes per body sidecar");
     assert!(bytes <= 24);
+}
+
+#[test]
+fn observe_format_retention_has_a_small_explicit_bound() {
+    assert!(size_of::<Option<Option<coaptic::message::ContentFormat>>>() <= 4);
 }

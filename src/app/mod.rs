@@ -1250,6 +1250,12 @@ where
     if !parsed.code().is_request() {
         let cache_ack = parsed.ty() == Type::Confirmable
             && parsed.unknown_critical().is_none()
+            && lives.observe_format_admissible(
+                Call::new(parsed.token(), peer),
+                &parsed,
+                now_ms,
+                oscore::is_active(oscore),
+            )
             && client::has_response_target(engine, &parsed, peer);
         let outcome = client::complete_client(
             engine,
