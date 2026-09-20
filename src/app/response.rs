@@ -379,6 +379,11 @@ impl<'a> Response<'a> {
     }
 
     /// Set ETag (1–8 bytes; longer values are truncated).
+    ///
+    /// Q-Block2 responses require a nonempty ETag. The caller must use a
+    /// different ETag for every different representation of a resource,
+    /// including across restarts. An active Q-Block2 continuation rejects
+    /// a changed ETag or body before advancing the retained transfer.
     #[must_use]
     pub fn etag(mut self, etag: &[u8]) -> Self {
         let n = etag.len().min(8);

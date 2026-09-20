@@ -229,7 +229,8 @@ fn sweep_q_outgoing(q_block1: bool) {
         let szx = BlockValue::from_size(0, false, size).expect("szx").szx();
         for blocks in BLOCK_COUNTS {
             let want = patterned_body(body_len(blocks, size));
-            let key = key_for(if q_block1 { 0x41 } else { 0x42 });
+            let key = key_for(if q_block1 { 0x41 } else { 0x42 })
+                .with_identity(coaptic::storage::BodyTag::new(b"body").unwrap());
             let body_id = if q_block1 {
                 engine.start_q_block1(key, &want, szx)
             } else {

@@ -1403,7 +1403,7 @@ where
     let dest = interest.endpoint();
     let token = interest.token();
     let key = BlockKey::new(token, dest);
-    if let Some(body) = engine.lookup_tx_body(key) {
+    if let Some(body) = response_body_for(engine, key) {
         let _ = engine.release_tx_body(body);
     }
 
@@ -1513,7 +1513,7 @@ where
     T: DatagramIo,
 {
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = engine.lookup_tx_body(key) {
+    if let Some(id) = response_body_for(engine, key) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),
@@ -1623,7 +1623,7 @@ where
     };
 
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = engine.lookup_tx_body(key) {
+    if let Some(id) = response_body_for(engine, key) {
         if engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),
@@ -1634,7 +1634,7 @@ where
         }
     }
 
-    if meta.block2.is_some() && meta.q_block2.is_none() && response.code().is_success() {
+    if (meta.block2.is_some() || meta.q_block2.is_some()) && response.code().is_success() {
         return start_outgoing(engine, io, meta, response, ty, key, oscore_ctx);
     }
 
@@ -1681,6 +1681,20 @@ where
     }
 }
 
+fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) -> Option<SlotId> {
+    (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+        let id = SlotId::from_index(index);
+        let transfer = engine.tx_body_transfer(id)?;
+        (transfer.token() == key.token()
+            && transfer.endpoint() == key.endpoint()
+            && matches!(
+                transfer.role(),
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            ))
+        .then_some(id)
+    })
+}
+
 fn start_outgoing<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -1696,6 +1710,14 @@ where
 {
     let szx = szx_for(meta.block2, meta.q_block2);
     let started = if meta.q_block2.is_some() {
+        let etag = response
+            .etag_bytes()
+            .ok_or(Error::Block(BlockTransferError::MissingIdentity))?;
+        let key = key.with_identity(
+            crate::storage::BodyTag::new(etag)
+                .map_err(BlockTransferError::from)
+                .map_err(Error::Block)?,
+        );
         engine.start_q_block2(key, response.payload(), szx)
     } else {
         engine.start_block2(key, response.payload(), szx)
@@ -1740,14 +1762,24 @@ where
         .map(|t| t.role())
         .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
     match role {
-        BlockRole::OutgoingQBlock2 => match meta.q_block2 {
-            Some(q) if q.more() => {
-                engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
-                issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
+        BlockRole::OutgoingQBlock2 => {
+            let transfer = engine
+                .tx_body_transfer(id)
+                .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+            if transfer.identity().as_slice() != response.etag_bytes()
+                || engine.tx_body_payload(id) != Some(response.payload())
+            {
+                return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
-            Some(_) => Ok(()),
-            None => issue_q_window(engine, io, meta, response, ty, id, oscore_ctx),
-        },
+            match meta.q_block2 {
+                Some(q) if q.more() => {
+                    engine.ack_q_block2(id, q.num()).map_err(Error::Block)?;
+                    issue_q_window(engine, io, meta, response, ty, id, oscore_ctx)
+                }
+                Some(_) => Ok(()),
+                None => issue_q_window(engine, io, meta, response, ty, id, oscore_ctx),
+            }
+        }
         BlockRole::OutgoingBlock2 => issue_classic(
             engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
         ),
