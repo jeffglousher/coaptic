@@ -7858,11 +7858,16 @@ fn qblock2_repeated_selections_send_the_union_once() {
             } else {
                 None
             };
-            let options: std::vec::Vec<_> = values
-                .iter()
-                .map(|v| Opt::opaque(OptionNumber::Q_BLOCK2, core::slice::from_ref(v)))
-                .collect();
-            let (wire, n) = encode_wide(Code::GET, &["large"], &options, 0x3700);
+            let mut options = crate::message::OptionsBuilder::<4>::new();
+            for v in values {
+                options
+                    .push(Opt::opaque(
+                        OptionNumber::Q_BLOCK2,
+                        core::slice::from_ref(v),
+                    ))
+                    .unwrap();
+            }
+            let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3700);
             app.transport_mut().inbox = Some((peer, wire, n));
             app.poll(0).unwrap();
             assert_eq!(app.transport().send_n, expected.len());
@@ -7927,11 +7932,16 @@ fn qblock2_invalid_later_options_refuse_before_handler_and_preserve_cached_body(
             .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
         let id = app.engine.start_q_block2(key, &LARGE, 0).unwrap();
         let before = app.engine.tx_body_transfer(id).unwrap();
-        let options: std::vec::Vec<_> = values
-            .iter()
-            .map(|v| Opt::opaque(OptionNumber::Q_BLOCK2, core::slice::from_ref(v)))
-            .collect();
-        let (wire, n) = encode_wide(Code::GET, &["large"], &options, 0x3800);
+        let mut options = crate::message::OptionsBuilder::<4>::new();
+        for v in values {
+            options
+                .push(Opt::opaque(
+                    OptionNumber::Q_BLOCK2,
+                    core::slice::from_ref(v),
+                ))
+                .unwrap();
+        }
+        let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3800);
         app.transport_mut().inbox = Some((peer, wire, n));
         app.poll(0).unwrap();
         assert_eq!(app.transport().send_n, 1);
@@ -8008,11 +8018,11 @@ fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch
         ],
     ];
     for case in cases {
-        let options: std::vec::Vec<_> = case
-            .iter()
-            .map(|&(number, value)| Opt::opaque(number, value))
-            .collect();
-        let (wire, n) = encode_wide(Code::GET, &["large"], &options, 0x3a00);
+        let mut options = crate::message::OptionsBuilder::<4>::new();
+        for &(number, value) in *case {
+            options.push(Opt::opaque(number, value)).unwrap();
+        }
+        let (wire, n) = encode_wide(Code::GET, &["large"], options.as_slice(), 0x3a00);
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
