@@ -25,7 +25,9 @@ pub trait DatagramIo {
     /// Receive one datagram into `buf`.
     ///
     /// `Ok(None)` is idle. `Ok(Some((n, endpoint)))` fills `buf[..n]` and
-    /// names the remote peer. `n` must not exceed `buf.len()`.
+    /// names the remote peer. `n` must not exceed `buf.len()`. Success must
+    /// represent the complete datagram: refuse oversized packets rather than
+    /// returning a truncated prefix.
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error>;
 
     /// Send one complete datagram to `dest`; success must report `bytes.len()`.
@@ -180,13 +182,40 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     }
 }
 
+/// Receives into scratch with one extra byte so exact-capacity datagrams are
+/// accepted and oversized datagrams cannot become valid-looking prefixes.
+/// Uses default-profile-sized stack scratch; larger caller buffers use a
+/// fallible temporary allocation of `buf.len() + 1` bytes. Native receive errors
+/// (including platform-specific truncation errors) are preserved.
 #[cfg(feature = "std")]
 impl DatagramIo for std::net::UdpSocket {
     type Error = std::io::Error;
 
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
-        match self.recv_from(buf) {
-            Ok((n, from)) => Ok(Some((n, Endpoint::from(from)))),
+        const STACK_BYTES: usize =
+            <super::profiles::Default as super::MemoryProfile>::RX_DATAGRAM_BYTES + 1;
+        let required = buf.len().checked_add(1).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "receive buffer too large")
+        })?;
+        let mut stack = [0; STACK_BYTES];
+        let mut heap = std::vec::Vec::new();
+        let scratch = if required <= stack.len() {
+            &mut stack[..required]
+        } else {
+            heap.try_reserve_exact(required)
+                .map_err(std::io::Error::other)?;
+            heap.resize(required, 0);
+            heap.as_mut_slice()
+        };
+        match self.recv_from(scratch) {
+            Ok((n, _)) if n > buf.len() => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "datagram exceeds receive capacity",
+            )),
+            Ok((n, from)) => {
+                buf[..n].copy_from_slice(&scratch[..n]);
+                Ok(Some((n, Endpoint::from(from))))
+            }
             Err(e) if is_idle_io(&e) => Ok(None),
             Err(e) => Err(e),
         }
@@ -386,5 +415,86 @@ mod tests {
         assert_eq!(engine.metrics().tx_ok, 0);
         assert_eq!(engine.metrics().tx_fail, 1);
         engine.release_tx(tx).expect("release");
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod udp_tests {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::time::Duration;
+
+    #[test]
+    fn udp_exact_capacity_oversize_and_recovery_ipv4_ipv6() {
+        for address in ["127.0.0.1:0", "[::1]:0"] {
+            let sender = UdpSocket::bind(address).unwrap();
+            let mut receiver = UdpSocket::bind(address).unwrap();
+            receiver
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let dest = receiver.local_addr().unwrap();
+            // Includes zero capacity, built-in profiles and the heap fallback.
+            for capacity in [0, 64, 1472, 2048] {
+                let mut output = std::vec![0xA5; capacity];
+                for extra in [0, 1, 100] {
+                    let payload = std::vec![0x39; capacity + extra];
+                    sender.send_to(&payload, dest).unwrap();
+                    let got = DatagramIo::recv(&mut receiver, &mut output);
+                    if extra == 0 {
+                        assert_eq!(
+                            got.unwrap(),
+                            Some((capacity, sender.local_addr().unwrap().into()))
+                        );
+                        assert_eq!(output, payload);
+                    } else {
+                        assert!(
+                            got.is_err(),
+                            "accepted truncated {address} capacity={capacity} extra={extra}"
+                        );
+                        // No prefix is exposed, even on Windows native failure.
+                        assert!(output.iter().all(|b| *b == 0x39));
+                    }
+                    sender.send_to(b"", dest).unwrap();
+                    assert_eq!(
+                        DatagramIo::recv(&mut receiver, &mut output)
+                            .unwrap()
+                            .unwrap()
+                            .0,
+                        0
+                    );
+                }
+            }
+            receiver.set_nonblocking(true).unwrap();
+            assert_eq!(DatagramIo::recv(&mut receiver, &mut [0; 8]).unwrap(), None);
+        }
+    }
+    #[test]
+    fn oversized_udp_cannot_occupy_an_engine_slot_and_next_packet_survives() {
+        use crate::storage::{EngineBuilder, Memory, profiles};
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let dest = receiver.local_addr().unwrap();
+        let mut engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .unwrap();
+        sender.send_to(&[0x41; 3000], dest).unwrap();
+        assert!(matches!(
+            engine.recv_from(&mut receiver),
+            Err(DatagramIoError::Io(_))
+        ));
+        assert_eq!(engine.rx_occupied(), 0);
+        assert_eq!(engine.metrics().rx_accepted, 0);
+        assert_eq!(engine.metrics().rx_error, 1);
+        let packet = [0x60, 0, 0x12, 0x34];
+        sender.send_to(&packet, dest).unwrap();
+        let rx = engine.recv_from(&mut receiver).unwrap().unwrap();
+        assert_eq!(engine.access_rx(rx).unwrap().as_bytes(), packet);
+        engine.release_rx(rx).unwrap();
+        assert_eq!(engine.rx_occupied(), 0);
     }
 }
