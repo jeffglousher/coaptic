@@ -764,6 +764,28 @@ fn app_oscore_observe_register_notify() {
             "old and duplicate PIV must not surface"
         );
     }
+    assert_eq!(
+        server
+            .notify(20_000, &["obs"], Response::not_found().observe(99))
+            .unwrap(),
+        1
+    );
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    let terminal = decode(&bytes[..n]).unwrap();
+    assert!(terminal.oscore().is_some());
+    assert!(terminal.observe().is_none());
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(20_000).unwrap();
+    let final_response = client.take_response(call).unwrap().unwrap();
+    assert_eq!(final_response.code(), Code::NOT_FOUND);
+    assert_eq!(final_response.observe_seq(), None);
+    assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+    assert_eq!(
+        server
+            .notify(30_000, &["obs"], Response::content(b"later"))
+            .unwrap(),
+        0
+    );
 }
 
 #[test]

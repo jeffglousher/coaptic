@@ -939,7 +939,7 @@ fn push_opt_fails_loud_when_builder_is_full() {
 }
 
 #[test]
-fn created_max_location_etag_observe_echo_all_on_wire() {
+fn created_metadata_on_wire_excludes_unsolicited_observe() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let (wire, n) = encode_req(Code::POST, &["items"], &[]);
     let mut app = App::profile::<profiles::Default>()
@@ -968,7 +968,7 @@ fn created_max_location_etag_observe_echo_all_on_wire() {
     }
     assert!(qs.next().is_none());
     assert_eq!(parsed.etag().next(), Some(&b"etag1"[..]));
-    assert_eq!(parsed.observe().and_then(Result::ok), Some(0));
+    assert!(parsed.observe().is_none());
     assert_eq!(
         parsed.content_format().and_then(Result::ok),
         Some(ContentFormat::TEXT_PLAIN)
@@ -2417,7 +2417,11 @@ fn notify_nstart_one_per_endpoint() {
 
     app.transport_mut().send_n = 0;
     let sent = app
-        .notify(10, &["sensors", "temp"], Response::content(b"obs-n"))
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-n").content_format(ContentFormat::TEXT_PLAIN),
+        )
         .expect("notify");
     assert_eq!(
         sent, 1,
@@ -2449,7 +2453,11 @@ fn notify_fans_out_to_distinct_endpoints() {
 
     app.transport_mut().send_n = 0;
     let sent = app
-        .notify(10, &["sensors", "temp"], Response::content(b"obs-n"))
+        .notify(
+            10,
+            &["sensors", "temp"],
+            Response::content(b"obs-n").content_format(ContentFormat::TEXT_PLAIN),
+        )
         .expect("notify");
     assert_eq!(sent, 2);
     assert_eq!(app.transport().send_n, 2);
@@ -2601,8 +2609,12 @@ fn observe_max_age_expiry_preserves_interest() {
     app.poll(5_000).expect("stale representation");
     assert!(observe_registered(&app, peer));
     assert_eq!(
-        app.notify(5_001, &["sensors", "temp"], Response::content(b"updated"))
-            .unwrap(),
+        app.notify(
+            5_001,
+            &["sensors", "temp"],
+            Response::content(b"updated").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
         1
     );
 }
@@ -6029,7 +6041,9 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
             app.notify(
                 0,
                 &["sensors", "temp"],
-                Response::content(b"non").max_age(0)
+                Response::content(b"non")
+                    .content_format(ContentFormat::TEXT_PLAIN)
+                    .max_age(0)
             )
             .unwrap(),
             1
@@ -6037,8 +6051,12 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
         app.poll(1).unwrap();
         assert!(observe_registered(&app, peer));
         assert_eq!(
-            app.notify(1, &["sensors", "temp"], Response::content(b"held"))
-                .unwrap(),
+            app.notify(
+                1,
+                &["sensors", "temp"],
+                Response::content(b"held").content_format(ContentFormat::TEXT_PLAIN)
+            )
+            .unwrap(),
             0
         );
         let now = ObserveTransmission::CONFIRM_INTERVAL_MS;
@@ -6047,7 +6065,9 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
             app.notify(
                 now,
                 &["sensors", "temp"],
-                Response::content(b"con").max_age(0)
+                Response::content(b"con")
+                    .content_format(ContentFormat::TEXT_PLAIN)
+                    .max_age(0)
             )
             .unwrap(),
             1
@@ -6103,4 +6123,100 @@ fn observe_signal_at_max_age_boundary_is_not_discarded() {
     assert_eq!(app.transport().send_n, 1);
     assert!(observe_registered(&app, peer));
     assert_eq!(last_wide(&app).observe().and_then(Result::ok), Some(1));
+}
+
+#[test]
+fn observe_notification_format_and_terminal_response_contract() {
+    fn plain(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial")
+            .content_format(ContentFormat::TEXT_PLAIN)
+            .observe(0)
+    }
+    fn absent(_: Request<'_>) -> Response<'static> {
+        Response::content(b"initial").observe(0)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for initial_format in [None, Some(ContentFormat::TEXT_PLAIN)] {
+        for next_format in [
+            None,
+            Some(ContentFormat::TEXT_PLAIN),
+            Some(ContentFormat::OCTET_STREAM),
+        ] {
+            for code in [Code::CONTENT, Code::NOT_FOUND, Code::SERVICE_UNAVAILABLE] {
+                let handler = if initial_format.is_some() {
+                    plain
+                } else {
+                    absent
+                };
+                let (wire, n) =
+                    encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 0x1001);
+                let mut app = App::profile::<profiles::Default>()
+                    .block_wise::<false>()
+                    .route("obs", get(handler))
+                    .bind(WideLoopback {
+                        inbox: Some((peer, wire, n)),
+                        ..WideLoopback::default()
+                    })
+                    .unwrap();
+                app.poll(0).unwrap();
+                let token = last_wide(&app).token();
+                assert_eq!(last_wide(&app).observe().and_then(Result::ok), Some(0));
+                let mut response = Response::new(code).observe(99).payload_copy(b"next");
+                if let Some(format) = next_format {
+                    response = response.content_format(format);
+                }
+                assert_eq!(app.notify(1, &["obs"], response).unwrap(), 1);
+                let note = last_wide(&app);
+                let mismatch = code.is_success() && initial_format != next_format;
+                assert_eq!(
+                    note.code(),
+                    if mismatch { Code::NOT_ACCEPTABLE } else { code }
+                );
+                assert_eq!(note.token(), token);
+                if code.is_success() && !mismatch {
+                    assert!(note.observe().is_some());
+                    assert_eq!(note.content_format().and_then(Result::ok), initial_format);
+                    assert_eq!(note.payload(), b"next");
+                    assert!(
+                        app.engine
+                            .lookup_observe(ObserveKey::new(token, peer))
+                            .is_some()
+                    );
+                } else {
+                    assert!(note.observe().is_none());
+                    assert!(
+                        app.engine
+                            .lookup_observe(ObserveKey::new(token, peer))
+                            .is_none()
+                    );
+                    assert_eq!(app.notify(3_001, &["obs"], response).unwrap(), 0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn observe_deregistration_strips_handler_observe_and_releases_relation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (index, option) in [Opt::observe_register(), Opt::observe_deregister()]
+        .into_iter()
+        .enumerate()
+    {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["sensors", "temp"],
+            &[option],
+            0x1001 + index as u16,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(index as u64).unwrap();
+        assert_eq!(last_wide(&app).observe().is_some(), index == 0);
+        assert_eq!(observe_registered(&app, peer), index == 0);
+    }
 }
