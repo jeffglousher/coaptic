@@ -21,11 +21,46 @@ pub(crate) type Request = Option<RequestRef>;
 #[derive(Clone, Copy)]
 pub(crate) struct Request;
 
+/// Authenticated, checked response state, committed after critical-option
+/// validation and successful CON acknowledgment. No persistent storage barrier.
+#[derive(Clone, Copy)]
+pub(crate) enum ResponseState {
+    None,
+    #[cfg(feature = "oscore")]
+    Notification(crate::message::Token, Option<crate::oscore::PartialIv>),
+    #[cfg(feature = "oscore")]
+    Replay(u64),
+}
+
+pub(crate) fn commit_response<E>(
+    ctx: &mut Field,
+    state: ResponseState,
+) -> Result<(), super::Error<E>> {
+    #[cfg(feature = "oscore")]
+    if let Some(ctx) = ctx.as_mut() {
+        match state {
+            ResponseState::None => {}
+            ResponseState::Notification(token, piv) => ctx
+                .accept_notification(token, piv)
+                .map_err(super::Error::Oscore)?,
+            ResponseState::Replay(sequence) => {
+                if !ctx.replay_fresh(sequence) {
+                    return Err(super::Error::Oscore(OscoreError::Replay));
+                }
+                ctx.replay_accept(sequence);
+            }
+        }
+    }
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, state);
+    Ok(())
+}
+
 /// Opened inner message after unprotect.
 #[cfg(feature = "oscore")]
-pub(crate) type Opened<'a> = (ParsedMessage<'a>, RequestRef);
+pub(crate) type Opened<'a> = (ParsedMessage<'a>, RequestRef, ResponseState);
 #[cfg(not(feature = "oscore"))]
-pub(crate) type Opened<'a> = (ParsedMessage<'a>, Request);
+pub(crate) type Opened<'a> = (ParsedMessage<'a>, Request, ResponseState);
 
 #[cfg(feature = "oscore")]
 pub(crate) type InboundError = OscoreError;
@@ -92,6 +127,7 @@ pub(crate) fn inbound<'a>(
         return Ok(None);
     };
     if parsed.oscore().is_some() {
+        let mut response_state = ResponseState::None;
         let (inner, request) = if parsed.code().is_request() {
             ctx.unprotect_request(parsed, scratch)?
         } else {
@@ -111,7 +147,8 @@ pub(crate) fn inbound<'a>(
                 let register_ack =
                     parsed.ty() == crate::message::Type::Acknowledgement && header.piv.is_none();
                 if !register_ack {
-                    ctx.accept_notification(parsed.token(), header.piv)?;
+                    ctx.notification_fresh(parsed.token(), header.piv)?;
+                    response_state = ResponseState::Notification(parsed.token(), header.piv);
                 }
             } else if inner.q_block2().next().is_some()
                 || (inner.code() == crate::message::Code::REQUEST_ENTITY_INCOMPLETE
@@ -126,11 +163,12 @@ pub(crate) fn inbound<'a>(
                     if !ctx.replay_fresh(piv.seq()) {
                         return Err(OscoreError::Replay);
                     }
-                    ctx.replay_accept(piv.seq());
+                    response_state = ResponseState::Replay(piv.seq());
                 } else {
                     // One no-PIV response is permitted for a request, including
                     // from independent peers. Others need fresh response PIVs.
-                    ctx.accept_notification(parsed.token(), None)?;
+                    ctx.notification_fresh(parsed.token(), None)?;
+                    response_state = ResponseState::Notification(parsed.token(), None);
                 }
             }
             // Authentication is not application admission. Unknown critical
@@ -139,7 +177,7 @@ pub(crate) fn inbound<'a>(
             // or replace them when a continuation encodes a fresh request.
             (inner, request)
         };
-        return Ok(Some((inner, request)));
+        return Ok(Some((inner, request, response_state)));
     }
     if parsed.is_empty() {
         return Ok(None);
