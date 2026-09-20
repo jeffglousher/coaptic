@@ -691,8 +691,10 @@ where
     /// and end the relation after successful transmission (RFC 7641 §4.2).
     /// With body pools enabled, oversized notifications start classic Block2;
     /// protected notification block zero uses a fresh OSCORE Partial IV. The
-    /// route handler must serve a consistent representation on follow-ups;
-    /// retained snapshot metadata and final-block recovery are not guaranteed.
+    /// route handler must serve the same payload and ETag on retained-body
+    /// follow-ups. Changes return `BlockTransferError::IdentityMismatch` before
+    /// body output or transfer advancement. Other retained snapshot metadata
+    /// and final-block recovery are not guaranteed.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
@@ -1931,7 +1933,7 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
     T: DatagramIo,
 {
-    let key = BlockKey::new(meta.token, meta.dest);
+    let key = response_block_key(meta.token, meta.dest, response)?;
     let id = match engine.start_block2(key, response.payload(), BlockValue::SZX_MAX) {
         Ok(id) => id,
         Err(BlockTransferError::NoBodyPools) => {
@@ -2216,6 +2218,22 @@ where
     }
 }
 
+fn response_block_key<E>(
+    token: crate::message::Token,
+    endpoint: Endpoint,
+    response: &Response<'_>,
+) -> Result<BlockKey, Error<E>> {
+    let key = BlockKey::new(token, endpoint);
+    match response.etag_bytes() {
+        Some(tag) => Ok(key.with_identity(
+            crate::storage::BodyTag::new(tag)
+                .map_err(BlockTransferError::from)
+                .map_err(Error::Block)?,
+        )),
+        None => Ok(key),
+    }
+}
+
 fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) -> Option<SlotId> {
     (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
         let id = SlotId::from_index(index);
@@ -2259,6 +2277,7 @@ where
         );
         engine.start_q_block2(key, response.payload(), szx)
     } else {
+        let key = response_block_key(key.token(), key.endpoint(), response)?;
         engine.start_block2(key, response.payload(), szx)
     };
     let id = match started {
@@ -2404,9 +2423,19 @@ where
                 ),
             }
         }
-        BlockRole::OutgoingBlock2 => issue_classic(
-            engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
-        ),
+        BlockRole::OutgoingBlock2 => {
+            let transfer = engine
+                .tx_body_transfer(id)
+                .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+            if transfer.identity().as_slice() != response.etag_bytes()
+                || engine.tx_body_payload(id) != Some(response.payload())
+            {
+                return Err(Error::Block(BlockTransferError::IdentityMismatch));
+            }
+            issue_classic(
+                engine, io, meta, response, ty, meta.mid, id, None, oscore_ctx,
+            )
+        }
         _ => Ok(()),
     }
 }

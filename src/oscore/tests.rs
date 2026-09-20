@@ -5340,11 +5340,11 @@ fn observe_download_binding_is_bounded_and_does_not_reset_notification_freshness
 fn protected_large_server_notifications_assemble_and_recover_from_send_failure() {
     use crate::{App, Request, Response, get, profiles};
     const BODY: [u8; 4097] = [b'Z'; 4097];
-    fn value(request: Request<'_>) -> Response<'static> {
+    fn value<const N: usize>(request: Request<'_>) -> Response<'static> {
         Response::content(if request.is_observe_register() {
             b"initial"
         } else {
-            &BODY[..4096]
+            &BODY[..N]
         })
         .content_format(ContentFormat::OCTET_STREAM)
         .etag(b"v1")
@@ -5359,7 +5359,14 @@ fn protected_large_server_notifications_assemble_and_recover_from_send_failure()
                 let mut server = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
-                    .route("obs", get(value))
+                    .route(
+                        "obs",
+                        get(if length == 2000 {
+                            value::<2000>
+                        } else {
+                            value::<4096>
+                        }),
+                    )
                     .bind(QWire::default())
                     .unwrap();
                 server.set_oscore(server_c1());
