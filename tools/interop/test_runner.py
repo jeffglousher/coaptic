@@ -2,7 +2,7 @@
 import socket
 import unittest
 from unittest.mock import patch
-from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests, ipv6_dtls_request
+from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests, ipv6_dtls_request, replay_envelope
 
 
 class RunnerTests(unittest.TestCase):
@@ -147,6 +147,29 @@ class RunnerTests(unittest.TestCase):
     def test_proxy_refuses_unknown_address_family(self):
         with self.assertRaises(ValueError):
             Proxy(1234, "dtls-reconnect", family="invented")
+
+    def test_replay_changes_routing_identity_but_preserves_ciphertext(self):
+        original = b"\x41\x02\x12\x34\xa1\x91\x01\xffciphertext-tag"
+        replay = replay_envelope(original)
+        self.assertNotEqual(replay[2:4], original[2:4])
+        self.assertNotEqual(replay[4:5], original[4:5])
+        self.assertEqual(replay[:2], original[:2])
+        self.assertEqual(replay[5:], original[5:])
+        for malformed in (b"", b"\x40\x02\x12\x34", b"\x49\x02\x12\x34long-token"):
+            with self.assertRaises(AssertionError):
+                replay_envelope(malformed)
+
+    def test_corruption_changes_actual_forwarded_datagram(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            server.bind(("127.0.0.1", 0))
+            server.settimeout(1)
+            with Proxy(server.getsockname()[1], "corrupt-request") as relay:
+                for payload in (b"tag\x00", b"tag\xff"):
+                    client.sendto(payload, ("127.0.0.1", relay.number))
+                    observed = server.recvfrom(100)[0]
+                    self.assertEqual(observed, payload[:-1] + bytes([payload[-1] ^ 0x80]))
+            self.assertEqual(len(relay.trace), 2)
+            self.assertTrue(all(row["action"] == "corrupt" and row["hex"] != row["forwarded_hex"] for row in relay.trace))
 
     def test_duplicate_and_drop_are_real_datagrams(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:

@@ -210,7 +210,11 @@ class Proxy:
                         if client is not None and source != client and self.mode != "dtls-reconnect":
                             raise RuntimeError("multiple clients in single-request fault proxy")
                         client = source
-                    if self.mode == "blackhole":
+                    if self.mode == "corrupt-request" and incoming:
+                        if not data:
+                            raise RuntimeError("cannot corrupt an empty datagram")
+                        action = "corrupt"
+                    elif self.mode == "blackhole":
                         action = "drop"
                     elif self.mode == "drop-reply" and not incoming and not dropped:
                         action, dropped = "drop", True
@@ -218,14 +222,15 @@ class Proxy:
                         action, duplicated = "duplicate", True
                     if len(self.trace) >= (8192 if self.mode == "dtls-reconnect" else 256):
                         raise RuntimeError("proxy trace limit exceeded")
+                    forwarded = data[:-1] + bytes([data[-1] ^ 0x80]) if action == "corrupt" else data
                     self.trace.append({"direction": "request" if incoming else "response",
-                                       "action": action, "hex": data.hex()})
+                                       "action": action, "hex": data.hex(), "forwarded_hex": forwarded.hex()})
                     if action != "drop":
                         target = self.back if incoming else self.front
                         address = self.dest if incoming else client
-                        target.sendto(data, address)
+                        target.sendto(forwarded, address)
                         if action == "duplicate":
-                            target.sendto(data, address)
+                            target.sendto(forwarded, address)
         except Exception as error:
             self.error = str(error)
 
@@ -285,6 +290,60 @@ def measure_requests(iterations, request_fn):
     if not failures:
         result["serial_host_requests_per_second"] = iterations * 1e9 / wall_ns
     return result
+
+
+def replay_envelope(data):
+    if len(data) < 5 or data[0] >> 6 != 1 or not 1 <= data[0] & 15 <= 8 or len(data) <= 4 + (data[0] & 15):
+        raise AssertionError("missing token-bearing protected request bytes")
+    replay = bytearray(data)
+    replay[2] ^= 0x40
+    replay[4] ^= 0x80
+    return bytes(replay)
+
+
+def oscore_fault_workflow(client, server):
+    with Server(server, "oscore") as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            accepted = request(client, "oscore", relay.number, sequence=0, path="counter", method="POST")
+            expect(accepted, 68, b"")
+            expect(request(client, "oscore", service.number, sequence=10, path="counter"), 69, b"1")
+            requests = [bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request"]
+            # Echo may cause one earlier challenged request. Replay the last
+            # application request that actually produced the accepted POST.
+            captured = next(wire for wire in reversed(requests) if len(wire) > 1 and wire[1] != 0)
+            # RFC 8613 leaves outer MID/Token outside integrity protection.
+            # Change both; preserve every option/ciphertext byte. Keep the
+            # first relay bound so a new socket cannot reuse its source port.
+            replay = replay_envelope(captured)
+            accepted_source = relay.back.getsockname()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                replay_source = sock.getsockname()
+                if replay_source == accepted_source:
+                    raise AssertionError("replay did not change source endpoint")
+                sock.settimeout(.5)
+                if sock.sendto(replay, ("127.0.0.1", service.number)) != len(replay):
+                    raise AssertionError("replay datagram was not completely sent")
+                try:
+                    replay_reply = sock.recvfrom(4096)[0].hex()
+                except socket.timeout:
+                    replay_reply = None
+        expect(request(client, "oscore", service.number, sequence=20, path="counter"), 69, b"1")
+        # A forged far-future request cannot advance the recipient window.
+        with Proxy(service.number, "corrupt-request") as corrupted:
+            refused = request(client, "oscore", corrupted.number, sequence=1000,
+                              path="counter", method="POST", timeout=500)
+        expect_refusal(refused)
+        if not any(row["action"] == "corrupt" and row["hex"] != row["forwarded_hex"] for row in corrupted.trace):
+            raise AssertionError("authenticated corruption was not exercised")
+        expect(request(client, "oscore", service.number, sequence=30, path="counter"), 69, b"1")
+        expect(request(client, "oscore", service.number, sequence=1000, path="counter", method="POST"), 68, b"")
+        final = request(client, "oscore", service.number, sequence=1100, path="counter")
+        expect(final, 69, b"2")
+        return {"accepted_trace": relay.trace, "accepted_source": accepted_source, "replay_source": replay_source, "replayed_hex": replay.hex(), "replay_reply_hex": replay_reply,
+                "corrupted_trace": corrupted.trace, "refused": refused, "final": final,
+                "verified": ["replayed ciphertext cannot repeat POST effect", "bad-tag future request cannot consume replay window", "valid sequence remains usable after refusal"],
+                "scope": "IPv4 UDP public C.1 context; sequential bounded counter fixture; not persistent or concurrent security qualification"}
 
 
 def ipv6_dtls_request(client, number, traces, **kwargs):
@@ -360,7 +419,7 @@ def main():
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
               "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
-              "libcoap_source": "7cf7465b784baded4de183290c547d582becfd28",
+              "libcoap_source": "851533c3cf63d16984d370ce39d586ecb3694971",
               "limitations": ["Only named plaintext/PSK DTLS/OSCORE assertions; Observe, certificates and full ETSI coverage remain unqualified"],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "capability_manifest": {"path": "tools/interop/capabilities.json", "sha256": manifest_hash},
@@ -406,10 +465,16 @@ def main():
                 expect(plain, 129, None)
                 expect(exchange(path="methods"), 69, b"alpha")
                 return {"server": service.ready, "traces": traces, "results": results, "plaintext_refusal": plain,
-                        "fixture_context": "RFC 8613 C.1 public keys; client sequences 0,100,200,300,400",
+                        "fixture_context": "RFC 8613 C.1 public keys; client starting sequences 0,100,200,300,400; one Echo retry may consume the next sequence",
                         "verified": ["exact authenticated GET", "PUT/readback", "wrong-key and plaintext state preservation"],
                         "unqualified": ["persistent keys/sequences", "replay/corruption campaign", "OSCORE Observe/block transfer"]}
         case(f"oscore-state:{client}->{server}", oscore_state)
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        if (args.libcoap_udp_only or args.libcoap_oscore_unavailable) and "libcoap" in (client, server):
+            continue
+        case(f"oscore-faults:{client}->{server}",
+             lambda client=client, server=server: oscore_fault_workflow(peers[client], peers[server]))
 
     for transport in ("udp", "dtls"):
         pairs = [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]

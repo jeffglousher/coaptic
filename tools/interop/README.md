@@ -4,7 +4,7 @@ Three separately built executables communicate only over loopback UDP/DTLS:
 
 - `peer-coaptic`: Coaptic App, webrtc-dtls 0.12 / util 0.11. No coap-rs dependency.
 - `peer-coap-rs`: coap 0.28.1 with a test transport bridge to webrtc-dtls 0.12 / util 0.11. No Coaptic dependency.
-- `peer-libcoap`: C fixture using libcoap 4.3.5 at `7cf7465b784baded4de183290c547d582becfd28`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; the matrix exercises PSK DTLS and the explicitly listed OSCORE state cases.
+- `peer-libcoap`: C fixture using libcoap 4.3.5b at `851533c3cf63d16984d370ce39d586ecb3694971`. CMake verifies the revision and unmodified tracked source. CI builds OpenSSL DTLS and OSCORE support; the matrix exercises PSK DTLS and the explicitly listed OSCORE state cases.
 
 libcoap is BSD-2-Clause; its independent source/build is outside the published library. OpenSSL is a test-machine dependency. No C FFI or DTLS dependency enters Coaptic. Lockfile pins Rust peers; the C source pin is checked by CMake. These are test fixtures, with a public, non-production PSK (`sesame`).
 
@@ -15,7 +15,7 @@ Requires stable Rust, Python 3.10+, CMake 3.20+, a C compiler and OpenSSL develo
 ```sh
 cargo build --locked --release -p peer-coaptic -p peer-coap-rs
 git init /tmp/libcoap
-git -C /tmp/libcoap fetch --depth 1 https://github.com/obgm/libcoap.git 7cf7465b784baded4de183290c547d582becfd28
+git -C /tmp/libcoap fetch --depth 1 https://github.com/obgm/libcoap.git 851533c3cf63d16984d370ce39d586ecb3694971
 git -C /tmp/libcoap checkout --detach FETCH_HEAD
 cmake -S tools/interop/libcoap -B target/libcoap-peer -DLIBCOAP_SOURCE=/tmp/libcoap -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
 cmake --build target/libcoap-peer --parallel 2
@@ -50,14 +50,22 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 72 scenario results (59 with local C-peer DTLS excluded):
+The full run contains 75 scenario results (60 with local C-peer DTLS excluded):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
   refusal and plaintext 4.01/state preservation are checked. The supervisor
   explicitly advances client sender sequences between fresh client processes.
-  This does not qualify replay/corruption campaigns, protected block/Observe,
+  This does not qualify protected block/Observe,
   persistent key/sequence storage or production credential management.
+- Three OSCORE fault scenarios replay accepted counter POST ciphertext from a
+  new endpoint with a changed outer MID/Token, then require the counter to remain one.
+  If Echo was required, the replay uses the final accepted request, and fresh
+  clients reserve sequence spacing for that bounded retry.
+  A real relay corrupts the authentication tag of a future-sequence POST; valid
+  low-sequence readback and a subsequent valid high-sequence POST must still work,
+  ending at counter two. This is a sequential bounded fixture, not concurrent,
+  restart/persistent replay or exhaustive ciphertext qualification.
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
   exact GET bytes, 4.04, 2,000-byte Block2 and repeated fresh clients. DTLS also

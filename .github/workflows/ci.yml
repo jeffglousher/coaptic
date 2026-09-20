@@ -204,7 +204,7 @@ jobs:
       - name: Pin independent C peer source
         run: |
           git init "$RUNNER_TEMP/libcoap"
-          git -C "$RUNNER_TEMP/libcoap" fetch --depth 1 https://github.com/obgm/libcoap.git 7cf7465b784baded4de183290c547d582becfd28
+          git -C "$RUNNER_TEMP/libcoap" fetch --depth 1 https://github.com/obgm/libcoap.git 851533c3cf63d16984d370ce39d586ecb3694971
           git -C "$RUNNER_TEMP/libcoap" checkout --detach FETCH_HEAD
       - name: Build separate peer executables
         run: |
