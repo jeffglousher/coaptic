@@ -1228,18 +1228,45 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.tx_body_transfer(id)
     }
 
-    /// Incoming body slot matching `key`, if any.
+    /// First incoming body matching `key` across roles; see [`Self::lookup_rx_body_role`].
     #[inline]
     #[must_use]
     pub fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_rx_body(key)
     }
 
-    /// Outgoing body slot matching `key`, if any.
+    /// First outgoing body matching `key` across roles; see [`Self::lookup_tx_body_role`].
     #[inline]
     #[must_use]
     pub fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_tx_body(key)
+    }
+
+    /// Incoming body matching both key and role. Use this when acting as
+    /// both client and server: opposite directions may use identical Tokens
+    /// and tags at the same endpoint. This scans the configured slot bound.
+    #[must_use]
+    pub fn lookup_rx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
+            let id = SlotId::from_index(index);
+            self.storage
+                .rx_body_transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
+        })
+    }
+
+    /// Outgoing body matching both key and role, without selecting a body
+    /// owned by the opposite client/server direction.
+    #[must_use]
+    pub fn lookup_tx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..self.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+            let id = SlotId::from_index(index);
+            self.storage
+                .tx_body_transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
+        })
     }
 
     /// Admit a new incoming Block1 body when the first block arrives.
@@ -2094,7 +2121,7 @@ impl<S: Storage + BodySlots> Engine<S> {
             } else {
                 BlockRole::IncomingQBlock1
             };
-            let existing = self.storage.lookup_rx_body(key).or_else(|| {
+            let existing = self.lookup_rx_body_role(key, role).or_else(|| {
                 (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
                     let id = SlotId::from_index(i);
                     let transfer = self.storage.rx_body_transfer(id)?;

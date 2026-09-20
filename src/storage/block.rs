@@ -87,7 +87,8 @@ impl BodyTag {
 /// Token plus the remote [`Endpoint`] is the RFC 7252 match. [`BodyTag`] is
 /// Request-Tag (request body) or ETag (response body). This is not a Dedup
 /// key (Message ID) and not a seventh core area; it is sidecar on the body
-/// slot. See `knowledge/rfcs/rfc9175.txt`.
+/// slot. Request/response transfer roles are matched separately; identical
+/// keys can coexist in opposite directions. See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BlockKey {
     token: Token,

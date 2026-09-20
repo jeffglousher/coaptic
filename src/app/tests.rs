@@ -9913,3 +9913,116 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         }
     }
 }
+
+#[test]
+fn outgoing_upload_lookup_and_cleanup_preserve_same_key_server_body() {
+    fn app() -> App<profiles::Default, WideLoopback, DEFAULT_ROUTES, true> {
+        App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(WideLoopback::default())
+            .unwrap()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = app().get("probe").non().to(peer).send(0).unwrap().token();
+    let tag = crate::storage::BodyTag::new(b"shared").unwrap();
+    let key = BlockKey::new(token, peer).with_identity(tag);
+    for q in [false, true] {
+        for server_q in [false, true] {
+            for finish in 0..3 {
+                let mut app = app();
+                // The server body occupies the first matching-key slot.
+                let server_body = if server_q {
+                    app.engine.start_q_block2(key, &[b'S'; 32], 0)
+                } else {
+                    app.engine.start_block2(key, &[b'S'; 32], 0)
+                }
+                .unwrap();
+                let retained = app.engine.tx_body_transfer(server_body).unwrap();
+                let outgoing = app.put("upload").payload(&LARGE).request_tag(tag).to(peer);
+                let outgoing = if q { outgoing.q_block1() } else { outgoing };
+                let call = outgoing.send(0).unwrap();
+                assert_eq!(call.token(), token);
+                let first =
+                    decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+                let first_mid = first.message_id();
+                if finish == 1 {
+                    assert!(app.cancel(call));
+                    assert_eq!(
+                        app.take_response(call).unwrap().unwrap_err(),
+                        crate::CallFailure::Cancelled
+                    );
+                } else {
+                    let block = BlockValue::from_size(0, true, 1024).unwrap().encode();
+                    let opts = [Opt::block1(&block)];
+                    let ack = if q {
+                        Message::empty_ack(first_mid)
+                    } else {
+                        Message::new(Type::Acknowledgement, Code::CONTINUE, first_mid)
+                            .with_token(token)
+                            .with_options(&opts)
+                    };
+                    let mut wire = [0; WIRE];
+                    let n = encode(&ack, &mut wire).unwrap();
+                    app.transport_mut().send_n = if finish == 2 { 4 } else { 0 };
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    let result = app.poll(1);
+                    if finish == 2 {
+                        assert!(result.is_err());
+                        assert_eq!(
+                            app.take_response(call).unwrap().unwrap_err(),
+                            crate::CallFailure::ContinuationFailed
+                        );
+                    } else {
+                        result.unwrap();
+                        assert!(app.take_response(call).is_none());
+                        assert_eq!(app.transport().send_n, 1);
+                        let next =
+                            decode(&app.transport().sends[0][..app.transport().send_lens[0]])
+                                .unwrap();
+                        assert_eq!(next.payload(), &LARGE[1024..]);
+                        assert_eq!(
+                            if q { next.q_block1() } else { next.block1() }
+                                .unwrap()
+                                .unwrap()
+                                .num(),
+                            1
+                        );
+                        let ack =
+                            Message::new(Type::Acknowledgement, Code::CHANGED, next.message_id())
+                                .with_token(token);
+                        let mut wire = [0; WIRE];
+                        let n = encode(&ack, &mut wire).unwrap();
+                        app.transport_mut().send_n = 0;
+                        app.transport_mut().inbox = Some((peer, wire, n));
+                        app.poll(2).unwrap();
+                        assert_eq!(
+                            app.take_response(call).unwrap().unwrap().code(),
+                            Code::CHANGED
+                        );
+                    }
+                }
+                assert!(app.take_response(call).is_none());
+                assert!(
+                    app.engine
+                        .lookup_tx_body_role(
+                            key,
+                            if q {
+                                crate::storage::BlockRole::OutgoingQBlock1
+                            } else {
+                                crate::storage::BlockRole::OutgoingBlock1
+                            }
+                        )
+                        .is_none()
+                );
+                assert_eq!(app.engine.tx_body_transfer(server_body), Some(retained));
+                assert_eq!(
+                    app.engine.tx_body_payload(server_body),
+                    Some(&[b'S'; 32][..])
+                );
+                assert_eq!(app.engine.rx_occupied(), 0);
+                assert_eq!(app.engine.tx_occupied(), 0);
+            }
+        }
+    }
+}
