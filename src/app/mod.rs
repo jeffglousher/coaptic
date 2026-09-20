@@ -689,6 +689,10 @@ where
     /// Content-Format, including its absence. A mismatch sends 4.06 without
     /// Observe and ends that relation. Non-success responses also omit Observe
     /// and end the relation after successful transmission (RFC 7641 §4.2).
+    /// With body pools enabled, oversized notifications start classic Block2;
+    /// protected notification block zero uses a fresh OSCORE Partial IV. The
+    /// route handler must serve a consistent representation on follow-ups;
+    /// retained snapshot metadata and final-block recovery are not guaranteed.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
@@ -1890,11 +1894,9 @@ where
         oscore_req,
     ) {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
-        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
-            if !oscore::is_active(oscore) =>
-        {
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             let _ = engine.release_tx(tx);
-            start_notify_block2(engine, io, meta, &notify, ty, pending)
+            start_notify_block2(engine, io, meta, &notify, ty, pending, oscore)
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -1923,6 +1925,7 @@ fn start_notify_block2<S, T>(
     response: &Response<'_>,
     ty: Type,
     pending: Option<(u64, MessageId, u32)>,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1939,15 +1942,7 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let outcome = issue_classic(
-        engine,
-        io,
-        meta,
-        response,
-        ty,
-        meta.mid,
-        id,
-        pending,
-        &mut oscore::empty_field(),
+        engine, io, meta, response, ty, meta.mid, id, pending, oscore_ctx,
     );
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -2753,7 +2748,9 @@ fn encode_response<S: Storage + DatagramSlots, E>(
                 .with_token(token)
                 .with_options(opts.as_slice())
                 .with_payload(payload);
-            if block.is_some_and(|b| b.q_block) {
+            if block.is_some_and(|b| b.q_block)
+                || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
+            {
                 oscore::encode_notification(oscore_ctx, oscore_req, engine, tx, &msg)
             } else {
                 oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)

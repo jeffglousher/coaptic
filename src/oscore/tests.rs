@@ -5335,3 +5335,173 @@ fn observe_download_binding_is_bounded_and_does_not_reset_notification_freshness
     }
     assert!(client.protect_request(&request, &mut wire).is_ok());
 }
+
+#[test]
+fn protected_large_server_notifications_assemble_and_recover_from_send_failure() {
+    use crate::{App, Request, Response, get, profiles};
+    const BODY: [u8; 4097] = [b'Z'; 4097];
+    fn value(request: Request<'_>) -> Response<'static> {
+        Response::content(if request.is_observe_register() {
+            b"initial"
+        } else {
+            &BODY[..4096]
+        })
+        .content_format(ContentFormat::OCTET_STREAM)
+        .etag(b"v1")
+        .observe(0)
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let base = 86_400_000;
+    for confirmable in [false, true] {
+        for length in [2000, 4096, 4097] {
+            for fail_send in [false, true] {
+                let mut server = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .route("obs", get(value))
+                    .bind(QWire::default())
+                    .unwrap();
+                server.set_oscore(server_c1());
+                let mut client = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .bind(QWire::default())
+                    .unwrap();
+                client.set_oscore(client_c1());
+                let call = client
+                    .get("obs")
+                    .observe()
+                    .to(server_ep)
+                    .send(base)
+                    .unwrap();
+                server.transport_mut().inbox =
+                    Some((client_ep, client.transport_mut().sent.remove(0)));
+                server.poll(base).unwrap();
+                client.transport_mut().inbox =
+                    Some((server_ep, server.transport_mut().sent.remove(0)));
+                client.poll(base + 1).unwrap();
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap().payload(),
+                    b"initial"
+                );
+                let response = Response::content(&BODY[..length])
+                    .content_format(ContentFormat::OCTET_STREAM)
+                    .etag(b"v1");
+                if confirmable {
+                    server
+                        .engine_mut()
+                        .record_observe_notify(
+                            crate::storage::ObserveKey::new(call.token(), client_ep),
+                            0,
+                            MessageId::new(55),
+                            false,
+                        )
+                        .unwrap();
+                }
+                server.transport_mut().fail_send = fail_send;
+                let first = server.notify(base + 2, &["obs"], response);
+                if length > 4096 {
+                    assert!(matches!(
+                        first,
+                        Err(crate::app::Error::Block(
+                            crate::error::BlockTransferError::Overflow
+                        ))
+                    ));
+                    assert!(server.transport().sent.is_empty());
+                    server.transport_mut().fail_send = false;
+                    assert_eq!(
+                        server
+                            .notify(
+                                base + 3,
+                                &["obs"],
+                                Response::content(b"small")
+                                    .content_format(ContentFormat::OCTET_STREAM)
+                            )
+                            .unwrap(),
+                        1
+                    );
+                    client.transport_mut().inbox =
+                        Some((server_ep, server.transport_mut().sent.remove(0)));
+                    client.poll(base + 3).unwrap();
+                    assert_eq!(
+                        client.take_response(call).unwrap().unwrap().payload(),
+                        b"small"
+                    );
+                } else {
+                    if fail_send {
+                        assert!(matches!(first, Err(crate::app::Error::Io(_))));
+                        assert!(server.transport().sent.is_empty());
+                        assert!(
+                            server
+                                .engine()
+                                .tx_body_transfer(crate::storage::SlotId::from_index(0))
+                                .is_none()
+                        );
+                        assert_eq!(server.notify(base + 3, &["obs"], response).unwrap(), 1);
+                    } else {
+                        assert_eq!(first.unwrap(), 1);
+                    }
+                    let first_wire = &server.transport().sent[0];
+                    assert_eq!(
+                        decode(first_wire).unwrap().ty(),
+                        if confirmable {
+                            Type::Confirmable
+                        } else {
+                            Type::NonConfirmable
+                        }
+                    );
+                    assert!(
+                        super::OscoreHeader::parse(decode(first_wire).unwrap().oscore().unwrap())
+                            .unwrap()
+                            .piv
+                            .is_some()
+                    );
+                    let mut complete = false;
+                    for step in 0..8 {
+                        if server.transport().sent.is_empty() {
+                            break;
+                        }
+                        let response = server.transport_mut().sent.remove(0);
+                        client.transport_mut().inbox = Some((server_ep, response));
+                        client.poll(base + 10 + step).unwrap();
+                        if let Some(reply) = client.take_response(call) {
+                            assert_eq!(reply.unwrap().body(), Some(&BODY[..length]));
+                            complete = true;
+                            break;
+                        }
+                        while !client.transport().sent.is_empty() {
+                            let request = client.transport_mut().sent.remove(0);
+                            server.transport_mut().inbox = Some((client_ep, request));
+                            server.poll(base + 10 + step).unwrap();
+                        }
+                    }
+                    assert!(complete, "large notification did not complete");
+                }
+                while !client.transport().sent.is_empty() {
+                    server.transport_mut().inbox =
+                        Some((client_ep, client.transport_mut().sent.remove(0)));
+                    server.poll(base + 100).unwrap();
+                }
+                server
+                    .oscore_mut()
+                    .unwrap()
+                    .set_sender_seq(1u64 << 40)
+                    .unwrap();
+                assert!(matches!(
+                    server.notify(base + 10_000, &["obs"], response),
+                    Err(crate::app::Error::Oscore(Error::SequenceExhausted))
+                ));
+                assert!(
+                    server.transport().sent.is_empty(),
+                    "exhaustion must never fall back to plaintext"
+                );
+                assert!(client.cancel(call));
+                assert_eq!(server.engine_mut().tx_occupied(), 0);
+                assert_eq!(server.engine_mut().rx_occupied(), 0);
+                assert_eq!(client.engine_mut().tx_occupied(), 0);
+                assert_eq!(client.engine_mut().rx_occupied(), 0);
+            }
+        }
+    }
+}
