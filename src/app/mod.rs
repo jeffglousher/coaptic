@@ -554,7 +554,9 @@ where
     ///
     /// **Inbound.** Handlers see a borrowed [`Request`] and return an owned
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
-    /// (RFC 7252 ping). Incomplete Block1 / Q-Block1 is 2.31 (handler not
+    /// (RFC 7252 ping). Incomplete Q-Block1 gets an empty ACK for CON;
+    /// NON payloads get 2.31 only after a complete payload set, with the
+    /// acknowledged Q-Block1 NUM. Incomplete classic Block1 is 2.31 (handler not
     /// run); a complete body is [`Request::body`]. Unrecognized critical
     /// options (not in the implemented set) and an OSCORE option with no
     /// attached context are 4.02 before the handler. A large response ships
@@ -780,6 +782,7 @@ where
 enum InboundBody {
     None,
     Continue,
+    QWait(Option<BlockValue>),
     Refused(Code),
     Complete(SlotId),
 }
@@ -819,8 +822,9 @@ where
             }
             Ok(progress) => {
                 let _ = engine.note_q_receive(progress.id(), now_ms);
-                InboundBody::Continue
+                qblock1_wait(engine, rx, parsed)
             }
+            Err(BlockTransferError::Duplicate) => qblock1_wait(engine, rx, parsed),
             Err(BlockTransferError::MissingBlock) => InboundBody::None,
             Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
             Err(BlockTransferError::Overflow) => {
@@ -830,6 +834,34 @@ where
         };
     }
     InboundBody::None
+}
+
+// An empty ACK acknowledges a CON payload without promising a complete
+// body. NON Continue is only due after a whole MAX_PAYLOADS_SET is present.
+fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
+    engine: &Engine<Mem>,
+    rx: SlotId,
+    parsed: &ParsedMessage<'_>,
+) -> InboundBody {
+    let next = if parsed.ty() == Type::NonConfirmable {
+        let peer = engine.rx_endpoint(rx);
+        let tag = parsed.request_tag().next();
+        (0..engine.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
+            let transfer = engine.rx_body_transfer(SlotId::from_index(index))?;
+            if transfer.role() != BlockRole::IncomingQBlock1
+                || Some(transfer.endpoint()) != peer
+                || transfer.identity().as_slice() != tag
+                || transfer.window_base() == 0
+                || transfer.window_mask() != 0
+            {
+                return None;
+            }
+            BlockValue::new(transfer.window_base() - 1, true, transfer.szx()).ok()
+        })
+    } else {
+        None
+    };
+    InboundBody::QWait(next)
 }
 
 /// Write a successfully unprotected Inner over the RX slot.
@@ -1151,7 +1183,11 @@ where
     }
     let block2 = parsed.block2().and_then(Result::ok);
     let q_block2 = parsed.q_block2().next().and_then(Result::ok);
-    let block1 = parsed.block1().and_then(Result::ok);
+    let block1 = parsed.block1().and_then(Result::ok).map(|value| BlockOpt {
+        value,
+        q_block: false,
+        size2: None,
+    });
     let meta = SendResponse {
         dest: peer,
         ty: parsed.ty(),
@@ -1232,6 +1268,42 @@ where
             let _ = engine.release_rx(rx);
             return outcome;
         }
+        InboundBody::QWait(continue_block) => {
+            let outcome = if let Some(value) = continue_block {
+                send_response(
+                    engine,
+                    io,
+                    ids,
+                    SendResponse {
+                        block1: Some(BlockOpt {
+                            value,
+                            q_block: true,
+                            size2: None,
+                        }),
+                        ..meta
+                    },
+                    &Response::new(Code::CONTINUE),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
+                )
+            } else if meta.ty == Type::Confirmable {
+                send_empty_ack(engine, io, meta.dest, meta.mid).map(|()| {
+                    remember_empty_ack(
+                        engine,
+                        meta.dest,
+                        meta.mid,
+                        now_ms,
+                        meta.request,
+                        dedup_closed,
+                    );
+                })
+            } else {
+                Ok(())
+            };
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
         InboundBody::Refused(code) => {
             // Apply errors (gap, SZX mismatch, overflow, Q-Block duplicate, …).
             // Classic Overlap / AlreadyComplete replay 2.31 above.
@@ -1260,7 +1332,10 @@ where
     let (response, plan) = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
-            InboundBody::None | InboundBody::Continue | InboundBody::Refused(_) => None,
+            InboundBody::None
+            | InboundBody::Continue
+            | InboundBody::QWait(_)
+            | InboundBody::Refused(_) => None,
         };
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
@@ -2269,7 +2344,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
     response: &Response<'_>,
     payload: &[u8],
     block: Option<BlockOpt>,
-    block1: Option<BlockValue>,
+    block1: Option<BlockOpt>,
     oscore_ctx: &mut oscore::Field,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
@@ -2283,7 +2358,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
     let size2_enc = block
         .and_then(|b| b.size2)
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
-    let block1_enc = block1.map(|b| b.encode());
+    let block1_enc = block1.map(|b| b.value.encode());
     let echo = response.echo_option();
     let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
     let filled = (|| -> Result<(), EncodeError> {
@@ -2316,7 +2391,14 @@ fn encode_response<S: Storage + DatagramSlots, E>(
             }
         }
         if let Some(ref encoded) = block1_enc {
-            push_opt(&mut opts, Opt::block1(encoded))?;
+            push_opt(
+                &mut opts,
+                if block1.is_some_and(|b| b.q_block) {
+                    Opt::q_block1(encoded)
+                } else {
+                    Opt::block1(encoded)
+                },
+            )?;
         }
         if let Some(ref echo) = echo {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
@@ -2945,7 +3027,7 @@ struct SendResponse<'a> {
     q_block2: Option<BlockValue>,
     q_request: Option<ParsedMessage<'a>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
-    block1: Option<BlockValue>,
+    block1: Option<BlockOpt>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
     oscore: oscore::Request,
     /// Inbound request code (Dedup fail-closed for POST / PATCH / FETCH).

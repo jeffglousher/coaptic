@@ -3299,3 +3299,110 @@ fn app_oscore_qblock1_missing_metadata_returns_protected_bad_request() {
         }
     }
 }
+
+#[test]
+fn app_oscore_qblock1_ack_continue_and_complete_follow_payload_set() {
+    use crate::{App, profiles, put};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static BODY: [u8; 168] = [b'Q'; 168];
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for non in [false, true] {
+        CALLS.store(0, Ordering::SeqCst);
+        let mut sender = client_c1();
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "upload",
+                put(|request| {
+                    assert_eq!(request.body(), Some(BODY.as_slice()));
+                    CALLS.fetch_add(1, Ordering::SeqCst);
+                    crate::Response::changed()
+                }),
+            )
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        for num in 0..11 {
+            let q = BlockValue::from_size(num, num < 10, 16).unwrap().encode();
+            let size = encode_uint(BODY.len() as u32);
+            let mut options = OptionsBuilder::<4>::new();
+            options.push(Opt::uri_path("upload")).unwrap();
+            options.push(Opt::q_block1(&q)).unwrap();
+            options.push(Opt::size1(&size)).unwrap();
+            options.push(Opt::request_tag(b"tag")).unwrap();
+            let token = Token::new(&[num as u8]).unwrap();
+            let mid = MessageId::new(100 + num as u16);
+            let offset = num as usize * 16;
+            let request = Message::new(
+                if non {
+                    Type::NonConfirmable
+                } else {
+                    Type::Confirmable
+                },
+                Code::PUT,
+                mid,
+            )
+            .with_token(token)
+            .with_options(options.as_slice())
+            .with_payload(&BODY[offset..(offset + 16).min(BODY.len())]);
+            let mut wire = [0; WIRE];
+            let n = sender.protect_request(&request, &mut wire).unwrap();
+            let request_ref = sender.lookup(token).unwrap();
+            server.transport_mut().sent.clear();
+            server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+            server.poll(u64::from(num)).unwrap();
+            if non && num < 9 {
+                assert!(server.transport().sent.is_empty());
+            } else {
+                assert_eq!(server.transport().sent.len(), 1);
+                let outer = decode(&server.transport().sent[0]).unwrap();
+                if !non && num < 10 {
+                    assert!(outer.is_empty_ack());
+                    assert_eq!(outer.message_id(), mid);
+                    assert_eq!(outer.token(), Token::EMPTY);
+                    // The exact protected retransmission is acknowledged again;
+                    // no replayed plaintext is admitted to the body.
+                    let ack = server.transport().sent[0].clone();
+                    server.transport_mut().sent.clear();
+                    server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+                    server.poll(u64::from(num)).unwrap();
+                    assert_eq!(server.transport().sent, [ack]);
+                } else {
+                    assert!(outer.oscore().is_some());
+                    let mut plain = [0; WIRE];
+                    let inner = sender
+                        .unprotect_response(&outer, request_ref, &mut plain)
+                        .unwrap();
+                    assert_eq!(inner.token(), token);
+                    assert_eq!(
+                        inner.code(),
+                        if num == 10 {
+                            Code::CHANGED
+                        } else {
+                            Code::CONTINUE
+                        }
+                    );
+                    if num == 9 {
+                        assert_eq!(
+                            inner.q_block1().unwrap().unwrap().encode().as_bytes(),
+                            &[0x98]
+                        );
+                        assert!(inner.block1().is_none());
+                    }
+                }
+            }
+            assert_eq!(CALLS.load(Ordering::SeqCst), usize::from(num == 10));
+            sender.take(token);
+        }
+        for index in 0..server.engine().capacities().rx_body_slots.unwrap() {
+            assert!(
+                server
+                    .engine()
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
