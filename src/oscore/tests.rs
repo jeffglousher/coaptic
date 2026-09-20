@@ -1854,3 +1854,47 @@ fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
         }
     }
 }
+
+#[test]
+fn app_client_no_response_stays_inner_and_unsuppressed_error_is_delivered() {
+    use crate::{App, Request, Response, profiles, put};
+    fn handler(req: Request<'_>) -> Response<'static> {
+        assert_eq!(req.no_response(), Some(Ok(NoResponse::new(2))));
+        assert_eq!(req.payload(), b"update");
+        Response::not_found()
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut server = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route("value", put(handler))
+        .bind(Loopback::default())
+        .unwrap();
+    server.set_oscore(server_c1());
+    let mut client = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .bind(Loopback::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let call = client
+        .put("value")
+        .to(server_ep)
+        .payload(b"update")
+        .no_response(NoResponse::new(2))
+        .send(0)
+        .unwrap();
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    let outer = decode(&bytes[..n]).unwrap();
+    assert!(outer.oscore().is_some());
+    assert!(outer.no_response().is_none());
+    server.transport_mut().inbox = Some((client_ep, bytes, n));
+    server.poll(0).unwrap();
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(1).unwrap();
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().code(),
+        Code::NOT_FOUND
+    );
+}

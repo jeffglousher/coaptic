@@ -4239,6 +4239,10 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
                 assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
+                assert_eq!(
+                    parsed.no_response(),
+                    Some(Ok(crate::message::NoResponse::DEFAULT))
+                );
                 assert_eq!(parsed.request_tag().next(), Some(&b"response"[..]));
                 self.requests += 1;
             }
@@ -4258,6 +4262,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .query("if=If1")
         .accept(ContentFormat::OCTET_STREAM)
         .echo(EchoOpt::new(b"challenge").unwrap())
+        .no_response(crate::message::NoResponse::DEFAULT)
         .request_tag(crate::storage::BodyTag::new(b"response").unwrap())
         .block2(BlockValue::from_size(0, false, 64).unwrap())
         .send(0)
@@ -5580,5 +5585,113 @@ fn explicit_echo_retry_uses_received_challenge_and_preserves_request() {
     assert_eq!(
         app.take_response(retry).unwrap().unwrap().code(),
         Code::CHANGED
+    );
+}
+
+#[test]
+fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
+    use crate::message::NoResponse;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for non in [false, true] {
+        for (mask, found, expected) in [
+            (0, true, Some(Code::CHANGED)),
+            (2, true, None),
+            (2, false, Some(Code::NOT_FOUND)),
+            (26, false, None),
+        ] {
+            let mut app = App::profile::<profiles::Default>()
+                .block_wise::<true>()
+                .route("value", put(|_: Request<'_>| Response::changed()))
+                .bind(Pipe::default())
+                .unwrap();
+            let mut request = app
+                .put(if found { "value" } else { "missing" })
+                .to(peer)
+                .payload(b"update")
+                .no_response(NoResponse::new(mask))
+                .deadline(20);
+            if non {
+                request = request.non();
+            }
+            let call = request.send(0).unwrap();
+            let (_, wire, n) = app.transport().slots[app.transport().head].unwrap();
+            let parsed = decode(&wire[..n]).unwrap();
+            assert_eq!(parsed.no_response(), Some(Ok(NoResponse::new(mask))));
+            if mask == 0 {
+                assert_eq!(
+                    parsed
+                        .get_option(OptionNumber::NO_RESPONSE)
+                        .unwrap()
+                        .value(),
+                    &[]
+                );
+            }
+            app.poll(0).unwrap();
+            app.poll(1).unwrap();
+            if let Some(code) = expected {
+                assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+            } else {
+                assert!(app.take_response(call).is_none());
+                app.poll(20).unwrap();
+                assert_eq!(
+                    app.take_response(call).unwrap().unwrap_err(),
+                    crate::CallFailure::DeadlineExceeded
+                );
+            }
+            assert_eq!(app.engine.tx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn no_response_unsupported_upload_and_observe_refuse_before_io() {
+    use crate::message::NoResponse;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = pipe_app();
+    assert_eq!(
+        app.put("upload")
+            .to(peer)
+            .payload(&LARGE)
+            .no_response(NoResponse::DEFAULT)
+            .send(0),
+        Err(Error::NoResponseUploadUnsupported)
+    );
+    assert_eq!(
+        app.put("upload")
+            .to(peer)
+            .payload(b"small")
+            .q_block1()
+            .no_response(NoResponse::new(2))
+            .send(0),
+        Err(Error::NoResponseUploadUnsupported)
+    );
+    assert_eq!(
+        app.get("value")
+            .to(peer)
+            .observe()
+            .no_response(NoResponse::new(2))
+            .send(0),
+        Err(Error::NoResponseObserveUnsupported)
+    );
+    assert_eq!(app.transport().len, 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    let call = app
+        .get("value")
+        .to(peer)
+        .deregister()
+        .no_response(NoResponse::new(NoResponse::SUPPRESS_ALL))
+        .send(1)
+        .unwrap();
+    let (_, wire, n) = app.transport().slots[app.transport().head].unwrap();
+    let parsed = decode(&wire[..n]).unwrap();
+    assert_eq!(parsed.observe(), Some(Ok(1)));
+    assert_eq!(parsed.no_response(), Some(Ok(NoResponse::new(26))));
+    assert!(
+        app.cancel(call),
+        "caller can cease listening without inventing remote success"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
     );
 }
