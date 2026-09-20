@@ -4378,3 +4378,110 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
         assert_eq!(client.engine_mut().rx_occupied(), 0);
     }
 }
+
+#[test]
+fn protected_response_inline_and_assembled_boundaries_reclaim_state() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let mut server = server_c1();
+    let mut scratch = [0; WIRE];
+    let mut wire = [0; WIRE];
+    for mode in 0..3 {
+        let lengths: &[usize] = if mode == 0 {
+            &[127, 128, 129, 128]
+        } else {
+            &[4095, 4096, 4097, 4096, 4097, 4095]
+        };
+        for &len in lengths {
+            let request = client.get("body").non().to(peer);
+            let request = if mode == 2 {
+                request.q_block2()
+            } else {
+                request
+            };
+            let call = request.send(0).unwrap();
+            let sent = client.transport_mut().sent.remove(0);
+            let request = decode(&sent).unwrap();
+            let (_, mut reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+            let mut done = false;
+            for (num, payload) in body[..len].chunks(1024).enumerate() {
+                let block = BlockValue::from_size(num as u32, (num + 1) * 1024 < len, 1024)
+                    .unwrap()
+                    .encode();
+                let size = encode_uint(len as u32);
+                let mut opts = OptionsBuilder::<3>::new();
+                if mode != 0 {
+                    opts.push(Opt::etag(b"body")).unwrap();
+                    opts.push(Opt::size2(&size)).unwrap();
+                    opts.push(if mode == 2 {
+                        Opt::q_block2(&block)
+                    } else {
+                        Opt::block2(&block)
+                    })
+                    .unwrap();
+                }
+                let response = Message::new(
+                    Type::NonConfirmable,
+                    Code::CONTENT,
+                    MessageId::new(100 + num as u16),
+                )
+                .with_token(call.token())
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+                let n = server
+                    .protect_response_with_piv(&response, reference, &mut wire)
+                    .unwrap();
+                client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+                client.poll(num as u64 + 1).unwrap();
+                if let Some(outcome) = client.take_response(call) {
+                    if mode == 0 {
+                        let response = outcome.unwrap();
+                        assert_eq!(response.payload(), &body[..len.min(128)]);
+                        assert_eq!(response.payload_src_len(), len);
+                        assert_eq!(response.payload_truncated(), len > 128);
+                        assert!(response.body().is_none());
+                    } else if len <= 4096 {
+                        assert_eq!(num + 1, len.div_ceil(1024));
+                        assert_eq!(outcome.unwrap().body(), Some(&body[..len]));
+                    } else {
+                        assert_eq!(
+                            outcome.unwrap_err(),
+                            crate::CallFailure::BlockTransfer(
+                                crate::error::BlockTransferError::Overflow
+                            )
+                        );
+                    }
+                    done = true;
+                    break;
+                }
+                if !client.transport().sent.is_empty() {
+                    let sent = client.transport_mut().sent.remove(0);
+                    let request = decode(&sent).unwrap();
+                    let (_, next) = server.unprotect_request(&request, &mut scratch).unwrap();
+                    reference = next;
+                }
+            }
+            assert!(done);
+            assert!(client.take_response(call).is_none());
+            assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+            assert!(client.transport().sent.is_empty());
+            assert_eq!(client.engine_mut().rx_occupied(), 0);
+            assert_eq!(client.engine_mut().tx_occupied(), 0);
+            for index in 0..client.engine().capacities().rx_body_slots.unwrap() {
+                assert!(
+                    client
+                        .engine()
+                        .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+    }
+}

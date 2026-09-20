@@ -9685,3 +9685,112 @@ fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
     }
     assert!(app.cancel(call));
 }
+
+// A larger Engine pool must not turn App's fixed hold into silent truncation.
+struct LargeDownload;
+impl MemoryProfile for LargeDownload {
+    const RX_DATAGRAM_SLOTS: usize = 4;
+    const RX_DATAGRAM_BYTES: usize = WIRE;
+    const TX_DATAGRAM_SLOTS: usize = 4;
+    const TX_DATAGRAM_BYTES: usize = WIRE;
+    const DEDUP_ENTRIES: usize = 8;
+    const OBSERVE_ENTRIES: usize = 4;
+    const RX_BODY_SLOTS: usize = 2;
+    const RX_BODY_BYTES: usize = 8192;
+    const TX_BODY_SLOTS: usize = 2;
+    const TX_BODY_BYTES: usize = 4096;
+    type RxDatagram = <profiles::Default as MemoryProfile>::RxDatagram;
+    type TxDatagram = <profiles::Default as MemoryProfile>::TxDatagram;
+    type RxBody = crate::storage::BodyPool<2, 8192>;
+    type TxBody = <profiles::Default as MemoryProfile>::TxBody;
+    type Dedup = <profiles::Default as MemoryProfile>::Dedup;
+    type Observe = <profiles::Default as MemoryProfile>::Observe;
+    type Exchange = <profiles::Default as MemoryProfile>::Exchange;
+    type RxScratch = <profiles::Default as MemoryProfile>::RxScratch;
+    type TxScratch = <profiles::Default as MemoryProfile>::TxScratch;
+}
+
+#[test]
+fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
+    fn exercise<
+        P: MemoryProfile
+            + MemoryLayout<true, Store = crate::storage::Memory<P, crate::storage::WithBodies<P>>>,
+    >()
+    where
+        crate::storage::Memory<P, crate::storage::WithBodies<P>>: crate::storage::BodySlots,
+    {
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
+        for q in [false, true] {
+            let mut app = App::profile::<P>()
+                .deterministic_for_tests()
+                .block_wise::<true>()
+                .bind(WideLoopback::default())
+                .unwrap();
+            let other = app.get("other").non().to(peer).send(0).unwrap();
+            for (round, len) in [4095, 4096, 4097, 4096, 4097, 4095].into_iter().enumerate() {
+                app.transport_mut().send_n = 0;
+                let request = app.get("body").non().to(peer);
+                let request = if q { request.q_block2() } else { request };
+                let call = request.send(round as u64 * 10).unwrap();
+                let mut done = false;
+                for (num, payload) in body[..len].chunks(1024).enumerate() {
+                    let block = BlockValue::from_size(num as u32, (num + 1) * 1024 < len, 1024)
+                        .unwrap()
+                        .encode();
+                    let size = encode_uint(len as u32);
+                    let mut opts = OptionsBuilder::<3>::new();
+                    opts.push(Opt::etag(b"body")).unwrap();
+                    opts.push(Opt::size2(&size)).unwrap();
+                    opts.push(if q {
+                        Opt::q_block2(&block)
+                    } else {
+                        Opt::block2(&block)
+                    })
+                    .unwrap();
+                    let response = Message::new(
+                        Type::NonConfirmable,
+                        Code::CONTENT,
+                        MessageId::new(100 + (round * 10 + num) as u16),
+                    )
+                    .with_token(call.token())
+                    .with_options(opts.as_slice())
+                    .with_payload(payload);
+                    let mut wire = [0; WIRE];
+                    let n = encode(&response, &mut wire).unwrap();
+                    app.transport_mut().send_n = 0;
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.poll((round * 10 + num) as u64 + 1).unwrap();
+                    if let Some(outcome) = app.take_response(call) {
+                        if len <= RESPONSE_BODY {
+                            assert_eq!(num + 1, len.div_ceil(1024));
+                            assert_eq!(outcome.unwrap().body(), Some(&body[..len]));
+                        } else {
+                            assert!(
+                                outcome.is_err(),
+                                "oversized assembled body must not succeed"
+                            );
+                        }
+                        done = true;
+                        break;
+                    }
+                }
+                assert!(done);
+                assert!(app.take_response(call).is_none());
+                assert!(app.take_response(other).is_none());
+                assert_eq!(app.engine_mut().rx_occupied(), 0);
+                assert_eq!(app.engine_mut().tx_occupied(), 0);
+                for index in 0..app.engine().capacities().rx_body_slots.unwrap() {
+                    assert!(
+                        app.engine()
+                            .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                            .is_none()
+                    );
+                }
+            }
+            assert!(app.cancel(other));
+        }
+    }
+    exercise::<profiles::Default>();
+    exercise::<LargeDownload>();
+}
