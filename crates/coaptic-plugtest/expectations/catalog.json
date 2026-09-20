@@ -251,7 +251,9 @@
       {"code": "0.01", "uri_path": [".well-known", "core"]},
       {"code": "2.05"},
       {"code": "0.01", "uri_path": ["path"]},
-      {"code": "2.05", "payload": {"contains": "/path/sub1"}}
+      {"code": "2.05", "content_format": 40, "payload": "</path/sub1>,</path/sub2>"},
+      {"code": "0.01", "uri_path": ["path", "sub1"]},
+      {"code": "2.05", "payload": "/path/sub1"}
     ]
   },
   "TD_COAP_OBS_01": {

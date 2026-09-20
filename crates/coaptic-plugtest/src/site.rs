@@ -18,7 +18,7 @@ pub const OBS_BODY: &[u8] = b"obs-0";
 /// Later Observe representation.
 pub const OBS_BODY_2: &[u8] = b"obs-1";
 /// `/path/sub1` payload.
-pub const PATH_SUB1: &[u8] = b"path-sub1";
+pub const PATH_SUB1: &[u8] = b"/path/sub1";
 /// `/path` link-format children.
 pub const PATH_LINKS: &str = "</path/sub1>,</path/sub2>";
 /// Large Block2 / Block1 body (bigger than a Default datagram).
@@ -34,7 +34,7 @@ pub const LINK_CATALOG: &[&str] = &[
     "</test>;rt=\"Type1 Type2\";if=\"If1\";sz=123",
     "</link1>;rt=\"Type2 Type3\";if=\"If2\"",
     "</link2>;rt=\"Type1 Type3\";if=\"foo\"",
-    "</link3>",
+    "</link3>;rt=\"\"",
     "</path>;ct=40",
     "</large>;sz=1024",
 ];
@@ -190,6 +190,10 @@ fn get_path_sub1(_req: Request<'_>) -> Response<'static> {
     Response::content(PATH_SUB1)
 }
 
+fn get_path_sub2(_req: Request<'_>) -> Response<'static> {
+    Response::content(b"/path/sub2")
+}
+
 fn get_secure(_req: Request<'_>) -> Response<'static> {
     Response::content(SECURE_BODY).content_format(ContentFormat::TEXT_PLAIN)
 }
@@ -208,14 +212,35 @@ fn well_known(req: Request<'_>) -> Response<'static> {
         )
         .content_format(ContentFormat::LINK_FORMAT);
     }
+    // Stable, finite fixture storage allows large filtered catalogs to use
+    // normal Block2 assembly instead of silently clipping the inline payload.
+    const FILTERS: [&str; 8] = [
+        "rt=Type1",
+        "rt=*",
+        "rt=Type2",
+        "if=If*",
+        "sz=*",
+        "href=/link1",
+        "href=/link*",
+        "rt=",
+    ];
+    static FILTERED: OnceLock<[String; 8]> = OnceLock::new();
+    if queries.len() == 1 {
+        if let Some(index) = FILTERS.iter().position(|q| *q == queries[0]) {
+            let catalogs =
+                FILTERED.get_or_init(|| FILTERS.map(|q| filter_catalog(&[q.to_owned()])));
+            return Response::content(catalogs[index].as_bytes())
+                .content_format(ContentFormat::LINK_FORMAT);
+        }
+    }
     let payload = filter_catalog(&queries);
     let response =
         Response::content_copy(payload.as_bytes()).content_format(ContentFormat::LINK_FORMAT);
-    assert!(
-        !response.payload_truncated(),
-        "discovery fixture must not silently truncate"
-    );
-    response
+    if response.payload_truncated() {
+        Response::new(Code::REQUEST_ENTITY_TOO_LARGE)
+    } else {
+        response
+    }
 }
 
 /// Filter [`LINK_CATALOG`] by RFC 6690 query keys (`rt`, `if`, `sz`, `href`).
@@ -276,6 +301,9 @@ fn attr_match(link: &str, attr: &str, value: &str) -> bool {
     let rest = rest.strip_prefix('"').unwrap_or(rest);
     let end = rest.find('"').unwrap_or(rest.len());
     let listed = &rest[..end];
+    if value.is_empty() {
+        return listed.is_empty();
+    }
     if let Some(prefix) = value.strip_suffix('*') {
         listed.split_whitespace().any(|t| t.starts_with(prefix))
     } else {
@@ -284,7 +312,7 @@ fn attr_match(link: &str, attr: &str, value: &str) -> bool {
 }
 
 /// Method router table for the coaptic App server (24 slots).
-pub fn routers() -> [(&'static str, MethodRouter); 16] {
+pub fn routers() -> [(&'static str, MethodRouter); 17] {
     [
         (
             "test",
@@ -308,6 +336,7 @@ pub fn routers() -> [(&'static str, MethodRouter); 16] {
         ("link3", get(get_link1)),
         ("path", get(get_path)),
         ("path/sub1", get(get_path_sub1)),
+        ("path/sub2", get(get_path_sub2)),
     ]
 }
 

@@ -294,6 +294,10 @@ fn handle_request(
                 resp.set_status(ResponseType::Content);
                 resp.message.payload = site::PATH_SUB1.to_vec();
             }
+            (RequestType::Get, "path/sub2") => {
+                resp.set_status(ResponseType::Content);
+                resp.message.payload = b"/path/sub2".to_vec();
+            }
             (RequestType::Get, "secure") => {
                 resp.set_status(ResponseType::Content);
                 resp.message.payload = site::SECURE_BODY.to_vec();
