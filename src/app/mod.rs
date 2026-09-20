@@ -3476,6 +3476,8 @@ pub enum Error<E> {
     ObserveCancellationMismatch,
     /// No live subscription matches the refresh request identity and Call.
     ObserveRefreshMismatch,
+    /// Observe registration/cancellation is defined only for GET and FETCH.
+    ObserveMethodUnsupported,
     /// Multiple subscriptions match; select one with `deregister_call`.
     ObserveCancellationAmbiguous,
     /// Observe request identity exceeds the App's 512 encoded-byte bound.
@@ -3534,6 +3536,7 @@ where
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
+            Self::ObserveMethodUnsupported => f.write_str("Observe requires GET or FETCH"),
             Self::ObserveRefreshMismatch => {
                 f.write_str("Observe refresh does not match a live subscription")
             }
@@ -3583,6 +3586,7 @@ where
             | Self::ConditionalUploadUnsupported
             | Self::NoResponseUploadUnsupported
             | Self::NoResponseObserveUnsupported
+            | Self::ObserveMethodUnsupported
             | Self::ObserveRefreshMismatch
             | Self::ObserveCancellationMismatch
             | Self::ObserveCancellationAmbiguous
