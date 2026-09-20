@@ -8192,3 +8192,93 @@ fn qblock1_non_out_of_order_and_duplicate_payloads_wait_for_the_entire_set() {
         }
     }
 }
+
+#[test]
+fn qblock1_arrival_at_recovery_deadline_invalidates_old_missing_report() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for complete in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(LED_PATH, put(put_body))
+            .bind(Loopback::default())
+            .unwrap();
+        // NUM 0 and final NUM 3 leave holes 1 and 2.
+        for (num, time) in [(0, 0), (3, 1)] {
+            let (mut wire, n) =
+                encode_block_req(q_block1(&[b'A'; 16], num, num != 3, 100 + num as u16, 64));
+            wire[0] |= 0x10;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(time).unwrap();
+        }
+        if complete {
+            let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 1, true, 101, 64));
+            wire[0] |= 0x10;
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(1).unwrap();
+        }
+        let due = 1 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+        let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 2, true, 102, 64));
+        wire[0] |= 0x10;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().last_send = None;
+        app.poll(due).unwrap();
+        if complete {
+            let reply = last_reply(&app);
+            assert_eq!(reply.code, Code::CHANGED);
+            assert_eq!(&reply.payload[..reply.payload_len], &[b'A'; 64]);
+        } else {
+            assert!(
+                app.transport().last_send.is_none(),
+                "stale missing report sent after arrival"
+            );
+            app.poll(due + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS) - 1)
+                .unwrap();
+            assert!(app.transport().last_send.is_none());
+            app.poll(due + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+                .unwrap();
+            let reply = last_reply(&app);
+            assert_eq!(reply.code, Code::REQUEST_ENTITY_INCOMPLETE);
+            let mut nums = [0; 4];
+            let n = MissingBlocks::decode(&reply.payload[..reply.payload_len], &mut nums).unwrap();
+            assert_eq!(&nums[..n], &[1]);
+        }
+    }
+}
+
+#[test]
+fn qblock2_completion_at_recovery_deadline_does_not_send_obsolete_get() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
+    app.transport_mut().send_n = 0;
+    let due = 1 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+    for (num, now) in [(0, 0), (2, 1), (1, due)] {
+        let q = BlockValue::from_size(num, num != 2, 16).unwrap().encode();
+        let size = encode_uint(48);
+        let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&q)];
+        let message = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(100 + num as u16),
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(&[b'A'; 16]);
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(now).unwrap();
+        assert_eq!(
+            app.transport().send_n,
+            0,
+            "completed body must not trigger stale recovery"
+        );
+    }
+    let reply = app.take_response(call).unwrap().unwrap();
+    assert_eq!(reply.body(), Some(&[b'A'; 48][..]));
+}
