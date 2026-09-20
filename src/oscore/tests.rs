@@ -661,7 +661,7 @@ fn observe_notification_inner_empty_outer_seq_and_piv() {
         .unwrap();
     assert_eq!(opened.code(), Code::CONTENT);
     assert_eq!(opened.payload(), b"obs-1");
-    assert_eq!(opened.observe().and_then(Result::ok), Some(3));
+    assert_eq!(opened.observe().and_then(Result::ok), Some(0));
 }
 
 #[test]
@@ -738,7 +738,32 @@ fn app_oscore_observe_register_notify() {
         .expect("protected notification")
         .expect("remote response");
     assert_eq!(got.payload(), b"obs-1");
-    assert!(got.observe_seq().is_some());
+    assert_eq!(got.observe_seq(), Some(0), "Inner Observe is empty");
+    let old = (bytes, n);
+    assert_eq!(
+        server
+            .notify(10_000, &["obs"], Response::content(b"obs-2"))
+            .unwrap(),
+        1
+    );
+    let (_, bytes, n) = server.transport().last_send.unwrap();
+    client.transport_mut().inbox = Some((server_ep, bytes, n));
+    client.poll(10_000).unwrap();
+    let got = client.take_response(call).unwrap().unwrap();
+    assert_eq!(got.payload(), b"obs-2");
+    assert_eq!(
+        got.observe_seq(),
+        Some(0),
+        "new PIV wins even with equal Inner Observe"
+    );
+    for (time, (bytes, n)) in [(10_001, old), (10_002, (bytes, n))] {
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(time).unwrap();
+        assert!(
+            client.take_response(call).is_none(),
+            "old and duplicate PIV must not surface"
+        );
+    }
 }
 
 #[test]
@@ -2037,5 +2062,62 @@ fn protected_partial_upload_failure_releases_all_request_state() {
                 crate::CallFailure::Cancelled
             );
         }
+    }
+}
+
+#[test]
+fn outer_observe_cannot_replace_protected_registration_or_notification() {
+    fn replace_observe(
+        message: &crate::message::ParsedMessage<'_>,
+        value: u32,
+        out: &mut [u8],
+    ) -> usize {
+        let encoded = encode_uint(value);
+        let mut opts = OptionsBuilder::<8>::new();
+        for opt in message.options() {
+            if opt.number() != crate::message::OptionNumber::OBSERVE {
+                opts.push(opt).unwrap();
+            }
+        }
+        opts.push(Opt::observe(&encoded)).unwrap();
+        Message::new(message.ty(), message.code(), message.message_id())
+            .with_token(message.token())
+            .with_options(opts.as_slice())
+            .with_payload(message.payload())
+            .encode(out)
+            .unwrap()
+    }
+    for registration in [0, 1] {
+        let mut client = client_c1();
+        let mut server = server_c1();
+        let encoded = encode_uint(registration);
+        let opts = [Opt::observe(&encoded)];
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+            .with_token(Token::from_checked(&[1]))
+            .with_options(&opts);
+        let mut wire = [0; 256];
+        let n = client.protect_request(&request, &mut wire).unwrap();
+        let mut altered = [0; 256];
+        let n = replace_observe(&decode(&wire[..n]).unwrap(), 1 - registration, &mut altered);
+        let mut inner = [0; 256];
+        let (opened, reference) = server
+            .unprotect_request(&decode(&altered[..n]).unwrap(), &mut inner)
+            .unwrap();
+        assert_eq!(opened.observe().and_then(Result::ok), Some(registration));
+        let seq = encode_uint(3);
+        let opts = [Opt::observe(&seq)];
+        let notification = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(2))
+            .with_token(request.token())
+            .with_options(&opts)
+            .with_payload(b"data");
+        let n = server
+            .protect_response_with_piv(&notification, reference, &mut wire)
+            .unwrap();
+        let n = replace_observe(&decode(&wire[..n]).unwrap(), 0xffffff, &mut altered);
+        let opened = client
+            .unprotect_response(&decode(&altered[..n]).unwrap(), reference, &mut inner)
+            .unwrap();
+        assert_eq!(opened.observe().and_then(Result::ok), Some(0));
+        assert_eq!(opened.payload(), b"data");
     }
 }

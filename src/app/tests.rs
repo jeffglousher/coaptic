@@ -5775,3 +5775,139 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
         }
     }
 }
+
+#[test]
+fn client_observe_serial_order_wrap_and_time_boundary() {
+    use crate::message::encode_uint;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let cases = [
+        (10, 9, 1, false),
+        (10, 10, 1, false),
+        (10, 11, 1, true),
+        (0xfffffe, 1, 1, true),
+        (1, 0xfffffe, 1, false),
+        (10, 0x80000a, 1, false),
+        (0x80000a, 10, 1, false),
+        (10, 9, 128_000, false),
+        (10, 9, 128_001, true),
+        (10, 10, 128_001, true),
+    ];
+    for (previous, next, time, accepted) in cases {
+        for ty in [Type::Confirmable, Type::NonConfirmable] {
+            for take_initial in [false, true] {
+                let mut app = record_client();
+                let call = app.get("value").observe().to(peer).non().send(0).unwrap();
+                for (index, sequence, now, payload) in
+                    [(0, previous, 0, b"old"), (1, next, time, b"new")]
+                {
+                    let seq = encode_uint(sequence);
+                    let age = encode_uint(1000);
+                    let opts = [Opt::observe(&seq), Opt::max_age(&age)];
+                    let message = Message::new(ty, Code::CONTENT, MessageId::new(100 + index))
+                        .with_token(call.token())
+                        .with_options(&opts)
+                        .with_payload(payload);
+                    let mut wire = [0; 256];
+                    let n = encode(&message, &mut wire).unwrap();
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.transport_mut().sent_n = 0;
+                    app.poll(now).unwrap();
+                    assert_eq!(app.transport().sent_n, usize::from(ty == Type::Confirmable));
+                    if ty == Type::Confirmable {
+                        let (_, bytes, n) = app.transport().sent[0].unwrap();
+                        let ack = decode(&bytes[..n]).unwrap();
+                        assert!(ack.is_empty());
+                        assert_eq!(ack.ty(), Type::Acknowledgement);
+                        assert_eq!(ack.message_id(), message.message_id());
+                    }
+                    if index == 0 && take_initial {
+                        assert_eq!(app.take_response(call).unwrap().unwrap().payload(), b"old");
+                    }
+                }
+                let response = app.take_response(call);
+                if accepted {
+                    let response = response.unwrap().unwrap();
+                    assert_eq!(response.payload(), b"new");
+                    assert_eq!(response.observe_seq(), Some(next));
+                    assert_eq!(response.received_at_ms(), Some(time));
+                } else if take_initial {
+                    assert!(response.is_none());
+                } else {
+                    assert_eq!(response.unwrap().unwrap().payload(), b"old");
+                }
+                let interest = app
+                    .engine
+                    .lookup_observe(ObserveKey::new(call.token(), peer))
+                    .unwrap();
+                let lifetime = app
+                    .engine
+                    .observe_interest(interest)
+                    .unwrap()
+                    .lifetime()
+                    .unwrap();
+                assert_eq!(
+                    lifetime.due_ms(),
+                    1_000_000 + if accepted { time } else { 0 }
+                );
+                assert_eq!(app.engine.tx_occupied(), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn stale_observe_block_zero_cannot_replace_incomplete_representation() {
+    use crate::message::encode_uint;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .bind(RecordIo::default())
+        .unwrap();
+    let call = app.get("value").observe().to(peer).non().send(0).unwrap();
+    for (step, sequence, number, tag, payload) in [
+        (0, Some(10), 0, b"a", &b"abcdefghijklmnop"[..]),
+        (1, Some(9), 0, b"b", &b"XXXXXXXXXXXXXXXX"[..]),
+        (2, None, 1, b"a", &b"qrstuvwx"[..]),
+    ] {
+        let seq = sequence.map(encode_uint);
+        let age = encode_uint(1000);
+        let block = BlockValue::from_size(number, number == 0, 16)
+            .unwrap()
+            .encode();
+        let mut opts = OptionsBuilder::<4>::new();
+        opts.push(Opt::etag(tag)).unwrap();
+        if let Some(seq) = &seq {
+            opts.push(Opt::observe(seq)).unwrap();
+        }
+        opts.push(Opt::max_age(&age)).unwrap();
+        opts.push(Opt::block2(&block)).unwrap();
+        let message = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(100 + step),
+        )
+        .with_token(call.token())
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+        let mut wire = [0; 256];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        let sends = app.transport().sent_n;
+        app.poll(u64::from(step)).unwrap();
+        if step < 2 {
+            assert!(app.take_response(call).is_none());
+        }
+        if step == 1 {
+            assert_eq!(
+                app.transport().sent_n,
+                sends,
+                "stale notification must not launch a replacement download"
+            );
+        }
+    }
+    let response = app.take_response(call).unwrap().unwrap();
+    assert_eq!(response.body(), Some(&b"abcdefghijklmnopqrstuvwx"[..]));
+    assert_eq!(response.observe_seq(), Some(10));
+    assert_eq!(response.received_at_ms(), Some(0));
+    assert_eq!(app.engine.tx_occupied(), 0);
+}
