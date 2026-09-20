@@ -10496,3 +10496,68 @@ fn observe_non_read_methods_are_refused_before_io_or_capacity_consumption() {
     }
     assert_eq!(app.transport().sent_n, 4);
 }
+
+#[test]
+fn retained_classic_response_refuses_changed_bytes_or_etag_without_advancing() {
+    use crate::error::BlockTransferError;
+    use crate::storage::{BodyTag, SlotId};
+    static BODY: [u8; 2000] = [b'A'; 2000];
+    fn stable(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v1")
+    }
+    fn changed(_: Request<'_>) -> Response<'static> {
+        Response::content(&[b'B'; 2000]).etag(b"v1")
+    }
+    fn shorter(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY[..1999]).etag(b"v1")
+    }
+    fn retagged(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"v2")
+    }
+    fn untagged(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for handler in [changed, shorter, retagged, untagged] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("changed", get(handler))
+            .route("stable", get(stable))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
+            .with_identity(BodyTag::new(b"v1").unwrap());
+        let id = app.engine.start_block2(key, &BODY, 6).unwrap();
+        app.engine.next_block2(id).unwrap();
+        let before = app.engine.tx_body_transfer(id).unwrap();
+        let block = [0x16];
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["changed"],
+            &[Opt::opaque(OptionNumber::BLOCK2, &block)],
+            0x7300,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert!(matches!(
+            app.poll(1),
+            Err(Error::Block(BlockTransferError::IdentityMismatch))
+        ));
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine.tx_body_transfer(id), Some(before));
+        assert_eq!(app.engine.tx_body_payload(id), Some(&BODY[..]));
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["stable"],
+            &[Opt::opaque(OptionNumber::BLOCK2, &block)],
+            0x7301,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(2).unwrap();
+        let response = last_wide(&app);
+        assert_eq!(response.payload(), &BODY[1024..]);
+        assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+        assert!(app.engine.tx_body_transfer(id).is_none());
+        assert!(app.engine.tx_body_transfer(SlotId::from_index(1)).is_none());
+    }
+}
