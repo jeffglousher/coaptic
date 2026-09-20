@@ -1351,8 +1351,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Retains the same bounded request matchability context as
     /// [`Self::apply_block1_rx`]; a mismatching continuation cannot mutate it.
     ///
-    /// Every payload must carry Size1. Missing or changed sizes are rejected
-    /// before modifying the body.
+    /// Every payload must carry Size1 and Request-Tag (which may be empty).
+    /// Missing identity or missing/changed sizes are rejected before modifying
+    /// the body.
     pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1408,7 +1409,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Uses the first Q-Block2 option. Repeatable recover-request options
     /// are for the outgoing reissue hook, not this assemble path. Missing
     /// Q-Block2 is [`BlockTransferError::MissingBlock`]. Every payload must carry
-    /// Size2; missing or changed sizes are rejected before modifying the body.
+    /// Size2 and a nonempty ETag; missing identity or missing/changed sizes
+    /// are rejected before modifying the body.
     pub fn apply_q_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1663,8 +1665,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Issue the next Q-Block1 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. Size1 is
-    /// encoded (RFC 9177 §4.6). Request-Tag is written when the sidecar has
-    /// one. The caller supplies type, code, and Message ID.
+    /// encoded (RFC 9177 §4.6). The sidecar must have a Request-Tag (empty
+    /// is valid). Missing identity is refused before advancing the window.
+    /// The caller owns uniqueness across bodies and supplies type, code, and Message ID.
     pub fn encode_q_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1676,6 +1679,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
+        self.require_q_identity(body_id, BlockRole::OutgoingQBlock1)?;
         let issued = self.storage.next_q_block1(body_id)?;
         self.finish_outgoing_tx(
             issued,
@@ -1736,7 +1740,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Issue the next Q-Block2 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. Size2 is
-    /// encoded (RFC 9177 §4.6). ETag is written when the sidecar has one.
+    /// encoded (RFC 9177 §4.6). The sidecar must have a nonempty ETag. Missing
+    /// identity is refused before advancing the window; callers own ETag uniqueness.
     /// The caller supplies type, code, and Message ID.
     pub fn encode_q_block2_tx(
         &mut self,
@@ -1749,6 +1754,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
+        self.require_q_identity(body_id, BlockRole::OutgoingQBlock2)?;
         let issued = self.storage.next_q_block2(body_id)?;
         self.finish_outgoing_tx(
             issued,
@@ -1804,7 +1810,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Reissue one Q-Block1 payload and encode it into occupied TX `tx_id`.
     ///
     /// Token, Size1, and endpoint come from the body sidecar. Request-Tag is
-    /// written when the sidecar has one. The caller supplies type, code, and
+    /// required in the sidecar. The caller supplies type, code, and
     /// Message ID.
     pub fn encode_q_block1_reissue_tx(
         &mut self,
@@ -1818,6 +1824,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
+        self.require_q_identity(body_id, BlockRole::OutgoingQBlock1)?;
         let issued = self.reissue_q_block1(body_id, num)?;
         self.finish_outgoing_tx(
             issued,
@@ -1831,7 +1838,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Reissue one Q-Block2 payload and encode it into occupied TX `tx_id`.
     ///
     /// Token, Size2, and endpoint come from the body sidecar. ETag is
-    /// written when the sidecar has one. The caller supplies type, code, and
+    /// required in the sidecar. The caller supplies type, code, and
     /// Message ID.
     pub fn encode_q_block2_reissue_tx(
         &mut self,
@@ -1845,6 +1852,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
+        self.require_q_identity(body_id, BlockRole::OutgoingQBlock2)?;
         let issued = self.reissue_q_block2(body_id, num)?;
         self.finish_outgoing_tx(
             issued,
@@ -1940,6 +1948,24 @@ impl<S: Storage + BodySlots> Engine<S> {
         ))
     }
 
+    fn require_q_identity(&self, id: SlotId, role: BlockRole) -> Result<(), BlockTransferError> {
+        let transfer = self
+            .storage
+            .tx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let identity = transfer.identity();
+        if identity.is_absent()
+            || (role == BlockRole::OutgoingQBlock2
+                && identity.as_slice().is_some_and(|tag| tag.is_empty()))
+        {
+            return Err(BlockTransferError::MissingIdentity);
+        }
+        Ok(())
+    }
+
     fn apply_incoming_rx(
         &mut self,
         id: SlotId,
@@ -1976,6 +2002,15 @@ impl<S: Storage + BodySlots> Engine<S> {
                 return Err(BlockTransferError::MissingSize);
             }
             let identity = which.read_identity(&parsed)?;
+            match which {
+                RxBlockOpt::QBlock1 if identity.is_absent() => {
+                    return Err(BlockTransferError::MissingIdentity);
+                }
+                RxBlockOpt::QBlock2 if identity.as_slice().is_none_or(|tag| tag.is_empty()) => {
+                    return Err(BlockTransferError::MissingIdentity);
+                }
+                _ => {}
+            }
             let binding = if which.uses_size1() {
                 Some(RequestBinding::from_message(&parsed)?)
             } else {
