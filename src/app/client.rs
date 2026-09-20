@@ -119,6 +119,9 @@ pub enum CallFailure {
     Cancelled,
     /// Explicit cancellation could not be sent; local subscription is retired.
     CancellationFailed,
+    /// A block continuation could not be sent. Poll returns the detailed error;
+    /// the call is retired locally and remote effects remain uncertain.
+    ContinuationFailed,
     /// Caller-supplied absolute deadline was reached.
     DeadlineExceeded,
     /// Retransmissions or the response lifetime were exhausted.
@@ -135,6 +138,7 @@ impl core::fmt::Display for CallFailure {
         match self {
             Self::Cancelled => f.write_str("call cancelled"),
             Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
+            Self::ContinuationFailed => f.write_str("block continuation send failed"),
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
             Self::Reset => f.write_str("peer reset the request"),
@@ -1584,6 +1588,18 @@ where
                     let outcome = continue_block1_tx(
                         engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
                     );
+                    if outcome.is_err() {
+                        abandon_send(engine, oscore, parsed.token(), peer);
+                        fail_call(
+                            engine,
+                            inbox,
+                            lives,
+                            oscore,
+                            Call::new(parsed.token(), peer),
+                            CallFailure::ContinuationFailed,
+                            true,
+                        );
+                    }
                     let _ = engine.release_rx(rx);
                     return outcome;
                 }
@@ -1654,6 +1670,18 @@ where
                     peer,
                     progress.id(),
                 );
+                if outcome.is_err() {
+                    abandon_send(engine, oscore, parsed.token(), peer);
+                    fail_call(
+                        engine,
+                        inbox,
+                        lives,
+                        oscore,
+                        Call::new(parsed.token(), peer),
+                        CallFailure::ContinuationFailed,
+                        true,
+                    );
+                }
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -1725,6 +1753,18 @@ where
                 } else {
                     Ok(())
                 };
+                if outcome.is_err() {
+                    abandon_send(engine, oscore, parsed.token(), peer);
+                    fail_call(
+                        engine,
+                        inbox,
+                        lives,
+                        oscore,
+                        Call::new(parsed.token(), peer),
+                        CallFailure::ContinuationFailed,
+                        true,
+                    );
+                }
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -2364,7 +2404,7 @@ fn abandon_send<Mem>(
         if engine.tx_endpoint(id) == Some(peer)
             && engine
                 .decode_tx(id)
-                .is_ok_and(|message| message.token() == token)
+                .is_ok_and(|message| message.token() == token && message.code().is_request())
         {
             let _ = engine.take_pending_con(pending.message_id(), peer);
             let _ = engine.release_tx(id);
@@ -2549,7 +2589,14 @@ fn fail_call<Mem>(
         }
     }
     if let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) {
-        let _ = engine.release_tx_body(body);
+        if engine.tx_body_transfer(body).is_some_and(|transfer| {
+            matches!(
+                transfer.role(),
+                BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+            )
+        }) {
+            let _ = engine.release_tx_body(body);
+        }
     }
     super::oscore::cancel(oscore, call.token());
     // Untaken failures occupy the same bounded completion budget as replies.
