@@ -131,6 +131,8 @@ pub enum CallFailure {
     Cancelled,
     /// Explicit cancellation could not be sent; local subscription is retired.
     CancellationFailed,
+    /// Re-registration could not be sent; local subscription is retired.
+    ReregistrationFailed,
     /// A block continuation could not be sent. Poll returns the detailed error;
     /// the call is retired locally and remote effects remain uncertain.
     ContinuationFailed,
@@ -152,6 +154,7 @@ impl core::fmt::Display for CallFailure {
         match self {
             Self::Cancelled => f.write_str("call cancelled"),
             Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
+            Self::ReregistrationFailed => f.write_str("Observe re-registration send failed"),
             Self::ContinuationFailed => f.write_str("block continuation send failed"),
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
@@ -1025,6 +1028,23 @@ where
     #[must_use]
     pub const fn observe(mut self) -> Self {
         self.observe = OutgoingObserve::Register;
+        self.observe_target = None;
+        self
+    }
+
+    /// Refresh a specific live subscription with Observe=0 and the same Token.
+    /// Repeat the original method, path, options and payload; ETags may differ.
+    /// Mismatch is refused before I/O. Notification ordering and the existing
+    /// absolute deadline survive the refresh (a new deadline may shorten it).
+    /// Pending transmissions and queued representations are retired before send.
+    /// On send failure, the local subscription terminates with
+    /// [`CallFailure::ReregistrationFailed`]; remote state remains uncertain.
+    /// The caller schedules refresh, including RFC 7641 section 3.3's randomized
+    /// delay after Max-Age. App does not automatically refresh subscriptions.
+    #[must_use]
+    pub const fn reregister_call(mut self, call: Call) -> Self {
+        self.observe = OutgoingObserve::Register;
+        self.observe_target = Some(call);
         self
     }
 
@@ -1085,6 +1105,8 @@ where
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
         let observe = self.observe;
+        let refreshing = observe == OutgoingObserve::Register && self.observe_target.is_some();
+        let replacing = observe == OutgoingObserve::Deregister || refreshing;
         if self.no_response.is_some() && self.q_block1 {
             return Err(Error::NoResponseUploadUnsupported);
         }
@@ -1142,7 +1164,7 @@ where
                 })?,
             )
         };
-        let token = if observe == OutgoingObserve::Deregister {
+        let token = if replacing {
             self.app
                 .lives
                 .observe_call::<T::Error>(
@@ -1153,7 +1175,14 @@ where
                         !self.app.inbox.contains(call)
                             || client_observe_live(&self.app.engine, call)
                     },
-                )?
+                )
+                .map_err(|error| {
+                    if refreshing {
+                        Error::ObserveRefreshMismatch
+                    } else {
+                        error
+                    }
+                })?
                 .token()
         } else {
             self.app.next_token()?
@@ -1173,8 +1202,18 @@ where
         {
             return Err(Error::RequestTagInUse);
         }
+        let prior = refreshing
+            .then(|| self.app.lives.get(Call::new(token, dest)))
+            .flatten();
+        let deadline_ms = match (self.deadline_ms, prior.and_then(|live| live.deadline_ms)) {
+            (Some(new), Some(old)) => Some(new.min(old)),
+            (new, old) => new.or(old),
+        };
+        if deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+            return Err(Error::DeadlineElapsed);
+        }
         spec.token = token;
-        if observe == OutgoingObserve::Deregister {
+        if replacing {
             // A new request reuses this Token. Do not retain old CONs, body
             // fragments or authenticated request bindings under that identity.
             abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
@@ -1184,7 +1223,11 @@ where
                 &mut self.app.lives,
                 &mut self.app.oscore,
                 Call::new(token, dest),
-                CallFailure::CancellationFailed,
+                if refreshing {
+                    CallFailure::ReregistrationFailed
+                } else {
+                    CallFailure::CancellationFailed
+                },
                 true,
             );
         }
@@ -1203,7 +1246,7 @@ where
                 return Err(error);
             }
         };
-        if observe == OutgoingObserve::Deregister {
+        if replacing {
             self.app.inbox.discard(call);
         }
         self.app.lives.insert(LiveCall {
@@ -1221,9 +1264,9 @@ where
             echo: self.echo,
             no_response: self.no_response,
             observe,
-            observed: None,
+            observed: prior.and_then(|live| live.observed),
             request_identity,
-            deadline_ms: self.deadline_ms,
+            deadline_ms,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
@@ -1603,6 +1646,16 @@ where
     if let Err(error) = super::oscore::commit_response(oscore, response_state) {
         let _ = engine.release_rx(rx);
         return Err(error);
+    }
+    // A matching piggybacked ACK ends retransmission even if its Observe
+    // value is stale. A delayed NON/CON notification cannot acknowledge a
+    // concurrently refreshed request merely by sharing its Token.
+    if parsed.ty() == Type::Acknowledgement {
+        if let Some(entry) = via_exchange {
+            if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
+                let _ = engine.release_tx(tx);
+            }
+        }
     }
     // ACK stale CON notifications too, but do not refresh their lifetime,
     // replace the inbox, or alter assembly. OSCORE already authenticated and

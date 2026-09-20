@@ -10100,3 +10100,162 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
         }
     }
 }
+
+#[test]
+fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    for fetch_request in [false, true] {
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route("obs", get(get_obs).fetch(get_obs))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .bind(WideLoopback::default())
+            .unwrap();
+        let request = if fetch_request {
+            client.fetch("obs")
+        } else {
+            client.get("obs")
+        };
+        let call = request
+            .observe()
+            .query("v=1")
+            .payload(b"selection")
+            .content_format(ContentFormat::OCTET_STREAM)
+            .accept(ContentFormat::TEXT_PLAIN)
+            .etag(b"old")
+            .deadline(50_000)
+            .to(server_ep)
+            .send(0)
+            .unwrap();
+        let (wire, n) = (client.transport().sends[0], client.transport().send_lens[0]);
+        server.transport_mut().inbox = Some((client_ep, wire, n));
+        server.poll(0).unwrap();
+        let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+        client.transport_mut().inbox = Some((server_ep, wire, n));
+        client.poll(1).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().observe_seq(),
+            Some(0)
+        );
+        client.transport_mut().send_n = 0;
+        // Every mismatch is refused before it can disturb the live relation.
+        for mismatch in 0..6 {
+            let request = if fetch_request {
+                client.fetch(if mismatch == 0 { "wrong" } else { "obs" })
+            } else {
+                client.get(if mismatch == 0 { "wrong" } else { "obs" })
+            };
+            let result = request
+                .reregister_call(call)
+                .query(if mismatch == 1 { "v=2" } else { "v=1" })
+                .payload(if mismatch == 2 {
+                    b"different"
+                } else {
+                    b"selection"
+                })
+                .content_format(if mismatch == 3 {
+                    ContentFormat::TEXT_PLAIN
+                } else {
+                    ContentFormat::OCTET_STREAM
+                })
+                .accept(if mismatch == 4 {
+                    ContentFormat::OCTET_STREAM
+                } else {
+                    ContentFormat::TEXT_PLAIN
+                })
+                .to(if mismatch == 5 { client_ep } else { server_ep })
+                .send(2);
+            assert!(matches!(result, Err(Error::ObserveRefreshMismatch)));
+            assert_eq!(client.transport().send_n, 0);
+            assert!(
+                client
+                    .engine()
+                    .lookup_observe(ObserveKey::new_client(call.token(), server_ep))
+                    .is_some()
+            );
+        }
+        for round in 1..=3u32 {
+            client.transport_mut().send_n = 0;
+            server.transport_mut().send_n = 0;
+            let request = if fetch_request {
+                client.fetch("obs")
+            } else {
+                client.get("obs")
+            };
+            let refreshed = request
+                .reregister_call(call)
+                .query("v=1")
+                .payload(b"selection")
+                .content_format(ContentFormat::OCTET_STREAM)
+                .accept(ContentFormat::TEXT_PLAIN)
+                .etag(b"new")
+                .to(server_ep)
+                .send(u64::from(round) * 100)
+                .unwrap();
+            assert_eq!(refreshed, call);
+            let (wire, n) = (client.transport().sends[0], client.transport().send_lens[0]);
+            let request = decode(&wire[..n]).unwrap();
+            assert_eq!(request.token(), call.token());
+            assert_eq!(request.observe(), Some(Ok(0)));
+            assert_eq!(request.etag().next(), Some(&b"new"[..]));
+            let old = encode_uint(round - 1);
+            let options = [Opt::observe(&old)];
+            for ty in [Type::NonConfirmable, Type::Confirmable] {
+                let stale_notification = Message::new(
+                    ty,
+                    Code::CONTENT,
+                    MessageId::new(1000 + round as u16 * 2 + u16::from(ty == Type::Confirmable)),
+                )
+                .with_token(call.token())
+                .with_options(&options)
+                .with_payload(b"stale");
+                let mut bytes = [0; WIRE];
+                let size = encode(&stale_notification, &mut bytes).unwrap();
+                client.transport_mut().inbox = Some((server_ep, bytes, size));
+                client.poll(u64::from(round) * 100 + 1).unwrap();
+                assert!(client.take_response(call).is_none());
+                assert_eq!(
+                    client.engine_mut().tx_occupied(),
+                    1,
+                    "stale notification cannot ACK the refresh"
+                );
+            }
+            let stale = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+                .with_token(call.token())
+                .with_options(&options)
+                .with_payload(b"stale");
+            let mut stale_wire = [0; WIRE];
+            let stale_n = encode(&stale, &mut stale_wire).unwrap();
+            client.transport_mut().inbox = Some((server_ep, stale_wire, stale_n));
+            client.poll(u64::from(round) * 100 + 1).unwrap();
+            assert!(client.take_response(call).is_none());
+            assert_eq!(
+                client.engine_mut().tx_occupied(),
+                0,
+                "stale ACK must stop request retransmission"
+            );
+            server.transport_mut().inbox = Some((client_ep, wire, n));
+            server.poll(u64::from(round) * 100 + 2).unwrap();
+            let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+            client.transport_mut().inbox = Some((server_ep, wire, n));
+            client.poll(u64::from(round) * 100 + 3).unwrap();
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap().observe_seq(),
+                Some(round)
+            );
+        }
+        client.poll(50_000).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::DeadlineExceeded
+        );
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+    }
+}
