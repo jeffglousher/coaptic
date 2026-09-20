@@ -3454,7 +3454,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
                     .content_format(ContentFormat::JSON)
                     .if_match(b"v0")
             } else {
-                client.get("large/part")
+                client.get("large/part").if_match(b"v0")
             };
             let call = request
                 .query("x=1")
@@ -3528,6 +3528,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
                 assert_eq!(outer.ty(), Type::NonConfirmable);
                 let (inner, fresh_ref) = server.unprotect_request(&outer, &mut opened).unwrap();
                 assert_eq!(inner.code(), if is_fetch { Code::FETCH } else { Code::GET });
+                assert_eq!(inner.if_match().next(), Some(&b"v0"[..]));
                 if is_fetch {
                     assert_eq!(inner.payload(), b"selection");
                     assert_eq!(inner.content_format(), Some(Ok(ContentFormat::JSON)));
