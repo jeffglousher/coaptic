@@ -66,7 +66,7 @@
 //! [`Outgoing::deregister`] sends Observe=1. Structured 4.xx bodies use
 //! [`Response::problem`]
 //! (RFC 9290). Q-Block1 holes from `poll` use [`Response::missing_blocks`]
-//! (RFC 9177, Content-Format 272). Time-based Echo freshness is
+//! (RFC 9177, Content-Format 272). Caller-owned Echo issuance and verification use
 //! [`app::AppBuilder::echo_policy`].
 //!
 //! # What you own

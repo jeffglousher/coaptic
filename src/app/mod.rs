@@ -561,8 +561,9 @@ where
     /// challenge or reject with 4.01 before processing. Location-Path /
     /// Location-Query on the [`Response`]
     /// are written on the wire. [`Response::separate`] is an empty ACK
-    /// to a CON request, then the representation in a later CON (new
-    /// Message ID; NON request → NON). A retransmitted CON request (same
+    /// to a CON request, then the completed representation in a new CON in
+    /// the same poll (NON request → NON). Handlers are synchronous; App
+    /// does not provide a deferred response completion handle. A retransmitted CON request (same
     /// Message ID + peer) is answered from the Dedup Table without a
     /// second handler call while the row is live (`EXCHANGE_LIFETIME`):
     /// the cached ACK bytes, or a pinned TX slot when the ACK does not

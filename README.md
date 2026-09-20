@@ -55,7 +55,7 @@ does not own a DTLS stack.
   8 KiB of RX/TX bodies for Constrained, 16 KiB for Default, plus a 4 KiB
   assembled client-body hold and bookkeeping. Datagram-only mode omits these.
 - Unknown critical response options reject the response; unknown elective
-  options are ignored. A rejected CON response gets RST, while a matching
+  options are retained in bounded response metadata without interpretation. A rejected CON response gets RST, while a matching
   piggybacked ACK stops request retransmission without completing the Call.
 
 ## Features

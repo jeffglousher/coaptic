@@ -117,7 +117,7 @@ impl IntoResponse for Response<'static> {
 /// Created can carry [`Self::location_path`] / [`Self::location_query`]
 /// (bounded, borrowed strings, no heap). Received Location values borrow App's
 /// reply hold; handler locations must outlive their response. [`Self::separate`] is an empty ACK to a
-/// CON request, then the representation in a later CON (new Message ID).
+/// CON request, then the representation in a new CON during the same poll.
 ///
 /// Handler returns and [`Self::observe`] copy the small header +
 /// inline/`'static` payload only.
@@ -572,8 +572,13 @@ impl<'a> Response<'a> {
     /// A CON request is acknowledged with an empty ACK; the representation
     /// follows in a new CON with a fresh Message ID and the request Token.
     /// A NON request is answered with a NON that also uses a fresh Message
-    /// ID. [`App::poll`](super::App::poll) performs both sends. Default is
-    /// piggybacked ACK (CON) or a NON that reuses the request Message ID.
+    /// ID. The handler completes synchronously before either send;
+    /// [`App::poll`](super::App::poll) performs both sends in that invocation.
+    /// This flag provides no deferred completion handle. Applications needing
+    /// work across polls must own that lifecycle through the advanced
+    /// [`Engine`](crate::storage::Engine) API, including retained request
+    /// identity, deadlines, duplicate suppression and pending CON delivery.
+    /// Default is piggybacked ACK (CON) or NON with a fresh Message ID.
     ///
     /// ```
     /// use coaptic::Response;
