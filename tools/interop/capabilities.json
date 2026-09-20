@@ -3,7 +3,8 @@
   "scope": "Independent process suite only. A passed case proves its listed assertions, not complete feature or RFC conformance.",
   "policy": "A report is complete only when every enabled case appears exactly once and passes. Explicit build exclusions and unqualified surfaces remain visible.",
   "required_capabilities": [
-    "libcoap-dtls"
+    "libcoap-dtls",
+    "libcoap-oscore"
   ],
   "cases": [
     {
@@ -2032,6 +2033,94 @@
         "wrong-key PUT refused, accepted state unchanged and subsequent service succeeds"
       ],
       "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "oscore-state:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "oscore",
+        "get",
+        "put",
+        "state-preservation"
+      ],
+      "positive_proof": [
+        "authenticated GET bytes",
+        "PUT creation and exact readback"
+      ],
+      "failure_proof": [
+        "wrong-key PUT cannot change state",
+        "plaintext PUT receives 4.01 and cannot change state"
+      ],
+      "executable": "tools/interop/run.py:main.oscore_state"
+    },
+    {
+      "id": "oscore-state:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "get",
+        "put",
+        "state-preservation"
+      ],
+      "positive_proof": [
+        "authenticated GET bytes",
+        "PUT creation and exact readback"
+      ],
+      "failure_proof": [
+        "wrong-key PUT cannot change state",
+        "plaintext PUT receives 4.01 and cannot change state"
+      ],
+      "executable": "tools/interop/run.py:main.oscore_state"
+    },
+    {
+      "id": "oscore-state:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-oscore"
+      ],
+      "features": [
+        "oscore",
+        "get",
+        "put",
+        "state-preservation"
+      ],
+      "positive_proof": [
+        "authenticated GET bytes",
+        "PUT creation and exact readback"
+      ],
+      "failure_proof": [
+        "wrong-key PUT cannot change state",
+        "plaintext PUT receives 4.01 and cannot change state"
+      ],
+      "executable": "tools/interop/run.py:main.oscore_state"
     }
   ],
   "gaps": [
@@ -2095,7 +2184,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Libcoap OSCORE build support is not exercised by this runner; independent wrong-key/replay/ciphertext/Observe/inner-block cases are absent.",
+      "reason": "Three initial process cases qualify exact GET and PUT/readback plus wrong-key/plaintext state preservation with public C.1 keys. Independent replay/corruption, protected Observe/block/Q transfer, context lifecycle and persistent sequence recovery remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },

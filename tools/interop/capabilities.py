@@ -21,7 +21,7 @@ def validate_manifest(manifest):
     if not isinstance(cases, list) or not cases:
         raise ValueError("capability manifest must declare executable cases")
     capabilities = manifest.get("required_capabilities")
-    if capabilities != ["libcoap-dtls"]:
+    if capabilities != ["libcoap-dtls", "libcoap-oscore"]:
         raise ValueError("unknown build capability policy")
     ids = set()
     for case in cases:
@@ -33,9 +33,11 @@ def validate_manifest(manifest):
         ids.add(case["id"])
         if case["client"] not in ("coaptic", "coap-rs", "libcoap") or case["server"] not in ("coaptic", "coap-rs", "libcoap"):
             raise ValueError("unknown peer")
-        if (case["transport"], case["security"]) not in (("udp", "none"), ("dtls", "psk-dtls")):
+        if (case["transport"], case["security"]) not in (("udp", "none"), ("dtls", "psk-dtls"), ("udp", "oscore")):
             raise ValueError("undeclared transport/security combination")
         expected = ["libcoap-dtls"] if case["transport"] == "dtls" and "libcoap" in (case["client"], case["server"]) else []
+        if case["security"] == "oscore" and "libcoap" in (case["client"], case["server"]):
+            expected = ["libcoap-oscore"]
         if case.get("requires") != expected:
             raise ValueError("case build exclusion does not match peer/transport")
         for field in ("features", "positive_proof", "failure_proof", "execution_platforms"):
@@ -55,11 +57,13 @@ def validate_manifest(manifest):
             raise ValueError("gap requires tracking issue")
 
 
-def evaluate(manifest, outcomes, *, libcoap_dtls, system):
+def evaluate(manifest, outcomes, *, libcoap_dtls, system, libcoap_oscore=True):
     """An omitted, duplicate, undeclared, disabled or failed case cannot pass."""
     validate_manifest(manifest)
-    if type(libcoap_dtls) is not bool:
+    if type(libcoap_dtls) is not bool or type(libcoap_oscore) is not bool:
         raise ValueError("build capability must be explicit")
+    def is_excluded(case):
+        return ("libcoap-dtls" in case["requires"] and not libcoap_dtls) or ("libcoap-oscore" in case["requires"] and not libcoap_oscore)
     counts = Counter(row.get("name") for row in outcomes)
     results = {row.get("name"): row for row in outcomes}
     declared = {row["id"] for row in manifest["cases"]}
@@ -67,7 +71,7 @@ def evaluate(manifest, outcomes, *, libcoap_dtls, system):
     coverage = []
     for case in manifest["cases"]:
         name = case["id"]
-        excluded = "libcoap-dtls" in case["requires"] and not libcoap_dtls
+        excluded = is_excluded(case)
         if excluded:
             state = "build-excluded"
             if counts[name]:
@@ -92,7 +96,7 @@ def evaluate(manifest, outcomes, *, libcoap_dtls, system):
             state = "passed"
         coverage.append({"case": name, "status": state})
     return {"schema": "coaptic-process-coverage/1", "complete": not problems,
-            "enabled_cases": sum(not ("libcoap-dtls" in case["requires"] and not libcoap_dtls) for case in manifest["cases"]),
+            "enabled_cases": sum(not is_excluded(case) for case in manifest["cases"]),
             "cases": coverage, "problems": problems,
             "unqualified": manifest["gaps"],
             "meaning": "Complete means all enabled listed assertions passed; unqualified surfaces and build exclusions remain open."}

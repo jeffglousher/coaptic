@@ -15,6 +15,8 @@ pub struct Args {
     pub server: bool,
     pub ipv6: bool,
     pub dtls: bool,
+    pub oscore: bool,
+    pub sequence: u64,
     pub port: u16,
     pub key: String,
     pub path: String,
@@ -25,13 +27,14 @@ pub struct Args {
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let a: Vec<_> = std::env::args().skip(1).collect();
-        if !(7..=9).contains(&a.len()) {
+        if !(7..=10).contains(&a.len()) {
             return Err(
-                "usage: PEER server|client udp|dtls PORT KEY PATH METHOD TIMEOUT_MS [ipv4|ipv6] [PAYLOAD_HEX]"
+                "usage: PEER server|client udp|dtls|oscore PORT KEY PATH METHOD TIMEOUT_MS [ipv4|ipv6] [PAYLOAD_HEX] [SENDER_SEQUENCE]"
                     .into(),
             );
         }
-        if !matches!(a[0].as_str(), "server" | "client") || !matches!(a[1].as_str(), "udp" | "dtls")
+        if !matches!(a[0].as_str(), "server" | "client")
+            || !matches!(a[1].as_str(), "udp" | "dtls" | "oscore")
         {
             return Err("invalid role, transport or method".into());
         }
@@ -74,10 +77,20 @@ impl Args {
         if !(100..=30000).contains(&timeout) {
             return Err("timeout must be 100..30000 ms".into());
         }
+        let sequence = a
+            .get(9)
+            .map(|value| value.parse::<u64>())
+            .transpose()?
+            .unwrap_or(0);
+        if sequence >= (1u64 << 40) {
+            return Err("OSCORE sequence exceeds 40 bits".into());
+        }
         Ok(Self {
             server: a[0] == "server",
             ipv6: family == "ipv6",
             dtls: a[1] == "dtls",
+            oscore: a[1] == "oscore",
+            sequence,
             port,
             key: a[3].clone(),
             path: a[4].clone(),
@@ -94,10 +107,10 @@ impl Args {
         }
     }
 }
-pub fn ready(peer: &str, stack: &str, port: u16, dtls: bool) {
+pub fn ready(peer: &str, stack: &str, port: u16, transport: &str) {
     println!(
         "{}",
-        serde_json::json!({"schema":"coaptic-peer/2","event":"ready","peer":peer,"stack":stack,"port":port,"transport":if dtls {"dtls"} else {"udp"}})
+        serde_json::json!({"schema":"coaptic-peer/2","event":"ready","peer":peer,"stack":stack,"port":port,"transport":transport})
     );
 }
 pub fn response(code: u8, body: &[u8], elapsed: Duration) {
