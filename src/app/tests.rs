@@ -6243,9 +6243,14 @@ fn fixture_echo_mac(
     issued: u64,
 ) -> hkdf::hmac::Hmac<sha2::Sha256> {
     use hkdf::hmac::{KeyInit, Mac};
-    // Public test key, never a production credential. Provider owns this key.
-    let mut mac =
-        hkdf::hmac::Hmac::<sha2::Sha256>::new_from_slice(b"coaptic test-only Echo key").unwrap();
+    extern crate std;
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    let key = KEY.get_or_init(|| {
+        let mut key = [0; 32];
+        getrandom::fill(&mut key).expect("test entropy");
+        key
+    });
+    let mut mac = hkdf::hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap();
     mac.update(b"coaptic-echo-fixture-v1");
     mac.update(&issued.to_be_bytes());
     match peer {

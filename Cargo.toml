@@ -54,3 +54,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [[example]]
 name = "coap_server"
 required-features = ["std"]
+
+[dev-dependencies]
+# Runtime entropy for test fixtures; not a library runtime dependency.
+getrandom = "=0.3.4"
