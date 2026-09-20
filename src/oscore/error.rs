@@ -58,7 +58,8 @@ pub enum Error {
     Options,
     /// Outer Block-wise over OSCORE (proxy hop-by-hop) is not in this slice.
     /// Inner Block-wise (fragment then protect) is supported on the App path.
-    /// Timed Q-Block gap recovery with an attached context is also unsupported.
+    /// Protected timed recovery requires a retained authenticated request reference;
+    /// manually seeded advanced bodies without one are refused.
     Unsupported,
 }
 

@@ -5141,3 +5141,197 @@ fn protected_observe_format_refusal_precedes_replay_commit_and_body_admission() 
         }
     }
 }
+
+#[test]
+fn protected_observe_download_retains_registration_binding_across_followups() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let call = client.get("obs").observe().to(peer).send(0).unwrap();
+    let initial = client.transport_mut().sent.remove(0);
+    let mut server = server_c1();
+    let mut scratch = [0; WIRE];
+    let (_, registration) = server
+        .unprotect_request(&decode(&initial).unwrap(), &mut scratch)
+        .unwrap();
+    let cf = encode_uint(u32::from(ContentFormat::TEXT_PLAIN.get()));
+    let sequence = encode_uint(0);
+    let mut wire = [0; WIRE];
+    let first = BlockValue::from_size(0, true, 16).unwrap().encode();
+    let options = [
+        Opt::etag(b"a"),
+        Opt::observe(&sequence),
+        Opt::content_format(&cf),
+        Opt::block2(&first),
+    ];
+    let response = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(100))
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"abcdefghijklmnop");
+    let n = server
+        .protect_response_with_piv(&response, registration, &mut wire)
+        .unwrap();
+    let old_notification = wire[..n].to_vec();
+    client.transport_mut().inbox = Some((peer, old_notification.clone()));
+    client.poll(1).unwrap();
+    assert!(client.take_response(call).is_none());
+    let followup = client.transport_mut().sent.remove(0);
+    let (request, continuation) = server
+        .unprotect_request(&decode(&followup).unwrap(), &mut scratch)
+        .unwrap();
+    assert!(
+        request.observe().is_none(),
+        "body follow-up must not re-register the observation"
+    );
+    assert_eq!(request.block2().unwrap().unwrap().num(), 1);
+    let last = BlockValue::from_size(1, false, 16).unwrap().encode();
+    let options = [
+        Opt::etag(b"a"),
+        Opt::content_format(&cf),
+        Opt::block2(&last),
+    ];
+    let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"qrstuvwxyzABCDEF");
+    let n = server
+        .protect_response(&response, continuation, &mut wire)
+        .unwrap();
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(2).unwrap();
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().body(),
+        Some(&b"abcdefghijklmnopqrstuvwxyzABCDEF"[..])
+    );
+    let seq = encode_uint(1);
+    let options = [Opt::observe(&seq), Opt::content_format(&cf)];
+    let response = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(101))
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"new");
+    let n = server
+        .protect_response_with_piv(&response, registration, &mut wire)
+        .unwrap();
+    client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    client.poll(3).unwrap();
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().payload(),
+        b"new"
+    );
+    client.transport_mut().inbox = Some((peer, old_notification));
+    client.poll(4).unwrap();
+    assert!(client.take_response(call).is_none());
+    assert!(client.transport().sent.is_empty());
+    assert!(client.cancel(call));
+    assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+    assert_eq!(client.engine_mut().tx_occupied(), 0);
+    assert_eq!(client.engine_mut().rx_occupied(), 0);
+}
+
+#[test]
+fn observe_download_binding_is_bounded_and_does_not_reset_notification_freshness() {
+    let mut client = client_c1();
+    let mut server = server_c1();
+    let mut wire = [0; WIRE];
+    let mut scratch = [0; WIRE];
+    for index in 0..LIVE_REQUESTS {
+        let token = Token::new(&[index as u8]).unwrap();
+        let registration = [Opt::observe_register(), Opt::uri_path("obs")];
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(index as u16))
+            .with_token(token)
+            .with_options(&registration);
+        let n = client.protect_request(&request, &mut wire).unwrap();
+        let (_, original) = server
+            .unprotect_request(&decode(&wire[..n]).unwrap(), &mut scratch)
+            .unwrap();
+        client
+            .accept_notification(token, Some(PartialIv::from_seq(100).unwrap()))
+            .unwrap();
+        let mut earlier = None;
+        for q in [false, true] {
+            let block = BlockValue::from_size(1, false, 16).unwrap().encode();
+            let options = [
+                Opt::uri_path("obs"),
+                if q {
+                    Opt::q_block2(&block)
+                } else {
+                    Opt::block2(&block)
+                },
+            ];
+            let request = Message::new(
+                Type::Confirmable,
+                Code::GET,
+                MessageId::new(10 + index as u16),
+            )
+            .with_token(token)
+            .with_options(&options);
+            let n = client.protect_request(&request, &mut wire).unwrap();
+            let (_, latest) = server
+                .unprotect_request(&decode(&wire[..n]).unwrap(), &mut scratch)
+                .unwrap();
+            if let Some(previous) = earlier {
+                let response =
+                    Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(201))
+                        .with_token(token)
+                        .with_payload(b"obsolete download");
+                let n = server
+                    .protect_response_with_piv(&response, previous, &mut wire)
+                    .unwrap();
+                assert_eq!(
+                    client.unprotect_bound_response(&decode(&wire[..n]).unwrap(), &mut scratch),
+                    Err(Error::Decrypt)
+                );
+            }
+            earlier = Some(latest);
+            assert_ne!(latest, original);
+            assert_eq!(client.lookup(token), Some(latest));
+            assert_eq!(client.observe_request(token), Some(original));
+            assert_eq!(
+                client.notification_fresh(token, Some(PartialIv::from_seq(100).unwrap())),
+                Err(Error::Replay)
+            );
+            client.accept_response_without_piv(token).unwrap();
+            assert_eq!(client.response_without_piv_fresh(token), Err(Error::Replay));
+            assert!(client.notification_fresh(token, None).is_ok());
+            // Both retained references authenticate ordinary responses, but an
+            // earlier intermediate download reference is not retained.
+            for reference in [original, latest] {
+                let response =
+                    Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(200))
+                        .with_token(token)
+                        .with_payload(b"bound");
+                let n = server
+                    .protect_response_with_piv(&response, reference, &mut wire)
+                    .unwrap();
+                let outer = decode(&wire[..n]).unwrap();
+                let (inner, used) = client
+                    .unprotect_bound_response(&outer, &mut scratch)
+                    .unwrap();
+                assert_eq!(used, reference);
+                assert_eq!(inner.payload(), b"bound");
+                wire[n - 1] ^= 1;
+                assert_eq!(
+                    client.unprotect_bound_response(&decode(&wire[..n]).unwrap(), &mut scratch),
+                    Err(Error::Decrypt)
+                );
+            }
+        }
+    }
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(999))
+        .with_token(Token::new(&[99]).unwrap());
+    assert_eq!(
+        client.protect_request(&request, &mut wire),
+        Err(Error::Saturated)
+    );
+    for index in 0..LIVE_REQUESTS {
+        let token = Token::new(&[index as u8]).unwrap();
+        assert!(client.take(token).is_some());
+        assert!(client.observe_request(token).is_none());
+    }
+    assert!(client.protect_request(&request, &mut wire).is_ok());
+}

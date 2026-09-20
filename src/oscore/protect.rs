@@ -172,7 +172,18 @@ pub fn protect_request(
         out,
     )?;
     let observe = plain.options().iter().any(is_observe);
-    ctx.remember_live(plain.token(), request, observe)?;
+    if !observe
+        && plain.options().iter().any(|option| {
+            matches!(
+                option.number(),
+                OptionNumber::BLOCK2 | OptionNumber::Q_BLOCK2
+            )
+        })
+    {
+        ctx.remember_download(plain.token(), request)?;
+    } else {
+        ctx.remember_live(plain.token(), request, observe)?;
+    }
     Ok(n)
 }
 
@@ -302,32 +313,69 @@ pub fn unprotect_response<'a>(
     request: RequestRef,
     out: &'a mut [u8],
 ) -> Result<ParsedMessage<'a>, Error> {
+    unprotect_response_candidates(ctx, protected, request, None, out).map(|(message, _)| message)
+}
+
+impl SecurityContext {
+    pub(crate) fn unprotect_bound_response<'a>(
+        &self,
+        protected: &ParsedMessage<'_>,
+        out: &'a mut [u8],
+    ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+        let request = self.lookup(protected.token()).ok_or(Error::Context)?;
+        let observation = self
+            .observe_request(protected.token())
+            .filter(|old| *old != request);
+        unprotect_response_candidates(self, protected, request, observation, out)
+    }
+}
+
+fn unprotect_response_candidates<'a>(
+    ctx: &SecurityContext,
+    protected: &ParsedMessage<'_>,
+    request: RequestRef,
+    fallback: Option<RequestRef>,
+    out: &'a mut [u8],
+) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
     let header = parse_protected(protected)?;
     if protected.payload().len() < TAG_LEN {
         return Err(Error::MessageLength);
     }
-    let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
-    let nonce = match header.piv {
-        Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
-        None => aead::nonce(ctx.common_iv(), request.kid(), request.piv()),
-    };
     let mut plaintext = [0u8; INNER];
-    let pt_len = aead::open(
-        ctx.recipient_key(),
-        &nonce,
-        aad.as_bytes(),
-        protected.payload(),
-        &mut plaintext,
-    )?;
+    let mut accepted = None;
+    // At most two AEAD attempts, using the same fixed scratch. Decode and
+    // admission happen only after authentication identifies the request.
+    for candidate in [Some(request), fallback].into_iter().flatten() {
+        let aad = Aad::new(candidate.kid(), candidate.piv().as_bytes())?;
+        let nonce = match header.piv {
+            Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
+            None => aead::nonce(ctx.common_iv(), candidate.kid(), candidate.piv()),
+        };
+        match aead::open(
+            ctx.recipient_key(),
+            &nonce,
+            aad.as_bytes(),
+            protected.payload(),
+            &mut plaintext,
+        ) {
+            Ok(len) => {
+                accepted = Some((len, candidate));
+                break;
+            }
+            Err(Error::Decrypt) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let (len, request) = accepted.ok_or(Error::Decrypt)?;
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
         protected.token(),
         protected.options(),
-        &plaintext[..pt_len],
+        &plaintext[..len],
         out,
     )?;
-    Ok(decode(&out[..n])?)
+    Ok((decode(&out[..n])?, request))
 }
 
 fn parse_protected<'a>(protected: &ParsedMessage<'a>) -> Result<OscoreHeader<'a>, Error> {

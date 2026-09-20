@@ -2326,9 +2326,6 @@ where
             push_opt(&mut opts, Opt::content_format(encoded))?;
         }
         if let Some(live) = live.as_ref() {
-            if live.observe == OutgoingObserve::Register && recovery_ty.is_none() {
-                push_opt(&mut opts, Opt::observe_register())?;
-            }
             for segment in live.path.segments() {
                 push_opt(&mut opts, Opt::uri_path(segment))?;
             }
