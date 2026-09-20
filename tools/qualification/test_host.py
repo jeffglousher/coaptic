@@ -1,7 +1,10 @@
 """Fail-closed host qualification accounting and retained failure evidence."""
 import subprocess
+import json
+import tempfile
+from pathlib import Path
 import unittest
-from host import CASES, run_case, run_matrix
+from host import CASES, run_case, run_matrix, binary_identity
 
 
 class HostEvidenceTests(unittest.TestCase):
@@ -48,6 +51,49 @@ class HostEvidenceTests(unittest.TestCase):
         result = run_case("core", [], execute)
         self.assertFalse(result["passed"])
         self.assertIn("compiler unavailable", result["stderr"])
+
+
+class TargetEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def pe(bits=32):
+        data = bytearray(128)
+        data[:2] = b"MZ"
+        data[60:64] = (64).to_bytes(4, "little")
+        data[64:68] = b"PE\0\0"
+        data[68:70] = (0x14c if bits == 32 else 0x8664).to_bytes(2, "little")
+        data[88:90] = (0x10b if bits == 32 else 0x20b).to_bytes(2, "little")
+        return bytes(data)
+
+    def test_headers_distinguish_image_architecture_and_reject_malformed(self):
+        self.assertEqual(binary_identity(self.pe()), ("pe", 32, 0x14c))
+        self.assertEqual(binary_identity(self.pe(64)), ("pe", 64, 0x8664))
+        elf = bytearray(64)
+        elf[:6] = b"\x7fELF\x01\x01"
+        elf[18:20] = (3).to_bytes(2, "little")
+        self.assertEqual(binary_identity(elf), ("elf", 32, 3))
+        for malformed in (b"", b"MZ", self.pe()[:80], b"MZ" + b"\xff" * 126):
+            with self.assertRaises(ValueError):
+                binary_identity(malformed)
+
+    def test_target_requires_executed_tests_and_matching_artifacts(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "test.exe"
+            def execute(command, **kwargs):
+                self.assertIn("i686-pc-windows-msvc", command)
+                self.assertIn("--message-format=json", command)
+                output = json.dumps({"reason": "compiler-artifact", "profile": {"test": True}, "executable": str(path)})
+                return subprocess.CompletedProcess(command, 0, output + "\ntest result: ok. 9 passed; 0 failed; 0 ignored;", "")
+            path.write_bytes(self.pe())
+            result = run_case("core", [], execute, target="i686-pc-windows-msvc")
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["executables"][0]["bits"], 32)
+            path.write_bytes(self.pe(64))
+            result = run_case("core", [], execute, target="i686-pc-windows-msvc")
+            self.assertFalse(result["passed"])
+            self.assertIn("wrong executable architecture", result["executable_error"])
+        missing = run_case("core", [], lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "test result: ok. 1 passed; 0 failed; 0 ignored;", ""), target="i686-pc-windows-msvc")
+        self.assertFalse(missing["passed"])
+        self.assertIn("no compiled test executables", missing["executable_error"])
 
 
 if __name__ == "__main__":

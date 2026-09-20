@@ -55,6 +55,41 @@ jobs:
           path: ${{ runner.temp }}/host-qualification.json
           if-no-files-found: error
 
+  host-32bit:
+    name: 32-bit library (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: python -m unittest discover -s tools/qualification -p "test_*.py"
+      - run: python tools/qualification/host.py --target "${{ matrix.target }}" --output "${{ runner.temp }}/host-32bit.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: host-32bit-${{ matrix.target }}
+          path: ${{ runner.temp }}/host-32bit.json
+          if-no-files-found: error
+
   source-coverage:
     name: source coverage evidence
     runs-on: ubuntu-latest
