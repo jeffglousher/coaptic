@@ -48,7 +48,9 @@ impl std::error::Error for ProblemError {}
 /// non-empty: [`Self::new`] always includes `response-code` (−4), matching
 /// the CoAP code on the message. Title (−1) and detail (−2) are optional
 /// unadorned text. Default Content-Format is
-/// [`ContentFormat::PROBLEM_DETAILS`]. On the App face, build these with
+/// [`ContentFormat::PROBLEM_DETAILS`]. Decoded maps additionally borrow and
+/// preserve their original entries, including fields not exposed by this API.
+/// On the App face, build these with
 /// [`crate::Response::problem`].
 ///
 /// ```
@@ -68,6 +70,8 @@ pub struct ProblemDetails<'a> {
     code: Option<Code>,
     title: Option<&'a str>,
     detail: Option<&'a str>,
+    original: Option<&'a [u8]>,
+    edited: u8,
 }
 
 impl ProblemDetails<'static> {
@@ -79,6 +83,8 @@ impl ProblemDetails<'static> {
             code: Some(code),
             title: None,
             detail: None,
+            original: None,
+            edited: 0,
         }
     }
 }
@@ -91,6 +97,7 @@ impl<'a> ProblemDetails<'a> {
     #[must_use]
     pub const fn title(mut self, title: &'a str) -> Self {
         self.title = Some(title);
+        self.edited |= 1;
         self
     }
 
@@ -98,6 +105,7 @@ impl<'a> ProblemDetails<'a> {
     #[must_use]
     pub const fn detail(mut self, detail: &'a str) -> Self {
         self.detail = Some(detail);
+        self.edited |= 2;
         self
     }
 
@@ -119,14 +127,20 @@ impl<'a> ProblemDetails<'a> {
         self.detail
     }
 
-    /// Encode the CBOR map into `buf`. Keys are in deterministic order
-    /// (title, detail, response-code).
+    /// Encode the CBOR map into `buf`. New maps use deterministic key order
+    /// (title, detail, response-code). Decoded maps retain all original entries
+    /// and their order, including unknown extensions. Unedited maps are copied
+    /// byte for byte; title/detail edits replace only their respective values.
+    /// This is lossless forwarding, not canonicalization of received CBOR.
     ///
     /// # Errors
     ///
     /// [`ProblemError::BufferTooSmall`] when `buf` cannot hold the map.
     /// [`ProblemError::Invalid`] when no field is set (empty map).
     pub fn encode(self, buf: &mut [u8]) -> Result<usize, ProblemError> {
+        if let Some(original) = self.original {
+            return self.encode_retained(original, buf);
+        }
         let pairs = usize::from(self.title.is_some())
             + usize::from(self.detail.is_some())
             + usize::from(self.code.is_some());
@@ -150,7 +164,64 @@ impl<'a> ProblemDetails<'a> {
         Ok(at)
     }
 
-    /// Decode a concise problem-details CBOR map. Unknown keys are skipped.
+    fn encode_retained(self, original: &[u8], buf: &mut [u8]) -> Result<usize, ProblemError> {
+        if self.edited == 0 {
+            let mut at = 0;
+            put_slice(buf, &mut at, original)?;
+            return Ok(at);
+        }
+        // Decoding already validated these immutable bytes. Scan without an
+        // extension table so retained storage stays independent of entry count.
+        let mut read = 0;
+        let (_, pairs) = read_head(original, &mut read)?;
+        let entries = read;
+        let mut found = 0;
+        for _ in 0..pairs {
+            match read_key(original, &mut read)? {
+                Some(0) => found |= 1,
+                Some(1) => found |= 2,
+                _ => {}
+            }
+            skip_item(original, &mut read)?;
+        }
+        let added = (self.edited & !found).count_ones();
+        let mut at = 0;
+        put_head(buf, &mut at, MAJOR_MAP, pairs + u64::from(added))?;
+        read = entries;
+        for _ in 0..pairs {
+            let start = read;
+            let key = read_key(original, &mut read)?;
+            let value = read;
+            skip_item(original, &mut read)?;
+            let replacement = match key {
+                Some(0) if self.edited & 1 != 0 => self.title,
+                Some(1) if self.edited & 2 != 0 => self.detail,
+                _ => None,
+            };
+            if let Some(text) = replacement {
+                put_slice(buf, &mut at, &original[start..value])?;
+                put_text(buf, &mut at, text)?;
+            } else {
+                put_slice(buf, &mut at, &original[start..read])?;
+            }
+        }
+        for (bit, key, text) in [(1, KEY_TITLE, self.title), (2, KEY_DETAIL, self.detail)] {
+            if self.edited & !found & bit != 0 {
+                put_nint(buf, &mut at, key)?;
+                put_text(buf, &mut at, text.ok_or(ProblemError::Invalid)?)?;
+            }
+        }
+        Ok(at)
+    }
+
+    /// Decode a concise problem-details CBOR map. Unknown fields are ignored
+    /// for typed access but borrowed with the input for lossless re-encoding.
+    /// Integer keys cover the full CBOR integer range; URI-reference keys are
+    /// UTF-8 text. Custom entries (unsigned integer or text keys) must contain
+    /// a nonempty map. A map containing only extensions is valid.
+    /// Duplicate title/detail/response-code entries are refused. This decoder
+    /// does not validate URI syntax or extension-specific semantics, or expose
+    /// language-tagged title/detail values; those remain unsupported.
     /// Definite nested extension values use constant auxiliary memory and work
     /// bounded by the input length. Malformed UTF-8 text and simple values are
     /// refused even inside an unknown extension. Indefinite CBOR is unsupported.
@@ -169,18 +240,41 @@ impl<'a> ProblemDetails<'a> {
             code: None,
             title: None,
             detail: None,
+            original: None,
+            edited: 0,
         };
         for _ in 0..n {
-            let key = read_int(bytes, &mut at)?;
+            let key = read_key(bytes, &mut at)?;
             match key {
-                -1 => out.title = Some(read_text(bytes, &mut at)?),
-                -2 => out.detail = Some(read_text(bytes, &mut at)?),
-                -4 => {
+                Some(0) => {
+                    if out.title.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.title = Some(read_text(bytes, &mut at)?);
+                }
+                Some(1) => {
+                    if out.detail.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.detail = Some(read_text(bytes, &mut at)?);
+                }
+                Some(3) => {
+                    if out.code.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
                     let raw = read_uint(bytes, &mut at)?;
                     if raw > u64::from(u8::MAX) {
                         return Err(ProblemError::Invalid);
                     }
                     out.code = Some(Code::from_raw(raw as u8));
+                }
+                None => {
+                    let mut probe = at;
+                    let (major, entries) = read_head(bytes, &mut probe)?;
+                    if major != MAJOR_MAP || entries == 0 {
+                        return Err(ProblemError::Invalid);
+                    }
+                    skip_item(bytes, &mut at)?;
                 }
                 _ => skip_item(bytes, &mut at)?,
             }
@@ -188,9 +282,7 @@ impl<'a> ProblemDetails<'a> {
         if at != bytes.len() {
             return Err(ProblemError::Invalid);
         }
-        if out.title.is_none() && out.detail.is_none() && out.code.is_none() {
-            return Err(ProblemError::Invalid);
-        }
+        out.original = Some(bytes);
         Ok(out)
     }
 }
@@ -316,11 +408,19 @@ fn read_head(bytes: &[u8], at: &mut usize) -> Result<(u8, u64), ProblemError> {
     Ok((major, n))
 }
 
-fn read_int(bytes: &[u8], at: &mut usize) -> Result<i64, ProblemError> {
+// Some(n) identifies the standard key -1-n without narrowing to i64.
+// None identifies a custom unsigned-integer or URI-reference text key.
+fn read_key(bytes: &[u8], at: &mut usize) -> Result<Option<u64>, ProblemError> {
+    let start = *at;
     let (major, n) = read_head(bytes, at)?;
     match major {
-        MAJOR_UINT if n <= i64::MAX as u64 => Ok(n as i64),
-        MAJOR_NINT if n < i64::MAX as u64 => Ok(-1 - (n as i64)),
+        MAJOR_NINT => Ok(Some(n)),
+        MAJOR_UINT => Ok(None),
+        MAJOR_TEXT => {
+            *at = start;
+            read_text(bytes, at)?;
+            Ok(None)
+        }
         _ => Err(ProblemError::Invalid),
     }
 }
@@ -465,6 +565,115 @@ mod tests {
     }
 
     #[test]
+    fn extension_only_maps_retain_uri_and_full_width_integer_keys() {
+        let maps: &[&[u8]] = &[
+            // {-9: [1, 2]}; a known title or response-code is not required.
+            &[0xa1, 0x28, 0x82, 1, 2],
+            // {"urn:x": {0: 1}}.
+            &[0xa1, 0x65, b'u', b'r', b'n', b':', b'x', 0xa1, 0, 1],
+            // Full CBOR uint and nint domains (including beyond i64).
+            &[
+                0xa1, 0x1b, 255, 255, 255, 255, 255, 255, 255, 255, 0xa1, 0, 1,
+            ],
+            &[0xa1, 0x3b, 255, 255, 255, 255, 255, 255, 255, 255, 0],
+            &[0xa1, 0x3b, 127, 255, 255, 255, 255, 255, 255, 255, 0],
+            // Nonpreferred (but well-formed) integer encoding is retained.
+            &[0xa1, 0x38, 8, 0x18, 1],
+        ];
+        for &wire in maps {
+            let parsed = ProblemDetails::decode(wire).unwrap();
+            assert_eq!(parsed.response_code(), None);
+            assert_eq!(parsed.title_text(), None);
+            let mut output = [0u8; 64];
+            let n = parsed.encode(&mut output).unwrap();
+            assert_eq!(&output[..n], wire);
+            for capacity in 0..n {
+                assert_eq!(
+                    parsed.encode(&mut output[..capacity]),
+                    Err(ProblemError::BufferTooSmall)
+                );
+            }
+            for end in 0..wire.len() {
+                assert_eq!(
+                    ProblemDetails::decode(&wire[..end]),
+                    Err(ProblemError::Invalid)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn edits_preserve_all_other_entries_and_replace_without_duplicates() {
+        // {-9: [1,2], -1: "a", "x": {0: 1}, -4: 132, -2: "d"}.
+        let original = [
+            0xa5, 0x28, 0x82, 1, 2, 0x20, 0x61, b'a', 0x61, b'x', 0xa1, 0, 1, 0x23, 0x18, 0x84,
+            0x21, 0x61, b'd',
+        ];
+        let parsed = ProblemDetails::decode(&original).unwrap();
+        let edited = parsed.title("new").detail("why");
+        let expected = [
+            0xa5, 0x28, 0x82, 1, 2, 0x20, 0x63, b'n', b'e', b'w', 0x61, b'x', 0xa1, 0, 1, 0x23,
+            0x18, 0x84, 0x21, 0x63, b'w', b'h', b'y',
+        ];
+        let mut output = [0; 64];
+        let n = edited.encode(&mut output).unwrap();
+        assert_eq!(&output[..n], &expected);
+        assert_eq!(
+            ProblemDetails::decode(&output[..n]).unwrap().detail_text(),
+            Some("why")
+        );
+        for capacity in 0..n {
+            assert_eq!(
+                edited.encode(&mut output[..capacity]),
+                Err(ProblemError::BufferTooSmall)
+            );
+        }
+        // Repeated builder calls replace one value; they do not add map entries.
+        let edited = parsed.title("old").title("new");
+        let n = edited.encode(&mut output).unwrap();
+        assert_eq!(output[0], 0xa5);
+        assert_eq!(
+            ProblemDetails::decode(&output[..n]).unwrap().title_text(),
+            Some("new")
+        );
+        let n = parsed.encode(&mut output).unwrap();
+        assert_eq!(&output[..n], &original);
+
+        let extensions = [0xa1, 0x28, 0];
+        let edited = ProblemDetails::decode(&extensions)
+            .unwrap()
+            .title("a")
+            .detail("b");
+        let n = edited.encode(&mut output).unwrap();
+        assert_eq!(
+            &output[..n],
+            &[0xa3, 0x28, 0, 0x20, 0x61, b'a', 0x21, 0x61, b'b']
+        );
+    }
+
+    #[test]
+    fn invalid_extension_shapes_keys_and_duplicate_typed_fields_are_refused() {
+        let invalid: &[&[u8]] = &[
+            &[0xa1, 0, 0], // Custom value must be a nonempty map.
+            &[0xa1, 0, 0xa0],
+            &[0xa1, 0x61, b'x', 0x82, 1, 2],
+            &[0xa1, 0x61, 255, 0xa1, 0, 1], // Invalid UTF-8 key.
+            &[0xa1, 0x40, 0],               // Byte string is not a URI key.
+            &[0xa1, 0xf4, 0],
+            &[0xa2, 0x20, 0x61, b'a', 0x20, 0x61, b'b'],
+            &[0xa2, 0x21, 0x61, b'a', 0x21, 0x61, b'b'],
+            &[0xa2, 0x23, 0x18, 0x84, 0x38, 3, 0x18, 0x84],
+        ];
+        for wire in invalid {
+            assert_eq!(
+                ProblemDetails::decode(wire),
+                Err(ProblemError::Invalid),
+                "{wire:x?}"
+            );
+        }
+    }
+
+    #[test]
     fn decode_rejects_empty_or_non_map() {
         assert_eq!(ProblemDetails::decode(&[]), Err(ProblemError::Invalid));
         assert_eq!(ProblemDetails::decode(&[0xa0]), Err(ProblemError::Invalid));
@@ -477,6 +686,8 @@ mod tests {
             code: None,
             title: None,
             detail: None,
+            original: None,
+            edited: 0,
         };
         let mut buf = [0u8; 16];
         assert_eq!(empty.encode(&mut buf), Err(ProblemError::Invalid));
