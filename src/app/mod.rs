@@ -446,6 +446,10 @@ impl<
     /// drain them first or use separate Apps for separate peers/key epochs.
     /// Timed Q-Block gap recovery returns [`crate::oscore::Error::Unsupported`]
     /// without sending plaintext while a context is attached.
+    /// Ordinary Q-Block2 response batches use fresh response Partial IVs and
+    /// retain the request binding through assembly until response collection
+    /// or cancellation. Recipient replay checks use the context's bounded
+    /// 32-sequence window; this does not qualify timed recovery or Q Observe.
     ///
     /// Requires the `oscore` crate feature. You derive
     /// [`crate::oscore::SecurityContext`] (Master Secret, Sender/Recipient
@@ -861,7 +865,7 @@ fn send_qblock_recover<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &oscore::Field,
+    oscore: &mut oscore::Field,
     now_ms: u64,
     recover: QBlockRecover,
     dedup_closed: &mut Option<DedupClosed>,
@@ -1634,7 +1638,7 @@ where
         meta.mid,
         id,
         pending,
-        &oscore::empty_field(),
+        &mut oscore::empty_field(),
     );
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
@@ -1650,7 +1654,7 @@ fn send_separate<S, T>(
     now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -1743,7 +1747,7 @@ fn send_response<S, T>(
     meta: SendResponse,
     response: &Response<'_>,
     now_ms: u64,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -1863,7 +1867,7 @@ fn start_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     key: BlockKey,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1922,7 +1926,7 @@ fn continue_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     id: SlotId,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -1977,7 +1981,7 @@ fn issue_classic<S, T>(
     mid: MessageId,
     id: SlotId,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -2038,7 +2042,7 @@ fn issue_q_selection<S, T>(
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -2082,7 +2086,7 @@ fn issue_q_window<S, T>(
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -2122,7 +2126,7 @@ fn send_issued<S, T>(
     issued: OutgoingBlock,
     q_block: bool,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots,
@@ -2192,7 +2196,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
     payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockValue>,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &mut oscore::Field,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
@@ -2251,7 +2255,11 @@ fn encode_response<S: Storage + DatagramSlots, E>(
                 .with_token(token)
                 .with_options(opts.as_slice())
                 .with_payload(payload);
-            oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
+            if block.is_some_and(|b| b.q_block) {
+                oscore::encode_notification(oscore_ctx, oscore_req, engine, tx, &msg)
+            } else {
+                oscore::encode_message(oscore_ctx, oscore_req, engine, tx, &msg)
+            }
         }
         Err(EncodeError::OptionsFull) => {
             encode_options_full_500(engine, tx, ty, mid, token, oscore_ctx, oscore_req)
@@ -2816,7 +2824,7 @@ where
                 .title("Unauthorized")
                 .max_age(0),
             now_ms,
-            &oscore::empty_field(),
+            &mut oscore::empty_field(),
             dedup_closed,
         )
     }
