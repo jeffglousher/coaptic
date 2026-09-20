@@ -441,6 +441,11 @@ fn unrecognized_critical_option_is_bad_option() {
         "must not dispatch unknown critical"
     );
     assert_eq!(parsed.content_format, Some(ContentFormat::PROBLEM_DETAILS));
+    let (_, wire, n) = app.transport().last_send.as_ref().unwrap();
+    let decoded = decode(&wire[..*n]).unwrap();
+    let details = crate::ProblemDetails::decode(decoded.payload()).unwrap();
+    assert_eq!(details.unprocessed_options().next(), Some(65001));
+    assert_eq!(details.unprocessed_options().len(), 1);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -10830,4 +10835,35 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
             }
         }
     }
+}
+
+#[test]
+fn response_unprocessed_options_preserves_fields_and_refuses_overflow() {
+    use crate::message::ProblemError;
+    let original = Response::problem(Code::BAD_OPTION)
+        .title("Bad Option")
+        .detail("unsupported");
+    let response = original.unprocessed_options(&[23, 60]).unwrap();
+    let details = response.problem_details().unwrap();
+    assert_eq!(details.response_code(), Some(Code::BAD_OPTION));
+    assert_eq!(details.title_text(), Some("Bad Option"));
+    assert_eq!(details.detail_text(), Some("unsupported"));
+    assert!(details.unprocessed_options().eq([23, 60]));
+    assert!(matches!(
+        original.unprocessed_options(&[]),
+        Err(ProblemError::Invalid)
+    ));
+    assert!(matches!(
+        original.unprocessed_options(&[u64::MAX; 32]),
+        Err(ProblemError::BufferTooSmall)
+    ));
+    let malformed = Response::content(b"not cbor").content_format(ContentFormat::PROBLEM_DETAILS);
+    assert!(matches!(
+        malformed.unprocessed_options(&[1]),
+        Err(ProblemError::Invalid)
+    ));
+    let plain = Response::new(Code::BAD_OPTION)
+        .unprocessed_options(&[23])
+        .unwrap();
+    assert_eq!(plain.payload(), &[0xa2, 0x23, 0x18, 0x82, 0x27, 0x17]);
 }
