@@ -12,13 +12,13 @@ const CATALOG: &[&str] = &[
     "</test>;rt=\"Type1 Type2\";if=\"If1\";sz=123",
     "</link1>;rt=\"Type2 Type3\";if=\"If2\"",
     "</link2>;rt=\"Type1 Type3\";if=\"foo\"",
-    "</link3>",
+    "</link3>;rt=\"\"",
     "</path>;ct=40",
     "</large>;sz=1024",
 ];
 
 const PATH_SUB: &str = "</path/sub1>,</path/sub2>";
-const PATH_SUB1_BODY: &[u8] = b"path-sub1";
+const PATH_SUB1_BODY: &[u8] = b"/path/sub1";
 
 pub fn run(id: &str) {
     match id {
@@ -140,8 +140,7 @@ fn attr_match(link: &str, attr: &str, value: &str) -> bool {
 fn link_01_all() {
     let mut pair = Pair::new();
     let body = well_known(&mut pair, &[]);
-    assert!(body.contains("</test>"));
-    assert!(body.contains("</link1>"));
+    assert_eq!(body, CATALOG.join(","));
 }
 
 fn link_filter(query: &str, pred: impl Fn(&str) -> bool) {
@@ -164,7 +163,7 @@ fn link_filter(query: &str, pred: impl Fn(&str) -> bool) {
 fn link_09_hierarchy() {
     let mut pair = Pair::new();
     let body = well_known(&mut pair, &[]);
-    assert!(body.contains("</path>"));
+    assert!(body.split(',').any(|link| link == "</path>;ct=40"));
     let token = Pair::client_token(2);
     let cf = ContentFormat::LINK_FORMAT.encode();
     let extra = [Opt::content_format(&cf)];
@@ -180,10 +179,13 @@ fn link_09_hierarchy() {
     );
     pair.server.release_rx(rx).ok();
     let crx = pair.exchange_server(stx);
-    assert!(
-        String::from_utf8_lossy(pair.client.decode_rx(crx).expect("path").payload())
-            .contains("/path/sub1")
+    let response = pair.client.decode_rx(crx).expect("path");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(
+        response.content_format().unwrap().unwrap(),
+        ContentFormat::LINK_FORMAT
     );
+    assert_eq!(response.payload(), PATH_SUB.as_bytes());
     pair.client.match_response_rx(crx).ok();
     pair.client.release_rx(crx).ok();
 
@@ -207,10 +209,9 @@ fn link_09_hierarchy() {
     );
     pair.server.release_rx(rx2).ok();
     let crx2 = pair.exchange_server(stx2);
-    assert_eq!(
-        pair.client.decode_rx(crx2).expect("sub1").payload(),
-        PATH_SUB1_BODY
-    );
+    let response = pair.client.decode_rx(crx2).expect("sub1");
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.payload(), PATH_SUB1_BODY);
     pair.client.match_response_rx(crx2).ok();
     pair.client.release_rx(crx2).ok();
 }
