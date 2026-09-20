@@ -1,8 +1,14 @@
-//! Isolated coap-rs peer, owning its old DTLS stack.
+//! Isolated coap-rs peer, using a modern test-only DTLS transport.
 #![forbid(unsafe_code)]
 macro_rules! conn_as_any {
-    () => {};
+    () => {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    };
 }
+#[path = "../../../tools/interop/coap_dtls.rs"]
+mod coap_dtls;
 #[path = "../../../tools/interop/dtls_listener.rs"]
 mod dtls_listener;
 #[path = "../../../tools/interop/support.rs"]
@@ -36,12 +42,17 @@ async fn run() -> Result<(), Error> {
             let listener =
                 dtls_listener::BoundedListener::bind(a.address(), config(&a.key)).await?;
             let _ = listener.addr().await?;
-            Server::from_listeners(vec![Box::new(TimedListener(listener))])
+            Server::from_listeners(vec![Box::new(coap_dtls::Server(listener))])
         } else {
             Server::new_udp(a.address())?
         };
         let counter = Arc::new(AtomicU32::new(0));
-        support::ready("coap-rs", "coap 0.28.1 / webrtc-dtls 0.8.0", a.port, a.dtls);
+        support::ready(
+            "coap-rs",
+            "coap 0.28.1 / webrtc-dtls 0.12.0",
+            a.port,
+            a.dtls,
+        );
         server
             .run(
                 move |mut req: Box<coap_lite::CoapRequest<std::net::SocketAddr>>| {
@@ -91,13 +102,19 @@ async fn run() -> Result<(), Error> {
         )
         .build();
         let response = if a.dtls {
-            CoAPClient::from_udp_dtls_config(coap::dtls::UdpDtlsConfig {
-                config: config(&a.key),
-                dest_addr: a.address(),
-            })
-            .await?
-            .send(request)
-            .await?
+            let transport = coap_dtls::Client::connect(a.address(), config(&a.key)).await?;
+            let connection = Arc::clone(&transport.0);
+            let result = CoAPClient::from_transport(transport).send(request).await;
+            // Stop timing before orderly shutdown, matching the other Rust peer.
+            let elapsed = start.elapsed();
+            let _ = tokio::time::timeout(Duration::from_secs(1), connection.close()).await;
+            let response = result?;
+            support::response(
+                response.message.header.code.into(),
+                &response.message.payload,
+                elapsed,
+            );
+            return Ok::<(), Error>(());
         } else {
             coap::client::UdpCoAPClient::new(a.address())
                 .await?
@@ -117,30 +134,4 @@ async fn run() -> Result<(), Error> {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> std::process::ExitCode {
     support::finish(run().await)
-}
-
-// Bound the old peer's serialized handshake accept so a bad PSK cannot stall
-// subsequent clients indefinitely. This wrapper owns only old util 0.8 types.
-struct TimedListener<T>(T);
-#[async_trait::async_trait]
-impl<T: Listener + Send + Sync> Listener for TimedListener<T> {
-    async fn accept(
-        &self,
-    ) -> webrtc_util::Result<(
-        Arc<dyn webrtc_util::conn::Conn + Send + Sync>,
-        std::net::SocketAddr,
-    )> {
-        loop {
-            match tokio::time::timeout(Duration::from_secs(2), self.0.accept()).await {
-                Ok(Ok(connection)) => return Ok(connection),
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-    }
-    async fn close(&self) -> webrtc_util::Result<()> {
-        self.0.close().await
-    }
-    async fn addr(&self) -> webrtc_util::Result<std::net::SocketAddr> {
-        self.0.addr().await
-    }
 }
