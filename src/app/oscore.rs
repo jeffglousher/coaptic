@@ -113,6 +113,20 @@ pub(crate) fn inbound<'a>(
                 if !register_ack {
                     ctx.accept_notification(parsed.token(), header.piv)?;
                 }
+            } else if inner.q_block2().next().is_some() {
+                // A Q response set shares one request binding. Authenticate
+                // before updating replay state; keep the binding until Call
+                // completion/cancellation, including an out-of-order final block.
+                if let Some(piv) = header.piv {
+                    if !ctx.replay_fresh(piv.seq()) {
+                        return Err(OscoreError::Replay);
+                    }
+                    ctx.replay_accept(piv.seq());
+                } else {
+                    // One no-PIV response is permitted for a request, including
+                    // from independent peers. Others need fresh response PIVs.
+                    ctx.accept_notification(parsed.token(), None)?;
+                }
             } else {
                 let _ = ctx.take(parsed.token());
             }

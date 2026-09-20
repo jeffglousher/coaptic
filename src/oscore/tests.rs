@@ -2957,3 +2957,235 @@ fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
         }
     }
 }
+
+#[derive(Default)]
+struct QWire {
+    inbox: Option<(Endpoint, std::vec::Vec<u8>)>,
+    sent: std::vec::Vec<std::vec::Vec<u8>>,
+}
+impl DatagramIo for QWire {
+    type Error = &'static str;
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let Some((peer, bytes)) = self.inbox.take() else {
+            return Ok(None);
+        };
+        if bytes.len() > buf.len() {
+            return Err("receive overflow");
+        }
+        buf[..bytes.len()].copy_from_slice(&bytes);
+        Ok(Some((bytes.len(), peer)))
+    }
+    fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        assert!(self.sent.len() < 16, "bounded test transcript");
+        self.sent.push(bytes.to_vec());
+        Ok(bytes.len())
+    }
+}
+
+#[test]
+fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
+    use crate::{App, Request, Response, get, profiles};
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE).etag(b"v1")
+    }
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    for order in [[0, 1], [1, 0]] {
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("large", get(body))
+            .bind(QWire::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        for cycle in 0..6 {
+            let now = cycle * 10;
+            let call = client
+                .get("large")
+                .q_block2()
+                .to(server_ep)
+                .send(now)
+                .unwrap();
+            let request = client.transport_mut().sent.remove(0);
+            server.transport_mut().inbox = Some((client_ep, request));
+            server.poll(now).unwrap();
+            let responses = core::mem::take(&mut server.transport_mut().sent);
+            assert_eq!(responses.len(), 2);
+            for (index, wire) in responses.iter().enumerate() {
+                let outer = decode(wire).unwrap();
+                assert!(outer.q_block2().next().is_none(), "Q option remains Inner");
+                let header = header::OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
+                assert_eq!(header.piv.unwrap().seq(), cycle * 2 + index as u64);
+            }
+            assert_eq!(server.oscore().unwrap().sender_seq(), cycle * 2 + 2);
+            let checkpoint = client.oscore().unwrap().replay_checkpoint();
+            let mut corrupt = responses[order[0]].clone();
+            *corrupt.last_mut().unwrap() ^= 1;
+            client.transport_mut().inbox = Some((server_ep, corrupt));
+            client.poll(now + 1).unwrap();
+            assert!(client.take_response(call).is_none());
+            assert_eq!(client.oscore().unwrap().replay_checkpoint(), checkpoint);
+            assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+            client.transport_mut().inbox = Some((server_ep, responses[order[0]].clone()));
+            client.poll(now + 2).unwrap();
+            assert!(client.take_response(call).is_none());
+            let accepted = client.oscore().unwrap().replay_checkpoint();
+            assert_ne!(accepted, checkpoint);
+            assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+            client.transport_mut().inbox = Some((server_ep, responses[order[0]].clone()));
+            client.poll(now + 3).unwrap();
+            assert!(
+                client.take_response(call).is_none(),
+                "duplicate cannot fail/complete the Call"
+            );
+            assert_eq!(client.oscore().unwrap().replay_checkpoint(), accepted);
+            client.transport_mut().inbox = Some((server_ep, responses[order[1]].clone()));
+            client.poll(now + 4).unwrap();
+            let response = client.take_response(call).unwrap().unwrap();
+            assert_eq!(response.body(), Some(LARGE.as_slice()));
+            assert_eq!(response.code(), Code::CONTENT);
+            assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+            assert_eq!(client.engine_mut().tx_occupied(), 0);
+            assert_eq!(client.engine_mut().rx_occupied(), 0);
+            for index in 0..client.engine().capacities().rx_body_slots.unwrap() {
+                assert!(
+                    client
+                        .engine()
+                        .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+            // Late protected response cannot create a new completed Call.
+            client.transport_mut().inbox = Some((server_ep, responses[0].clone()));
+            client.poll(now + 5).unwrap();
+            assert!(client.take_response(call).is_none());
+        }
+    }
+}
+
+#[test]
+fn app_oscore_qblock2_sequence_exhaustion_releases_body_without_plaintext_fallback() {
+    use crate::{App, Request, Response, get, profiles};
+    fn body(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE).etag(b"v1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut sender = client_c1();
+    let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
+    let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::new(&[3]).unwrap())
+        .with_options(&opts);
+    let mut wire = [0; WIRE];
+    let n = sender.protect_request(&request, &mut wire).unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(body))
+        .bind(QWire::default())
+        .unwrap();
+    let mut context = server_c1();
+    context.set_sender_seq((1u64 << 40) - 1).unwrap();
+    server.set_oscore(context);
+    server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
+    assert_eq!(
+        server.poll(0),
+        Err(crate::app::Error::Oscore(Error::SequenceExhausted))
+    );
+    assert_eq!(server.transport().sent.len(), 1);
+    let first = decode(&server.transport().sent[0]).unwrap();
+    assert_eq!(
+        header::OscoreHeader::parse(first.oscore().unwrap())
+            .unwrap()
+            .piv
+            .unwrap()
+            .seq(),
+        (1u64 << 40) - 1
+    );
+    assert_eq!(server.oscore().unwrap().sender_seq(), 1u64 << 40);
+    assert_eq!(server.engine_mut().tx_occupied(), 0);
+    for index in 0..server.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            server
+                .engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn app_oscore_qblock2_accepts_one_no_piv_response_then_fresh_piv() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(QWire::default())
+        .unwrap();
+    client.set_oscore(client_c1());
+    let call = client.get("large").q_block2().to(peer).send(0).unwrap();
+    let wire = client.transport_mut().sent.remove(0);
+    let request = decode(&wire).unwrap();
+    let mut server = server_c1();
+    let mut opened = [0; WIRE];
+    let (_, request_ref) = server.unprotect_request(&request, &mut opened).unwrap();
+    let mut replies = std::vec::Vec::new();
+    let body = b"0123456789abcdefghijklmnopqrstuv";
+    for num in 0..2 {
+        let block = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+        let size = encode_uint(32);
+        let opts = [Opt::etag(b"v1"), Opt::size2(&size), Opt::q_block2(&block)];
+        let response = Message::new(
+            if num == 0 {
+                Type::Acknowledgement
+            } else {
+                Type::NonConfirmable
+            },
+            Code::CONTENT,
+            if num == 0 {
+                request.message_id()
+            } else {
+                MessageId::new(900)
+            },
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(&body[num as usize * 16..num as usize * 16 + 16]);
+        let mut protected = [0; WIRE];
+        let n = if num == 0 {
+            server.protect_response(&response, request_ref, &mut protected)
+        } else {
+            server.protect_response_with_piv(&response, request_ref, &mut protected)
+        }
+        .unwrap();
+        replies.push(protected[..n].to_vec());
+    }
+    let mut corrupt = replies[0].clone();
+    *corrupt.last_mut().unwrap() ^= 1;
+    client.transport_mut().inbox = Some((peer, corrupt));
+    client.poll(1).unwrap();
+    assert!(client.take_response(call).is_none());
+    for now in 2..4 {
+        client.transport_mut().inbox = Some((peer, replies[0].clone()));
+        client.poll(now).unwrap();
+        assert!(
+            client.take_response(call).is_none(),
+            "duplicate is silently ignored"
+        );
+        assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+    }
+    client.transport_mut().inbox = Some((peer, replies[1].clone()));
+    client.poll(4).unwrap();
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().body(),
+        Some(body.as_slice())
+    );
+    assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+}
