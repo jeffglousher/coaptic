@@ -159,6 +159,8 @@ struct LiveRequest {
     token: Token,
     request: RequestRef,
     observe: bool,
+    observe_request: Option<RequestRef>,
+    response_no_piv: bool,
     notify_no_piv: bool,
     notify_number: Option<u64>,
 }
@@ -334,6 +336,8 @@ impl SecurityContext {
             token,
             request,
             observe,
+            observe_request: observe.then_some(request),
+            response_no_piv: false,
             notify_no_piv: false,
             notify_number: None,
         };
@@ -352,7 +356,61 @@ impl SecurityContext {
         Err(Error::Saturated)
     }
 
-    /// Look up a request binding by Token.
+    // A body request replaces only the latest response binding. Its parent
+    // Observe registration and notification replay history remain authoritative.
+    pub(crate) fn remember_download(
+        &mut self,
+        token: Token,
+        request: RequestRef,
+    ) -> Result<(), Error> {
+        if let Some(row) = self
+            .live
+            .iter_mut()
+            .flatten()
+            .find(|row| row.token == token && row.observe)
+        {
+            row.request = request;
+            row.response_no_piv = false;
+            return Ok(());
+        }
+        self.remember(token, request)
+    }
+
+    pub(crate) fn observe_request(&self, token: Token) -> Option<RequestRef> {
+        self.live
+            .iter()
+            .flatten()
+            .find(|row| row.token == token)
+            .and_then(|row| row.observe_request)
+    }
+
+    pub(crate) fn response_without_piv_fresh(&self, token: Token) -> Result<(), Error> {
+        let row = self
+            .live
+            .iter()
+            .flatten()
+            .find(|row| row.token == token)
+            .ok_or(Error::Context)?;
+        if row.response_no_piv {
+            Err(Error::Replay)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn accept_response_without_piv(&mut self, token: Token) -> Result<(), Error> {
+        self.response_without_piv_fresh(token)?;
+        self.live
+            .iter_mut()
+            .flatten()
+            .find(|row| row.token == token)
+            .ok_or(Error::Context)?
+            .response_no_piv = true;
+        Ok(())
+    }
+
+    /// Look up the latest request binding by Token.
+    /// Observe download follow-ups retain the original registration separately.
     #[must_use]
     pub fn lookup(&self, token: Token) -> Option<RequestRef> {
         self.live
@@ -360,7 +418,7 @@ impl SecurityContext {
             .find_map(|row| row.and_then(|r| (r.token == token).then_some(r.request)))
     }
 
-    /// Whether this Token is an in-flight Observe registration.
+    /// Whether this Token retains an Observe registration, including during body downloads.
     #[must_use]
     pub fn is_observe(&self, token: Token) -> bool {
         self.live

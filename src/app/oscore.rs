@@ -1,4 +1,9 @@
 //! App-side OSCORE hook. Zero-sized when the `oscore` feature is off.
+//!
+//! Each live Token retains the Observe registration and the latest Block2/Q-Block2
+//! request independently. Response authentication tries at most these two bindings
+//! using one fixed scratch buffer; older download requests are not retained.
+//! Download follow-ups omit Observe and preserve notification replay history.
 
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{Message, ParsedMessage};
@@ -30,6 +35,8 @@ pub(crate) enum ResponseState {
     Notification(crate::message::Token, Option<crate::oscore::PartialIv>),
     #[cfg(feature = "oscore")]
     Replay(u64),
+    #[cfg(feature = "oscore")]
+    ResponseWithoutPiv(crate::message::Token),
 }
 
 pub(crate) fn commit_response<E>(
@@ -42,6 +49,9 @@ pub(crate) fn commit_response<E>(
             ResponseState::None => {}
             ResponseState::Notification(token, piv) => ctx
                 .accept_notification(token, piv)
+                .map_err(super::Error::Oscore)?,
+            ResponseState::ResponseWithoutPiv(token) => ctx
+                .accept_response_without_piv(token)
                 .map_err(super::Error::Oscore)?,
             ResponseState::Replay(sequence) => {
                 if !ctx.replay_fresh(sequence) {
@@ -131,12 +141,11 @@ pub(crate) fn inbound<'a>(
         let (inner, request) = if parsed.code().is_request() {
             ctx.unprotect_request(parsed, scratch)?
         } else {
-            let request = ctx.lookup(parsed.token()).ok_or(OscoreError::Context)?;
-            let inner = ctx.unprotect_response(parsed, request, scratch)?;
+            let (inner, request) = ctx.unprotect_bound_response(parsed, scratch)?;
             let header =
                 crate::oscore::OscoreHeader::parse(parsed.oscore().ok_or(OscoreError::Header)?)?;
             let observe = inner.observe().is_some();
-            if observe && !ctx.is_observe(parsed.token()) {
+            if observe && ctx.observe_request(parsed.token()) != Some(request) {
                 // Response to a non-Observe request must not carry Inner Observe.
                 return Err(OscoreError::Replay);
             }
@@ -167,8 +176,13 @@ pub(crate) fn inbound<'a>(
                 } else {
                     // One no-PIV response is permitted for a request, including
                     // from independent peers. Others need fresh response PIVs.
-                    ctx.notification_fresh(parsed.token(), None)?;
-                    response_state = ResponseState::Notification(parsed.token(), None);
+                    if ctx.observe_request(parsed.token()) == Some(request) {
+                        ctx.notification_fresh(parsed.token(), None)?;
+                        response_state = ResponseState::Notification(parsed.token(), None);
+                    } else {
+                        ctx.response_without_piv_fresh(parsed.token())?;
+                        response_state = ResponseState::ResponseWithoutPiv(parsed.token());
+                    }
                 }
             }
             // Authentication is not application admission. Unknown critical
