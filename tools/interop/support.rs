@@ -40,7 +40,7 @@ impl Args {
         }
         if !matches!(
             a[4].as_str(),
-            "test" | "large" | "counter" | "missing" | "methods"
+            "test" | "large" | "counter" | "missing" | "methods" | "upload"
         ) {
             return Err("unsupported fixture path".into());
         }
@@ -55,7 +55,7 @@ impl Args {
             _ => return Err("invalid method".into()),
         };
         let hex = a.get(8).map(String::as_str).unwrap_or("");
-        if hex.len() > 512 || hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if hex.len() > 8192 || hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("invalid bounded payload hex".into());
         }
         let payload = (0..hex.len())
@@ -201,4 +201,56 @@ impl MethodResource {
             _ => (133, vec![]),
         }
     }
+}
+
+/// Bounded upload oracle: exact public byte pattern and accepted/handler counts.
+#[derive(Default)]
+pub struct UploadResource {
+    accepted: u32,
+    calls: u32,
+}
+impl UploadResource {
+    pub const fn new() -> Self {
+        Self {
+            accepted: 0,
+            calls: 0,
+        }
+    }
+    pub fn respond(&mut self, method: u8, payload: &[u8], format_ok: bool) -> (u8, Vec<u8>) {
+        if method == 1 {
+            return (69, format!("{}:{}", self.accepted, self.calls).into_bytes());
+        }
+        if method != 2 {
+            return (133, vec![]);
+        }
+        self.calls += 1;
+        if !format_ok {
+            return (143, vec![]);
+        }
+        if !matches!(payload.len(), 2000 | 4096)
+            || !payload
+                .iter()
+                .enumerate()
+                .all(|(i, b)| *b == (i % 251) as u8)
+        {
+            return (128, vec![]);
+        }
+        self.accepted += 1;
+        (65, vec![])
+    }
+}
+#[test]
+fn upload_oracle_checks_every_byte_length_format_and_handler_effect() {
+    let mut resource = UploadResource::new();
+    for length in [2000, 4096] {
+        let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
+        assert_eq!(resource.respond(2, &payload, true).0, 65);
+    }
+    assert_eq!(resource.respond(1, &[], false), (69, b"2:2".to_vec()));
+    assert_eq!(resource.respond(2, &LARGE[..1999], true).0, 128);
+    let mut changed = LARGE;
+    changed[1999] ^= 1;
+    assert_eq!(resource.respond(2, &changed, true).0, 128);
+    assert_eq!(resource.respond(2, &LARGE, false).0, 143);
+    assert_eq!(resource.respond(1, &[], false), (69, b"2:5".to_vec()));
 }
