@@ -933,9 +933,7 @@ where
 fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> bool {
     let mut tags = parsed.request_tag();
     let first = tags.next();
-    let bad_tag = first.is_some_and(|tag| tag.len() > 8)
-        || tags.next().is_some()
-        || (parsed.q_block1().is_some() && first.is_none());
+    let bad_tag = first.is_some_and(|tag| tag.len() > 8) || tags.next().is_some();
     bad_tag
         || parsed.unknown_critical().is_some()
         || (parsed.oscore().is_some() && !oscore::is_active(oscore))
@@ -1168,7 +1166,11 @@ where
         request: parsed.code(),
     };
 
-    if !valid_q_selections(&parsed) {
+    // RFC 9177 section 4.3 requires 4.00 for missing Request-Tag or Size1.
+    // Reject before admission/dispatch, preserving any existing partial body.
+    let missing_q1_metadata = parsed.q_block1().is_some()
+        && (parsed.request_tag().next().is_none() || !matches!(parsed.size1(), Some(Ok(_))));
+    if missing_q1_metadata || !valid_q_selections(&parsed) {
         let outcome = send_response(
             engine,
             io,
