@@ -690,7 +690,8 @@ where
         self.request(Method::Delete, path)
     }
 
-    /// CON FETCH builder. Next: [`Outgoing::to`].
+    /// CON FETCH builder. Set [`Outgoing::content_format`] for the selection
+    /// body (also required for an empty selection), then [`Outgoing::to`].
     #[must_use]
     pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
         self.request(Method::Fetch, path)
@@ -1071,6 +1072,9 @@ where
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
+        }
+        if self.code == Code::FETCH && self.content_format.is_none() {
+            return Err(Error::FetchContentFormatRequired);
         }
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
