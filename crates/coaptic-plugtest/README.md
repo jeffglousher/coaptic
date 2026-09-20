@@ -35,7 +35,7 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 
 The App TD runner reports known incomplete scenarios as `SKIP: coverage gap #199`.
 These are unfinished work, not conformance passes: CORE separate responses and
-loss scenarios; full BLOCK and OBS scenarios; LINK_04 and LINK_09; DTLS loss, authenticated
+loss scenarios; full BLOCK and OBS scenarios; DTLS loss, authenticated
 failure evidence and raw-public-key scenarios. The X.509 fixture does not prove
 raw-public-key support. The Engine tests, dogfood and process tests retain their
 separate, narrower coverage. See [#199](https://github.com/jeffglousher/coaptic/issues/199).
@@ -43,12 +43,16 @@ The DTLS grader requires captured decrypted responses for success and visible
 plaintext fatal alerts for its alert expectation. It does not interpret encrypted
 alerts or reassemble fragmented handshakes; unavailable evidence fails grading.
 
-LINK_01/02/03/05/06/07/08 now compare complete assembled discovery results
+All nine LINK TDs now compare complete assembled discovery results
 against explicit expected membership, including exclusion of nonmatching links,
 and require Content-Format 40. They run in both mixed peer directions and the
 Coaptic self-pair. Refusal tests cover missing, extra, duplicate and truncated
 links and missing/incorrect Content-Format. This fixture comparison is not a
-general-purpose RFC 6690 parser qualification.
+general-purpose RFC 6690 parser qualification. LINK_04 includes the specified
+empty `rt` group and proves its exclusion from Type2 results. LINK_03 includes
+that group in `rt=*` results while excluding absent attributes. LINK_09 checks
+both child links, content format, selection from received links, and the exact
+final sub-resource response; malformed/partial/extra/duplicate child sets fail.
 
 The legacy coap-rs DTLS feature is disabled. Test-only bridges use its public
 transport traits with webrtc-dtls 0.12, keeping CoAP behavior independent while

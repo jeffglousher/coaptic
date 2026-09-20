@@ -296,10 +296,12 @@ fn drive_td(
             link(client, dest, &[])?;
             let got = client.send_request(dest, &ClientRequest::get(&["path"]))?;
             expect_codes(id, got.code, &[Code::CONTENT])?;
-            if !String::from_utf8_lossy(&got.payload).contains("/path/sub1") {
-                return Err(PeerError("LINK_09 /path missing sub1".into()));
-            }
-            let sub = client.send_request(dest, &ClientRequest::get(&["path", "sub1"]))?;
+            let target = check_hierarchy_payload(
+                got.content_format,
+                got.body.as_deref().unwrap_or(&got.payload),
+            )?;
+            let path: Vec<&str> = target.trim_start_matches('/').split('/').collect();
+            let sub = client.send_request(dest, &ClientRequest::get(&path))?;
             expect_codes(id, sub.code, &[Code::CONTENT])?;
             if sub.payload != site::PATH_SUB1 {
                 return Err(PeerError("LINK_09 /path/sub1 payload".into()));
@@ -383,7 +385,7 @@ fn link(client: &mut dyn Peer, dest: SocketAddr, query: &[&str]) -> Result<(), P
     let indices: &[usize] = match query {
         [] => &[0, 1, 2, 3, 4, 5],
         ["rt=Type1"] => &[0, 2],
-        ["rt=*"] => &[0, 1, 2],
+        ["rt=*"] => &[0, 1, 2, 3],
         ["rt=Type2"] => &[0, 1],
         ["if=If*"] => &[0, 1],
         ["sz=*"] => &[0, 5],
@@ -396,6 +398,28 @@ fn link(client: &mut dyn Peer, dest: SocketAddr, query: &[&str]) -> Result<(), P
         got.body.as_deref().unwrap_or(&got.payload),
         indices,
     )
+}
+
+fn check_hierarchy_payload(format: Option<u16>, payload: &[u8]) -> Result<&str, PeerError> {
+    if format != Some(40) {
+        return Err(PeerError(
+            "LINK_09: missing/incorrect child link content-format".into(),
+        ));
+    }
+    let text = std::str::from_utf8(payload).map_err(|e| PeerError(e.to_string()))?;
+    let mut children: Vec<&str> = text.split(',').collect();
+    children.sort_unstable();
+    if children != ["</path/sub1>", "</path/sub2>"] {
+        return Err(PeerError(
+            "LINK_09: missing, extra, duplicate or malformed child links".into(),
+        ));
+    }
+    // Select the next request from the verified received representation.
+    Ok(children[0]
+        .strip_prefix('<')
+        .unwrap()
+        .strip_suffix('>')
+        .unwrap())
 }
 
 fn check_link_payload(
@@ -503,6 +527,27 @@ pub fn run_suite(ids: &[&str], pairs: &[Pair]) -> Vec<TdResult> {
 #[cfg(test)]
 mod link_grade_tests {
     use super::*;
+
+    #[test]
+    fn hierarchy_refuses_partial_duplicate_extra_and_wrong_format() {
+        let valid = b"</path/sub1>,</path/sub2>";
+        assert_eq!(
+            check_hierarchy_payload(Some(40), valid).unwrap(),
+            "/path/sub1"
+        );
+        for format in [None, Some(0), Some(50)] {
+            assert!(check_hierarchy_payload(format, valid).is_err());
+        }
+        for invalid in [
+            "",
+            "</path/sub1>",
+            "</path/sub1>,</path/sub1>",
+            "</path/sub1>,</path/sub2>,</other>",
+            "</path/sub1>,</path/sub2",
+        ] {
+            assert!(check_hierarchy_payload(Some(40), invalid.as_bytes()).is_err());
+        }
+    }
 
     #[test]
     fn exact_discovery_refuses_missing_extra_duplicate_and_truncated_links() {
