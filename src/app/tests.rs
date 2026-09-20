@@ -5033,3 +5033,197 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
         }
     }
 }
+
+#[test]
+fn response_option_bounds_are_typed_sticky_and_preserve_exact_values() {
+    use crate::ResponseError;
+    static LONG: [u8; 256] = [b'x'; 256];
+    let long = core::str::from_utf8(&LONG).unwrap();
+    for n in [0, 9] {
+        assert_eq!(
+            Response::content(b"ok").etag(&[1; 9][..n]).validate(),
+            Err(ResponseError::EtagLength)
+        );
+    }
+    for n in [1, 8] {
+        let response = Response::content(b"ok").etag(&[1; 8][..n]);
+        assert_eq!(response.validate(), Ok(()));
+        assert_eq!(response.etag_bytes(), Some(&[1; 8][..n]));
+    }
+    let invalid = Response::content(b"ok")
+        .etag(&[1; 9])
+        .etag(b"good")
+        .location_path(".");
+    assert_eq!(invalid.validate(), Err(ResponseError::EtagLength));
+    for segment in [".", ".."] {
+        assert_eq!(
+            Response::created().location_path(segment).validate(),
+            Err(ResponseError::LocationDotSegment)
+        );
+    }
+    assert_eq!(
+        Response::created().location_path(long).validate(),
+        Err(ResponseError::LocationPathBounds)
+    );
+    assert_eq!(
+        Response::created().location_query(long).validate(),
+        Err(ResponseError::LocationQueryBounds)
+    );
+    let mut response = Response::created()
+        .location_path(&long[..255])
+        .location_query(&long[..255]);
+    for _ in 1..super::LOCATION_MAX {
+        response = response.location_path("").location_query("");
+    }
+    assert_eq!(response.validate(), Ok(()));
+    assert_eq!(response.location_paths().len(), 8);
+    assert_eq!(response.location_queries().len(), 8);
+    assert_eq!(response.location_paths()[1..], [""; 7]);
+    assert_eq!(response.location_queries()[1..], [""; 7]);
+    assert_eq!(
+        response.location_path("").validate(),
+        Err(ResponseError::LocationPathBounds)
+    );
+    assert_eq!(
+        response.location_query("").validate(),
+        Err(ResponseError::LocationQueryBounds)
+    );
+}
+
+#[test]
+fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
+    static LONG: [u8; 255] = [b'x'; 255];
+    fn handler(_: Request<'_>) -> Response<'static> {
+        let long = core::str::from_utf8(&LONG).unwrap();
+        let mut response = Response::created()
+            .etag(b"12345678")
+            .location_path(long)
+            .location_query(long);
+        for _ in 1..super::LOCATION_MAX {
+            response = response.location_path("").location_query("");
+        }
+        response
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["test"], &[], 0x1400);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["test"], get(handler))
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let reply = last_wide(&app);
+    assert_eq!(reply.etag().next(), Some(&b"12345678"[..]));
+    for (i, value) in reply.location_path().enumerate() {
+        assert_eq!(
+            value.unwrap().as_bytes(),
+            if i == 0 { &LONG[..] } else { &[] }
+        );
+    }
+    for (i, value) in reply.location_query().enumerate() {
+        assert_eq!(
+            value.unwrap().as_bytes(),
+            if i == 0 { &LONG[..] } else { &[] }
+        );
+    }
+    assert_eq!(reply.location_path().count(), 8);
+    assert_eq!(reply.location_query().count(), 8);
+}
+
+#[test]
+fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
+    use crate::ResponseError;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static VALID: AtomicBool = AtomicBool::new(false);
+    fn handler(_: Request<'_>) -> Response<'static> {
+        if VALID.load(Ordering::SeqCst) {
+            Response::content(b"ok").etag(b"good").observe(0)
+        } else {
+            Response::content(b"bad").etag(b"too-long-tag").separate()
+        }
+    }
+    VALID.store(false, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .route(&["test"], get(handler))
+        .bind(WideLoopback::default())
+        .unwrap();
+    // Repeat beyond RX/TX capacity: refusal must release every request.
+    for mid in 0..12 {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["test"],
+            &[Opt::observe_register()],
+            0x1500 + mid,
+        );
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(mid)),
+            Err(Error::Response(ResponseError::EtagLength))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        assert!(!observe_live(&app, peer, token));
+    }
+    VALID.store(true, Ordering::SeqCst);
+    let (wire, n) = encode_wide(Code::GET, &["test"], &[Opt::observe_register()], 0x1600);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(observe_live(&app, peer, token));
+    let id = app
+        .engine
+        .lookup_observe(ObserveKey::new(token, peer))
+        .unwrap();
+    let before = app.engine.observe_interest(id).unwrap();
+    assert_eq!(
+        app.notify(13, &["test"], Response::content(b"bad").location_path("..")),
+        Err(Error::Response(ResponseError::LocationDotSegment))
+    );
+    assert_eq!(app.engine.observe_interest(id), Some(before));
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(
+        app.notify(14, &["test"], Response::content(b"good").etag(b"new")),
+        Ok(1)
+    );
+}
+
+#[test]
+fn invalid_handler_response_releases_assembled_upload_body() {
+    use crate::ResponseError;
+    use crate::storage::SlotId;
+    fn handler(req: Request<'_>) -> Response<'static> {
+        assert_eq!(req.body(), Some(&b"body"[..]));
+        Response::changed().location_query(core::str::from_utf8(&LONG).unwrap())
+    }
+    static LONG: [u8; 256] = [b'x'; 256];
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .route(LED_PATH, put(handler))
+        .bind(Loopback {
+            inbox: None,
+            last_send: None,
+        })
+        .unwrap();
+    for mid in 0..12 {
+        let (wire, n) = encode_req_block1(Code::PUT, LED_PATH, b"body", 0, false, 16, 0x1700 + mid);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(mid)),
+            Err(Error::Response(ResponseError::LocationQueryBounds))
+        );
+        assert!(app.transport().last_send.is_none());
+        for index in 0..app.engine.capacities().rx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .rx_body_transfer(SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
