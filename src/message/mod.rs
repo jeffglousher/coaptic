@@ -52,7 +52,7 @@ pub use missing_blocks::{MissingBlocks, MissingBlocksError};
 pub use no_response::NoResponse;
 pub use option::{Opt, OptionNumber, Options};
 pub use precondition::Precondition;
-pub use problem::{ProblemDetails, ProblemError, ProblemText, WritingDirection};
+pub use problem::{ProblemDetails, ProblemError, ProblemOptions, ProblemText, WritingDirection};
 pub use value::{
     BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
     OBSERVE_SEQUENCE_MASK, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
