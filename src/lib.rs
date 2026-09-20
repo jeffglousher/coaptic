@@ -152,8 +152,8 @@ pub mod storage;
 pub use storage::profiles;
 
 pub use app::{
-    App, Call, Error, Method, Outgoing, Request, Response, delete, fetch, get, ipatch, patch, post,
-    put,
+    App, Call, CallFailure, Error, Method, Outgoing, Request, Response, delete, fetch, get, ipatch,
+    patch, post, put,
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};
