@@ -297,6 +297,8 @@ pub enum BlockTransferError {
     Overflow,
     /// Q-Block length conflicts with Size1 / Size2 or an earlier final block.
     LengthInconsistent,
+    /// An incoming Q-Block payload lacks its mandatory Size1 / Size2 option.
+    MissingSize,
     /// Transfer already completed (M=0 accepted or last Block2 issued).
     AlreadyComplete,
     /// Payload length is not valid for this NUM / M / SZX.
@@ -329,6 +331,7 @@ impl core::fmt::Display for BlockTransferError {
             Self::LengthInconsistent => {
                 f.write_str("Q-Block length conflicts with Size1/Size2 or final block")
             }
+            Self::MissingSize => f.write_str("Q-Block payload requires Size1/Size2"),
             Self::AlreadyComplete => f.write_str("block transfer is already complete"),
             Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
             Self::Value(e) => write!(f, "{e}"),
