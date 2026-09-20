@@ -106,7 +106,7 @@ use crate::storage::{
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
-pub use client::{Call, Outgoing};
+pub use client::{Call, CallFailure, Outgoing};
 pub use request::{IntoPath, MAX_PATH_SEGMENTS, PathError, Request, split_path};
 pub use response::{
     AppAssembled, INLINE_PAYLOAD, IntoResponse, LOCATION_MAX, RESPONSE_BODY, Response,
@@ -638,13 +638,14 @@ where
 {
     // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
     // Saturated after those timers still run (RFC 7252 §4.2).
+    // Local deadlines must progress even if receiving the next packet fails.
+    expire_request_dedup(engine, dedup_closed, now_ms);
+    client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
     let (received, recv_saturated) = match engine.recv_from(io) {
         Ok(id) => (id, false),
         Err(DatagramIoError::Saturated) => (None, true),
         Err(e) => return Err(e.into()),
     };
-    expire_request_dedup(engine, dedup_closed, now_ms);
-    client::expire_client_exchanges(engine, inbox, lives, now_ms);
     let progress = engine.progress(now_ms);
 
     if let Some(retransmit) = progress.retransmit() {
@@ -653,7 +654,7 @@ where
                 engine.send_tx(io, pending.tx_slot())?;
             }
             Retransmit::GiveUp(pending) => {
-                client::forget_exchange_tx(engine, lives, pending.tx_slot());
+                client::give_up_client(engine, inbox, lives, oscore, pending.tx_slot());
                 engine.release_tx(pending.tx_slot())?;
             }
         }
@@ -926,7 +927,7 @@ where
 
     if parsed.is_empty_ack_or_rst() {
         if parsed.is_empty_rst() {
-            client::complete_client_rst(engine, inbox, lives, parsed.message_id(), peer);
+            client::complete_client_rst(engine, inbox, lives, oscore, parsed.message_id(), peer);
         }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
@@ -2668,6 +2669,8 @@ where
 /// Failure of [`App::poll`] or [`Outgoing::send`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error<E> {
+    /// Absolute caller deadline has already elapsed; no request was sent.
+    DeadlineElapsed,
     /// [`Engine::recv_from`] / [`Engine::send_tx`].
     Io(DatagramIoError<E>),
     /// Slot addressing or fill.
@@ -2726,6 +2729,7 @@ where
             Self::Io(e) => write!(f, "{e}"),
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
+            Self::DeadlineElapsed => f.write_str("call deadline already elapsed"),
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
@@ -2750,7 +2754,7 @@ where
             Self::Io(e) => Some(e),
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
-            Self::Saturated => None,
+            Self::Saturated | Self::DeadlineElapsed => None,
             Self::Block(e) => Some(e),
             Self::Path
             | Self::ConditionalUploadUnsupported

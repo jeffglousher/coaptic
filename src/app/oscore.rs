@@ -257,3 +257,13 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
         other => super::Error::Oscore(other),
     }
 }
+
+/// Release a terminal client's request binding without resetting crypto state.
+pub(crate) fn cancel(ctx: &mut Field, token: crate::message::Token) {
+    #[cfg(feature = "oscore")]
+    if let Some(ctx) = ctx.as_mut() {
+        let _ = ctx.take(token);
+    }
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, token);
+}
