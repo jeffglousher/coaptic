@@ -8282,3 +8282,79 @@ fn qblock2_completion_at_recovery_deadline_does_not_send_obsolete_get() {
     let reply = app.take_response(call).unwrap().unwrap();
     assert_eq!(reply.body(), Some(&[b'A'; 48][..]));
 }
+
+#[test]
+fn observe_reregistration_does_not_inherit_a_replaced_rows_due_notification() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for replacement in ["first", "second"] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route("first", get(get_obs).observe(obs_snapshot))
+            .route("second", get(get_obs).observe(obs_snapshot))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let (wire, n) = encode_wide(Code::GET, &["first"], &[Opt::observe_register()], 100);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        // Force replacement to reuse the released row rather than an empty
+        // slot elsewhere in the table.
+        for index in 1..app.engine().capacities().observe_entries {
+            let token = Token::new(&[index as u8, 0x55]).unwrap();
+            assert!(
+                app.engine_mut()
+                    .insert_observe(crate::storage::ObserveInterest::new(token, peer))
+                    .is_some()
+            );
+        }
+        assert_eq!(app.signal(&["first"]), 1);
+        let (wire, n) = encode_wide(Code::GET, &[replacement], &[Opt::observe_register()], 101);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().send_n = 0;
+        app.poll(10).unwrap();
+        assert_eq!(
+            app.transport().send_n,
+            1,
+            "old scheduled slot notified the replacement row"
+        );
+        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        assert_eq!(app.signal(&[replacement]), 1);
+        app.transport_mut().send_n = 0;
+        app.poll(11).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    }
+}
+
+#[test]
+fn observe_signal_survives_unrelated_ingress_response_send_failure() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(get_obs).observe(obs_snapshot))
+        .route("plain", get(get_temp))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let token = Token::new(&[0xa1]).unwrap();
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 100);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(app.signal(&["obs"]), 1);
+    let id = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, peer))
+        .unwrap();
+    let (wire, n) = encode_wide(Code::GET, &["plain"], &[], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().send_n = 4; // Fail the unrelated response before notify.
+    assert!(matches!(app.poll(10), Err(Error::Io(_))));
+    let row = app.engine().observe_interest(id).unwrap();
+    assert!(row.is_pending());
+    assert_eq!(row.seq(), 0);
+    app.transport_mut().send_n = 0;
+    app.poll(11).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    assert_eq!(last_wide(&app).payload(), b"obs-snap");
+}
