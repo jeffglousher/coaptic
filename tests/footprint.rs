@@ -162,3 +162,11 @@ fn block_request_identity_sidecar_has_an_explicit_bound() {
     );
     assert!(bytes <= BlockTransfer::REQUEST_IDENTITY_BYTES + 192);
 }
+
+#[cfg(feature = "oscore")]
+#[test]
+fn protected_recovery_reference_has_a_fixed_sidecar_budget() {
+    let bytes = size_of::<Option<(coaptic::message::Token, coaptic::oscore::RequestRef)>>();
+    println!("protected recovery reference: {bytes} bytes per body sidecar");
+    assert!(bytes <= 24);
+}

@@ -447,9 +447,16 @@ impl<
     /// Timed Q-Block2 recovery for a live client GET uses a fresh protected
     /// request and retains its path, queries and selection options. Only the
     /// latest request binding is retained; late responses to earlier requests
-    /// are not qualified. Server Q-Block1 recovery and advanced receive bodies
-    /// without a live client call return [`crate::oscore::Error::Unsupported`]
-    /// without sending plaintext while a context is attached.
+    /// are not qualified. Timed server Q-Block1 reports retain the Token and
+    /// request reference with the highest authenticated request Partial IV in
+    /// the body sidecar, so reordered older payloads cannot replace it. Each
+    /// report uses a fresh response Partial IV; failed sends retain bounded
+    /// retry state and never reuse that sequence. Body completion/expiry drops
+    /// the reference. This adds 24 bytes per body sidecar on the 64-bit host
+    /// (96 bytes across Default RX/TX body slots), only with OSCORE enabled.
+    /// Advanced receive bodies without a retained authenticated request or a
+    /// live client Call return [`crate::oscore::Error::Unsupported`] without
+    /// sending plaintext while a context is attached.
     /// Ordinary Q-Block2 response batches use fresh response Partial IVs and
     /// retain the request binding through assembly until response collection
     /// or cancellation. Recipient replay checks use the context's bounded
@@ -846,10 +853,13 @@ fn assemble_inbound_body<Mem>(
     rx: SlotId,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
+    oscore_request: oscore::Request,
 ) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
 {
+    #[cfg(not(feature = "oscore"))]
+    let _ = oscore_request;
     // Classify from the first decode. Plain GET must not enter apply_*
     // (each stacks profile-sized Block IO scratch, then MissingBlock).
     if parsed.block1().is_some() {
@@ -875,10 +885,30 @@ where
                 InboundBody::Complete(progress.id())
             }
             Ok(progress) => {
+                #[cfg(feature = "oscore")]
+                if let Some(request) = oscore_request {
+                    engine.remember_qblock1_request(progress.id(), parsed.token(), request);
+                }
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 qblock1_wait(engine, rx, parsed)
             }
-            Err(BlockTransferError::Duplicate) => qblock1_wait(engine, rx, parsed),
+            Err(BlockTransferError::Duplicate) => {
+                #[cfg(feature = "oscore")]
+                if let Some(request) = oscore_request {
+                    for index in 0..engine.capacities().rx_body_slots.unwrap_or(0) {
+                        let id = SlotId::from_index(index);
+                        if engine.rx_body_transfer(id).is_some_and(|transfer| {
+                            transfer.role() == BlockRole::IncomingQBlock1
+                                && Some(transfer.endpoint()) == engine.rx_endpoint(rx)
+                                && transfer.identity().as_slice() == parsed.request_tag().next()
+                        }) {
+                            engine.remember_qblock1_request(id, parsed.token(), request);
+                            break;
+                        }
+                    }
+                }
+                qblock1_wait(engine, rx, parsed)
+            }
             Err(BlockTransferError::MissingBlock) => InboundBody::None,
             Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
             Err(BlockTransferError::Overflow) => {
@@ -968,11 +998,11 @@ where
     {
         return Ok(());
     }
-    // Server Q-Block1 recovery and advanced body state without a live Call
-    // have no retained request binding. Never fall back to plaintext.
+    // Protected recovery requires an authenticated request binding. Advanced
+    // body state without one must never fall back to plaintext.
     #[cfg(feature = "oscore")]
     if oscore::is_active(oscore) {
-        return Err(Error::Oscore(crate::oscore::Error::Unsupported));
+        return oscore::send_qblock1_recover(engine, io, ids, oscore, now_ms, recover);
     }
     match recover.role() {
         BlockRole::IncomingQBlock2 => {
@@ -1379,7 +1409,7 @@ where
         }
     }
 
-    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed);
+    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
     match assembled {
         InboundBody::Continue => {
             let outcome = send_response(

@@ -326,3 +326,60 @@ pub(crate) fn cancel(ctx: &mut Field, token: crate::message::Token) {
     #[cfg(not(feature = "oscore"))]
     let _ = (ctx, token);
 }
+
+#[cfg(feature = "oscore")]
+pub(crate) fn send_qblock1_recover<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut super::AppIds,
+    ctx: &mut Field,
+    now_ms: u64,
+    recover: crate::storage::QBlockRecover,
+) -> Result<(), super::Error<T::Error>>
+where
+    S: Storage
+        + DatagramSlots
+        + crate::storage::BodySlots
+        + crate::storage::PendingCons
+        + crate::storage::DedupSlots,
+    T: crate::storage::DatagramIo,
+{
+    use crate::message::{Code, ContentFormat, Opt, Type};
+    use crate::storage::BlockRole;
+    let binding = engine
+        .rx_body_transfer(recover.id())
+        .filter(|transfer| {
+            recover.role() == BlockRole::IncomingQBlock1
+                && transfer.role() == BlockRole::IncomingQBlock1
+                && transfer.key() == recover.key()
+        })
+        .and_then(|transfer| transfer.oscore_request);
+    let Some((token, request)) = binding else {
+        return Err(super::Error::Oscore(OscoreError::Unsupported));
+    };
+    let mut nums = [0; 16];
+    let n = recover.copy_missing_nums(&mut nums);
+    let response = super::Response::missing_blocks(nums.into_iter().take(n));
+    let format = ContentFormat::MISSING_BLOCKS.encode();
+    let options = [Opt::content_format(&format)];
+    let message = Message::new(
+        Type::NonConfirmable,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        ids.next_for(engine, now_ms)?,
+    )
+    .with_token(token)
+    .with_options(&options)
+    .with_payload(response.payload());
+    let tx = engine.acquire_tx().ok_or(super::Error::Saturated)?;
+    let result = encode_notification(ctx, Some(request), engine, tx, &message).and_then(|()| {
+        engine
+            .set_tx_endpoint(tx, recover.key().endpoint())
+            .map_err(super::Error::Slot)?;
+        engine
+            .send_tx(io, tx)
+            .map(|_| ())
+            .map_err(super::Error::from)
+    });
+    let _ = engine.release_tx(tx);
+    result
+}
