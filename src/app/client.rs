@@ -1962,6 +1962,7 @@ where
         parsed.token(),
         peer,
         Some(block),
+        &[],
         None,
     )
 }
@@ -1998,8 +1999,65 @@ where
         parsed.token(),
         peer,
         None,
-        Some(block),
+        &[block],
+        None,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn recover_qblock2<Mem, T>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox,
+    lives: &mut ClientLives,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field,
+    now_ms: u64,
+    recover: crate::storage::QBlockRecover,
+) -> Result<bool, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    let call = Call::new(recover.key().token(), recover.key().endpoint());
+    if lives.get(call).is_none() {
+        return Ok(false);
+    }
+    let mut nums = [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let count = recover.copy_missing_nums(&mut nums);
+    let mut blocks = [BlockValue::new(0, false, 0).expect("valid block");
+        crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    for (block, num) in blocks.iter_mut().zip(&nums[..count]) {
+        *block = BlockValue::new(*num, false, recover.szx())
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?;
+    }
+    let outcome = send_followup(
+        engine,
+        io,
+        lives,
+        ids,
+        oscore,
+        now_ms,
+        call.token(),
+        call.peer(),
+        None,
+        &blocks[..count],
+        Some(Type::NonConfirmable),
+    );
+    if outcome.is_err() {
+        abandon_send(engine, oscore, call.token(), call.peer());
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    outcome.map(|()| true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2013,25 +2071,36 @@ fn send_followup<Mem, T>(
     token: Token,
     peer: Endpoint,
     block2: Option<BlockValue>,
-    q_block2: Option<BlockValue>,
+    q_block2: &[BlockValue],
+    recovery_ty: Option<Type>,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges,
     T: DatagramIo,
 {
     let live = lives.get(Call::new(token, peer));
-    let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
+    let ty = recovery_ty.unwrap_or_else(|| live.map(|live| live.ty).unwrap_or(Type::Confirmable));
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
-    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let mut opts = OptionsBuilder::<
+        { CLIENT_OPTION_SLOTS + crate::storage::BlockTransfer::MAX_PAYLOADS as usize - 1 },
+    >::new();
     let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
     let no_response = live
         .and_then(|live| live.no_response)
         .map(crate::message::NoResponse::encode);
     let b2 = block2.map(BlockValue::encode);
-    let q2 = q_block2.map(BlockValue::encode);
+    let mut q2 = [encode_uint(0); crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    if q_block2.len() > q2.len() {
+        return Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::OptionsFull,
+        )));
+    }
+    for (encoded, block) in q2.iter_mut().zip(q_block2) {
+        *encoded = block.encode();
+    }
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(live) = live.as_ref() {
-            if live.observe == OutgoingObserve::Register {
+            if live.observe == OutgoingObserve::Register && recovery_ty.is_none() {
                 push_opt(&mut opts, Opt::observe_register())?;
             }
             for segment in live.path.segments() {
@@ -2049,7 +2118,7 @@ where
         if let Some(ref encoded) = b2 {
             push_opt(&mut opts, Opt::block2(encoded))?;
         }
-        if let Some(ref encoded) = q2 {
+        for encoded in &q2[..q_block2.len()] {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
         if let Some(ref value) = no_response {
