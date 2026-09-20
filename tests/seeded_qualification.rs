@@ -83,7 +83,7 @@ fn seeded_cbor_mutations_keep_bounds_and_known_values() {
     // {-1: "a"}, with an unknown nested extension in the second map.
     let corpus: &[&[u8]] = &[
         &[0xa1, 0x20, 0x61, b'a'],
-        &[0xa2, 0x20, 0x61, b'a', 0, 0x82, 1, 2],
+        &[0xa2, 0x20, 0x61, b'a', 0x28, 0x82, 1, 2],
     ];
     for bytes in corpus {
         assert_eq!(
@@ -112,6 +112,7 @@ fn seeded_cbor_mutations_keep_bounds_and_known_values() {
             accepted += 1;
             let mut canonical = [0u8; 512];
             let len = problem.encode(&mut canonical).unwrap();
+            assert_eq!(&canonical[..len], &bytes[..n]);
             assert_eq!(ProblemDetails::decode(&canonical[..len]).unwrap(), problem);
             let mut short = [0u8; 512];
             assert!(problem.encode(&mut short[..len - 1]).is_err());
