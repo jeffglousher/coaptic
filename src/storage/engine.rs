@@ -978,10 +978,33 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         marked
     }
 
+    /// Queue a terminal App notification without losing congestion-control state.
+    pub(crate) fn mark_observe_resource_deleted(&mut self, resource: ObserveResource) -> usize {
+        if resource.is_none() {
+            return 0;
+        }
+        let mut marked = 0;
+        for i in 0..self.storage.capacities().observe_entries {
+            let id = SlotId::from_index(i);
+            let Some(mut interest) = self.storage.observe_interest(id) else {
+                continue;
+            };
+            if interest.key().is_client() || interest.resource() != resource {
+                continue;
+            }
+            interest.mark_deleted();
+            if self.storage.set_observe_interest(id, interest).is_ok() {
+                marked += 1;
+            }
+        }
+        marked
+    }
+
     /// Drop every interest whose [`ObserveResource`] equals `resource`.
     ///
-    /// Returns how many rows were removed. Used when DELETE succeeds on that
-    /// path. [`ObserveResource::NONE`] matches nothing.
+    /// Returns how many rows were removed. This is immediate removal with no
+    /// notification; App DELETE instead queues terminal delivery.
+    /// [`ObserveResource::NONE`] matches nothing.
     pub fn take_observe_resource(&mut self, resource: ObserveResource) -> usize {
         if resource.is_none() {
             return 0;
