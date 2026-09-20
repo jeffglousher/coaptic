@@ -96,7 +96,11 @@ impl SecurityContext {
         unprotect_request(self, protected, out)
     }
 
-    /// Protect `plain` as an OSCORE response (no new Partial IV).
+    /// Protect the single response without a new Partial IV for this request.
+    /// The caller must use this for at most one distinct response plaintext per
+    /// [`RequestRef`]. Retransmit retained bytes; use
+    /// [`Self::protect_response_with_piv`] for additional responses such as Q
+    /// payloads or notifications. This low-level API does not retain that budget.
     pub fn protect_response(
         &self,
         plain: &Message<'_>,

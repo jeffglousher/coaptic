@@ -773,6 +773,7 @@ where
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
+            super::oscore::cancel(&mut self.oscore, call.token());
         }
         if let Some(id) = body {
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
