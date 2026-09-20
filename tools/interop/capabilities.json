@@ -1480,6 +1480,160 @@
         "missing resource and repeated DELETE return 4.04"
       ],
       "executable": "tools/interop/run.py:method_workflow"
+    },
+    {
+      "id": "ipv6-dtls:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "wrong-psk-refusal",
+        "ipv6-only-relay"
+      ],
+      "positive_proof": [
+        "exact GET bytes through IPv6-only relay",
+        "exact 2000-byte Block2 assembly",
+        "valid service after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "4.04 for absent resource",
+        "wrong PSK cannot establish authenticated exchange"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_dtls"
+    },
+    {
+      "id": "ipv6-dtls:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "wrong-psk-refusal",
+        "ipv6-only-relay"
+      ],
+      "positive_proof": [
+        "exact GET bytes through IPv6-only relay",
+        "exact 2000-byte Block2 assembly",
+        "valid service after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "4.04 for absent resource",
+        "wrong PSK cannot establish authenticated exchange"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_dtls"
+    },
+    {
+      "id": "ipv6-dtls:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "wrong-psk-refusal",
+        "ipv6-only-relay"
+      ],
+      "positive_proof": [
+        "exact GET bytes through IPv6-only relay",
+        "exact 2000-byte Block2 assembly",
+        "valid service after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "4.04 for absent resource",
+        "wrong PSK cannot establish authenticated exchange"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_dtls"
+    },
+    {
+      "id": "ipv6-dtls:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "wrong-psk-refusal",
+        "ipv6-only-relay"
+      ],
+      "positive_proof": [
+        "exact GET bytes through IPv6-only relay",
+        "exact 2000-byte Block2 assembly",
+        "valid service after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "4.04 for absent resource",
+        "wrong PSK cannot establish authenticated exchange"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_dtls"
+    },
+    {
+      "id": "ipv6-dtls:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv6-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [
+        "libcoap-dtls"
+      ],
+      "features": [
+        "get",
+        "block2",
+        "not-found",
+        "wrong-psk-refusal",
+        "ipv6-only-relay"
+      ],
+      "positive_proof": [
+        "exact GET bytes through IPv6-only relay",
+        "exact 2000-byte Block2 assembly",
+        "valid service after wrong-key refusal"
+      ],
+      "failure_proof": [
+        "4.04 for absent resource",
+        "wrong PSK cannot establish authenticated exchange"
+      ],
+      "executable": "tools/interop/run.py:main.ipv6_dtls"
     }
   ],
   "gaps": [
@@ -1655,7 +1809,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "IPv6 UDP loopback GET/404/Block2 is exercised by five cases. Scoped/link-local IPv6, IPv6 DTLS, alternative server fault directions, reordering/delay/MTU and combined schedules remain absent.",
+      "reason": "IPv6 UDP and PSK DTLS loopback GET/404/Block2 are exercised by five cases each. DTLS additionally checks wrong-key refusal and service afterward through IPv6-only relays. Scoped/link-local IPv6, alternative server fault directions, reordering/delay/MTU and combined schedules remain absent.",
       "issue": 200,
       "executable_cases": []
     },

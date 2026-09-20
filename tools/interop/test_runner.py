@@ -97,6 +97,27 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["samples_ns"]["request"], [])
         self.assertNotIn("request_ns", result)
 
+    def test_ipv6_relay_preserves_bytes_in_both_directions(self):
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as client:
+            server.bind(("::1", 0))
+            server.settimeout(1)
+            client.settimeout(1)
+            with Proxy(server.getsockname()[1], "dtls-reconnect", family="ipv6") as proxy:
+                for endpoint in (proxy.front, proxy.back):
+                    self.assertEqual(endpoint.family, socket.AF_INET6)
+                    self.assertEqual(endpoint.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY), 1)
+                client.sendto(b"request\x00", ("::1", proxy.number))
+                data, address = server.recvfrom(100)
+                self.assertEqual(data, b"request\x00")
+                self.assertEqual(address[0], "::1")
+                server.sendto(b"reply\xff", address)
+                self.assertEqual(client.recvfrom(100)[0], b"reply\xff")
+            self.assertEqual([row["direction"] for row in proxy.trace], ["request", "response"])
+
+    def test_proxy_refuses_unknown_address_family(self):
+        with self.assertRaises(ValueError):
+            Proxy(1234, "dtls-reconnect", family="invented")
+
     def test_duplicate_and_drop_are_real_datagrams(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
             server.bind(("127.0.0.1",0))
