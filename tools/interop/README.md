@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 51 scenario results (44 with local C-peer DTLS excluded):
+The full run contains 56 scenario results (47 with local C-peer DTLS excluded):
 
 - Ten transport/pair scenarios: UDP and PSK DTLS, each with Coaptic self-pair,
   Coaptic/coap-rs both directions and Coaptic/libcoap both directions. Each checks
@@ -61,6 +61,11 @@ The full run contains 51 scenario results (44 with local C-peer DTLS excluded):
   probe records actual request/response bytes from `::1`, preventing silent IPv4
   fallback from passing. These are loopback checks, not scoped/link-local, DTLS
   or IPv6 fault-injection qualification.
+- Five IPv6 PSK DTLS scenarios check GET bytes, 4.04, 2,000-byte Block2,
+  wrong-key refusal and valid service afterward. Each exchange traverses a relay
+  whose two sockets require AF_INET6 and IPV6_V6ONLY, retaining actual datagram
+  traces. These checks do not establish cipher/Finished captures, scoped addresses
+  or IPv6 DTLS loss recovery.
 - Fifteen method workflows across IPv4 UDP, PSK DTLS and IPv6 UDP use the same
   pairings and execute 29 ordered
   steps each: PUT creation/replacement, GET readback, POST append, PATCH changes,

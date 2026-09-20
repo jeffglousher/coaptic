@@ -168,13 +168,19 @@ def expect(event, code=69, payload=BODY):
 
 class Proxy:
     """One-client UDP relay, deterministic first-packet faults, bounded trace."""
-    def __init__(self, dest, mode):
-        self.front = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.back = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.front.bind(("127.0.0.1", 0))
-        self.back.bind(("127.0.0.1", 0))
+    def __init__(self, dest, mode, family="ipv4"):
+        if family not in ("ipv4", "ipv6"):
+            raise ValueError("unsupported proxy address family")
+        address_family = socket.AF_INET6 if family == "ipv6" else socket.AF_INET
+        address = "::1" if family == "ipv6" else "127.0.0.1"
+        self.front = socket.socket(address_family, socket.SOCK_DGRAM)
+        self.back = socket.socket(address_family, socket.SOCK_DGRAM)
+        for endpoint in (self.front, self.back):
+            if family == "ipv6":
+                endpoint.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            endpoint.bind((address, 0))
         self.number = self.front.getsockname()[1]
-        self.dest = ("127.0.0.1", dest)
+        self.dest = (address, dest, 0, 0) if family == "ipv6" else (address, dest)
         self.mode, self.trace, self.error = mode, [], None
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -394,6 +400,32 @@ def main():
                 expect(request(peers[client], "udp", service.number, family="ipv6"))
                 return {"server": service.ready, "address": "::1", "ipv6_socket_probe": probe, "verified": ["IPv6 UDP GET bytes", "4.04", "2000-byte Block2", "service after refusal"]}
         case(f"ipv6-udp:{client}->{server}", ipv6_matrix)
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        if args.libcoap_udp_only and "libcoap" in (client, server):
+            continue
+        def ipv6_dtls(client=client, server=server):
+            with Server(peers[server], "dtls", family="ipv6") as service:
+                # New relay per session: qualify IPv6 transport without assuming
+                # a peer's same-endpoint replacement-handshake policy.
+                traces = []
+                def exchange(**kwargs):
+                    with Proxy(service.number, "dtls-reconnect", family="ipv6") as relay:
+                        result = request(peers[client], "dtls", relay.number, family="ipv6", **kwargs)
+                    if not any(row["direction"] == "request" for row in relay.trace):
+                        raise AssertionError("no IPv6 request datagrams")
+                    traces.append(relay.trace)
+                    return result
+                expect(exchange())
+                expect(exchange(path="missing"), 132, None)
+                expect(exchange(path="large"), 69, LARGE)
+                refused = exchange(key="incorrect", timeout=1500)
+                expect_refusal(refused, handshake=True)
+                expect(exchange())
+                return {"server": service.ready, "address": "::1", "relay_family": "AF_INET6",
+                        "ipv6_only": True, "traces": traces, "wrong_key_result": refused,
+                        "verified": ["IPv6 PSK DTLS GET bytes", "4.04", "2000-byte Block2", "wrong-key refusal", "service after refusal"]}
+        case(f"ipv6-dtls:{client}->{server}", ipv6_dtls)
 
     # The relay preserves one server-visible UDP endpoint across fresh clients.
     for server in ("coaptic", "coap-rs"):
