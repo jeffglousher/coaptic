@@ -306,8 +306,11 @@ def oscore_fault_workflow(client, server):
         with Proxy(service.number, "dtls-reconnect") as relay:
             accepted = request(client, "oscore", relay.number, sequence=0, path="counter", method="POST")
             expect(accepted, 68, b"")
-            expect(request(client, "oscore", service.number, sequence=1, path="counter"), 69, b"1")
-            captured = next(bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request")
+            expect(request(client, "oscore", service.number, sequence=10, path="counter"), 69, b"1")
+            requests = [bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request"]
+            # Echo may cause one earlier challenged request. Replay the last
+            # application request that actually produced the accepted POST.
+            captured = next(wire for wire in reversed(requests) if len(wire) > 1 and wire[1] != 0)
             # RFC 8613 leaves outer MID/Token outside integrity protection.
             # Change both; preserve every option/ciphertext byte. Keep the
             # first relay bound so a new socket cannot reuse its source port.
@@ -325,7 +328,7 @@ def oscore_fault_workflow(client, server):
                     replay_reply = sock.recvfrom(4096)[0].hex()
                 except socket.timeout:
                     replay_reply = None
-        expect(request(client, "oscore", service.number, sequence=2, path="counter"), 69, b"1")
+        expect(request(client, "oscore", service.number, sequence=20, path="counter"), 69, b"1")
         # A forged far-future request cannot advance the recipient window.
         with Proxy(service.number, "corrupt-request") as corrupted:
             refused = request(client, "oscore", corrupted.number, sequence=1000,
@@ -333,9 +336,9 @@ def oscore_fault_workflow(client, server):
         expect_refusal(refused)
         if not any(row["action"] == "corrupt" and row["hex"] != row["forwarded_hex"] for row in corrupted.trace):
             raise AssertionError("authenticated corruption was not exercised")
-        expect(request(client, "oscore", service.number, sequence=3, path="counter"), 69, b"1")
+        expect(request(client, "oscore", service.number, sequence=30, path="counter"), 69, b"1")
         expect(request(client, "oscore", service.number, sequence=1000, path="counter", method="POST"), 68, b"")
-        final = request(client, "oscore", service.number, sequence=1001, path="counter")
+        final = request(client, "oscore", service.number, sequence=1100, path="counter")
         expect(final, 69, b"2")
         return {"accepted_trace": relay.trace, "accepted_source": accepted_source, "replay_source": replay_source, "replayed_hex": replay.hex(), "replay_reply_hex": replay_reply,
                 "corrupted_trace": corrupted.trace, "refused": refused, "final": final,
@@ -462,7 +465,7 @@ def main():
                 expect(plain, 129, None)
                 expect(exchange(path="methods"), 69, b"alpha")
                 return {"server": service.ready, "traces": traces, "results": results, "plaintext_refusal": plain,
-                        "fixture_context": "RFC 8613 C.1 public keys; client sequences 0,100,200,300,400",
+                        "fixture_context": "RFC 8613 C.1 public keys; client starting sequences 0,100,200,300,400; one Echo retry may consume the next sequence",
                         "verified": ["exact authenticated GET", "PUT/readback", "wrong-key and plaintext state preservation"],
                         "unqualified": ["persistent keys/sequences", "replay/corruption campaign", "OSCORE Observe/block transfer"]}
         case(f"oscore-state:{client}->{server}", oscore_state)
