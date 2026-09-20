@@ -1559,9 +1559,7 @@ where
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
-    let via_observe = engine
-        .lookup_observe(ObserveKey::new_client(parsed.token(), peer))
-        .is_some();
+    let via_observe = matching_observe(engine, parsed, peer);
     if via_exchange.is_none() && !via_observe {
         let outcome = if parsed.ty() == Type::Confirmable {
             super::send_empty_rst(engine, io, peer, parsed.message_id())
@@ -1928,6 +1926,27 @@ fn store_reply<Mem: Storage + BodySlots>(
             }
         }
     }
+}
+
+/// Check unencrypted routing fields before touching protected response state.
+pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots>(
+    engine: &Engine<Mem>,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+) -> bool {
+    matching_exchange(engine, parsed, peer).is_some() || matching_observe(engine, parsed, peer)
+}
+
+fn matching_observe<Mem: Storage + ObserveSlots>(
+    engine: &Engine<Mem>,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+) -> bool {
+    parsed.code().is_response()
+        && matches!(parsed.ty(), Type::Confirmable | Type::NonConfirmable)
+        && engine
+            .lookup_observe(ObserveKey::new_client(parsed.token(), peer))
+            .is_some()
 }
 
 fn matching_exchange<Mem: Storage + Exchanges>(

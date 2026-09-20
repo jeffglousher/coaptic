@@ -3950,3 +3950,111 @@ fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
     assert_eq!(client.oscore().unwrap().sender_seq(), seq);
     assert!(client.transport().sent.is_empty());
 }
+
+#[test]
+fn protected_response_matching_preserves_live_state_until_expected_peer_and_mid() {
+    use crate::{App, profiles};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 9], 5683);
+    for case in 0..4 {
+        let mut client = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .bind(QWire::default())
+            .unwrap();
+        client.set_oscore(client_c1());
+        let outgoing = client.get("value").to(peer);
+        let outgoing = if case == 2 {
+            outgoing.non()
+        } else if case == 3 {
+            outgoing.observe()
+        } else {
+            outgoing
+        };
+        let call = outgoing.send(0).unwrap();
+        let sent = client.transport_mut().sent.remove(0);
+        let request = decode(&sent).unwrap();
+        let mut server = server_c1();
+        let mut scratch = [0; WIRE];
+        let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+        let observe = encode_uint(0);
+        let options = [Opt::observe(&observe)];
+        let reply = Message::new(
+            if case == 2 {
+                Type::NonConfirmable
+            } else {
+                Type::Acknowledgement
+            },
+            Code::CONTENT,
+            request.message_id(),
+        )
+        .with_token(call.token())
+        .with_payload(b"correct")
+        .with_options(if case == 3 { &options } else { &[] });
+        let mut wire = [0; WIRE];
+        let n = server
+            .protect_response(&reply, reference, &mut wire)
+            .unwrap();
+        let good = wire[..n].to_vec();
+        let mut mismatched = good.clone();
+        let source = if case == 1 {
+            let wrong = request.message_id().get().wrapping_add(1).to_be_bytes();
+            mismatched[2..4].copy_from_slice(&wrong);
+            peer
+        } else {
+            other
+        };
+        client.transport_mut().inbox = Some((source, mismatched));
+        client.poll(1).unwrap();
+        assert!(client.take_response(call).is_none());
+        assert!(client.oscore().unwrap().lookup(call.token()).is_some());
+        assert!(client.transport().sent.is_empty());
+        client.transport_mut().inbox = Some((peer, good));
+        client.poll(2).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().payload(),
+            b"correct"
+        );
+        if case == 3 {
+            for attempt in 0..2 {
+                let sequence = encode_uint(1 + attempt);
+                let options = [Opt::observe(&sequence)];
+                let notification = Message::new(
+                    Type::NonConfirmable,
+                    Code::CONTENT,
+                    MessageId::new(100 + attempt as u16),
+                )
+                .with_token(call.token())
+                .with_options(&options)
+                .with_payload(b"next");
+                let n = server
+                    .protect_response_with_piv(&notification, reference, &mut wire)
+                    .unwrap();
+                let good = wire[..n].to_vec();
+                let mut bad = good.clone();
+                let source = if attempt == 0 {
+                    other
+                } else {
+                    // An ACK cannot become a notification after its exchange
+                    // has completed, even with a matching Observe Token.
+                    bad[0] = (bad[0] & !0x30) | 0x20;
+                    peer
+                };
+                client.transport_mut().inbox = Some((source, bad));
+                client.poll(3 + u64::from(attempt) * 2).unwrap();
+                assert!(client.take_response(call).is_none());
+                assert!(client.transport().sent.is_empty());
+                client.transport_mut().inbox = Some((peer, good));
+                client.poll(4 + u64::from(attempt) * 2).unwrap();
+                assert_eq!(
+                    client.take_response(call).unwrap().unwrap().payload(),
+                    b"next"
+                );
+            }
+            assert!(client.cancel(call));
+        }
+        assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+    }
+}
