@@ -12,7 +12,7 @@
 //! [`crate::Response::problem`]). [`MissingBlocks`] is RFC 9177
 //! missing-blocks CBOR-seq ([`crate::Response::missing_blocks`]).
 //! [`Echo`] is RFC 9175; App applies 4.01 when
-//! [`crate::app::AppBuilder::echo_freshness`] is set. [`BlockValue`] SZX 7
+//! [`crate::app::AppBuilder::echo_policy`] is set. [`BlockValue`] SZX 7
 //! is Engine BERT (future / backlog on the App face).
 //!
 //! Optional, not used by [`decode`]:
