@@ -1351,12 +1351,20 @@ where
             oscore: oscore_req,
             request: parsed.code(),
         };
+        let mut response = Response::problem(Code::BAD_OPTION).title("Bad Option");
+        if let Some(number) = parsed.unknown_critical() {
+            // A single u16 option fits the fixed problem payload. Preserve a
+            // valid 4.02 fallback if the compact encoder's limits ever change.
+            response = response
+                .unprocessed_options(&[u64::from(number.get())])
+                .unwrap_or(response);
+        }
         let outcome = send_response(
             engine,
             io,
             ids,
             meta,
-            &Response::problem(Code::BAD_OPTION).title("Bad Option"),
+            &response,
             now_ms,
             oscore,
             dedup_closed,

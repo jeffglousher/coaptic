@@ -105,6 +105,44 @@ impl<'a> ProblemText<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OptionNumbers<'a> {
+    Values(&'a [u64]),
+    Encoded(&'a [u8]),
+}
+
+/// Borrowed iterator over RFC 9290 unprocessed CoAP option numbers.
+/// Preserves order and repetitions; values span the CBOR unsigned range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProblemOptions<'a> {
+    source: OptionNumbers<'a>,
+    at: usize,
+    remaining: usize,
+}
+impl Iterator for ProblemOptions<'_> {
+    type Item = u64;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let number = match self.source {
+            OptionNumbers::Values(values) => {
+                let number = *values.get(self.at)?;
+                self.at += 1;
+                number
+            }
+            OptionNumbers::Encoded(bytes) => read_uint(bytes, &mut self.at).ok()?,
+        };
+        self.remaining -= 1;
+        Some(number)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+impl ExactSizeIterator for ProblemOptions<'_> {}
+impl core::iter::FusedIterator for ProblemOptions<'_> {}
+
 /// RFC 9290 concise problem details: `response-code` plus optional title/detail.
 ///
 /// Encodes as a CBOR map with Standard Problem Detail keys. The map is
@@ -137,6 +175,7 @@ pub struct ProblemDetails<'a> {
     base_uri: Option<&'a str>,
     base_language: Option<&'a str>,
     base_direction: Option<WritingDirection>,
+    unprocessed: Option<ProblemOptions<'a>>,
     original: Option<&'a [u8]>,
     edited: u8,
 }
@@ -154,6 +193,7 @@ impl ProblemDetails<'static> {
             base_uri: None,
             base_language: None,
             base_direction: None,
+            unprocessed: None,
             original: None,
             edited: 0,
         }
@@ -251,10 +291,41 @@ impl<'a> ProblemDetails<'a> {
         self.base_direction
     }
 
+    /// Set RFC 9290 section 3.1.1 option numbers that could not be processed.
+    /// One number encodes as an unsigned integer; two or more encode as an
+    /// array. Order and repeated numbers are preserved. This list need not
+    /// include every problematic option, or only options sent by the client.
+    ///
+    /// # Errors
+    /// [`ProblemError::Invalid`] for an empty list.
+    pub fn with_unprocessed_options(mut self, numbers: &'a [u64]) -> Result<Self, ProblemError> {
+        if numbers.is_empty() {
+            return Err(ProblemError::Invalid);
+        }
+        self.unprocessed = Some(ProblemOptions {
+            source: OptionNumbers::Values(numbers),
+            at: 0,
+            remaining: numbers.len(),
+        });
+        self.edited |= 4;
+        Ok(self)
+    }
+
+    /// Option numbers the producer could not process, or an empty iterator
+    /// when key -8 is absent. No integer narrowing or allocation occurs.
+    #[must_use]
+    pub fn unprocessed_options(self) -> ProblemOptions<'a> {
+        self.unprocessed.unwrap_or(ProblemOptions {
+            source: OptionNumbers::Values(&[]),
+            at: 0,
+            remaining: 0,
+        })
+    }
+
     /// Encode the CBOR map into `buf`. New maps use deterministic key order
-    /// (title, detail, response-code). Decoded maps retain all original entries
+    /// (title, detail, response-code, unprocessed options). Decoded maps retain all original entries
     /// and their order, including unknown extensions. Unedited maps are copied
-    /// byte for byte; title/detail edits replace only their respective values.
+    /// byte for byte; typed edits replace only their respective values.
     /// This is lossless forwarding, not canonicalization of received CBOR.
     ///
     /// # Errors
@@ -267,7 +338,8 @@ impl<'a> ProblemDetails<'a> {
         }
         let pairs = usize::from(self.title.is_some())
             + usize::from(self.detail.is_some())
-            + usize::from(self.code.is_some());
+            + usize::from(self.code.is_some())
+            + usize::from(self.unprocessed.is_some());
         if pairs == 0 {
             return Err(ProblemError::Invalid);
         }
@@ -284,6 +356,10 @@ impl<'a> ProblemDetails<'a> {
         if let Some(code) = self.code {
             put_nint(buf, &mut at, KEY_RESPONSE_CODE)?;
             put_uint(buf, &mut at, u64::from(code.as_raw()))?;
+        }
+        if let Some(options) = self.unprocessed {
+            put_nint(buf, &mut at, -8)?;
+            put_option_numbers(buf, &mut at, options)?;
         }
         Ok(at)
     }
@@ -304,6 +380,7 @@ impl<'a> ProblemDetails<'a> {
             match read_key(original, &mut read)? {
                 Some(0) => found |= 1,
                 Some(1) => found |= 2,
+                Some(7) => found |= 4,
                 _ => {}
             }
             skip_item(original, &mut read)?;
@@ -322,7 +399,10 @@ impl<'a> ProblemDetails<'a> {
                 Some(1) if self.edited & 2 != 0 => self.detail,
                 _ => None,
             };
-            if let Some(text) = replacement {
+            if key == Some(7) && self.edited & 4 != 0 {
+                put_slice(buf, &mut at, &original[start..value])?;
+                put_option_numbers(buf, &mut at, self.unprocessed.ok_or(ProblemError::Invalid)?)?;
+            } else if let Some(text) = replacement {
                 put_slice(buf, &mut at, &original[start..value])?;
                 put_problem_text(buf, &mut at, text)?;
             } else {
@@ -335,6 +415,10 @@ impl<'a> ProblemDetails<'a> {
                 put_problem_text(buf, &mut at, text.ok_or(ProblemError::Invalid)?)?;
             }
         }
+        if self.edited & !found & 4 != 0 {
+            put_nint(buf, &mut at, -8)?;
+            put_option_numbers(buf, &mut at, self.unprocessed.ok_or(ProblemError::Invalid)?)?;
+        }
         Ok(at)
     }
 
@@ -343,7 +427,7 @@ impl<'a> ProblemDetails<'a> {
     /// Integer keys cover the full CBOR integer range; URI-reference keys are
     /// UTF-8 text. Custom entries (unsigned integer or text keys) must contain
     /// a nonempty map. A map containing only extensions is valid.
-    /// Duplicate standard fields -1 through -7 are refused. Title/detail accept
+    /// Duplicate standard fields -1 through -8 are refused. Title/detail accept
     /// plain text or tag 38, including optional CBOR tags on its language/text
     /// components. Instance/base URI and language/direction context are exposed.
     /// Language validation follows Appendix A CDDL syntax, not registry
@@ -370,6 +454,7 @@ impl<'a> ProblemDetails<'a> {
             base_uri: None,
             base_language: None,
             base_direction: None,
+            unprocessed: None,
             original: None,
             edited: 0,
         };
@@ -424,6 +509,12 @@ impl<'a> ProblemDetails<'a> {
                     }
                     out.base_direction = Some(read_direction(bytes, &mut at)?);
                 }
+                Some(7) => {
+                    if out.unprocessed.is_some() {
+                        return Err(ProblemError::Invalid);
+                    }
+                    out.unprocessed = Some(read_option_numbers(bytes, &mut at)?);
+                }
                 None => {
                     let mut probe = at;
                     let (major, entries) = read_head(bytes, &mut probe)?;
@@ -441,6 +532,48 @@ impl<'a> ProblemDetails<'a> {
         out.original = Some(bytes);
         Ok(out)
     }
+}
+
+fn put_option_numbers(
+    buf: &mut [u8],
+    at: &mut usize,
+    options: ProblemOptions<'_>,
+) -> Result<(), ProblemError> {
+    if options.len() > 1 {
+        put_head(buf, at, MAJOR_ARRAY, options.len() as u64)?;
+    }
+    for number in options {
+        put_uint(buf, at, number)?;
+    }
+    Ok(())
+}
+
+fn read_option_numbers<'a>(
+    bytes: &'a [u8],
+    at: &mut usize,
+) -> Result<ProblemOptions<'a>, ProblemError> {
+    let start = *at;
+    let (major, count) = read_head(bytes, at)?;
+    let (start, remaining) = if major == MAJOR_UINT {
+        (start, 1)
+    } else if major == MAJOR_ARRAY && count >= 2 {
+        let start = *at;
+        let remaining = usize::try_from(count).map_err(|_| ProblemError::Invalid)?;
+        if remaining > bytes.len().saturating_sub(*at) {
+            return Err(ProblemError::Invalid);
+        }
+        for _ in 0..remaining {
+            read_uint(bytes, at)?;
+        }
+        (start, remaining)
+    } else {
+        return Err(ProblemError::Invalid);
+    };
+    Ok(ProblemOptions {
+        source: OptionNumbers::Encoded(&bytes[start..*at]),
+        at: 0,
+        remaining,
+    })
 }
 
 fn put(buf: &mut [u8], at: &mut usize, byte: u8) -> Result<(), ProblemError> {
@@ -1129,6 +1262,7 @@ mod tests {
             base_uri: None,
             base_language: None,
             base_direction: None,
+            unprocessed: None,
             original: None,
             edited: 0,
         };
@@ -1213,5 +1347,111 @@ mod tests {
                 Some("a")
             );
         }
+    }
+    #[test]
+    fn unprocessed_option_numbers_match_literal_scalar_and_array_forms() {
+        for (wire, expected) in [
+            (&[0xa1, 0x27, 0x00][..], &[0][..]),
+            (&[0xa1, 0x27, 0x18, 0x3c][..], &[60][..]),
+            (&[0xa1, 0x27, 0x82, 0x17, 0x17][..], &[23, 23][..]),
+            (
+                &[
+                    0xa1, 0x27, 0x83, 0x01, 0x19, 0xff, 0xff, 0x1b, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff, 0xff, 0xff,
+                ][..],
+                &[1, 65535, u64::MAX][..],
+            ),
+        ] {
+            let parsed = ProblemDetails::decode(wire).unwrap();
+            let mut values = parsed.unprocessed_options();
+            assert_eq!(values.len(), expected.len());
+            for expected in expected {
+                assert_eq!(values.next(), Some(*expected));
+            }
+            assert_eq!(values.len(), 0);
+            assert_eq!(values.next(), None);
+            assert_eq!(values.next(), None);
+            let mut out = [0; 128];
+            let n = parsed.encode(&mut out).unwrap();
+            assert_eq!(&out[..n], wire);
+            let built = ProblemDetails::new(Code::BAD_OPTION)
+                .with_unprocessed_options(expected)
+                .unwrap();
+            let n = built.encode(&mut out).unwrap();
+            assert!(
+                ProblemDetails::decode(&out[..n])
+                    .unwrap()
+                    .unprocessed_options()
+                    .eq(expected.iter().copied())
+            );
+            for capacity in 0..n {
+                assert_eq!(
+                    built.encode(&mut out[..capacity]),
+                    Err(ProblemError::BufferTooSmall)
+                );
+            }
+        }
+        assert_eq!(
+            ProblemDetails::new(Code::BAD_OPTION)
+                .unprocessed_options()
+                .next(),
+            None
+        );
+        assert_eq!(
+            ProblemDetails::new(Code::BAD_OPTION).with_unprocessed_options(&[]),
+            Err(ProblemError::Invalid)
+        );
+    }
+
+    #[test]
+    fn unprocessed_options_reject_invalid_shapes_and_duplicate_fields() {
+        for wire in [
+            &[0xa1, 0x27, 0x80][..],
+            &[0xa1, 0x27, 0x81, 0x01][..],
+            &[0xa1, 0x27, 0x20][..],
+            &[0xa1, 0x27, 0xf4][..],
+            &[0xa1, 0x27, 0x61, b'x'][..],
+            &[0xa1, 0x27, 0x82, 0x01][..],
+            &[0xa1, 0x27, 0x82, 0x01, 0x20][..],
+            &[
+                0xa1, 0x27, 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            ][..],
+            &[0xa2, 0x27, 0x01, 0x38, 0x07, 0x02][..],
+        ] {
+            assert_eq!(
+                ProblemDetails::decode(wire),
+                Err(ProblemError::Invalid),
+                "{wire:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unprocessed_option_edits_preserve_unrelated_wire_entries() {
+        let original = [0xa2, 0x01, 0xa1, 0x18, 0x01, 0x18, 0x02, 0x27, 0x18, 0x03];
+        let parsed = ProblemDetails::decode(&original).unwrap();
+        let mut out = [0; 128];
+        let edited = parsed
+            .with_unprocessed_options(&[23, 60])
+            .unwrap()
+            .title("why");
+        let n = edited.encode(&mut out).unwrap();
+        assert_eq!(
+            &out[..n],
+            &[
+                0xa3, 0x01, 0xa1, 0x18, 0x01, 0x18, 0x02, 0x27, 0x82, 0x17, 0x18, 0x3c, 0x20, 0x63,
+                b'w', b'h', b'y'
+            ]
+        );
+        let absent = [0xa1, 0x01, 0xa1, 0x18, 0x01, 0x18, 0x02];
+        let added = ProblemDetails::decode(&absent)
+            .unwrap()
+            .with_unprocessed_options(&[60])
+            .unwrap();
+        let n = added.encode(&mut out).unwrap();
+        assert_eq!(
+            &out[..n],
+            &[0xa2, 0x01, 0xa1, 0x18, 0x01, 0x18, 0x02, 0x27, 0x18, 0x3c]
+        );
     }
 }

@@ -371,6 +371,33 @@ impl<'a> Response<'a> {
         Self::new(code).with_problem(None, None)
     }
 
+    /// Add RFC 9290 unprocessed option numbers to a problem response.
+    /// Existing valid problem fields are preserved. Other payloads are replaced
+    /// with a problem map carrying this response's code. Apply this after
+    /// title/detail builders, which rebuild their compact problem payload.
+    ///
+    /// # Errors
+    /// [`crate::message::ProblemError::Invalid`] for an empty list or malformed
+    /// existing problem payload; `BufferTooSmall` if the complete map exceeds
+    /// the inline payload capacity. No partial/truncated map is returned.
+    pub fn unprocessed_options(
+        self,
+        numbers: &[u64],
+    ) -> Result<Self, crate::message::ProblemError> {
+        let details = if self.format() == Some(ContentFormat::PROBLEM_DETAILS) {
+            ProblemDetails::decode(self.payload())?
+        } else {
+            ProblemDetails::new(self.code())
+        };
+        let mut buf = [0; INLINE_PAYLOAD];
+        let n = details
+            .with_unprocessed_options(numbers)?
+            .encode(&mut buf)?;
+        Ok(self
+            .content_format(ContentFormat::PROBLEM_DETAILS)
+            .payload_copy(&buf[..n]))
+    }
+
     /// 4.08 with RFC 9177 missing-blocks CBOR-seq (Content-Format 272).
     ///
     /// Encodes `nums` as a CBOR Sequence of unsigned integers (no array
