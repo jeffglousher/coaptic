@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
-getrandom = "=0.3.4"
+getrandom = "=0.4.3"
 coaptic = { path = "../..", features = ["std", "oscore"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
