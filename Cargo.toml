@@ -57,4 +57,4 @@ required-features = ["std"]
 
 [dev-dependencies]
 # Host examples/doctests and fixtures supply OS entropy; not a library runtime dependency.
-getrandom = "=0.3.4"
+getrandom = "=0.4.3"
