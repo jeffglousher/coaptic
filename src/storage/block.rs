@@ -1049,8 +1049,21 @@ impl BlockTransfer {
         if self.complete {
             return Err(BlockTransferError::AlreadyComplete);
         }
+        // RFC 7959 Figure 9: a smaller power-of-two size is the next block
+        // only when its number addresses the first byte not yet received.
+        // A larger size, or a smaller size at any other offset, is not that
+        // exchange. Q-Block keeps the size it started with.
         if block.szx() != self.szx {
-            return Err(BlockTransferError::SzxMismatch);
+            if self.is_bert() || block.is_bert() || block.szx() > self.szx {
+                return Err(BlockTransferError::SzxMismatch);
+            }
+            let new_size = usize::from(block.size());
+            let offset = block_offset(block.num(), new_size)?;
+            if offset != self.filled {
+                return Err(BlockTransferError::Gap);
+            }
+            self.szx = block.szx();
+            self.next_num = block.num();
         }
         if block.num() < self.next_num {
             return Err(BlockTransferError::Overlap);
@@ -1263,6 +1276,38 @@ impl BlockTransfer {
             return self.issue_bert_outgoing(self.filled);
         }
         self.issue_range(self.next_num)
+    }
+
+    /// Continue an outgoing classic transfer at a smaller power-of-two size.
+    ///
+    /// The next block number counts bytes already issued in the new size.
+    /// Q-Block and a larger size are refused. See `knowledge/rfcs/rfc7959.txt`.
+    pub fn adopt_smaller_szx(&mut self, szx: u8) -> Result<(), BlockTransferError> {
+        if !self.role.is_outgoing() || self.role.is_q_block() || self.is_bert() {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        if self.complete {
+            return Err(BlockTransferError::AlreadyComplete);
+        }
+        if szx >= self.szx {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+        let old = usize::from(
+            BlockValue::size_from_szx(self.szx).map_err(|_| BlockTransferError::SzxMismatch)?,
+        );
+        let new = usize::from(
+            BlockValue::size_from_szx(szx).map_err(|_| BlockTransferError::SzxMismatch)?,
+        );
+        let issued = usize::try_from(self.next_num)
+            .ok()
+            .and_then(|count| count.checked_mul(old))
+            .ok_or(BlockTransferError::Overflow)?;
+        if issued % new != 0 {
+            return Err(BlockTransferError::Gap);
+        }
+        self.szx = szx;
+        self.next_num = u32::try_from(issued / new).map_err(|_| BlockTransferError::Overflow)?;
+        Ok(())
     }
 
     /// Issue one BERT payload of at most `max_payload` bytes.
@@ -1585,6 +1630,12 @@ pub(crate) trait BodyOps {
         id: SlotId,
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError>;
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError>;
     fn next_bert_outgoing(
         &mut self,
         id: SlotId,
@@ -1701,6 +1752,53 @@ mod tests {
             full.accept_incoming(extra, 1, 4096).expect_err("cap"),
             BlockTransferError::Overflow
         );
+    }
+
+    #[test]
+    fn incoming_smaller_szx_continues_only_at_the_filled_byte() {
+        let mut transfer = BlockTransfer::incoming_block1(
+            key(),
+            BlockValue::from_size(0, true, 64).unwrap(),
+            64,
+            4096,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            transfer
+                .accept_incoming(BlockValue::from_size(1, true, 16).unwrap(), 16, 4096)
+                .unwrap_err(),
+            BlockTransferError::Gap
+        );
+        assert_eq!(
+            transfer
+                .accept_incoming(BlockValue::from_size(4, false, 16).unwrap(), 16, 4096)
+                .unwrap(),
+            64
+        );
+        assert!(transfer.is_complete());
+        assert_eq!(transfer.filled(), 80);
+        assert_eq!(transfer.szx(), 0);
+
+        let mut q =
+            BlockTransfer::incoming_q_block1(key(), szx16(0, true), 16, 4096, Some(32)).unwrap();
+        assert_eq!(
+            q.accept_q_incoming(BlockValue::from_size(1, false, 32).unwrap(), 1, 4096)
+                .unwrap_err(),
+            BlockTransferError::SzxMismatch
+        );
+    }
+
+    #[test]
+    fn outgoing_adopts_smaller_szx_at_the_issued_byte() {
+        let mut transfer =
+            BlockTransfer::outgoing(key(), BlockRole::OutgoingBlock1, 2000, 6, 4096).unwrap();
+        let (block, _, len) = transfer.issue_outgoing().unwrap();
+        assert_eq!((block.num(), len), (0, 1024));
+        transfer.adopt_smaller_szx(2).unwrap();
+        let (block, offset, len) = transfer.issue_outgoing().unwrap();
+        assert_eq!((block.num(), block.szx(), offset, len), (16, 2, 1024, 64));
+        assert!(transfer.adopt_smaller_szx(6).is_err());
     }
 
     #[test]

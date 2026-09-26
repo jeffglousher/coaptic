@@ -499,7 +499,7 @@ def coap_payload(packet):
     return b""
 
 
-def coap_exchange(sock, address, packet, timeout=2):
+def coap_roundtrip(sock, address, packet, timeout=2):
     """Send from one bound socket so Block1 identity stays on that endpoint."""
     sock.settimeout(timeout)
     if sock.sendto(packet, address) != len(packet):
@@ -510,7 +510,52 @@ def coap_exchange(sock, address, packet, timeout=2):
         raise AssertionError(f"no CoAP reply: {error}") from error
     if (sender[0], sender[1]) != address or ((data[0] >> 4) & 3) != 2:
         raise AssertionError(f"unexpected CoAP acknowledgement from {sender}")
+    return data
+
+
+def coap_exchange(sock, address, packet, timeout=2):
+    data = coap_roundtrip(sock, address, packet, timeout)
     return data[1], coap_payload(data)
+
+
+def decoded_options(packet):
+    if len(packet) < 4 or packet[0] >> 6 != 1 or (packet[0] & 15) > 8:
+        raise AssertionError("not a CoAP datagram")
+    index = 4 + (packet[0] & 15)
+    number = 0
+    found = {}
+    while index < len(packet) and packet[index] != 0xFF:
+        delta_nibble = packet[index] >> 4
+        length_nibble = packet[index] & 15
+        index += 1
+        if delta_nibble == 15 or length_nibble == 15 or index > len(packet):
+            raise AssertionError("malformed CoAP option")
+        delta, length = delta_nibble, length_nibble
+        if delta_nibble == 13:
+            delta = packet[index] + 13
+            index += 1
+        elif delta_nibble == 14:
+            delta = int.from_bytes(packet[index:index + 2], "big") + 269
+            index += 2
+        if length_nibble == 13:
+            length = packet[index] + 13
+            index += 1
+        elif length_nibble == 14:
+            length = int.from_bytes(packet[index:index + 2], "big") + 269
+            index += 2
+        if index + length > len(packet):
+            raise AssertionError("CoAP option exceeds the datagram")
+        number += delta
+        found.setdefault(number, []).append(packet[index:index + length])
+        index += length
+    return found
+
+
+def block1_fields(value):
+    if len(value) not in (1, 2, 3):
+        raise AssertionError(f"Block1 length {len(value)} is outside 1..3")
+    raw = int.from_bytes(value, "big")
+    return raw >> 4, bool(raw & 8), raw & 7
 
 
 def upload_block(mid, token, num, more, szx, payload, size1=None):
@@ -595,9 +640,59 @@ def block1_fault_workflow(server):
     return {"codes": {"continue": CONTINUE, "incomplete": INCOMPLETE, "too_large": TOO_LARGE},
             "body_limit": 4096, "final": {"code": final[0], "payload": final[1].decode()},
             "verified": ["Size1 does not complete M=1", "duplicate NUM stays 2.31 and preserves progress",
-                         "gap is 4.08", "changed SZX is 4.08", "a block past 4096 bytes is 4.13",
+                         "gap is 4.08", "unscaled larger SZX is 4.08", "a block past 4096 bytes is 4.13",
                          "the upload handler stays at 0:0"],
             "unqualified": ["OSCORE block faults", "client SZX reduction", "Q-Block"]}
+
+
+def smaller_block_upload(server):
+    """Client starts at 256-byte blocks and keeps that size through completion."""
+    szx = 4
+    size = 1 << (szx + 4)
+    body = LARGE
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            offset = num = 0
+            mid = 1
+            while offset < len(body):
+                chunk = body[offset:offset + size]
+                more = offset + len(chunk) < len(body)
+                mid += 1
+                reply = coap_roundtrip(
+                    sock, address, upload_block(mid, b"\x21", num, more, szx, chunk))
+                echoed = decoded_options(reply).get(27, [])
+                if more:
+                    if len(echoed) != 1:
+                        raise AssertionError(f"block {num} did not echo Block1: {echoed!r}")
+                    echoed_num, _, echoed_szx = block1_fields(echoed[0])
+                    if (echoed_num, echoed_szx) != (num, szx):
+                        raise AssertionError(f"block {num} was not kept at SZX {szx}: {echoed!r}")
+                elif len(echoed) == 1:
+                    echoed_num, _, echoed_szx = block1_fields(echoed[0])
+                    if (echoed_num, echoed_szx) != (num, szx):
+                        raise AssertionError(f"final block echo changed size: {echoed!r}")
+                elif echoed:
+                    raise AssertionError(f"final block had repeated Block1: {echoed!r}")
+                if reply[1] != (CONTINUE if more else 65):
+                    raise AssertionError(f"block {num} returned {reply[1]}")
+                offset += len(chunk)
+                num += 1
+            if num < 3:
+                raise AssertionError(f"256-byte blocks did not split the body: {num}")
+            code, counts = coap_exchange(
+                sock, address, coap_message(1, mid + 1, b"\x22", [(11, b"upload")]))
+        finally:
+            sock.close()
+    if (code, counts) != (69, b"1:1"):
+        raise AssertionError(f"smaller blocks did not create the body once: {code} {counts!r}")
+    return {"szx": szx, "block_bytes": size, "blocks": num, "length": len(body),
+            "readback": counts.decode(),
+            "verified": ["client-selected 256-byte Block1 completes the exact 2000-byte body once",
+                         "each non-final acknowledgement echoes that SZX and NUM"],
+            "unqualified": ["server-requested downshift", "Q-Block"]}
 
 
 def oscore_upload_workflow(client, server):
@@ -874,6 +969,9 @@ def main():
                  upload_workflow(peers[client], peers[server], transport, family))
 
     case("block1-faults:coaptic", lambda: block1_fault_workflow(peers["coaptic"]))
+    for server_name in ("coaptic", "coap-rs", "libcoap"):
+        case(f"block1-szx:{server_name}",
+             lambda server_name=server_name: smaller_block_upload(peers[server_name]))
 
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         if (args.libcoap_udp_only or args.libcoap_oscore_unavailable) and "libcoap" in (client, server):

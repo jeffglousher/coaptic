@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 105 scenario results (80 when the local C peer is built without DTLS and OSCORE):
+The full run contains 108 scenario results (83 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -191,10 +191,17 @@ including the wrong-byte refusal and count readback, traverses an IPv6-only rela
 
 An independent UDP client, bound to one source port, exercises Coaptic Block1 refusals.
 A `Size1` of 1 does not complete an `M=1` block. A repeated NUM stays 2.31 and the
-following NUM continues. A skipped NUM is 4.08. Changing SZX is 4.08. A block past the
+following NUM continues. A skipped NUM is 4.08. NUM 1 at 1,024 bytes after NUM 0 at
+64 bytes is also 4.08: its byte offset does not continue the body. A block past the
 4,096-byte body is 4.13. The upload handler stays at `0:0`. coap-rs answers the skipped
-NUM with 2.31, so that refusal is not claimed for it. Client-driven smaller-SZX
-selection and Q-Block are not part of this proof.
+NUM with 2.31, so that refusal is not claimed for it. A smaller size whose block
+number addresses the next unread byte is accepted by the library; this process
+case does not send that exchange.
+
+Three more cases, against Coaptic, coap-rs, and libcoap, send the same 2,000-byte body as 256-byte blocks from the first block.
+Each non-final acknowledgement must echo that size and block number, and the server
+must create the body once. The final response may omit Block1. A server-requested
+smaller size with a scaled block number, and Q-Block uploads, are not part of this proof.
 
 Three OSCORE upload cases, Coaptic self-pair and both libcoap directions, repeat the
 exact 2,000- and 4,096-byte creates, the wrong-byte refusal, and a wrong-key refusal

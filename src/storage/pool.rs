@@ -749,6 +749,29 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         ))
     }
 
+    /// Shrink an outgoing classic Block1 transfer before the next range.
+    pub fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        transfer.adopt_smaller_szx(szx)
+    }
+
     /// Issue one BERT payload of at most `max_payload` bytes from `id`.
     pub fn next_bert_outgoing(
         &mut self,
@@ -881,6 +904,15 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         BodyPool::next_outgoing(self, id, role)
+    }
+
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        BodyPool::adopt_smaller_outgoing_szx(self, id, role, szx)
     }
 
     fn next_bert_outgoing(

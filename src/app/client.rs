@@ -1830,6 +1830,7 @@ where
                         oscore,
                         now_ms,
                         parsed.token(),
+                        parsed.block1().and_then(Result::ok),
                         parsed.q_block1().and_then(Result::ok),
                         peer,
                         body,
@@ -2556,6 +2557,7 @@ where
             now_ms,
             call.token(),
             None,
+            None,
             peer,
             body,
         )
@@ -2584,6 +2586,7 @@ fn continue_block1_tx<Mem, T>(
     oscore: &mut super::oscore::Field,
     now_ms: u64,
     token: Token,
+    block1: Option<BlockValue>,
     q_ack: Option<BlockValue>,
     peer: Endpoint,
     body: SlotId,
@@ -2595,6 +2598,13 @@ where
     let Some(transfer) = engine.tx_body_transfer(body) else {
         return Ok(());
     };
+    if let Some(preferred) = block1 {
+        if transfer.role() == BlockRole::OutgoingBlock1 && preferred.szx() < transfer.szx() {
+            engine
+                .adopt_smaller_block1(body, preferred.szx())
+                .map_err(Error::Block)?;
+        }
+    }
     if transfer.is_complete() {
         return Ok(());
     }
