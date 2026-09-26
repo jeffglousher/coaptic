@@ -459,6 +459,13 @@ pub trait BodySlots {
         id: SlotId,
     ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
 
+    /// Continue outgoing Block1 at a smaller power-of-two size.
+    fn adopt_smaller_block1(
+        &mut self,
+        id: SlotId,
+        szx: u8,
+    ) -> Result<(), crate::error::BlockTransferError>;
+
     /// Issue one outgoing Block1 BERT payload of at most `max_payload` bytes.
     fn next_bert1(
         &mut self,

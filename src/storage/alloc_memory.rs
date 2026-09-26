@@ -717,6 +717,13 @@ impl BodySlots for AllocMemory {
             .next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
+    fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .adopt_smaller_outgoing_szx(id, BlockRole::OutgoingBlock1, szx)
+    }
+
     fn next_bert1(
         &mut self,
         id: SlotId,
@@ -1134,6 +1141,29 @@ impl AllocBodyPool {
         ))
     }
 
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.slots[id.index()]
+            .transfer
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        transfer.adopt_smaller_szx(szx)
+    }
+
     fn next_bert_outgoing(
         &mut self,
         id: SlotId,
@@ -1254,6 +1284,15 @@ impl BodyOps for AllocBodyPool {
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         AllocBodyPool::next_outgoing(self, id, role)
+    }
+
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        AllocBodyPool::adopt_smaller_outgoing_szx(self, id, role, szx)
     }
 
     fn next_bert_outgoing(

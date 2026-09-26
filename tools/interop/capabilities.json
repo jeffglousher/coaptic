@@ -3169,7 +3169,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), NUM 1 at 1024 bytes after NUM 0 at 64 bytes (4.08), and a block past 4096 bytes (4.13). A client-selected 256-byte Block1 upload completes against Coaptic, coap-rs, and libcoap. Protected exact uploads, including a lost first reply and a duplicated request, are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. A server-requested smaller SZX and Q-Block uploads remain unqualified.",
+      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), NUM 1 at 1024 bytes after NUM 0 at 64 bytes (4.08), and a block past 4096 bytes (4.13). A client-selected 256-byte Block1 upload completes against Coaptic, coap-rs, and libcoap. Protected exact uploads, including a lost first reply and a duplicated request, are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. The library accepts a smaller classic Block size when the block number addresses the next unread byte; this process suite does not drive that exchange. Q-Block keeps its original size, and Q-Block uploads remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },

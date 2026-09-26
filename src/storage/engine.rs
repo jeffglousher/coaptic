@@ -1519,6 +1519,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.next_block1(id)
     }
 
+    /// Continue an outgoing Block1 body at a smaller power-of-two size.
+    #[inline]
+    pub fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.storage.adopt_smaller_block1(id, szx)
+    }
+
     /// Issue the next Block1 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. The caller

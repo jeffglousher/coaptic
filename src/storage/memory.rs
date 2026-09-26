@@ -731,6 +731,10 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn adopt_smaller_block1(&mut self, _id: SlotId, _szx: u8) -> Result<(), BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn next_bert1(
         &mut self,
         _id: SlotId,
@@ -1001,6 +1005,12 @@ where
 
     fn next_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock1)
+    }
+
+    fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.bodies
+            .tx
+            .adopt_smaller_outgoing_szx(id, BlockRole::OutgoingBlock1, szx)
     }
 
     fn next_bert1(

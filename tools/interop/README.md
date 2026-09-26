@@ -194,8 +194,9 @@ A `Size1` of 1 does not complete an `M=1` block. A repeated NUM stays 2.31 and t
 following NUM continues. A skipped NUM is 4.08. NUM 1 at 1,024 bytes after NUM 0 at
 64 bytes is also 4.08: its byte offset does not continue the body. A block past the
 4,096-byte body is 4.13. The upload handler stays at `0:0`. coap-rs answers the skipped
-NUM with 2.31, so that refusal is not claimed for it. RFC 7959 Figure 9, a smaller
-size with the block number scaled to the same byte, is not this proof.
+NUM with 2.31, so that refusal is not claimed for it. A smaller size whose block
+number addresses the next unread byte is accepted by the library; this process
+case does not send that exchange.
 
 Three more cases, against Coaptic, coap-rs, and libcoap, send the same 2,000-byte body as 256-byte blocks from the first block.
 Each non-final acknowledgement must echo that size and block number, and the server

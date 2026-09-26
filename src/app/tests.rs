@@ -1957,6 +1957,72 @@ fn block_and_qblock_do_not_share_a_packet_or_a_body() {
 }
 
 #[test]
+fn block1_smaller_szx_continues_at_the_filled_byte() {
+    fn take(req: Request<'_>) -> Response<'static> {
+        let bytes = req.body().expect("assembled body");
+        assert_eq!(bytes.len(), 80);
+        assert!(bytes[..64].iter().all(|byte| *byte == b'A'));
+        assert!(bytes[64..].iter().all(|byte| *byte == b'C'));
+        Response::changed()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let first = [b'A'; 64];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &first, 0, true, 64, 0x2201);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(&["leds", "0"], put(take))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &[b'B'; 16], 1, true, 16, 0x2202);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).unwrap();
+    assert_eq!(last_reply(&app).code, Code::REQUEST_ENTITY_INCOMPLETE);
+
+    let tail = [b'C'; 16];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &tail, 4, false, 16, 0x2203);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(2).unwrap();
+    assert_eq!(last_reply(&app).code, Code::CHANGED);
+}
+
+#[test]
+fn client_adopts_smaller_block1_size_from_continue() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app.put("upload").payload(&LARGE).to(peer).send(0).unwrap();
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    assert_eq!(first.block1().unwrap().unwrap().szx(), BlockValue::SZX_MAX);
+    let block = BlockValue::from_size(0, true, 64).unwrap().encode();
+    let opts = [Opt::block1(&block)];
+    let ack = Message::new(Type::Acknowledgement, Code::CONTINUE, first.message_id())
+        .with_token(call.token())
+        .with_options(&opts);
+    let mut wire = [0u8; WIRE];
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().send_n = 0;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    let next = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = next.block1().unwrap().unwrap();
+    assert_eq!(block.num(), 16);
+    assert_eq!(block.szx(), 2);
+    assert_eq!(next.payload(), &LARGE[1024..1088]);
+}
+
+#[test]
 fn block1_complete_exposes_body() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let first = [b'A'; 16];
