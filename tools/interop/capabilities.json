@@ -2932,6 +2932,26 @@
       "executable": "tools/interop/run.py:scaled_smaller_block"
     },
     {
+      "id": "qblock1-upload:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "request-tag", "size1", "szx", "upload", "handler-effect"],
+      "positive_proof": [
+        "two Q-Block1 payloads create the exact 2000-byte body once",
+        "an incomplete confirmable Q-Block1 payload is an empty acknowledgement"
+      ],
+      "failure_proof": [
+        "missing Request-Tag is 4.00 and does not reach the handler",
+        "a changed SZX is 4.08 and does not reach the handler"
+      ],
+      "executable": "tools/interop/run.py:qblock1_upload"
+    },
+    {
       "id": "block1-szx:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3187,7 +3207,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), NUM 1 at 1024 bytes after NUM 0 at 64 bytes (4.08), and a block past 4096 bytes (4.13). A client-selected 256-byte Block1 upload completes against Coaptic, coap-rs, and libcoap. Protected exact uploads, including a lost first reply and a duplicated request, are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. The library accepts a smaller classic Block size when the block number addresses the next unread byte, including one Coaptic process case. Q-Block keeps its original size, and Q-Block uploads remain unqualified.",
+      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), NUM 1 at 1024 bytes after NUM 0 at 64 bytes (4.08), and a block past 4096 bytes (4.13). A client-selected 256-byte Block1 upload completes against Coaptic, coap-rs, and libcoap. Protected exact uploads, including a lost first reply and a duplicated request, are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. The library accepts a smaller classic Block size when the block number addresses the next unread byte, including one Coaptic process case. Q-Block keeps its original size.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3235,7 +3255,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Full independent Q recovery and continuation cases are absent.",
+      "reason": "One Coaptic process case creates an exact 2000-byte body from two Q-Block1 payloads, refuses a missing Request-Tag with 4.00, and refuses a changed SZX with 4.08. Recovery, continuation, other peers, and protected Q-Block remain absent.",
       "issue": 200,
       "executable_cases": []
     },

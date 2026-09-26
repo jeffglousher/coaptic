@@ -729,6 +729,60 @@ def scaled_smaller_block(server):
             "unqualified": ["Q-Block size change", "peer servers other than Coaptic"]}
 
 
+def qblock1_message(mid, token, num, more, szx, payload, size1, tag):
+    encoded = size1.to_bytes(4, "big").lstrip(b"\x00") or b"\x00"
+    options = [(11, b"upload"), (12, bytes([42])), (19, block1_value(num, more, szx)), (60, encoded)]
+    if tag is not None:
+        options.append((292, tag))
+    return coap_message(2, mid, token, options, payload)
+
+
+def qblock1_upload(server):
+    """One Coaptic Q-Block1 upload. Recovery and other peers stay out of this proof."""
+    body = LARGE
+    first, rest = body[:1024], body[1024:]
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            def post(mid, token, num, more, szx, payload, size1, tag):
+                return coap_roundtrip(
+                    sock, address, qblock1_message(mid, token, num, more, szx, payload, size1, tag))
+
+            def counts(mid, token):
+                return coap_exchange(
+                    sock, address, coap_message(1, mid, token, [(11, b"upload")]))
+
+            missing = post(2, b"\x41", 0, True, 6, first, len(body), None)
+            if missing[1] != 128:
+                raise AssertionError(f"missing Request-Tag returned {missing[1]}")
+            if counts(3, b"\x51") != (69, b"0:0"):
+                raise AssertionError("missing Request-Tag reached the upload handler")
+            opened = post(4, b"\x42", 0, True, 6, first, len(body), b"a")
+            if opened[1] != 0 or (opened[0] & 15) != 0 or len(opened) != 4:
+                raise AssertionError(f"incomplete Q-Block1 was not an empty ACK: {opened!r}")
+            changed = post(5, b"\x42", 1, False, 2, rest[:64], len(body), b"a")
+            if changed[1] != INCOMPLETE:
+                raise AssertionError(f"changed Q-Block1 size returned {changed[1]}")
+            if counts(6, b"\x52") != (69, b"0:0"):
+                raise AssertionError("changed Q-Block1 size reached the upload handler")
+            if post(7, b"\x43", 0, True, 6, first, len(body), b"b")[1] != 0:
+                raise AssertionError("exact Q-Block1 payload 0 was not acknowledged")
+            created = post(8, b"\x43", 1, False, 6, rest, len(body), b"b")
+            if created[1] != 65:
+                raise AssertionError(f"exact Q-Block1 body returned {created[1]}")
+            code, readback = counts(9, b"\x53")
+        finally:
+            sock.close()
+    if (code, readback) != (69, b"1:1"):
+        raise AssertionError(f"Q-Block1 body was not created once: {code} {readback!r}")
+    return {"blocks": 2, "block_bytes": 1024, "length": len(body), "readback": readback.decode(),
+            "verified": ["missing Request-Tag is 4.00", "incomplete confirmable payload is an empty ACK",
+                         "changed SZX is 4.08", "exact 2000-byte body is created once"],
+            "unqualified": ["Q-Block recovery", "peer servers other than Coaptic"]}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1004,6 +1058,7 @@ def main():
 
     case("block1-faults:coaptic", lambda: block1_fault_workflow(peers["coaptic"]))
     case("block1-scaled:coaptic", lambda: scaled_smaller_block(peers["coaptic"]))
+    case("qblock1-upload:coaptic", lambda: qblock1_upload(peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))
