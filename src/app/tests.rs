@@ -1858,6 +1858,105 @@ fn block1_acked_num_retransmit_is_continue() {
 }
 
 #[test]
+fn block_and_qblock_do_not_share_a_packet_or_a_body() {
+    // RFC 9177 §4.1: without an Inner/Outer split, Block and Q-Block in one
+    // packet are 4.02. A later request that uses the other option is a
+    // separate body; it does not continue the first transfer.
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn take(req: Request<'_>) -> Response<'static> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        let bytes = req.body().unwrap_or(req.payload());
+        Response::changed().payload_copy(bytes)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+    let mut mixed = OptionsBuilder::<8>::new();
+    mixed.push(Opt::uri_path("leds")).unwrap();
+    mixed.push(Opt::uri_path("0")).unwrap();
+    mixed.push(Opt::q_block1(&block)).unwrap();
+    mixed.push(Opt::block1(&block)).unwrap();
+    let size1 = encode_uint(16);
+    mixed.push(Opt::size1(&size1)).unwrap();
+    mixed.push(Opt::request_tag(b"upload-1")).unwrap();
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(0x2101))
+        .with_token(Token::new(&[0xA1]).unwrap())
+        .with_options(mixed.as_slice())
+        .with_payload(&[0xAB; 16]);
+    let mut wire = [0u8; 256];
+    let n = encode(&msg, &mut wire).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(&["leds", "0"], put(take))
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(last_reply(&app).code, Code::BAD_OPTION);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+
+    let classic = [b'A'; 16];
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], &classic, 0, true, 16, 0x2102);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(1).unwrap();
+    assert_eq!(last_reply(&app).code, Code::CONTINUE);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+
+    let (wire, n) = encode_block_req(BlockReq {
+        code: Code::PUT,
+        path: LED_PATH,
+        payload: b"q",
+        num: 0,
+        more: false,
+        size: 16,
+        mid: 0x2103,
+        size1: Some(1),
+        q_block: true,
+    });
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(2).unwrap();
+    let q_reply = last_reply(&app);
+    assert_eq!(q_reply.code, Code::CHANGED);
+    assert_eq!(&q_reply.payload[..q_reply.payload_len], b"q");
+
+    let (wire, n) = encode_req_block1(Code::PUT, &["leds", "0"], b"Z", 1, false, 16, 0x2104);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(3).unwrap();
+    let classic_reply = last_reply(&app);
+    assert_eq!(classic_reply.code, Code::CHANGED);
+    let mut expected = [b'A'; 17];
+    expected[16] = b'Z';
+    assert_eq!(
+        &classic_reply.payload[..classic_reply.payload_len],
+        &expected
+    );
+    assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+
+    let download = BlockValue::from_size(0, false, 16).unwrap().encode();
+    let mut download_mix = OptionsBuilder::<8>::new();
+    download_mix.push(Opt::uri_path("leds")).unwrap();
+    download_mix.push(Opt::uri_path("0")).unwrap();
+    download_mix.push(Opt::block2(&download)).unwrap();
+    download_mix.push(Opt::q_block2(&download)).unwrap();
+    let download_msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x2105))
+        .with_token(Token::new(&[0xA2]).unwrap())
+        .with_options(download_mix.as_slice());
+    let mut download_wire = [0u8; 256];
+    let n = encode(&download_msg, &mut download_wire).unwrap();
+    app.transport_mut().inbox = Some((peer, download_wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(4).unwrap();
+    assert_eq!(last_reply(&app).code, Code::BAD_OPTION);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn block1_complete_exposes_body() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let first = [b'A'; 16];
