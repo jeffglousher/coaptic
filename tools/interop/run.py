@@ -462,10 +462,10 @@ def block1_value(num, more, szx):
     return bytes([(num << 4) | ((1 if more else 0) << 3) | szx])
 
 
-def coap_message(code, mid, token, options, payload=b""):
+def coap_message(code, mid, token, options, payload=b"", *, non=False):
     if not 0 < len(token) <= 8 or not 0 <= mid <= 0xFFFF or not 0 <= code <= 0xFF:
         raise ValueError("invalid CoAP header field")
-    message = bytes([0x40 | len(token), code, mid >> 8, mid & 0xFF]) + token + coap_options(options)
+    message = bytes([(0x50 if non else 0x40) | len(token), code, mid >> 8, mid & 0xFF]) + token + coap_options(options)
     if payload:
         message += b"\xff" + payload
     return message
@@ -729,12 +729,23 @@ def scaled_smaller_block(server):
             "unqualified": ["Q-Block size change", "peer servers other than Coaptic"]}
 
 
-def qblock1_message(mid, token, num, more, szx, payload, size1, tag):
+def qblock1_message(mid, token, num, more, szx, payload, size1, tag, non=False):
     encoded = size1.to_bytes(4, "big").lstrip(b"\x00") or b"\x00"
     options = [(11, b"upload"), (12, bytes([42])), (19, block1_value(num, more, szx)), (60, encoded)]
     if tag is not None:
         options.append((292, tag))
-    return coap_message(2, mid, token, options, payload)
+    return coap_message(2, mid, token, options, payload, non=non)
+
+
+def await_datagram(sock, address, timeout):
+    sock.settimeout(timeout)
+    try:
+        data, sender = sock.recvfrom(4096)
+    except (socket.timeout, ConnectionResetError) as error:
+        raise AssertionError(f"no CoAP reply: {error}") from error
+    if (sender[0], sender[1]) != address or data[0] >> 6 != 1:
+        raise AssertionError(f"unexpected datagram from {sender}")
+    return data
 
 
 def qblock1_upload(server):
@@ -781,6 +792,51 @@ def qblock1_upload(server):
             "verified": ["missing Request-Tag is 4.00", "incomplete confirmable payload is an empty ACK",
                          "changed SZX is 4.08", "exact 2000-byte body is created once"],
             "unqualified": ["Q-Block recovery", "peer servers other than Coaptic"]}
+
+
+def qblock1_missing(server):
+    """A skipped NON Q-Block1 number is reported, then that payload is delivered once."""
+    token = b"\x61"
+    first = bytes(i % 251 for i in range(16))
+    middle = bytes((16 + i) % 251 for i in range(16))
+    tail = bytes((32 + i) % 251 for i in range(8))
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            def send(mid, num, more, payload):
+                packet = qblock1_message(mid, token, num, more, 0, payload, 40, b"h", non=True)
+                if sock.sendto(packet, address) != len(packet):
+                    raise AssertionError("Q-Block1 probe was not completely sent")
+
+            send(2, 0, True, first)
+            send(3, 2, False, tail)
+            report = await_datagram(sock, address, 6)
+            if ((report[0] >> 4) & 3) != 1 or report[1] != INCOMPLETE or (report[0] & 15) != 1:
+                raise AssertionError(f"hole was not a NON 4.08: {report!r}")
+            if report[4:5] != token:
+                raise AssertionError(f"4.08 token was not the request token: {report!r}")
+            if decoded_options(report).get(12) != [bytes([1, 16])]:
+                raise AssertionError("4.08 content format was not missing-blocks")
+            if coap_payload(report) != b"\x01":
+                raise AssertionError(f"4.08 did not name block 1: {coap_payload(report)!r}")
+            if coap_exchange(sock, address, coap_message(1, 4, b"\x62", [(11, b"upload")])) != (69, b"0:0"):
+                raise AssertionError("missing Q-Block1 payload reached the handler")
+            filled = coap_roundtrip(
+                sock, address, qblock1_message(5, token, 1, True, 0, middle, 40, b"h"))
+            if filled[1] != 128:
+                raise AssertionError(f"filled hole returned {filled[1]}")
+            code, readback = coap_exchange(
+                sock, address, coap_message(1, 6, b"\x63", [(11, b"upload")]))
+        finally:
+            sock.close()
+    if (code, readback) != (69, b"0:1"):
+        raise AssertionError(f"filled hole was not delivered once: {code} {readback!r}")
+    return {"missing": 1, "reported_format": 272, "length": 40, "readback": readback.decode(),
+            "verified": ["NON 4.08 names block 1", "handler stays at 0:0 until that payload arrives",
+                         "the reported payload is delivered once"],
+            "unqualified": ["full-window continuation", "peer servers other than Coaptic", "protected Q-Block"]}
 
 
 def oscore_upload_workflow(client, server):
@@ -1059,6 +1115,7 @@ def main():
     case("block1-faults:coaptic", lambda: block1_fault_workflow(peers["coaptic"]))
     case("block1-scaled:coaptic", lambda: scaled_smaller_block(peers["coaptic"]))
     case("qblock1-upload:coaptic", lambda: qblock1_upload(peers["coaptic"]))
+    case("qblock1-missing:coaptic", lambda: qblock1_missing(peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))
