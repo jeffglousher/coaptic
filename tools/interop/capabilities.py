@@ -99,4 +99,4 @@ def evaluate(manifest, outcomes, *, libcoap_dtls, system, libcoap_oscore=True):
             "enabled_cases": sum(not is_excluded(case) for case in manifest["cases"]),
             "cases": coverage, "problems": problems,
             "unqualified": manifest["gaps"],
-            "meaning": "Complete means all enabled listed assertions passed; unqualified surfaces and build exclusions remain open."}
+            "meaning": "Enabled cases passed once."}

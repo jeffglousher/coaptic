@@ -1,7 +1,7 @@
 {
   "schema": "coaptic-capabilities/1",
-  "scope": "Independent process suite only. A passed case proves its listed assertions, not complete feature or RFC conformance.",
-  "policy": "A report is complete only when every enabled case appears exactly once and passes. Explicit build exclusions and unqualified surfaces remain visible.",
+  "scope": "Process cases in this file.",
+  "policy": "Every enabled case appears once and passes.",
   "required_capabilities": [
     "libcoap-dtls",
     "libcoap-oscore"
@@ -3286,7 +3286,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Fifteen workflows across IPv4 UDP, PSK DTLS and IPv6 UDP exercise all seven methods with bounded octet-stream fixture state and specific malformed/overflow refusals. Conditional options, standardized patch formats, IPv6 DTLS and complete option/representation negotiation remain unqualified.",
+      "reason": "Conditional options and standardized patch formats are not in the method workflows.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3302,7 +3302,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), NUM 1 at 1024 bytes after NUM 0 at 64 bytes (4.08), and a block past 4096 bytes (4.13). A client-selected 256-byte Block1 upload completes against Coaptic, coap-rs, and libcoap. Protected exact uploads, including a lost first reply and a duplicated request, are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. The library accepts a smaller classic Block size when the block number addresses the next unread byte, including one Coaptic process case. Q-Block keeps its original size.",
+      "reason": "coap-rs answers a skipped Block1 number with 2.31. A server-requested smaller Block1 size is not a process case.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3318,7 +3318,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "No process notification collector; App tests and same-stack dogfood do not establish independent ordering, cancellation, re-registration or large notifications.",
+      "reason": "No process notification collector.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3334,7 +3334,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Initial independent process cases qualify GET/PUT state, wrong-key/plaintext refusal, replayed counter POST ciphertext and forged-future bad-tag refusal without replay-window poisoning. Protected Observe/block/Q, concurrent contexts and persistent sequence recovery remain unqualified.",
+      "reason": "Protected Observe, concurrent contexts, and persistent sender state are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3350,7 +3350,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Coaptic process cases cover an exact 2000-byte Q-Block1 upload, a missing Request-Tag (4.00), a changed SZX (4.08), a skipped NON payload reported as missing-blocks 4.08, one 2.31 after ten NON payloads, and protected 2000- and 4096-byte Q-Block1 creates. Protected Q-Block1 also completes after a lost first reply and a duplicated request. libcoap has no Q-Block peer here.",
+      "reason": "libcoap does not implement Q-Block in this suite.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3366,7 +3366,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "One Coaptic process case suppresses a 2.04 for a NON POST and still runs the handler. Request-Tag, Echo, problem details, and 4.xx/5.xx suppression remain local tests.",
+      "reason": "Echo, Request-Tag, problem details, and 4.xx/5.xx No-Response are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3382,7 +3382,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Harness discovery tests are separate evidence; this process runner has no discovery or delayed application completion cases.",
+      "reason": "No discovery or delayed-completion process cases.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3398,7 +3398,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Mutual certificate and trust-refusal tests use the same Rust DTLS backend; no process X.509 cases against libcoap.",
+      "reason": "No process X.509 cases against libcoap.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3414,7 +3414,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Current Rust DTLS fixtures do not support RFC 7250 RPK; certificate tests are not substitutes.",
+      "reason": "These DTLS fixtures have no raw public key.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3430,7 +3430,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "ETSI cipher offer/selection, Finished and authenticated alert evidence, full loss schedule and actual RPK are not qualified by generic GET success.",
+      "reason": "ETSI DTLS cipher, Finished, alert, and loss schedules are not process cases.",
       "issue": 199,
       "executable_cases": []
     },
@@ -3446,7 +3446,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "IPv6 UDP and PSK DTLS loopback GET/404/Block2 are exercised by five cases each. DTLS additionally checks wrong-key refusal and service afterward through IPv6-only relays. Scoped/link-local IPv6, reordering/delay/MTU and combined schedules remain absent. IPv4 UDP lost reply, duplicate request, blackhole and restart are exercised with Coaptic as client against each alternative server; DTLS/IPv6 faults and compound schedules remain unqualified.",
+      "reason": "Scoped IPv6, reorder, delay, and MTU cases are absent.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3462,7 +3462,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Serial fresh sessions and 140-session churn are not concurrent capacity or long-soak qualification.",
+      "reason": "Serial sessions and 140-session churn are not a concurrent soak.",
       "issue": 202,
       "executable_cases": []
     },
@@ -3478,7 +3478,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Library host CI is separate from this process suite. Process host runs do not establish MCU runtime, stack high-water, endianness or macOS/Windows continuous adapter qualification.",
+      "reason": "Process runs do not measure MCU stack or runtime.",
       "issue": 202,
       "executable_cases": []
     },
@@ -3494,7 +3494,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "No source-bound full requirements/branch-coverage or seeded campaign evidence in this process suite.",
+      "reason": "No fuzz or requirements-coverage campaign in this suite.",
       "issue": 202,
       "executable_cases": []
     },
@@ -3508,7 +3508,7 @@
         "linux",
         "windows"
       ],
-      "reason": "Exploratory dropped-reply and duplicated-request counter POSTs produced two effects in both alternative fixtures. Their passing fault cases qualify idempotent PUT state and Coaptic retransmission identity only; no fixture response cache was added to mask this result.",
+      "reason": "coap-rs and libcoap apply a duplicated counter POST twice.",
       "issue": 200,
       "executable_cases": []
     }

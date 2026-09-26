@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Process-isolated interop, request timing and deterministic UDP fault checks.
-
-No third-party Python dependencies. This is a smoke/measurement harness, not a
-claim of complete ETSI coverage or a statistically controlled performance SLA.
-"""
+"""Process interop runner. Cases live in capabilities.json."""
 import argparse
 import hashlib
 import json
@@ -346,9 +342,7 @@ def oscore_fault_workflow(client, server):
         final = request(client, "oscore", service.number, sequence=1100, path="counter")
         expect(final, 69, b"2")
         return {"accepted_trace": relay.trace, "accepted_source": accepted_source, "replay_source": replay_source, "replayed_hex": replay.hex(), "replay_reply_hex": replay_reply,
-                "corrupted_trace": corrupted.trace, "refused": refused, "final": final,
-                "verified": ["replayed ciphertext cannot repeat POST effect", "bad-tag future request cannot consume replay window", "valid sequence remains usable after refusal"],
-                "scope": "IPv4 UDP public C.1 context; sequential bounded counter fixture; not persistent or concurrent security qualification"}
+                "corrupted_trace": corrupted.trace, "refused": refused, "final": final}
 
 
 def oscore_block2_workflow(client, server):
@@ -374,8 +368,7 @@ def oscore_block2_workflow(client, server):
             evidence.append({"mode": mode, "result": result, "trace": relay.trace,
                              "wrong_key_refusal": refused, "recovered": recovered})
     return {"transfers": evidence, "expected_length": len(LARGE),
-            "expected_sha256": hashlib.sha256(LARGE).hexdigest(),
-            "scope": "Exact 2000-byte protected Block2 GET on IPv4; first reply loss and request duplication after Echo warm-up. No Block1, Observe, Q-Block, arbitrary reordering or persistent-context claim."}
+            "expected_sha256": hashlib.sha256(LARGE).hexdigest()}
 
 
 def upload_workflow(client, server, transport="udp", family="ipv4"):
@@ -421,12 +414,7 @@ def upload_workflow(client, server, transport="udp", family="ipv4"):
                 "sha256": {"2000": hashlib.sha256(LARGE).hexdigest(),
                            "4096": hashlib.sha256(UPLOAD_4K).hexdigest()},
                 "request_datagrams": {"2000": first_requests, "4096": wide_requests},
-                "wrong_byte": refused, "readback": readback,
-                "verified": ["exact 2000-byte Block1 POST creates once",
-                             "one wrong byte is 4.00 and does not increment accepted",
-                             "exact 4096-byte Block1 POST creates once"],
-                "unqualified": ["missing or duplicate blocks", "body-limit negotiation", "OSCORE"]
-                + ([] if transport == "dtls" and family == "ipv6" else ["IPv6 DTLS"])}
+                "wrong_byte": refused, "readback": readback}
 
 
 CONTINUE = 95
@@ -642,11 +630,7 @@ def block1_fault_workflow(server):
     session(ordered)
     final = session(overflow)
     return {"codes": {"continue": CONTINUE, "incomplete": INCOMPLETE, "too_large": TOO_LARGE},
-            "body_limit": 4096, "final": {"code": final[0], "payload": final[1].decode()},
-            "verified": ["Size1 does not complete M=1", "duplicate NUM stays 2.31 and preserves progress",
-                         "gap is 4.08", "unscaled larger SZX is 4.08", "a block past 4096 bytes is 4.13",
-                         "the upload handler stays at 0:0"],
-            "unqualified": ["OSCORE block faults", "client SZX reduction", "Q-Block"]}
+            "body_limit": 4096, "final": {"code": final[0], "payload": final[1].decode()}}
 
 
 def smaller_block_upload(server):
@@ -693,10 +677,7 @@ def smaller_block_upload(server):
     if (code, counts) != (69, b"1:1"):
         raise AssertionError(f"smaller blocks did not create the body once: {code} {counts!r}")
     return {"szx": szx, "block_bytes": size, "blocks": num, "length": len(body),
-            "readback": counts.decode(),
-            "verified": ["client-selected 256-byte Block1 completes the exact 2000-byte body once",
-                         "each non-final acknowledgement echoes that SZX and NUM"],
-            "unqualified": ["server-requested downshift", "Q-Block"]}
+            "readback": counts.decode()}
 
 
 def scaled_smaller_block(server):
@@ -727,10 +708,7 @@ def scaled_smaller_block(server):
             sock.close()
     if (code, counts) != (69, b"0:1"):
         raise AssertionError(f"scaled body was not delivered once: {code} {counts!r}")
-    return {"first_bytes": 64, "next_num": 4, "next_bytes": 16, "readback": counts.decode(),
-            "verified": ["64-byte block 0 continues", "16-byte block 1 is 4.08",
-                         "16-byte block 4 is delivered once"],
-            "unqualified": ["Q-Block size change", "peer servers other than Coaptic"]}
+    return {"first_bytes": 64, "next_num": 4, "next_bytes": 16, "readback": counts.decode()}
 
 
 def qblock1_message(mid, token, num, more, szx, payload, size1, tag, non=False):
@@ -792,10 +770,7 @@ def qblock1_upload(server):
             sock.close()
     if (code, readback) != (69, b"1:1"):
         raise AssertionError(f"Q-Block1 body was not created once: {code} {readback!r}")
-    return {"blocks": 2, "block_bytes": 1024, "length": len(body), "readback": readback.decode(),
-            "verified": ["missing Request-Tag is 4.00", "incomplete confirmable payload is an empty ACK",
-                         "changed SZX is 4.08", "exact 2000-byte body is created once"],
-            "unqualified": ["Q-Block recovery", "peer servers other than Coaptic"]}
+    return {"blocks": 2, "block_bytes": 1024, "length": len(body), "readback": readback.decode()}
 
 
 def qblock1_missing(server):
@@ -837,10 +812,7 @@ def qblock1_missing(server):
             sock.close()
     if (code, readback) != (69, b"0:1"):
         raise AssertionError(f"filled hole was not delivered once: {code} {readback!r}")
-    return {"missing": 1, "reported_format": 272, "length": 40, "readback": readback.decode(),
-            "verified": ["NON 4.08 names block 1", "handler stays at 0:0 until that payload arrives",
-                         "the reported payload is delivered once"],
-            "unqualified": ["full-window continuation", "peer servers other than Coaptic", "protected Q-Block"]}
+    return {"missing": 1, "reported_format": 272, "length": 40, "readback": readback.decode()}
 
 
 def qblock1_window(server):
@@ -887,10 +859,7 @@ def qblock1_window(server):
             sock.close()
     if (code, readback) != (69, b"0:1"):
         raise AssertionError(f"payload after the window was not delivered once: {code} {readback!r}")
-    return {"window": 10, "continue_num": 9, "length": size1, "readback": readback.decode(),
-            "verified": ["nine NON payloads draw no Continue", "the tenth payload is NON 2.31 for NUM 9",
-                         "the handler stays at 0:0 until the next payload", "that payload is delivered once"],
-            "unqualified": ["peer servers other than Coaptic", "protected Q-Block"]}
+    return {"window": 10, "continue_num": 9, "length": size1, "readback": readback.decode()}
 
 
 def oscore_qblock1_upload(client, server):
@@ -914,11 +883,7 @@ def oscore_qblock1_upload(client, server):
         expect_refusal(refused)
         preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
         expect(preserved, 69, b"2:3")
-    return {"readback": preserved, "wrong_key": refused,
-            "verified": ["exact protected 2000- and 4096-byte Q-Block1 creates",
-                         "wrong byte does not increment accepted",
-                         "wrong key cannot change the accepted count"],
-            "unqualified": ["libcoap Q-Block", "protected Q-Block loss"]}
+    return {"readback": preserved, "wrong_key": refused}
 
 
 def oscore_qblock1_faults(client, server):
@@ -942,11 +907,7 @@ def oscore_qblock1_faults(client, server):
             preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
             expect(preserved, 69, b"1:1")
             evidence.append({"mode": mode, "requests": len(requests)})
-    return {"transfers": evidence,
-            "verified": ["exact protected Q-Block1 upload after a lost first reply",
-                         "exact protected Q-Block1 upload after a duplicated request",
-                         "one handler effect", "wrong key cannot add another effect"],
-            "unqualified": ["libcoap Q-Block", "IPv6", "DTLS"]}
+    return {"transfers": evidence}
 
 
 def no_response_counter(server):
@@ -982,10 +943,7 @@ def no_response_counter(server):
             sock.close()
     if (code, body) != (69, b"2"):
         raise AssertionError(f"counter did not reach 2: {code} {body!r}")
-    return {"readback": body.decode(),
-            "verified": ["NON No-Response 2.xx sends nothing", "the handler still runs once",
-                         "a later POST without No-Response is 2.04"],
-            "unqualified": ["peer servers other than Coaptic", "4.xx and 5.xx suppression"]}
+    return {"readback": body.decode()}
 
 
 def oscore_upload_workflow(client, server):
@@ -1012,11 +970,7 @@ def oscore_upload_workflow(client, server):
         expect(preserved, 69, b"2:3")
         return {"sha256": {"2000": hashlib.sha256(LARGE).hexdigest(),
                            "4096": hashlib.sha256(UPLOAD_4K).hexdigest()},
-                "wrong_key": refused, "readback": readback,
-                "verified": ["exact protected 2000- and 4096-byte Block1 creates",
-                             "wrong byte does not increment accepted",
-                             "wrong key cannot change the accepted count"],
-                "unqualified": ["protected block loss or duplication", "OSCORE client SZX negotiation"]}
+                "wrong_key": refused, "readback": readback}
 
 
 def oscore_upload_fault_workflow(client, server):
@@ -1043,11 +997,7 @@ def oscore_upload_fault_workflow(client, server):
             evidence.append({"mode": mode, "created": created, "trace": relay.trace,
                              "wrong_key_refusal": refused, "preserved": preserved})
     return {"expected_length": len(LARGE), "expected_sha256": hashlib.sha256(LARGE).hexdigest(),
-            "transfers": evidence,
-            "verified": ["exact protected upload after a lost first reply",
-                         "exact protected upload after a duplicated request",
-                         "one handler effect", "wrong key cannot add another effect"],
-            "unqualified": ["IPv6", "DTLS", "Q-Block", "client SZX reduction"]}
+            "transfers": evidence}
 
 
 def ipv6_dtls_request(client, number, traces, **kwargs):
@@ -1111,7 +1061,7 @@ def main():
     parser.add_argument("--libcoap", required=True, type=Path)
     parser.add_argument("--libcoap-udp-only", action="store_true", help="Explicit local build limitation, recorded in results; CI requires DTLS")
     parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--build-note", default="Unspecified build profiles; do not compare timings across peers")
+    parser.add_argument("--build-note", default="")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if not 1 <= args.iterations <= 10000:
@@ -1121,15 +1071,15 @@ def main():
     report = {"schema": "coaptic-process-interop/2", "platform": platform.platform(),
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
-              "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "child request includes socket/session/DTLS handshake and response assembly; excludes process startup. host_total includes spawn and exit. Serial, fresh client per request; no warm-session throughput claim.",
+              "iterations": args.iterations, "build_note": args.build_note, "timing_scope": "request_us excludes process startup; host_total_us includes it",
               "host_clock": {"name": time.get_clock_info("perf_counter").implementation, "resolution_ns": math.ceil(time.get_clock_info("perf_counter").resolution * 1e9)},
               "libcoap_source": "851533c3cf63d16984d370ce39d586ecb3694971",
-              "limitations": ["Only named plaintext/PSK DTLS/OSCORE assertions; Observe, certificates and full ETSI coverage remain unqualified"],
+              "limitations": [],
               "executables": {n: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for n,p in peers.items()},
               "capability_manifest": {"path": "tools/interop/capabilities.json", "sha256": manifest_hash},
               "cases": [], "benchmarks": []}
     if args.libcoap_udp_only:
-        report["limitations"].append("libcoap DTLS explicitly excluded for this local build")
+        report["limitations"].append("libcoap DTLS and OSCORE excluded")
 
     def case(name, function):
         try:
@@ -1169,9 +1119,7 @@ def main():
                 expect(plain, 129, None)
                 expect(exchange(path="methods"), 69, b"alpha")
                 return {"server": service.ready, "traces": traces, "results": results, "plaintext_refusal": plain,
-                        "fixture_context": "RFC 8613 C.1 public keys; client starting sequences 0,100,200,300,400; one Echo retry may consume the next sequence",
-                        "verified": ["exact authenticated GET", "PUT/readback", "wrong-key and plaintext state preservation"],
-                        "unqualified": ["persistent keys/sequences", "replay/corruption campaign", "OSCORE Observe/block transfer"]}
+                        "fixture_context": "RFC 8613 C.1; client sequences 0,100,200,300,400"}
         case(f"oscore-state:{client}->{server}", oscore_state)
 
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
@@ -1205,7 +1153,7 @@ def main():
                         expect_refusal(refused, handshake=True)
                         # A failed handshake must not destroy availability.
                         expect(request(peers[client], transport, service.number))
-                    return {"server": service.ready, "verified": ["GET bytes", "4.04", "2000-byte Block2", "repeat requests"]}
+                    return {"server": service.ready}
             case(label, matrix)
 
     for transport, family, label in (("udp", "ipv4", "methods-udp"),
@@ -1227,7 +1175,7 @@ def main():
                 expect(request(peers[client], "udp", service.number, family="ipv6", path="missing"), 132, None)
                 expect(request(peers[client], "udp", service.number, family="ipv6", path="large"), 69, LARGE)
                 expect(request(peers[client], "udp", service.number, family="ipv6"))
-                return {"server": service.ready, "address": "::1", "ipv6_socket_probe": probe, "verified": ["IPv6 UDP GET bytes", "4.04", "2000-byte Block2", "service after refusal"]}
+                return {"server": service.ready, "address": "::1", "ipv6_socket_probe": probe}
         case(f"ipv6-udp:{client}->{server}", ipv6_matrix)
 
     for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
@@ -1245,8 +1193,7 @@ def main():
                 expect_refusal(refused, handshake=True)
                 expect(exchange())
                 return {"server": service.ready, "address": "::1", "relay_family": "AF_INET6",
-                        "ipv6_only": True, "traces": traces, "wrong_key_result": refused,
-                        "verified": ["IPv6 PSK DTLS GET bytes", "4.04", "2000-byte Block2", "wrong-key refusal", "service after refusal"]}
+                        "ipv6_only": True, "traces": traces, "wrong_key_result": refused}
         case(f"ipv6-dtls:{client}->{server}", ipv6_dtls)
 
     for transport, family, label in (("udp", "ipv4", "upload-udp"),
@@ -1305,8 +1252,7 @@ def main():
                         expect(request(peers["coaptic"], "dtls", relay.number, path="counter", method="POST"), 68, b"")
                     expect(request(peers["coaptic"], "dtls", relay.number, path="counter"), 69, b"140")
                     endpoint = relay.back.getsockname()
-            return {"server_endpoint": endpoint, "connections": 141,
-                    "verified": "140 distinct authenticated POST effects across reused endpoint", "trace": relay.trace}
+            return {"server_endpoint": endpoint, "connections": 141, "trace": relay.trace}
         case(f"dtls-churn:coaptic->{server}", churn)
 
     if not args.libcoap_udp_only:
@@ -1321,7 +1267,7 @@ def main():
                     if alerts < 141:
                         raise AssertionError(f"missing terminal client records: {alerts}")
             return {"server_endpoint": endpoint, "connections": 141, "client_alert_records": alerts,
-                    "verified": "Coaptic explicit shutdown and 140 independent POST effects", "trace": relay.trace}
+                    "trace": relay.trace}
         case("dtls-clean-reconnect:coaptic->libcoap", c_server_reconnect)
 
     # Exercise both Coaptic roles against independent peer implementations.
