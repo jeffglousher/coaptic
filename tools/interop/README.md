@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 105 scenario results (80 when the local C peer is built without DTLS and OSCORE):
+The full run contains 108 scenario results (83 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -193,8 +193,12 @@ An independent UDP client, bound to one source port, exercises Coaptic Block1 re
 A `Size1` of 1 does not complete an `M=1` block. A repeated NUM stays 2.31 and the
 following NUM continues. A skipped NUM is 4.08. Changing SZX is 4.08. A block past the
 4,096-byte body is 4.13. The upload handler stays at `0:0`. coap-rs answers the skipped
-NUM with 2.31, so that refusal is not claimed for it. Client-driven smaller-SZX
-selection and Q-Block are not part of this proof.
+NUM with 2.31, so that refusal is not claimed for it.
+
+Three more cases, against Coaptic, coap-rs, and libcoap, send the same 2,000-byte body as 256-byte blocks from the first block.
+The server must echo that size and block number on every acknowledgement and create the
+body once. A server asking the client to switch to a smaller size mid-transfer, and
+Q-Block uploads, are not part of this proof.
 
 Three OSCORE upload cases, Coaptic self-pair and both libcoap directions, repeat the
 exact 2,000- and 4,096-byte creates, the wrong-byte refusal, and a wrong-key refusal

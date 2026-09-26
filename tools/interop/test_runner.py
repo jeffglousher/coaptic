@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 from run import (Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow,
                   expect_identical_requests, ipv6_dtls_request, replay_envelope, coap_message,
-                  upload_block, coap_payload, block1_value)
+                  upload_block, coap_payload, block1_value, decoded_options, block1_fields)
 
 
 class RunnerTests(unittest.TestCase):
@@ -204,6 +204,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(coap_payload(message), b"A" * 64)
         parsed = coap_message(1, 7, b"\x01", [(11, b"upload")])
         self.assertEqual(coap_payload(parsed), b"")
+        small = upload_block(3, b"\x21", 7, False, 4, b"Z")
+        self.assertEqual(block1_fields(decoded_options(small)[27][0]), (7, False, 4))
 
 
 if __name__ == "__main__":
