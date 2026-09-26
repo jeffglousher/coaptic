@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 75 scenario results (60 with local C-peer DTLS excluded):
+The full run contains 83 scenario results (66 when the local C-peer DTLS build is excluded):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -182,6 +182,13 @@ Echo, preserving request parameters and the original deadline. It records the
 retry count; plaintext responses and repeated challenges cannot trigger this
 policy. The libcoap direction requires its default B.1.2 challenge to be exercised.
 This is a bounded fixture policy, not automatic freshness policy in the library.
+
+Five IPv4 UDP upload cases exercise Coaptic self-pair, both coap-rs directions, and both
+libcoap directions. Each posts the exact 2,000-byte and 4,096-byte public patterns,
+requires more than one request datagram, and checks that one wrong body byte returns
+4.00 without increasing the accepted-handler count. The readback is `accepted:calls`.
+This is assembled Block1 on loopback UDP, not missing or duplicate blocks, size
+negotiation, DTLS, IPv6, or OSCORE uploads.
 
 Three protected Block2 cases exercise Coaptic self-pair and both libcoap directions.
 Each checks exact 2,000-byte assembly normally, with the first reply dropped and
