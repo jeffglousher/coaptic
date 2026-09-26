@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 98 scenario results (77 when the local C-peer DTLS build is excluded):
+The full run contains 102 scenario results (79 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -188,8 +188,18 @@ Each posts the exact 2,000-byte and 4,096-byte public patterns, requires more th
 request datagram, and checks that one wrong body byte returns 4.00 without increasing
 the accepted-handler count. The readback is `accepted:calls`. Every IPv6 exchange,
 including the wrong-byte refusal and count readback, traverses an IPv6-only relay.
-This is assembled Block1 on loopback, not missing or duplicate blocks, size
-negotiation, or OSCORE uploads.
+
+An independent UDP client, bound to one source port, exercises Coaptic Block1 refusals.
+A `Size1` of 1 does not complete an `M=1` block. A repeated NUM stays 2.31 and the
+following NUM continues. A skipped NUM is 4.08. Changing SZX is 4.08. A block past the
+4,096-byte body is 4.13. The upload handler stays at `0:0`. coap-rs answers the skipped
+NUM with 2.31, so that refusal is not claimed for it. Client-driven smaller-SZX
+selection and Q-Block are not part of this proof.
+
+Three OSCORE upload cases, Coaptic self-pair and both libcoap directions, repeat the
+exact 2,000- and 4,096-byte creates, the wrong-byte refusal, and a wrong-key refusal
+that leaves `accepted:calls` unchanged. Each fresh client process starts at its own
+sender sequence. Lost or duplicated protected blocks are not part of this proof.
 
 Three protected Block2 cases exercise Coaptic self-pair and both libcoap directions.
 Each checks exact 2,000-byte assembly normally, with the first reply dropped and

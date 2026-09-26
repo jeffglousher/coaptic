@@ -2880,6 +2880,122 @@
         "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
       ],
       "executable": "tools/interop/run.py:upload_workflow"
+    },
+    {
+      "id": "block1-faults:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "size1",
+        "duplicate-block",
+        "missing-block",
+        "szx",
+        "body-limit"
+      ],
+      "positive_proof": [
+        "duplicate NUM stays 2.31 and the next NUM continues",
+        "Size1 does not complete an M=1 block"
+      ],
+      "failure_proof": [
+        "skipped NUM is 4.08",
+        "changed SZX is 4.08",
+        "a block past 4096 bytes is 4.13",
+        "upload handler remains 0:0"
+      ],
+      "executable": "tools/interop/run.py:block1_fault_workflow"
+    },
+    {
+      "id": "oscore-upload:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "oscore",
+        "block1",
+        "upload",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact protected 2000-byte Block1 POST is created once",
+        "exact protected 4096-byte Block1 POST is created once"
+      ],
+      "failure_proof": [
+        "one wrong payload byte does not increment accepted",
+        "wrong key cannot change the accepted count"
+      ],
+      "executable": "tools/interop/run.py:oscore_upload_workflow"
+    },
+    {
+      "id": "oscore-upload:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": ["libcoap-oscore"],
+      "features": [
+        "oscore",
+        "block1",
+        "upload",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact protected 2000-byte Block1 POST is created once",
+        "exact protected 4096-byte Block1 POST is created once"
+      ],
+      "failure_proof": [
+        "one wrong payload byte does not increment accepted",
+        "wrong key cannot change the accepted count"
+      ],
+      "executable": "tools/interop/run.py:oscore_upload_workflow"
+    },
+    {
+      "id": "oscore-upload:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": ["libcoap-oscore"],
+      "features": [
+        "oscore",
+        "block1",
+        "upload",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact protected 2000-byte Block1 POST is created once",
+        "exact protected 4096-byte Block1 POST is created once"
+      ],
+      "failure_proof": [
+        "one wrong payload byte does not increment accepted",
+        "wrong key cannot change the accepted count"
+      ],
+      "executable": "tools/interop/run.py:oscore_upload_workflow"
     }
   ],
   "gaps": [
@@ -2911,7 +3027,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Listed cases cover exact 2000-byte Block2 and exact 2000/4096-byte Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, including one wrong-byte refusal. Missing, duplicate, and oversized block negotiation and OSCORE uploads remain unqualified.",
+      "reason": "Listed cases cover exact Block1 uploads on IPv4 UDP, IPv4 and IPv6 PSK DTLS, and IPv6 UDP, plus Coaptic refusals for an unfinished Size1, a duplicate NUM, a skipped NUM (4.08), a changed SZX (4.08), and a block past 4096 bytes (4.13). Protected exact uploads are listed for Coaptic and both libcoap directions. coap-rs answers a skipped Block1 NUM with 2.31. OSCORE block loss, client-driven SZX reduction, and Q-Block remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },

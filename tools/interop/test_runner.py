@@ -2,7 +2,9 @@
 import socket
 import unittest
 from unittest.mock import patch
-from run import Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow, expect_identical_requests, ipv6_dtls_request, replay_envelope
+from run import (Proxy, decode, expect, summary, validate_timing, measure_requests, method_workflow,
+                  expect_identical_requests, ipv6_dtls_request, replay_envelope, coap_message,
+                  upload_block, coap_payload, block1_value)
 
 
 class RunnerTests(unittest.TestCase):
@@ -191,6 +193,17 @@ class RunnerTests(unittest.TestCase):
                 server.sendto(b"keep",address)
                 self.assertEqual(client.recvfrom(100)[0],b"keep")
             self.assertEqual(sum(e["action"]=="drop" for e in proxy.trace),1)
+
+    def test_upload_block_encodes_ordered_options_and_one_byte_block1(self):
+        self.assertEqual(block1_value(0, True, 6), b"\x0e")
+        self.assertEqual(block1_value(2, True, 2), bytes([(2 << 4) | (1 << 3) | 2]))
+        message = upload_block(0x1234, b"\x09", 0, True, 2, b"A" * 64, size1=1)
+        self.assertEqual(message[:4], bytes([0x41, 0x02, 0x12, 0x34]))
+        self.assertEqual(message[4:5], b"\x09")
+        self.assertIn(b"upload", message)
+        self.assertEqual(coap_payload(message), b"A" * 64)
+        parsed = coap_message(1, 7, b"\x01", [(11, b"upload")])
+        self.assertEqual(coap_payload(parsed), b"")
 
 
 if __name__ == "__main__":
