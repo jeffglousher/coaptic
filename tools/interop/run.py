@@ -374,33 +374,39 @@ def oscore_block2_workflow(client, server):
             "scope": "Exact 2000-byte protected Block2 GET on IPv4; first reply loss and request duplication after Echo warm-up. No Block1, Observe, Q-Block, arbitrary reordering or persistent-context claim."}
 
 
-def upload_workflow(client, server):
+def upload_workflow(client, server, transport="udp", family="ipv4"):
     """Exact Block1 bodies and one wrong byte, across one fresh server process."""
     changed = bytearray(LARGE)
     changed[-1] ^= 1
-    with Server(server, "udp") as service:
-        with Proxy(service.number, "dtls-reconnect") as relay:
-            created = request(client, "udp", relay.number, path="upload", method="POST",
-                              payload=LARGE, timeout=6500)
+
+    def direct(**kwargs):
+        return request(client, transport, service.number, family=family, path="upload",
+                       timeout=6500, **kwargs)
+
+    def traced(payload):
+        with Proxy(service.number, "dtls-reconnect", family=family) as relay:
+            result = request(client, transport, relay.number, family=family, path="upload",
+                             method="POST", payload=payload, timeout=6500)
+            count = sum(row["direction"] == "request" for row in relay.trace)
+        return result, count
+
+    with Server(server, transport, family=family) as service:
+        created, first_requests = traced(LARGE)
         expect(created, 65, b"")
-        first_requests = sum(row["direction"] == "request" for row in relay.trace)
         if first_requests < 2:
             raise AssertionError(f"2000-byte upload used {first_requests} request datagrams")
-        expect(request(client, "udp", service.number, path="upload"), 69, b"1:1")
-        refused = request(client, "udp", service.number, path="upload", method="POST",
-                          payload=bytes(changed), timeout=6500)
+        expect(direct(), 69, b"1:1")
+        refused = direct(method="POST", payload=bytes(changed))
         expect(refused, 128, b"")
-        expect(request(client, "udp", service.number, path="upload"), 69, b"1:2")
-        with Proxy(service.number, "dtls-reconnect") as relay:
-            wide = request(client, "udp", relay.number, path="upload", method="POST",
-                           payload=UPLOAD_4K, timeout=6500)
+        expect(direct(), 69, b"1:2")
+        wide, wide_requests = traced(UPLOAD_4K)
         expect(wide, 65, b"")
-        wide_requests = sum(row["direction"] == "request" for row in relay.trace)
         if wide_requests < 2:
             raise AssertionError(f"4096-byte upload used {wide_requests} request datagrams")
-        readback = request(client, "udp", service.number, path="upload")
+        readback = direct()
         expect(readback, 69, b"2:3")
-        return {"lengths": [len(LARGE), len(UPLOAD_4K)],
+        return {"transport": transport, "family": family,
+                "lengths": [len(LARGE), len(UPLOAD_4K)],
                 "sha256": {"2000": hashlib.sha256(LARGE).hexdigest(),
                            "4096": hashlib.sha256(UPLOAD_4K).hexdigest()},
                 "request_datagrams": {"2000": first_requests, "4096": wide_requests},
@@ -409,7 +415,7 @@ def upload_workflow(client, server):
                              "one wrong byte is 4.00 and does not increment accepted",
                              "exact 4096-byte Block1 POST creates once"],
                 "unqualified": ["missing or duplicate blocks", "body-limit negotiation",
-                                "DTLS", "IPv6", "OSCORE"]}
+                                "IPv6 DTLS", "OSCORE"]}
 
 
 def ipv6_dtls_request(client, number, traces, **kwargs):
@@ -611,10 +617,16 @@ def main():
                         "verified": ["IPv6 PSK DTLS GET bytes", "4.04", "2000-byte Block2", "wrong-key refusal", "service after refusal"]}
         case(f"ipv6-dtls:{client}->{server}", ipv6_dtls)
 
-    for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"),
-                           ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
-        case(f"upload-udp:{client}->{server}",
-             lambda client=client, server=server: upload_workflow(peers[client], peers[server]))
+    for transport, family, label in (("udp", "ipv4", "upload-udp"),
+                                     ("dtls", "ipv4", "upload-dtls"),
+                                     ("udp", "ipv6", "upload-ipv6-udp")):
+        for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"),
+                               ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+            if transport == "dtls" and args.libcoap_udp_only and "libcoap" in (client, server):
+                continue
+            case(f"{label}:{client}->{server}",
+                 lambda client=client, server=server, transport=transport, family=family:
+                 upload_workflow(peers[client], peers[server], transport, family))
 
     # The relay preserves one server-visible UDP endpoint across fresh clients.
     for server in ("coaptic", "coap-rs"):
