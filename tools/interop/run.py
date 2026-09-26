@@ -425,6 +425,212 @@ def upload_workflow(client, server, transport="udp", family="ipv4"):
                 + ([] if transport == "dtls" and family == "ipv6" else ["IPv6 DTLS"])}
 
 
+CONTINUE = 95
+INCOMPLETE = 136
+TOO_LARGE = 141
+
+
+def coap_option(delta, value):
+    """One CoAP option. Delta and length use the RFC 7252 extended nibble form."""
+    def field(n):
+        if n < 13:
+            return n, b""
+        if n < 269:
+            return 13, bytes([n - 13])
+        if n < 65805:
+            return 14, (n - 269).to_bytes(2, "big")
+        raise ValueError("CoAP option field does not fit")
+    delta_nibble, delta_ext = field(delta)
+    length_nibble, length_ext = field(len(value))
+    return bytes([(delta_nibble << 4) | length_nibble]) + delta_ext + length_ext + value
+
+
+def coap_options(items):
+    encoded = bytearray()
+    previous = 0
+    for number, value in items:
+        if number < previous:
+            raise ValueError("CoAP options are not in ascending order")
+        encoded += coap_option(number - previous, value)
+        previous = number
+    return bytes(encoded)
+
+
+def block1_value(num, more, szx):
+    if not 0 <= num < 16 or not 0 <= szx <= 6:
+        raise ValueError("Block1 value is outside the one-byte encoding")
+    return bytes([(num << 4) | ((1 if more else 0) << 3) | szx])
+
+
+def coap_message(code, mid, token, options, payload=b""):
+    if not 0 < len(token) <= 8 or not 0 <= mid <= 0xFFFF or not 0 <= code <= 0xFF:
+        raise ValueError("invalid CoAP header field")
+    message = bytes([0x40 | len(token), code, mid >> 8, mid & 0xFF]) + token + coap_options(options)
+    if payload:
+        message += b"\xff" + payload
+    return message
+
+
+def coap_payload(packet):
+    if len(packet) < 4 or packet[0] >> 6 != 1 or (packet[0] & 15) > 8:
+        raise AssertionError("not a CoAP datagram")
+    index = 4 + (packet[0] & 15)
+    while index < len(packet):
+        if packet[index] == 0xFF:
+            return packet[index + 1:]
+        delta_nibble = packet[index] >> 4
+        length_nibble = packet[index] & 15
+        index += 1
+        if delta_nibble == 15 or length_nibble == 15:
+            raise AssertionError("malformed CoAP option")
+        if delta_nibble == 13:
+            delta_nibble = packet[index] + 13
+            index += 1
+        elif delta_nibble == 14:
+            delta_nibble = int.from_bytes(packet[index:index + 2], "big") + 269
+            index += 2
+        if length_nibble == 13:
+            length_nibble = packet[index] + 13
+            index += 1
+        elif length_nibble == 14:
+            length_nibble = int.from_bytes(packet[index:index + 2], "big") + 269
+            index += 2
+        index += length_nibble
+    return b""
+
+
+def coap_exchange(sock, address, packet, timeout=2):
+    """Send from one bound socket so Block1 identity stays on that endpoint."""
+    sock.settimeout(timeout)
+    if sock.sendto(packet, address) != len(packet):
+        raise AssertionError("CoAP probe was not completely sent")
+    try:
+        data, sender = sock.recvfrom(4096)
+    except (socket.timeout, ConnectionResetError) as error:
+        raise AssertionError(f"no CoAP reply: {error}") from error
+    if (sender[0], sender[1]) != address or ((data[0] >> 4) & 3) != 2:
+        raise AssertionError(f"unexpected CoAP acknowledgement from {sender}")
+    return data[1], coap_payload(data)
+
+
+def upload_block(mid, token, num, more, szx, payload, size1=None):
+    options = [(11, b"upload"), (12, bytes([42])), (27, block1_value(num, more, szx))]
+    if size1 is not None:
+        encoded = size1.to_bytes(4, "big").lstrip(b"\x00") or b"\x00"
+        options.append((60, encoded))
+    return coap_message(2, mid, token, options, payload)
+
+
+def block1_fault_workflow(server):
+    """Independent Block1 refusals. The handler must stay cold."""
+    pattern = bytes(i % 251 for i in range(1024))
+    small = pattern[:64]
+
+    def session(check):
+        with Server(server, "udp") as service:
+            address = ("127.0.0.1", service.number)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(("127.0.0.1", 0))
+            state = {"token": 1, "mid": 1}
+
+            def fresh(token=None):
+                state["mid"] = state["mid"] % 0xFFFF + 1
+                if token is None:
+                    state["token"] = state["token"] % 255 + 1
+                    token = bytes([state["token"]])
+                return state["mid"], token
+
+            def post(token, num, more, szx, payload, size1=None):
+                mid, _ = fresh(token)
+                code, _ = coap_exchange(
+                    sock, address, upload_block(mid, token, num, more, szx, payload, size1))
+                return code
+
+            def counts():
+                mid, token = fresh()
+                code, body = coap_exchange(
+                    sock, address, coap_message(1, mid, token, [(11, b"upload")]))
+                return code, body
+
+            try:
+                return check(post, counts)
+            finally:
+                sock.close()
+
+    def ordered(post, counts):
+        token = bytes([9])
+        if post(token, 0, True, 2, small, size1=1) != CONTINUE:
+            raise AssertionError("Size1 did not leave an unfinished block at 2.31")
+        if counts() != (69, b"0:0"):
+            raise AssertionError("Size1 completed or invoked the upload handler")
+        if post(token, 0, True, 2, small) != CONTINUE:
+            raise AssertionError("duplicate Block1 NUM was not replayed as 2.31")
+        if post(token, 1, True, 2, small) != CONTINUE:
+            raise AssertionError("duplicate Block1 NUM reset the transfer")
+        if post(token, 3, True, 2, small) != INCOMPLETE:
+            raise AssertionError("Block1 gap was not 4.08")
+        if counts() != (69, b"0:0"):
+            raise AssertionError("gap or duplicate invoked the upload handler")
+        mismatched = bytes([10])
+        if post(mismatched, 0, True, 2, small) != CONTINUE:
+            raise AssertionError("initial SZX was refused")
+        if post(mismatched, 1, True, 6, pattern) != INCOMPLETE:
+            raise AssertionError("changed SZX was not 4.08")
+        return counts()
+
+    def overflow(post, counts):
+        token = bytes([11])
+        for num in range(4):
+            if post(token, num, True, 6, pattern) != CONTINUE:
+                raise AssertionError(f"block {num} of a 4096-byte body was refused early")
+        if post(token, 4, True, 6, pattern) != TOO_LARGE:
+            raise AssertionError("body past 4096 bytes was not 4.13")
+        final = counts()
+        if final != (69, b"0:0"):
+            raise AssertionError(f"upload handler ran during refusal: {final}")
+        return final
+
+    session(ordered)
+    final = session(overflow)
+    return {"codes": {"continue": CONTINUE, "incomplete": INCOMPLETE, "too_large": TOO_LARGE},
+            "body_limit": 4096, "final": {"code": final[0], "payload": final[1].decode()},
+            "verified": ["Size1 does not complete M=1", "duplicate NUM stays 2.31 and preserves progress",
+                         "gap is 4.08", "changed SZX is 4.08", "a block past 4096 bytes is 4.13",
+                         "the upload handler stays at 0:0"],
+            "unqualified": ["OSCORE block faults", "client SZX reduction", "Q-Block"]}
+
+
+def oscore_upload_workflow(client, server):
+    """Exact protected uploads. Each fresh client process has its own sender sequence."""
+    changed = bytearray(LARGE)
+    changed[-1] ^= 1
+    with Server(server, "oscore") as service:
+        expect(request(client, "oscore", service.number, sequence=0))
+        created = request(client, "oscore", service.number, sequence=100, path="upload",
+                          method="POST", payload=LARGE, timeout=6500)
+        expect(created, 65, b"")
+        expect(request(client, "oscore", service.number, sequence=200, path="upload"), 69, b"1:1")
+        expect(request(client, "oscore", service.number, sequence=300, path="upload", method="POST",
+                       payload=bytes(changed), timeout=6500), 128, b"")
+        expect(request(client, "oscore", service.number, sequence=400, path="upload"), 69, b"1:2")
+        expect(request(client, "oscore", service.number, sequence=500, path="upload", method="POST",
+                       payload=UPLOAD_4K, timeout=6500), 65, b"")
+        readback = request(client, "oscore", service.number, sequence=700, path="upload")
+        expect(readback, 69, b"2:3")
+        refused = request(client, "oscore", service.number, sequence=1000, path="upload",
+                          method="POST", payload=LARGE, key="incorrect", timeout=500)
+        expect_refusal(refused)
+        preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
+        expect(preserved, 69, b"2:3")
+        return {"sha256": {"2000": hashlib.sha256(LARGE).hexdigest(),
+                           "4096": hashlib.sha256(UPLOAD_4K).hexdigest()},
+                "wrong_key": refused, "readback": readback,
+                "verified": ["exact protected 2000- and 4096-byte Block1 creates",
+                             "wrong byte does not increment accepted",
+                             "wrong key cannot change the accepted count"],
+                "unqualified": ["protected block loss or duplication", "OSCORE client SZX negotiation"]}
+
+
 def ipv6_dtls_request(client, number, traces, **kwargs):
     # Each session has a fresh server-visible endpoint; IPv6-only sockets
     # prevent a fixture silently falling back to IPv4 from satisfying the case.
@@ -635,6 +841,14 @@ def main():
             case(f"{label}:{client}->{server}",
                  lambda client=client, server=server, transport=transport, family=family:
                  upload_workflow(peers[client], peers[server], transport, family))
+
+    case("block1-faults:coaptic", lambda: block1_fault_workflow(peers["coaptic"]))
+
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        if (args.libcoap_udp_only or args.libcoap_oscore_unavailable) and "libcoap" in (client, server):
+            continue
+        case(f"oscore-upload:{client}->{server}",
+             lambda client=client, server=server: oscore_upload_workflow(peers[client], peers[server]))
 
     # The relay preserves one server-visible UDP endpoint across fresh clients.
     for server in ("coaptic", "coap-rs"):
