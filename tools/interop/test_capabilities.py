@@ -20,11 +20,11 @@ class CapabilityTests(unittest.TestCase):
     def test_full_and_explicitly_limited_inventory(self):
         full = self.check(self.outcomes)
         self.assertTrue(full["complete"])
-        self.assertEqual(full["enabled_cases"], 110)
+        self.assertEqual(full["enabled_cases"], 111)
         excluded = {row["id"] for row in self.manifest["cases"] if row["requires"]}
         limited = self.check([row for row in self.outcomes if row["name"] not in excluded], False, "windows")
         self.assertTrue(limited["complete"])
-        self.assertEqual(limited["enabled_cases"], 85)
+        self.assertEqual(limited["enabled_cases"], 86)
         self.assertEqual(sum(row["status"] == "build-excluded" for row in limited["cases"]), 25)
         self.assertEqual(limited["unqualified"], full["unqualified"])
         self.assertEqual(len(self.digest), 64)
@@ -34,7 +34,7 @@ class CapabilityTests(unittest.TestCase):
         result = evaluate(self.manifest, [row for row in self.outcomes if row["name"] not in excluded],
                           libcoap_dtls=True, libcoap_oscore=False, system="linux")
         self.assertTrue(result["complete"])
-        self.assertEqual(result["enabled_cases"], 100)
+        self.assertEqual(result["enabled_cases"], 101)
         self.assertFalse(evaluate(self.manifest, self.outcomes, libcoap_dtls=True,
                                   libcoap_oscore=False, system="linux")["complete"])
 

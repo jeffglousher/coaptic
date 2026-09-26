@@ -2952,6 +2952,25 @@
       "executable": "tools/interop/run.py:qblock1_upload"
     },
     {
+      "id": "qblock1-missing:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "request-tag", "missing-blocks", "handler-effect"],
+      "positive_proof": [
+        "the payload named by the missing-blocks report is delivered once"
+      ],
+      "failure_proof": [
+        "a skipped NON Q-Block1 number is NON 4.08 content format 272 naming that number",
+        "the handler stays at 0:0 until the reported payload arrives"
+      ],
+      "executable": "tools/interop/run.py:qblock1_missing"
+    },
+    {
       "id": "block1-szx:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3255,7 +3274,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "One Coaptic process case creates an exact 2000-byte body from two Q-Block1 payloads, refuses a missing Request-Tag with 4.00, and refuses a changed SZX with 4.08. Recovery, continuation, other peers, and protected Q-Block remain absent.",
+      "reason": "One Coaptic process case creates an exact 2000-byte body from two Q-Block1 payloads, refuses a missing Request-Tag with 4.00, and refuses a changed SZX with 4.08. A second case reports a skipped NON payload as missing-blocks 4.08, keeps the handler at 0:0, and delivers that payload once. Full-window continuation, other peers, and protected Q-Block remain absent.",
       "issue": 200,
       "executable_cases": []
     },
