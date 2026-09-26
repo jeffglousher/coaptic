@@ -65,12 +65,12 @@ class TargetEvidenceTests(unittest.TestCase):
         return bytes(data)
 
     def test_headers_distinguish_image_architecture_and_reject_malformed(self):
-        self.assertEqual(binary_identity(self.pe()), ("pe", 32, 0x14c))
-        self.assertEqual(binary_identity(self.pe(64)), ("pe", 64, 0x8664))
+        self.assertEqual(binary_identity(self.pe()), ("pe", 32, 0x14c, "little"))
+        self.assertEqual(binary_identity(self.pe(64)), ("pe", 64, 0x8664, "little"))
         elf = bytearray(64)
         elf[:6] = b"\x7fELF\x01\x01"
         elf[18:20] = (3).to_bytes(2, "little")
-        self.assertEqual(binary_identity(elf), ("elf", 32, 3))
+        self.assertEqual(binary_identity(elf), ("elf", 32, 3, "little"))
         for malformed in (b"", b"MZ", self.pe()[:80], b"MZ" + b"\xff" * 126):
             with self.assertRaises(ValueError):
                 binary_identity(malformed)
@@ -94,6 +94,30 @@ class TargetEvidenceTests(unittest.TestCase):
         missing = run_case("core", [], lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "test result: ok. 1 passed; 0 failed; 0 ignored;", ""), target="i686-pc-windows-msvc")
         self.assertFalse(missing["passed"])
         self.assertIn("no compiled test executables", missing["executable_error"])
+
+    def test_big_endian_target_requires_runner_and_matching_byte_order(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "test-elf"
+            data = bytearray(64)
+            data[:6] = b"\x7fELF\x02\x02"
+            data[18:20] = (22).to_bytes(2, "big")
+            path.write_bytes(data)
+            def execute(command, **kwargs):
+                self.assertIn("--lib", command)
+                self.assertIn("--tests", command)
+                self.assertIn("--test-threads=1", command)
+                self.assertEqual(kwargs["env"]["CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUNNER"], "qemu-s390x -L /usr/s390x-linux-gnu")
+                output = json.dumps({"reason": "compiler-artifact", "profile": {"test": True}, "executable": str(path)})
+                return subprocess.CompletedProcess(command, 0, output + "\ntest result: ok. 9 passed; 0 failed; 0 ignored;", "")
+            result = run_case("core", [], execute, target="s390x-unknown-linux-gnu")
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["executables"][0]["byte_order"], "big")
+            data[5] = 1
+            data[18:20] = (22).to_bytes(2, "little")
+            path.write_bytes(data)
+            result = run_case("core", [], execute, target="s390x-unknown-linux-gnu")
+            self.assertFalse(result["passed"])
+            self.assertIn("wrong executable architecture", result["executable_error"])
 
 
 if __name__ == "__main__":
