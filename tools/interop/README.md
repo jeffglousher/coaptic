@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 111 scenario results (86 when the local C peer is built without DTLS and OSCORE):
+The full run contains 112 scenario results (87 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -204,6 +204,8 @@ A later payload at a different size is 4.08. Neither refusal reaches the handler
 
 One further Coaptic case sends non-confirmable payloads 0 and 2 of a 40-byte body and skips payload 1.
 The server answers with non-confirmable 4.08, content format 272, naming block 1. The handler stays at `0:0` until that payload arrives, then runs once.
+
+One further Coaptic case sends ten non-confirmable 16-byte payloads. The first nine draw no reply. The tenth draws one non-confirmable 2.31 echoing Q-Block1 number 9. The handler stays at `0:0` until the following 8-byte payload, then runs once.
 
 Three more cases, against Coaptic, coap-rs, and libcoap, send the same 2,000-byte body as 256-byte blocks from the first block.
 Each non-final acknowledgement must echo that size and block number, and the server
