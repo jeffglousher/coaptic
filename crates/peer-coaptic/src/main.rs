@@ -14,6 +14,8 @@ use support::{Args, Error};
 use webrtc_util::conn::Listener;
 static METHOD_RESOURCE: std::sync::Mutex<support::MethodResource> =
     std::sync::Mutex::new(support::MethodResource::new());
+static UPLOAD_RESOURCE: std::sync::Mutex<support::UploadResource> =
+    std::sync::Mutex::new(support::UploadResource::new());
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn count(_: Request<'_>) -> Response<'static> {
     Response::content_copy(COUNTER.load(Ordering::SeqCst).to_string().as_bytes())
@@ -31,6 +33,15 @@ fn method_resource(request: Request<'_>) -> Response<'static> {
     );
     Response::new(Code::from_raw(code)).payload_copy(&bytes)
 }
+fn upload_resource(request: Request<'_>) -> Response<'static> {
+    let (code, bytes) = UPLOAD_RESOURCE.lock().expect("fixture lock").respond(
+        request.method().expect("routed method").code().as_raw(),
+        request.body().unwrap_or(request.payload()),
+        request.content_format() == Some(Ok(ContentFormat::OCTET_STREAM)),
+    );
+    Response::new(Code::from_raw(code)).payload_copy(&bytes)
+}
+
 enum Io {
     Udp(UdpSocket),
     Dtls(dtls::DtlsIo),
@@ -138,6 +149,7 @@ async fn run() -> Result<(), Error> {
         "large" => &["large"][..],
         "counter" => &["counter"][..],
         "methods" => &["methods"][..],
+        "upload" => &["upload"][..],
         _ => &["missing"][..],
     };
     let method = match a.method {
@@ -153,7 +165,7 @@ async fn run() -> Result<(), Error> {
         .request(method, path)
         .payload(&a.payload)
         .to(Endpoint::from(a.address()));
-    if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+    if matches!(a.path.as_str(), "methods" | "upload") && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
         outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
     }
     let mut call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
@@ -179,7 +191,9 @@ async fn run() -> Result<(), Error> {
                     .payload(&a.payload)
                     .to(Endpoint::from(a.address()))
                     .echo(challenge);
-                if a.path == "methods" && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
+                if matches!(a.path.as_str(), "methods" | "upload")
+                    && matches!(a.method, 2 | 3 | 5 | 6 | 7)
+                {
                     retry = retry.content_format(ContentFormat::OCTET_STREAM);
                 }
                 call = retry
@@ -227,11 +241,11 @@ fn echo_retry_requires_protection_challenge_and_unused_budget() {
     }
 }
 
-fn fixture(io: Io) -> Result<App<profiles::Default, Io, 4, true>, Error> {
+fn fixture(io: Io) -> Result<App<profiles::Default, Io, 5, true>, Error> {
     App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
-        .routes::<4>()
+        .routes::<5>()
         .route(
             "/test",
             get(|_: Request<'_>| Response::content(support::BODY)),
@@ -241,6 +255,7 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 4, true>, Error> {
             get(|_: Request<'_>| Response::content(&support::LARGE)),
         )
         .route("/counter", get(count).post(increment))
+        .route("/upload", get(upload_resource).post(upload_resource))
         .route(
             "/methods",
             get(method_resource)

@@ -2300,6 +2300,146 @@
         "missing follow-up datagrams or unexercised fault fails"
       ],
       "executable": "tools/interop/run.py:oscore_block2_workflow"
+    },
+    {
+      "id": "upload-udp:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "upload",
+        "content-format",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact 2000-byte Block1 POST is created once",
+        "exact 4096-byte Block1 POST is created once",
+        "both transfers use more than one request datagram"
+      ],
+      "failure_proof": [
+        "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
+      ],
+      "executable": "tools/interop/run.py:upload_workflow"
+    },
+    {
+      "id": "upload-udp:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "upload",
+        "content-format",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact 2000-byte Block1 POST is created once",
+        "exact 4096-byte Block1 POST is created once",
+        "both transfers use more than one request datagram"
+      ],
+      "failure_proof": [
+        "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
+      ],
+      "executable": "tools/interop/run.py:upload_workflow"
+    },
+    {
+      "id": "upload-udp:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "upload",
+        "content-format",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact 2000-byte Block1 POST is created once",
+        "exact 4096-byte Block1 POST is created once",
+        "both transfers use more than one request datagram"
+      ],
+      "failure_proof": [
+        "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
+      ],
+      "executable": "tools/interop/run.py:upload_workflow"
+    },
+    {
+      "id": "upload-udp:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "upload",
+        "content-format",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact 2000-byte Block1 POST is created once",
+        "exact 4096-byte Block1 POST is created once",
+        "both transfers use more than one request datagram"
+      ],
+      "failure_proof": [
+        "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
+      ],
+      "executable": "tools/interop/run.py:upload_workflow"
+    },
+    {
+      "id": "upload-udp:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": [
+        "linux",
+        "windows"
+      ],
+      "requires": [],
+      "features": [
+        "block1",
+        "upload",
+        "content-format",
+        "handler-effect"
+      ],
+      "positive_proof": [
+        "exact 2000-byte Block1 POST is created once",
+        "exact 4096-byte Block1 POST is created once",
+        "both transfers use more than one request datagram"
+      ],
+      "failure_proof": [
+        "one wrong payload byte is 4.00 and leaves the accepted count unchanged"
+      ],
+      "executable": "tools/interop/run.py:upload_workflow"
     }
   ],
   "gaps": [
@@ -2331,7 +2471,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Exact 2000-byte Block2 is qualified only by listed cases; uploads, malformed/missing/duplicate blocks, negotiation and limits need independent cases.",
+      "reason": "Listed cases cover exact 2000-byte Block2 and exact 2000/4096-byte IPv4 UDP Block1 uploads, including one wrong-byte refusal. Missing, duplicate, and oversized block negotiation, DTLS, IPv6, and OSCORE uploads remain unqualified.",
       "issue": 200,
       "executable_cases": []
     },
