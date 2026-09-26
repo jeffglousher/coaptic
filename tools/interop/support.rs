@@ -23,10 +23,15 @@ pub struct Args {
     pub method: u8,
     pub payload: Vec<u8>,
     pub timeout: u64,
+    pub q_block1: bool,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
-        let a: Vec<_> = std::env::args().skip(1).collect();
+        let mut a: Vec<_> = std::env::args().skip(1).collect();
+        let q_block1 = a.last().is_some_and(|item| item == "qblock1");
+        if q_block1 {
+            a.pop();
+        }
         if !(7..=10).contains(&a.len()) {
             return Err(
                 "usage: PEER server|client udp|dtls|oscore PORT KEY PATH METHOD TIMEOUT_MS [ipv4|ipv6] [PAYLOAD_HEX] [SENDER_SEQUENCE]"
@@ -97,6 +102,7 @@ impl Args {
             method,
             payload,
             timeout,
+            q_block1,
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {

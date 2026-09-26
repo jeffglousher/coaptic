@@ -46,9 +46,13 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    return result + ([str(sequence)] if sequence is not None else [])
+    if sequence is not None or qblock1:
+        result.append("0" if sequence is None else str(sequence))
+    if qblock1:
+        result.append("qblock1")
+    return result
 
 
 def decode(line):
@@ -889,6 +893,101 @@ def qblock1_window(server):
             "unqualified": ["peer servers other than Coaptic", "protected Q-Block"]}
 
 
+def oscore_qblock1_upload(client, server):
+    """Protected Q-Block1 creates. libcoap has no Q-Block peer in this suite."""
+    changed = bytearray(LARGE)
+    changed[-1] ^= 1
+    with Server(server, "oscore") as service:
+        created = request(client, "oscore", service.number, sequence=0, path="upload", method="POST",
+                          payload=LARGE, timeout=6500, qblock1=True)
+        expect(created, 65, b"")
+        expect(request(client, "oscore", service.number, sequence=100, path="upload"), 69, b"1:1")
+        expect(request(client, "oscore", service.number, sequence=200, path="upload", method="POST",
+                       payload=bytes(changed), timeout=6500, qblock1=True), 128, b"")
+        expect(request(client, "oscore", service.number, sequence=300, path="upload"), 69, b"1:2")
+        expect(request(client, "oscore", service.number, sequence=400, path="upload", method="POST",
+                       payload=UPLOAD_4K, timeout=6500, qblock1=True), 65, b"")
+        readback = request(client, "oscore", service.number, sequence=500, path="upload")
+        expect(readback, 69, b"2:3")
+        refused = request(client, "oscore", service.number, sequence=1000, path="upload", method="POST",
+                          payload=LARGE, key="incorrect", timeout=500, qblock1=True)
+        expect_refusal(refused)
+        preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
+        expect(preserved, 69, b"2:3")
+    return {"readback": preserved, "wrong_key": refused,
+            "verified": ["exact protected 2000- and 4096-byte Q-Block1 creates",
+                         "wrong byte does not increment accepted",
+                         "wrong key cannot change the accepted count"],
+            "unqualified": ["libcoap Q-Block", "protected Q-Block loss"]}
+
+
+def oscore_qblock1_faults(client, server):
+    """Lost first reply and a duplicated request during one protected Q-Block1 upload."""
+    evidence = []
+    for mode in ("dtls-reconnect", "drop-reply", "duplicate-request"):
+        with Server(server, "oscore") as service:
+            with Proxy(service.number, mode) as relay:
+                created = request(client, "oscore", relay.number, sequence=100, path="upload",
+                                  method="POST", payload=LARGE, timeout=6500, qblock1=True)
+            expect(created, 65, b"")
+            requests = [row for row in relay.trace if row["direction"] == "request"]
+            if len(requests) < 2:
+                raise AssertionError("protected Q-Block1 upload did not send a follow-up")
+            if mode != "dtls-reconnect" and not any(row["action"] != "forward" for row in relay.trace):
+                raise AssertionError("requested Q-Block1 fault was not exercised")
+            expect(request(client, "oscore", service.number, sequence=200, path="upload"), 69, b"1:1")
+            refused = request(client, "oscore", service.number, sequence=1000, path="upload",
+                              method="POST", payload=LARGE, key="incorrect", timeout=500, qblock1=True)
+            expect_refusal(refused)
+            preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
+            expect(preserved, 69, b"1:1")
+            evidence.append({"mode": mode, "requests": len(requests)})
+    return {"transfers": evidence,
+            "verified": ["exact protected Q-Block1 upload after a lost first reply",
+                         "exact protected Q-Block1 upload after a duplicated request",
+                         "one handler effect", "wrong key cannot add another effect"],
+            "unqualified": ["libcoap Q-Block", "IPv6", "DTLS"]}
+
+
+def no_response_counter(server):
+    """NON POST with No-Response 2.xx still increments the counter and sends nothing."""
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            def counts(mid, token):
+                return coap_exchange(
+                    sock, address, coap_message(1, mid, token, [(11, b"counter")]))
+
+            if counts(2, b"\x81") != (69, b"0"):
+                raise AssertionError("counter did not start at 0")
+            suppressed = coap_message(2, 3, b"\x82", [(11, b"counter"), (258, b"\x02")], non=True)
+            if sock.sendto(suppressed, address) != len(suppressed):
+                raise AssertionError("No-Response POST was not completely sent")
+            sock.settimeout(0.3)
+            try:
+                early, _sender = sock.recvfrom(4096)
+            except socket.timeout:
+                early = None
+            if early is not None:
+                raise AssertionError(f"suppressed 2.04 was sent: {early!r}")
+            if counts(4, b"\x83") != (69, b"1"):
+                raise AssertionError("suppressed POST did not increment the counter")
+            visible = coap_roundtrip(sock, address, coap_message(2, 5, b"\x84", [(11, b"counter")]))
+            if visible[1] != 68:
+                raise AssertionError(f"visible POST returned {visible[1]}")
+            code, body = counts(6, b"\x85")
+        finally:
+            sock.close()
+    if (code, body) != (69, b"2"):
+        raise AssertionError(f"counter did not reach 2: {code} {body!r}")
+    return {"readback": body.decode(),
+            "verified": ["NON No-Response 2.xx sends nothing", "the handler still runs once",
+                         "a later POST without No-Response is 2.04"],
+            "unqualified": ["peer servers other than Coaptic", "4.xx and 5.xx suppression"]}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1167,6 +1266,9 @@ def main():
     case("qblock1-upload:coaptic", lambda: qblock1_upload(peers["coaptic"]))
     case("qblock1-missing:coaptic", lambda: qblock1_missing(peers["coaptic"]))
     case("qblock1-window:coaptic", lambda: qblock1_window(peers["coaptic"]))
+    case("oscore-qblock1:coaptic", lambda: oscore_qblock1_upload(peers["coaptic"], peers["coaptic"]))
+    case("oscore-qblock1-faults:coaptic", lambda: oscore_qblock1_faults(peers["coaptic"], peers["coaptic"]))
+    case("no-response:coaptic", lambda: no_response_counter(peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))
