@@ -640,7 +640,7 @@ def block1_fault_workflow(server):
     return {"codes": {"continue": CONTINUE, "incomplete": INCOMPLETE, "too_large": TOO_LARGE},
             "body_limit": 4096, "final": {"code": final[0], "payload": final[1].decode()},
             "verified": ["Size1 does not complete M=1", "duplicate NUM stays 2.31 and preserves progress",
-                         "gap is 4.08", "changed SZX is 4.08", "a block past 4096 bytes is 4.13",
+                         "gap is 4.08", "unscaled larger SZX is 4.08", "a block past 4096 bytes is 4.13",
                          "the upload handler stays at 0:0"],
             "unqualified": ["OSCORE block faults", "client SZX reduction", "Q-Block"]}
 
@@ -664,11 +664,18 @@ def smaller_block_upload(server):
                 reply = coap_roundtrip(
                     sock, address, upload_block(mid, b"\x21", num, more, szx, chunk))
                 echoed = decoded_options(reply).get(27, [])
-                if len(echoed) != 1:
-                    raise AssertionError(f"block {num} did not echo Block1: {echoed!r}")
-                echoed_num, _, echoed_szx = block1_fields(echoed[0])
-                if (echoed_num, echoed_szx) != (num, szx):
-                    raise AssertionError(f"block {num} was not kept at SZX {szx}: {echoed!r}")
+                if more:
+                    if len(echoed) != 1:
+                        raise AssertionError(f"block {num} did not echo Block1: {echoed!r}")
+                    echoed_num, _, echoed_szx = block1_fields(echoed[0])
+                    if (echoed_num, echoed_szx) != (num, szx):
+                        raise AssertionError(f"block {num} was not kept at SZX {szx}: {echoed!r}")
+                elif len(echoed) == 1:
+                    echoed_num, _, echoed_szx = block1_fields(echoed[0])
+                    if (echoed_num, echoed_szx) != (num, szx):
+                        raise AssertionError(f"final block echo changed size: {echoed!r}")
+                elif echoed:
+                    raise AssertionError(f"final block had repeated Block1: {echoed!r}")
                 if reply[1] != (CONTINUE if more else 65):
                     raise AssertionError(f"block {num} returned {reply[1]}")
                 offset += len(chunk)
@@ -684,7 +691,7 @@ def smaller_block_upload(server):
     return {"szx": szx, "block_bytes": size, "blocks": num, "length": len(body),
             "readback": counts.decode(),
             "verified": ["client-selected 256-byte Block1 completes the exact 2000-byte body once",
-                         "every acknowledgement echoes that SZX and NUM"],
+                         "each non-final acknowledgement echoes that SZX and NUM"],
             "unqualified": ["server-requested downshift", "Q-Block"]}
 
 
