@@ -631,6 +631,37 @@ def oscore_upload_workflow(client, server):
                 "unqualified": ["protected block loss or duplication", "OSCORE client SZX negotiation"]}
 
 
+def oscore_upload_fault_workflow(client, server):
+    """Lost first reply and duplicated request during one protected Block1 upload."""
+    evidence = []
+    for mode in ("dtls-reconnect", "drop-reply", "duplicate-request"):
+        with Server(server, "oscore") as service:
+            expect(request(client, "oscore", service.number, sequence=0))
+            with Proxy(service.number, mode) as relay:
+                created = request(client, "oscore", relay.number, sequence=100, path="upload",
+                                  method="POST", payload=LARGE, timeout=6500)
+            expect(created, 65, b"")
+            requests = [row for row in relay.trace if row["direction"] == "request"]
+            if len(requests) < 2:
+                raise AssertionError("protected upload did not exercise follow-up datagrams")
+            if mode != "dtls-reconnect" and not any(row["action"] != "forward" for row in relay.trace):
+                raise AssertionError("requested upload fault was not exercised")
+            expect(request(client, "oscore", service.number, sequence=200, path="upload"), 69, b"1:1")
+            refused = request(client, "oscore", service.number, sequence=1000, path="upload",
+                              method="POST", payload=LARGE, key="incorrect", timeout=500)
+            expect_refusal(refused)
+            preserved = request(client, "oscore", service.number, sequence=1100, path="upload")
+            expect(preserved, 69, b"1:1")
+            evidence.append({"mode": mode, "created": created, "trace": relay.trace,
+                             "wrong_key_refusal": refused, "preserved": preserved})
+    return {"expected_length": len(LARGE), "expected_sha256": hashlib.sha256(LARGE).hexdigest(),
+            "transfers": evidence,
+            "verified": ["exact protected upload after a lost first reply",
+                         "exact protected upload after a duplicated request",
+                         "one handler effect", "wrong key cannot add another effect"],
+            "unqualified": ["IPv6", "DTLS", "Q-Block", "client SZX reduction"]}
+
+
 def ipv6_dtls_request(client, number, traces, **kwargs):
     # Each session has a fresh server-visible endpoint; IPv6-only sockets
     # prevent a fixture silently falling back to IPv4 from satisfying the case.
@@ -849,6 +880,8 @@ def main():
             continue
         case(f"oscore-upload:{client}->{server}",
              lambda client=client, server=server: oscore_upload_workflow(peers[client], peers[server]))
+        case(f"oscore-upload-faults:{client}->{server}",
+             lambda client=client, server=server: oscore_upload_fault_workflow(peers[client], peers[server]))
 
     # The relay preserves one server-visible UDP endpoint across fresh clients.
     for server in ("coaptic", "coap-rs"):

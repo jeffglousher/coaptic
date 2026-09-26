@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 102 scenario results (79 when the local C peer is built without DTLS and OSCORE):
+The full run contains 105 scenario results (80 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -199,7 +199,10 @@ selection and Q-Block are not part of this proof.
 Three OSCORE upload cases, Coaptic self-pair and both libcoap directions, repeat the
 exact 2,000- and 4,096-byte creates, the wrong-byte refusal, and a wrong-key refusal
 that leaves `accepted:calls` unchanged. Each fresh client process starts at its own
-sender sequence. Lost or duplicated protected blocks are not part of this proof.
+sender sequence. Three further cases repeat the 2,000-byte upload normally, with the first
+reply dropped, and with the first request duplicated. Each schedule must create the body once.
+A later wrong-key POST must leave the count unchanged. IPv6, DTLS, and Q-Block uploads are
+not part of this fault proof.
 
 Three protected Block2 cases exercise Coaptic self-pair and both libcoap directions.
 Each checks exact 2,000-byte assembly normally, with the first reply dropped and
