@@ -839,6 +839,56 @@ def qblock1_missing(server):
             "unqualified": ["full-window continuation", "peer servers other than Coaptic", "protected Q-Block"]}
 
 
+def qblock1_window(server):
+    """Ten NON Q-Block1 payloads draw one 2.31. The next payload is delivered once."""
+    token = b"\x71"
+    size1 = 168
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            def send_non(mid, num, payload, more):
+                packet = qblock1_message(mid, token, num, more, 0, payload, size1, b"w", non=True)
+                if sock.sendto(packet, address) != len(packet):
+                    raise AssertionError("Q-Block1 probe was not completely sent")
+
+            for num in range(9):
+                send_non(2 + num, num, bytes((num * 16 + i) % 251 for i in range(16)), True)
+            sock.settimeout(0.3)
+            try:
+                early, _sender = sock.recvfrom(4096)
+            except socket.timeout:
+                early = None
+            if early is not None:
+                raise AssertionError(f"Continue arrived before payload 9: {early!r}")
+            send_non(11, 9, bytes((9 * 16 + i) % 251 for i in range(16)), True)
+            continued = await_datagram(sock, address, 2)
+            if ((continued[0] >> 4) & 3) != 1 or continued[1] != CONTINUE or (continued[0] & 15) != 1:
+                raise AssertionError(f"full window was not a NON 2.31: {continued!r}")
+            if continued[4:5] != token:
+                raise AssertionError(f"2.31 token was not the request token: {continued!r}")
+            if decoded_options(continued).get(19) != [b"\x98"]:
+                raise AssertionError("2.31 did not echo Q-Block1 NUM 9, M=1, SZX 0")
+            if coap_exchange(sock, address, coap_message(1, 12, b"\x72", [(11, b"upload")])) != (69, b"0:0"):
+                raise AssertionError("the completed window reached the handler")
+            finished = coap_roundtrip(
+                sock, address,
+                qblock1_message(13, token, 10, False, 0, bytes((160 + i) % 251 for i in range(8)), size1, b"w"))
+            if finished[1] != 128:
+                raise AssertionError(f"payload after the window returned {finished[1]}")
+            code, readback = coap_exchange(
+                sock, address, coap_message(1, 14, b"\x73", [(11, b"upload")]))
+        finally:
+            sock.close()
+    if (code, readback) != (69, b"0:1"):
+        raise AssertionError(f"payload after the window was not delivered once: {code} {readback!r}")
+    return {"window": 10, "continue_num": 9, "length": size1, "readback": readback.decode(),
+            "verified": ["nine NON payloads draw no Continue", "the tenth payload is NON 2.31 for NUM 9",
+                         "the handler stays at 0:0 until the next payload", "that payload is delivered once"],
+            "unqualified": ["peer servers other than Coaptic", "protected Q-Block"]}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1116,6 +1166,7 @@ def main():
     case("block1-scaled:coaptic", lambda: scaled_smaller_block(peers["coaptic"]))
     case("qblock1-upload:coaptic", lambda: qblock1_upload(peers["coaptic"]))
     case("qblock1-missing:coaptic", lambda: qblock1_missing(peers["coaptic"]))
+    case("qblock1-window:coaptic", lambda: qblock1_window(peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))

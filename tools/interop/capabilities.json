@@ -2971,6 +2971,26 @@
       "executable": "tools/interop/run.py:qblock1_missing"
     },
     {
+      "id": "qblock1-window:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "request-tag", "size1", "continue", "handler-effect"],
+      "positive_proof": [
+        "the tenth NON Q-Block1 payload of a set draws one NON 2.31 echoing NUM 9",
+        "the payload after that set is delivered once"
+      ],
+      "failure_proof": [
+        "the first nine payloads draw no Continue",
+        "the handler stays at 0:0 until the payload after the set"
+      ],
+      "executable": "tools/interop/run.py:qblock1_window"
+    },
+    {
       "id": "block1-szx:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3274,7 +3294,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "One Coaptic process case creates an exact 2000-byte body from two Q-Block1 payloads, refuses a missing Request-Tag with 4.00, and refuses a changed SZX with 4.08. A second case reports a skipped NON payload as missing-blocks 4.08, keeps the handler at 0:0, and delivers that payload once. Full-window continuation, other peers, and protected Q-Block remain absent.",
+      "reason": "Coaptic process cases cover an exact 2000-byte Q-Block1 upload, a missing Request-Tag (4.00), a changed SZX (4.08), a skipped NON payload reported as missing-blocks 4.08, and one 2.31 after ten NON payloads. Other peers and protected Q-Block remain absent.",
       "issue": 200,
       "executable_cases": []
     },
