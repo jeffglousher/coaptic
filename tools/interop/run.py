@@ -695,6 +695,40 @@ def smaller_block_upload(server):
             "unqualified": ["server-requested downshift", "Q-Block"]}
 
 
+def scaled_smaller_block(server):
+    """RFC 7959 Figure 9 against one server: 64-byte block 0, then 16-byte block 4."""
+    first = bytes(i % 251 for i in range(64))
+    tail = bytes((64 + i) % 251 for i in range(16))
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            opened = coap_roundtrip(sock, address, upload_block(2, b"\x31", 0, True, 2, first))
+            if opened[1] != CONTINUE:
+                raise AssertionError(f"first 64-byte block returned {opened[1]}")
+            skipped = coap_roundtrip(sock, address, upload_block(3, b"\x31", 1, True, 0, tail))
+            if skipped[1] != INCOMPLETE:
+                raise AssertionError(f"unaligned smaller block returned {skipped[1]}")
+            code, counts = coap_exchange(
+                sock, address, coap_message(1, 5, b"\x32", [(11, b"upload")]))
+            if (code, counts) != (69, b"0:0"):
+                raise AssertionError(f"unaligned block reached the handler: {code} {counts!r}")
+            finished = coap_roundtrip(sock, address, upload_block(4, b"\x31", 4, False, 0, tail))
+            if finished[1] != 128:
+                raise AssertionError(f"scaled block did not reach the length check: {finished[1]}")
+            code, counts = coap_exchange(
+                sock, address, coap_message(1, 6, b"\x33", [(11, b"upload")]))
+        finally:
+            sock.close()
+    if (code, counts) != (69, b"0:1"):
+        raise AssertionError(f"scaled body was not delivered once: {code} {counts!r}")
+    return {"first_bytes": 64, "next_num": 4, "next_bytes": 16, "readback": counts.decode(),
+            "verified": ["64-byte block 0 continues", "16-byte block 1 is 4.08",
+                         "16-byte block 4 is delivered once"],
+            "unqualified": ["Q-Block size change", "peer servers other than Coaptic"]}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -969,6 +1003,7 @@ def main():
                  upload_workflow(peers[client], peers[server], transport, family))
 
     case("block1-faults:coaptic", lambda: block1_fault_workflow(peers["coaptic"]))
+    case("block1-scaled:coaptic", lambda: scaled_smaller_block(peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))

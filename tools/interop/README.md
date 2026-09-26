@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 108 scenario results (83 when the local C peer is built without DTLS and OSCORE):
+The full run contains 109 scenario results (84 when the local C peer is built without DTLS and OSCORE):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -194,9 +194,9 @@ A `Size1` of 1 does not complete an `M=1` block. A repeated NUM stays 2.31 and t
 following NUM continues. A skipped NUM is 4.08. NUM 1 at 1,024 bytes after NUM 0 at
 64 bytes is also 4.08: its byte offset does not continue the body. A block past the
 4,096-byte body is 4.13. The upload handler stays at `0:0`. coap-rs answers the skipped
-NUM with 2.31, so that refusal is not claimed for it. A smaller size whose block
-number addresses the next unread byte is accepted by the library; this process
-case does not send that exchange.
+NUM with 2.31, so that refusal is not claimed for it. One further Coaptic case sends a
+64-byte block and then a 16-byte block numbered at that byte. The unaligned number
+is 4.08. The aligned number is delivered once. Q-Block does not change size this way.
 
 Three more cases, against Coaptic, coap-rs, and libcoap, send the same 2,000-byte body as 256-byte blocks from the first block.
 Each non-final acknowledgement must echo that size and block number, and the server

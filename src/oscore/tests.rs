@@ -975,7 +975,7 @@ fn figure5_option_class_matrix() {
     assert!(header::encode_as_outer(16));
 
     // Dual (E+U).
-    for n in [6, 14, 23, 27, 28, 60, 258] {
+    for n in [6, 14, 19, 23, 27, 28, 31, 60, 258] {
         assert_eq!(header::classify(n), OptionClass::Dual, "Dual {n}");
         assert!(header::classify(n).in_plaintext());
     }
@@ -987,6 +987,10 @@ fn figure5_option_class_matrix() {
     assert!(
         !header::encode_as_outer(23) && !header::encode_as_outer(27),
         "Block stays Inner-only on encode"
+    );
+    assert!(
+        !header::encode_as_outer(19) && !header::encode_as_outer(31),
+        "Q-Block stays Inner-only on encode"
     );
     assert!(!header::encode_as_outer(28) && !header::encode_as_outer(60));
     assert!(
@@ -1001,10 +1005,88 @@ fn figure5_option_class_matrix() {
         assert!(!header::encode_as_outer(n));
     }
     // Unknown / later options: Class E (§4.1).
-    for n in [19, 31, 99, 252, 292] {
+    for n in [99, 252, 292] {
         assert_eq!(header::classify(n), OptionClass::Inner, "unknown {n}");
         assert!(!header::encode_as_outer(n));
     }
+}
+
+#[test]
+fn oscore_block_and_qblock_mix_is_per_side() {
+    use crate::{App, Request, Response, profiles, put};
+
+    fn take(req: Request<'_>) -> Response<'static> {
+        let bytes = req.body().unwrap_or(req.payload());
+        assert_eq!(bytes, b"q");
+        Response::changed()
+    }
+    let from = Endpoint::v4([192, 0, 2, 1], 5683);
+    let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+    let size1 = encode_uint(1);
+
+    let response_code = |outer_extra: &[Opt<'_>], inner_block: bool| -> Code {
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("upload", put(take))
+            .bind(WideLoopback::default())
+            .unwrap();
+        server.set_oscore(server_c1());
+        let mut client = client_c1();
+        let mut opts = OptionsBuilder::<8>::new();
+        opts.push(Opt::uri_path("upload")).unwrap();
+        opts.push(Opt::q_block1(&block)).unwrap();
+        if inner_block {
+            opts.push(Opt::block1(&block)).unwrap();
+        }
+        opts.push(Opt::size1(&size1)).unwrap();
+        opts.push(Opt::request_tag(b"t")).unwrap();
+        let plain = Message::new(Type::Confirmable, Code::PUT, MessageId::new(7))
+            .with_token(Token::from_checked(&[9]))
+            .with_options(opts.as_slice())
+            .with_payload(b"q");
+        let mut protected = [0u8; WIRE];
+        let n = client.protect_request(&plain, &mut protected).unwrap();
+        let mut delivered = [0u8; WIRE];
+        let n = if outer_extra.is_empty() {
+            delivered[..n].copy_from_slice(&protected[..n]);
+            n
+        } else {
+            let outer = decode(&protected[..n]).unwrap();
+            inject_outer_opts(&outer, outer_extra, &mut delivered)
+        };
+        server.transport_mut().inbox = Some((from, delivered, n));
+        server.poll(0).unwrap();
+        let (_, sent, sn) = server.transport().last_send.expect("response");
+        let wire = decode(&sent[..sn]).unwrap();
+        if wire.oscore().is_none() {
+            return wire.code();
+        }
+        let request = super::RequestRef::from_kid(&[], PartialIv::from_seq(0).unwrap()).unwrap();
+        let mut opened = [0u8; WIRE];
+        client
+            .unprotect_response(&wire, request, &mut opened)
+            .unwrap()
+            .code()
+    };
+
+    let outer_block = Opt::block1(&block);
+    let outer_q = Opt::q_block1(&block);
+    assert_eq!(
+        response_code(&[outer_block, outer_q], false),
+        Code::BAD_OPTION,
+        "outer Block and Q-Block together"
+    );
+    assert_eq!(
+        response_code(&[], true),
+        Code::BAD_OPTION,
+        "inner Block and Q-Block together"
+    );
+    assert_eq!(
+        response_code(&[outer_block], false),
+        Code::CHANGED,
+        "outer Block with inner Q-Block"
+    );
 }
 
 fn inject_outer_opts(

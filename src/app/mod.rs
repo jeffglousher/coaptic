@@ -1092,8 +1092,7 @@ fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> boo
         || parsed
             .q_block2()
             .any(|value| value.map_or(true, |block| block.is_bert()))
-        || ((parsed.block1().is_some() || parsed.block2().is_some())
-            && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some()))
+        || mixes_block_and_qblock(parsed)
         || parsed
             .get_options(crate::message::OptionNumber::Q_BLOCK1)
             .nth(1)
@@ -1107,6 +1106,13 @@ fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> boo
                     })
                 })))
         || matches!(parsed.block1(), Some(Err(_)))
+}
+
+fn mixes_block_and_qblock(parsed: &ParsedMessage<'_>) -> bool {
+    // RFC 9177 §4.1. Same-side Block and Q-Block are 4.02. A mix across
+    // Inner and Outer is not visible on one of these messages.
+    (parsed.block1().is_some() || parsed.block2().is_some())
+        && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some())
 }
 
 fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
@@ -1236,6 +1242,22 @@ where
     {
         let _ = engine.release_rx(rx);
         return Ok(());
+    }
+
+    // RFC 9177 §4.1: Block and Q-Block on the Outer side are 4.02 before
+    // the ciphertext is treated as a body. Inner options are still sealed.
+    if parsed.oscore().is_some() && mixes_block_and_qblock(&parsed) {
+        // Plaintext 4.02: the ciphertext is not a request this response can
+        // protect, and the outer options are already not one body.
+        let outcome = send_empty(
+            engine,
+            io,
+            peer,
+            Message::new(Type::Acknowledgement, Code::BAD_OPTION, parsed.message_id())
+                .with_token(parsed.token()),
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
     }
 
     let mut inner_scratch = Mem::RxScratch::default();
