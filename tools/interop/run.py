@@ -380,8 +380,15 @@ def upload_workflow(client, server, transport="udp", family="ipv4"):
     changed[-1] ^= 1
 
     def direct(**kwargs):
-        return request(client, transport, service.number, family=family, path="upload",
-                       timeout=6500, **kwargs)
+        if family != "ipv6":
+            return request(client, transport, service.number, family=family, path="upload",
+                           timeout=6500, **kwargs)
+        with Proxy(service.number, "dtls-reconnect", family=family) as relay:
+            result = request(client, transport, relay.number, family=family, path="upload",
+                             timeout=6500, **kwargs)
+        if not any(row["direction"] == "request" for row in relay.trace):
+            raise AssertionError("no IPv6 request datagrams")
+        return result
 
     def traced(payload):
         with Proxy(service.number, "dtls-reconnect", family=family) as relay:
@@ -414,8 +421,8 @@ def upload_workflow(client, server, transport="udp", family="ipv4"):
                 "verified": ["exact 2000-byte Block1 POST creates once",
                              "one wrong byte is 4.00 and does not increment accepted",
                              "exact 4096-byte Block1 POST creates once"],
-                "unqualified": ["missing or duplicate blocks", "body-limit negotiation",
-                                "IPv6 DTLS", "OSCORE"]}
+                "unqualified": ["missing or duplicate blocks", "body-limit negotiation", "OSCORE"]
+                + ([] if transport == "dtls" and family == "ipv6" else ["IPv6 DTLS"])}
 
 
 def ipv6_dtls_request(client, number, traces, **kwargs):
@@ -619,7 +626,8 @@ def main():
 
     for transport, family, label in (("udp", "ipv4", "upload-udp"),
                                      ("dtls", "ipv4", "upload-dtls"),
-                                     ("udp", "ipv6", "upload-ipv6-udp")):
+                                     ("udp", "ipv6", "upload-ipv6-udp"),
+                                     ("dtls", "ipv6", "upload-ipv6-dtls")):
         for client, server in [("coaptic", "coaptic"), ("coaptic", "coap-rs"), ("coap-rs", "coaptic"),
                                ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
             if transport == "dtls" and args.libcoap_udp_only and "libcoap" in (client, server):

@@ -50,7 +50,7 @@ certificate-verifier error. These are not raw-public-key or full ETSI tests.
 
 ## Tested surface
 
-The full run contains 93 scenario results (74 when the local C-peer DTLS build is excluded):
+The full run contains 98 scenario results (77 when the local C-peer DTLS build is excluded):
 
 - Three OSCORE state scenarios (Coaptic self-pair and both libcoap directions)
   use public RFC 8613 C.1 fixture keys. Exact GET, PUT/readback, wrong-key PUT
@@ -183,12 +183,13 @@ retry count; plaintext responses and repeated challenges cannot trigger this
 policy. The libcoap direction requires its default B.1.2 challenge to be exercised.
 This is a bounded fixture policy, not automatic freshness policy in the library.
 
-Fifteen upload cases use the same five pairings on IPv4 UDP, IPv4 PSK DTLS, and IPv6 UDP.
+Twenty upload cases use the same five pairings on IPv4 UDP, IPv4 PSK DTLS, IPv6 UDP, and IPv6 PSK DTLS.
 Each posts the exact 2,000-byte and 4,096-byte public patterns, requires more than one
 request datagram, and checks that one wrong body byte returns 4.00 without increasing
-the accepted-handler count. The readback is `accepted:calls`. IPv6 uploads traverse an
-IPv6-only relay. This is assembled Block1 on loopback, not missing or duplicate blocks,
-size negotiation, IPv6 DTLS, or OSCORE uploads.
+the accepted-handler count. The readback is `accepted:calls`. Every IPv6 exchange,
+including the wrong-byte refusal and count readback, traverses an IPv6-only relay.
+This is assembled Block1 on loopback, not missing or duplicate blocks, size
+negotiation, or OSCORE uploads.
 
 Three protected Block2 cases exercise Coaptic self-pair and both libcoap directions.
 Each checks exact 2,000-byte assembly normally, with the first reply dropped and
