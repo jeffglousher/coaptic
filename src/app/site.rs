@@ -306,6 +306,17 @@ fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Res
     Response::new(Code::CONTENT)
         .payload_copy_full(&buf[..n])
         .content_format(ContentFormat::LINK_FORMAT)
+        .etag(&catalog_etag(&buf[..n]))
+}
+
+/// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
+fn catalog_etag(body: &[u8]) -> [u8; 4] {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in body {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash.to_be_bytes()
 }
 
 fn link_bytes(segments: &[&str]) -> usize {
