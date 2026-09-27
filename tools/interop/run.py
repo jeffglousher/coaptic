@@ -1015,7 +1015,7 @@ def discovery(server):
     if decoded_options(reply).get(12) != [bytes([40])]:
         raise AssertionError("discovery content format was not link-format")
     body = coap_payload(reply).decode()
-    for path in ("/test", "/large", "/counter", "/upload", "/methods", "/separate"):
+    for path in ("/test", "/large", "/counter", "/upload", "/methods", "/separate", "/fail"):
         if f"<{path}>" not in body:
             raise AssertionError(f"discovery omitted {path}: {body}")
     if ".well-known" in body:
@@ -1046,6 +1046,32 @@ def separate_response(server):
         finally:
             sock.close()
     return {"ack_mid": 0x21, "payload": "separate-payload"}
+
+
+def no_response_internal(server):
+    """GET /fail is 5.00. NON with No-Response 5.xx sends nothing."""
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            visible = coap_roundtrip(
+                sock, address, coap_message(1, 2, b"\x9a", [(11, b"fail")]))
+            if visible[1] != 160:
+                raise AssertionError(f"/fail returned {visible[1]}")
+            suppressed = coap_message(1, 3, b"\x9b", [(11, b"fail"), (258, bytes([16]))], non=True)
+            if sock.sendto(suppressed, address) != len(suppressed):
+                raise AssertionError("No-Response GET was not completely sent")
+            sock.settimeout(0.3)
+            try:
+                early, _sender = sock.recvfrom(4096)
+            except socket.timeout:
+                early = None
+            if early is not None:
+                raise AssertionError(f"suppressed 5.00 was sent: {early!r}")
+        finally:
+            sock.close()
+    return {"visible": 160}
 
 
 def empty_request_tag(server):
@@ -1386,6 +1412,7 @@ def main():
     case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
+    case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
