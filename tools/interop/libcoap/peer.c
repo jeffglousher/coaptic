@@ -201,6 +201,8 @@ static coap_oscore_conf_t *oscore_config(int server, int wrong_key, uint64_t seq
 
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
+  const int q_block = argc > 8 && strcmp(argv[argc-1],"qblock1")==0;
+  if(q_block) argc--;
   if(argc<8 || argc>11){failure("invalid arguments");return 2;}
   const char *family = argc >= 9 ? argv[8] : "ipv4";
   if(strcmp(family,"ipv4") && strcmp(family,"ipv6")){failure("invalid address family");return 2;}
@@ -237,10 +239,13 @@ int main(int argc,char **argv) {
   coap_startup();coap_set_log_level(COAP_LOG_EMERG);
   if(dtls && !coap_dtls_is_supported()){failure("DTLS unavailable in libcoap build");coap_cleanup();return 2;}
   if(oscore && !coap_oscore_is_supported()){failure("OSCORE unavailable in libcoap build");coap_cleanup();return 2;}
+  if(q_block && !coap_q_block_is_supported()){failure("Q-Block unavailable in libcoap build");coap_cleanup();return 2;}
   for(size_t i=0;i<sizeof(large_body);i++)large_body[i]=(uint8_t)(i%251);
   coap_context_t *ctx=coap_new_context(NULL);
   if(!ctx){failure("context failed");coap_cleanup();return 1;}
-  coap_context_set_block_mode(ctx,COAP_BLOCK_USE_LIBCOAP|COAP_BLOCK_SINGLE_BODY);
+  /* A server with Q-Block answers Q-Block requests and still serves classic Block. */
+  const int try_q_block=(server||q_block)&&coap_q_block_is_supported();
+  coap_context_set_block_mode(ctx,COAP_BLOCK_USE_LIBCOAP|COAP_BLOCK_SINGLE_BODY|(try_q_block?COAP_BLOCK_TRY_Q_BLOCK:0));
   coap_address_t addr;coap_address_init(&addr);
   if(ipv6) {
     addr.addr.sin6.sin6_family=AF_INET6;

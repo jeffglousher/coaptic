@@ -3179,6 +3179,57 @@
       "executable": "tools/interop/run.py:conditional_workflow"
     },
     {
+      "id": "qblock1-interop:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "upload", "handler-effect"],
+      "positive_proof": [
+        "the coaptic client posts the exact 2000-byte pattern to coaptic with Q-Block1 on every POST datagram and gets 2.01",
+        "the readback is 1:1"
+      ],
+      "failure_proof": ["a POST datagram without Q-Block1 or with Block1 fails"],
+      "executable": "tools/interop/run.py:qblock1_interop"
+    },
+    {
+      "id": "qblock1-interop:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "upload", "handler-effect"],
+      "positive_proof": [
+        "the coaptic client posts the exact 2000-byte pattern to libcoap with Q-Block1 on every POST datagram and gets 2.01",
+        "the readback is 1:1"
+      ],
+      "failure_proof": ["a POST datagram without Q-Block1 or with Block1 fails"],
+      "executable": "tools/interop/run.py:qblock1_interop"
+    },
+    {
+      "id": "qblock1-interop:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block1", "upload", "handler-effect"],
+      "positive_proof": [
+        "the libcoap client posts the exact 2000-byte pattern to coaptic with Q-Block1 on every POST datagram and gets 2.01",
+        "the readback is 1:1"
+      ],
+      "failure_proof": ["a POST datagram without Q-Block1 or with Block1 fails"],
+      "executable": "tools/interop/run.py:qblock1_interop"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3544,7 +3595,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "libcoap does not implement Q-Block in this suite.",
+      "reason": "Q-Block2, missing-block recovery, and window continuation against libcoap are not process cases. coap-rs has no Q-Block.",
       "issue": 200,
       "executable_cases": []
     },
