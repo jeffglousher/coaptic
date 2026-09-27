@@ -3047,6 +3047,36 @@
       "executable": "tools/interop/run.py:no_response_counter"
     },
     {
+      "id": "no-response-4:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["no-response"],
+      "positive_proof": ["GET /missing without No-Response is 4.04"],
+      "failure_proof": ["a NON GET /missing with No-Response suppressing 4.xx sends nothing"],
+      "executable": "tools/interop/run.py:no_response_not_found"
+    },
+    {
+      "id": "discovery:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["discovery", "link-format"],
+      "positive_proof": [
+        "GET /.well-known/core is 2.05 link-format and lists the five registered routes"
+      ],
+      "failure_proof": ["a catalog that lists .well-known or omits a route fails"],
+      "executable": "tools/interop/run.py:discovery"
+    },
+    {
       "id": "concurrent-counter:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3400,7 +3430,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Echo, Request-Tag, problem details, and 4.xx/5.xx No-Response are not process cases.",
+      "reason": "Echo, Request-Tag, problem details, and 5.xx No-Response are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3416,7 +3446,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "No discovery or delayed-completion process cases.",
+      "reason": "Delayed responses are not process cases.",
       "issue": 200,
       "executable_cases": []
     },

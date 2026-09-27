@@ -972,6 +972,57 @@ def concurrent_counter(server, first, second):
     return {"posts": len(replies), "readback": "2"}
 
 
+def no_response_not_found(server):
+    """NON GET /missing with No-Response 4.xx sends nothing. Without it, the code is 4.04."""
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            visible = coap_roundtrip(
+                sock, address, coap_message(1, 2, b"\x91", [(11, b"missing")]))
+            if visible[1] != 132:
+                raise AssertionError(f"missing path returned {visible[1]}")
+            suppressed = coap_message(1, 3, b"\x92", [(11, b"missing"), (258, bytes([8]))], non=True)
+            if sock.sendto(suppressed, address) != len(suppressed):
+                raise AssertionError("No-Response GET was not completely sent")
+            sock.settimeout(0.3)
+            try:
+                early, _sender = sock.recvfrom(4096)
+            except socket.timeout:
+                early = None
+            if early is not None:
+                raise AssertionError(f"suppressed 4.04 was sent: {early!r}")
+        finally:
+            sock.close()
+    return {"visible": 132}
+
+
+def discovery(server):
+    """GET /.well-known/core lists the registered routes."""
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            reply = coap_roundtrip(
+                sock, address,
+                coap_message(1, 2, b"\x93", [(11, b".well-known"), (11, b"core")]))
+        finally:
+            sock.close()
+    if reply[1] != 69:
+        raise AssertionError(f"discovery returned {reply[1]}")
+    if decoded_options(reply).get(12) != [bytes([40])]:
+        raise AssertionError("discovery content format was not link-format")
+    body = coap_payload(reply).decode()
+    for path in ("/test", "/large", "/counter", "/upload", "/methods"):
+        if f"<{path}>" not in body:
+            raise AssertionError(f"discovery omitted {path}: {body}")
+    if ".well-known" in body:
+        raise AssertionError(f"discovery listed itself: {body}")
+    return {"links": body}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1242,6 +1293,8 @@ def main():
     case("oscore-qblock1:coaptic", lambda: oscore_qblock1_upload(peers["coaptic"], peers["coaptic"]))
     case("oscore-qblock1-faults:coaptic", lambda: oscore_qblock1_faults(peers["coaptic"], peers["coaptic"]))
     case("no-response:coaptic", lambda: no_response_counter(peers["coaptic"]))
+    case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
+    case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
     case("concurrent-counter:coaptic",
          lambda: concurrent_counter(peers["coaptic"], peers["coaptic"], peers["coap-rs"]))
     case("concurrent-counter:coap-rs",
