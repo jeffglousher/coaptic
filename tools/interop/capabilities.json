@@ -3159,6 +3159,26 @@
       "executable": "tools/interop/run.py:observe_client"
     },
     {
+      "id": "conditional:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["if-match", "if-none-match", "etag"],
+      "positive_proof": [
+        "PUT If-None-Match creates a missing /cond (2.01)",
+        "PUT and DELETE with If-Match on the current ETag succeed (2.04, 2.02)"
+      ],
+      "failure_proof": [
+        "If-Match on a missing resource, If-None-Match on an existing one, and a stale If-Match ETag are 4.12",
+        "each 4.12 leaves the body and ETag unchanged"
+      ],
+      "executable": "tools/interop/run.py:conditional_workflow"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3460,7 +3480,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Conditional options and standardized patch formats are not in the method workflows.",
+      "reason": "Conditional requests are Coaptic only. Standardized patch formats are not in the method workflows.",
       "issue": 200,
       "executable_cases": []
     },
