@@ -97,8 +97,9 @@ static void get_fixture(coap_resource_t *resource, coap_session_t *session,
 static void post_counter(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
                         coap_pdu_t *response) {
-  (void)resource;(void)session;(void)request;(void)query;
+  (void)session;(void)request;(void)query;
   counter++;coap_pdu_set_code(response,COAP_RESPONSE_CODE_CHANGED);
+  coap_resource_notify_observers(resource,NULL);
 }
 /* Bounded application workflow fixture; each CoAP stack owns its wire parsing. */
 static void method_resource(coap_resource_t *resource, coap_session_t *session,
@@ -261,7 +262,7 @@ int main(int argc,char **argv) {
     for(size_t i=0;i<3;i++) {
       coap_resource_t *r=coap_resource_init(coap_make_str_const(paths[i]),oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
       coap_register_handler(r,COAP_REQUEST_GET,get_fixture);
-      if(i==2)coap_register_handler(r,COAP_REQUEST_POST,post_counter);
+      if(i==2){coap_register_handler(r,COAP_REQUEST_POST,post_counter);coap_resource_set_get_observable(r,1);}
       coap_add_resource(ctx,r);
     }
     coap_resource_t *methods_resource = coap_resource_init(coap_make_str_const("methods"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);

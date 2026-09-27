@@ -42,12 +42,14 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, observe=False):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    if sequence is not None or qblock1:
+    if sequence is not None or qblock1 or observe:
         result.append("0" if sequence is None else str(sequence))
     if qblock1:
         result.append("qblock1")
+    if observe:
+        result.append("observe")
     return result
 
 
@@ -1160,6 +1162,41 @@ def observe_counter(server):
     return {"observe": [first_seq, second_seq, third_seq], "final": value.decode()}
 
 
+def observe_client(client, server, writer):
+    """The client observes /counter through a relay and prints three bodies."""
+    def wait_responses(relay, count, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if sum(row["direction"] == "response" for row in relay.trace) >= count:
+                return
+            time.sleep(0.02)
+        raise AssertionError(f"relay saw fewer than {count} responses")
+
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            proc = subprocess.Popen(
+                command(client, "client", "udp", relay.number, path="counter", timeout=15000, observe=True),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                wait_responses(relay, 1, 8)
+                expect(request(writer, "udp", service.number, path="counter", method="POST"), 68, b"")
+                wait_responses(relay, 2, 8)
+                expect(request(writer, "udp", service.number, path="counter", method="POST"), 68, b"")
+                out, err = proc.communicate(timeout=20)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+            trace = relay.trace
+    lines = out.splitlines()
+    if len(lines) != 1:
+        raise RuntimeError(f"expected one observe event: {out[:400]!r} {err[-400:]!r}")
+    event = decode(lines[0])
+    event["exit_code"] = proc.returncode
+    expect(event, 69, b"0,1,2")
+    return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
+
+
 def empty_request_tag(server):
     """A missing Request-Tag is 4.00. An empty Request-Tag is accepted and the handler runs once."""
     payload = bytes(range(16))
@@ -1500,6 +1537,9 @@ def main():
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
+    for server_name in ("coaptic", "libcoap"):
+        case(f"observe-client:coaptic->{server_name}",
+             lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
