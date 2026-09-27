@@ -1074,6 +1074,92 @@ def no_response_internal(server):
     return {"visible": 160}
 
 
+def observe_counter(server):
+    """RFC 7641 against /counter: register, two notifications, deregister, then RST cancel.
+
+    A NON notification stays outstanding for 3 s (section 4.5.1), so the
+    second notification may arrive after that hold.
+    """
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        watcher = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        writer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        watcher.bind(("127.0.0.1", 0))
+        writer.bind(("127.0.0.1", 0))
+        mids = iter(range(0x40, 0x100))
+        try:
+            def observe_value(packet):
+                values = decoded_options(packet).get(6, [])
+                if len(values) != 1:
+                    raise AssertionError(f"expected one Observe option: {values!r}")
+                return int.from_bytes(values[0], "big")
+
+            def register(token):
+                reply = coap_roundtrip(
+                    watcher, address, coap_message(1, next(mids), token, [(6, b""), (11, b"counter")]))
+                if reply[1] != 69 or reply[4:4 + len(token)] != token:
+                    raise AssertionError(f"registration was not 2.05 on the token: {reply!r}")
+                return observe_value(reply), coap_payload(reply)
+
+            def post():
+                if coap_roundtrip(writer, address,
+                                  coap_message(2, next(mids), b"\xb0", [(11, b"counter")]))[1] != 68:
+                    raise AssertionError("counter POST was not 2.04")
+
+            def notification(token):
+                note = await_datagram(watcher, address, 5)
+                kind = (note[0] >> 4) & 3
+                if kind not in (0, 1) or note[1] != 69 or note[4:4 + len(token)] != token:
+                    raise AssertionError(f"not a 2.05 notification on the token: {note!r}")
+                if kind == 0:
+                    watcher.sendto(bytes([0x60, 0]) + note[2:4], address)
+                return note, observe_value(note), coap_payload(note)
+
+            def silent():
+                watcher.settimeout(0.5)
+                try:
+                    stray, _sender = watcher.recvfrom(4096)
+                except socket.timeout:
+                    return
+                raise AssertionError(f"notification after cancel: {stray!r}")
+
+            first_seq, first_body = register(b"\xb1")
+            if first_body != b"0":
+                raise AssertionError(f"registration body was {first_body!r}")
+            post()
+            _, second_seq, second_body = notification(b"\xb1")
+            post()
+            _, third_seq, third_body = notification(b"\xb1")
+            if (second_body, third_body) != (b"1", b"2"):
+                raise AssertionError(f"notification bodies were {second_body!r} {third_body!r}")
+            if not first_seq < second_seq < third_seq:
+                raise AssertionError(f"Observe did not increase: {first_seq} {second_seq} {third_seq}")
+
+            leave = coap_roundtrip(
+                watcher, address, coap_message(1, next(mids), b"\xb1", [(6, b"\x01"), (11, b"counter")]))
+            if leave[1] != 69 or 6 in decoded_options(leave):
+                raise AssertionError(f"deregistration was not a plain 2.05: {leave!r}")
+            post()
+            silent()
+
+            register(b"\xb2")
+            post()
+            note, _, body = notification(b"\xb2")
+            if body != b"4":
+                raise AssertionError(f"notification after re-register was {body!r}")
+            watcher.sendto(bytes([0x70, 0]) + note[2:4], address)
+            post()
+            silent()
+
+            code, value = coap_exchange(writer, address, coap_message(1, next(mids), b"\xb3", [(11, b"counter")]))
+        finally:
+            watcher.close()
+            writer.close()
+    if (code, value) != (69, b"5"):
+        raise AssertionError(f"counter did not reach 5: {code} {value!r}")
+    return {"observe": [first_seq, second_seq, third_seq], "final": value.decode()}
+
+
 def empty_request_tag(server):
     """A missing Request-Tag is 4.00. An empty Request-Tag is accepted and the handler runs once."""
     payload = bytes(range(16))
@@ -1413,6 +1499,7 @@ def main():
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
+    case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
