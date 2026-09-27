@@ -3107,6 +3107,26 @@
       "executable": "tools/interop/run.py:no_response_internal"
     },
     {
+      "id": "observe:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["observe", "handler-effect"],
+      "positive_proof": [
+        "GET /counter with Observe 0 is 2.05 with an Observe option and body 0",
+        "each counter POST sends a 2.05 notification on the same token with a larger Observe value"
+      ],
+      "failure_proof": [
+        "after GET with Observe 1 the response has no Observe option and no notification follows",
+        "after an RST of a notification no notification follows"
+      ],
+      "executable": "tools/interop/run.py:observe_counter"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3440,7 +3460,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "No process notification collector.",
+      "reason": "A hand-written client observes the Coaptic server only. The Coaptic client does not collect notifications from coap-rs or libcoap.",
       "issue": 200,
       "executable_cases": []
     },

@@ -18,6 +18,9 @@ static UPLOAD_RESOURCE: std::sync::Mutex<support::UploadResource> =
     std::sync::Mutex::new(support::UploadResource::new());
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn count(_: Request<'_>) -> Response<'static> {
+    counter_snapshot().observe(0)
+}
+fn counter_snapshot() -> Response<'static> {
     Response::content_copy(COUNTER.load(Ordering::SeqCst).to_string().as_bytes())
 }
 fn increment(_: Request<'_>) -> Response<'static> {
@@ -138,9 +141,15 @@ async fn run() -> Result<(), Error> {
             a.port,
             if a.oscore { "oscore" } else { "udp" },
         );
+        let mut signalled = COUNTER.load(Ordering::SeqCst);
         loop {
             app.poll(start.elapsed().as_millis() as u64 + 1)
                 .map_err(|e| format!("poll: {e}"))?;
+            let value = COUNTER.load(Ordering::SeqCst);
+            if value != signalled {
+                signalled = value;
+                app.signal(&["counter"]);
+            }
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -266,7 +275,10 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 7, true>, Error> {
             "/large",
             get(|_: Request<'_>| Response::content(&support::LARGE)),
         )
-        .route("/counter", get(count).post(increment))
+        .route(
+            "/counter",
+            get(count).post(increment).observe(counter_snapshot),
+        )
         .route("/upload", get(upload_resource).post(upload_resource))
         .route(
             "/methods",
