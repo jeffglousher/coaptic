@@ -3071,10 +3071,26 @@
       "requires": [],
       "features": ["discovery", "link-format"],
       "positive_proof": [
-        "GET /.well-known/core is 2.05 link-format and lists the five registered routes"
+        "GET /.well-known/core is 2.05 link-format and lists the registered routes"
       ],
       "failure_proof": ["a catalog that lists .well-known or omits a route fails"],
       "executable": "tools/interop/run.py:discovery"
+    },
+    {
+      "id": "separate:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["separate-response"],
+      "positive_proof": [
+        "GET /separate is an empty ACK of the request MID, then confirmable 2.05 separate-payload"
+      ],
+      "failure_proof": ["a piggybacked 2.05 fails"],
+      "executable": "tools/interop/run.py:separate_response"
     },
     {
       "id": "problem-details:coaptic",
@@ -3460,7 +3476,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Delayed responses are not process cases.",
+      "reason": "Separate responses are Coaptic only.",
       "issue": 200,
       "executable_cases": []
     },

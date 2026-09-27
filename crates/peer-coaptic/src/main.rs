@@ -253,11 +253,11 @@ fn echo_retry_requires_protection_challenge_and_unused_budget() {
     }
 }
 
-fn fixture(io: Io) -> Result<App<profiles::Default, Io, 5, true>, Error> {
+fn fixture(io: Io) -> Result<App<profiles::Default, Io, 6, true>, Error> {
     App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
-        .routes::<5>()
+        .routes::<6>()
         .route(
             "/test",
             get(|_: Request<'_>| Response::content(support::BODY)),
@@ -277,6 +277,14 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 5, true>, Error> {
                 .fetch(method_resource)
                 .patch(method_resource)
                 .ipatch(method_resource),
+        )
+        .route(
+            "/separate",
+            get(|_: Request<'_>| {
+                Response::content(b"separate-payload")
+                    .content_format(coaptic::ContentFormat::TEXT_PLAIN)
+                    .separate()
+            }),
         )
         .well_known_core()
         .bind(io)
