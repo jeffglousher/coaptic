@@ -220,7 +220,7 @@ int main(int argc,char **argv) {
   if(*end || port<1 || port>65535){failure("invalid port");return 2;}
   long timeout=strtol(argv[7],&end,10);
   if(*end || timeout<100 || timeout>30000){failure("invalid timeout");return 2;}
-  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods") && strcmp(argv[5],"upload")){failure("unsupported path");return 2;}
+  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods") && strcmp(argv[5],"upload") && strcmp(argv[5],"separate")){failure("unsupported path");return 2;}
   const char *methods[] = {"GET", "POST", "PUT", "DELETE", "FETCH", "PATCH", "IPATCH"};
   unsigned method = 0;
   for(unsigned i = 0; i < 7; i++) if(!strcmp(argv[6], methods[i])) method = i + 1;
