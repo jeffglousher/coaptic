@@ -3093,6 +3093,20 @@
       "executable": "tools/interop/run.py:separate_response"
     },
     {
+      "id": "no-response-5:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["no-response"],
+      "positive_proof": ["GET /fail is 5.00"],
+      "failure_proof": ["a NON GET /fail with No-Response suppressing 5.xx sends nothing"],
+      "executable": "tools/interop/run.py:no_response_internal"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3474,7 +3488,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Echo and 5.xx No-Response are not process cases.",
+      "reason": "libcoap Echo retry is asserted on oscore-state:coaptic->libcoap. A Coaptic server does not issue Echo.",
       "issue": 200,
       "executable_cases": []
     },
