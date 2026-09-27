@@ -278,6 +278,7 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 5, true>, Error> {
                 .patch(method_resource)
                 .ipatch(method_resource),
         )
+        .well_known_core()
         .bind(io)
         .map_err(|e| format!("bind: {e:?}").into())
 }
