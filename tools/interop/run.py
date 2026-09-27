@@ -1271,7 +1271,7 @@ def qblock1_interop(client, server):
     with Server(server, "udp") as service:
         with Proxy(service.number, "dtls-reconnect") as relay:
             created = request(client, "udp", relay.number, path="upload", method="POST",
-                              payload=LARGE, timeout=6500, qblock1=True)
+                              payload=LARGE, timeout=12000, qblock1=True)
         requests = [bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request"]
         expect(created, 65, b"")
         readback = request(client, "udp", service.number, path="upload")

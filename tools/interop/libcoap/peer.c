@@ -20,6 +20,8 @@ static int method_exists;
 static uint8_t large_body[2000];
 static const uint8_t small_body[] = "core-test-payload";
 static int complete;
+static uint8_t pending_token[8];
+static size_t pending_token_len;
 static uint64_t started;
 static uint64_t clock_resolution_ns;
 #ifdef _WIN32
@@ -175,6 +177,10 @@ static int hex_digit(char c) {
 static coap_response_t response_handler(coap_session_t *session,
     const coap_pdu_t *sent,const coap_pdu_t *received,const coap_mid_t mid) {
   (void)session;(void)sent;(void)mid;
+  /* libcoap's Q-Block probe is a separate GET /.well-known/core. Ignore it. */
+  coap_bin_const_t token = coap_pdu_get_token(received);
+  if(token.length != pending_token_len || memcmp(token.s, pending_token, pending_token_len) != 0)
+    return COAP_RESPONSE_OK;
   const uint8_t *data=NULL;size_t len=0,offset=0,total=0;
   coap_get_data_large(received,&len,&data,&offset,&total);
   if (offset || total>len) return COAP_RESPONSE_FAIL;
@@ -287,6 +293,7 @@ int main(int argc,char **argv) {
     coap_pdu_t *pdu=coap_new_pdu(COAP_MESSAGE_CON,(coap_pdu_code_t)method,session);
     if(!pdu){failure("PDU allocation failed");coap_session_release(session);status=1;goto done;}
     uint8_t token[8];size_t token_len=sizeof(token);coap_session_new_token(session,&token_len,token);
+    memcpy(pending_token, token, token_len); pending_token_len = token_len;
     if(!coap_add_token(pdu,token_len,token)||!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
     if((!strcmp(argv[5], "methods") || !strcmp(argv[5], "upload")) && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
       const uint8_t format = 42;
