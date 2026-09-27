@@ -54,7 +54,7 @@ impl Args {
         }
         if !matches!(
             a[4].as_str(),
-            "test" | "large" | "counter" | "missing" | "methods" | "upload"
+            "test" | "large" | "counter" | "missing" | "methods" | "upload" | "separate"
         ) {
             return Err("unsupported fixture path".into());
         }
