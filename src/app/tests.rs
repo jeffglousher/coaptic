@@ -1401,6 +1401,39 @@ fn well_known_core_lists_registered_paths() {
     assert_eq!(body, "</a>,</b>");
 }
 
+#[test]
+fn well_known_q_block2_probe_returns_the_first_block() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let q = BlockValue::from_size(0, false, 16).expect("szx").encode();
+    let (wire, n) = encode_wide(
+        Code::GET,
+        &[".well-known", "core"],
+        &[Opt::q_block2(&q)],
+        0x1400,
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(&["sensors", "temperature"], get(get_temp))
+        .well_known_core()
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .expect("bind");
+    app.poll(0).expect("poll");
+    consume_q_empty_ack(&mut app, MessageId::new(0x1400));
+    assert_eq!(app.transport().send_n, 1);
+    let response = last_wide(&app);
+    assert_eq!(response.ty(), Type::NonConfirmable);
+    let block = response.q_block2().next().expect("Q-Block2").expect("val");
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(block.size(), 16);
+    assert!(response.etag().next().is_some());
+    assert_eq!(response.payload().len(), 16);
+}
+
 /// Sixteen short registered paths. Catalog is 143 bytes — past
 /// [`INLINE_PAYLOAD`] (128), so a 128-byte write would silently drop links.
 const TEN_PLUS_ROUTES: [&str; 16] = [

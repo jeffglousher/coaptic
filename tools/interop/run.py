@@ -1246,6 +1246,24 @@ def conditional_workflow(server):
     return {"steps": steps}
 
 
+def qblock1_interop(client, server):
+    """Q-Block1 POST of the 2000-byte pattern through a relay, then readback 1:1."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            created = request(client, "udp", relay.number, path="upload", method="POST",
+                              payload=LARGE, timeout=12000, qblock1=True)
+        requests = [bytes.fromhex(row["hex"]) for row in relay.trace if row["direction"] == "request"]
+        expect(created, 65, b"")
+        readback = request(client, "udp", service.number, path="upload")
+        expect(readback, 69, b"1:1")
+    uploads = [packet for packet in requests if len(packet) > 1 and packet[1] == 2]
+    if len(uploads) < 2 or any(19 not in decoded_options(packet) for packet in uploads):
+        raise AssertionError("the upload did not use Q-Block1 on every POST datagram")
+    if any(27 in decoded_options(packet) for packet in uploads):
+        raise AssertionError("the upload fell back to Block1")
+    return {"post_datagrams": len(uploads), "readback": "1:1"}
+
+
 def empty_request_tag(server):
     """A missing Request-Tag is 4.00. An empty Request-Tag is accepted and the handler runs once."""
     payload = bytes(range(16))
@@ -1587,6 +1605,9 @@ def main():
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        case(f"qblock1-interop:{client}->{server}",
+             lambda client=client, server=server: qblock1_interop(peers[client], peers[server]))
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
