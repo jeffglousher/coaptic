@@ -1015,12 +1015,37 @@ def discovery(server):
     if decoded_options(reply).get(12) != [bytes([40])]:
         raise AssertionError("discovery content format was not link-format")
     body = coap_payload(reply).decode()
-    for path in ("/test", "/large", "/counter", "/upload", "/methods"):
+    for path in ("/test", "/large", "/counter", "/upload", "/methods", "/separate"):
         if f"<{path}>" not in body:
             raise AssertionError(f"discovery omitted {path}: {body}")
     if ".well-known" in body:
         raise AssertionError(f"discovery listed itself: {body}")
     return {"links": body}
+
+
+def separate_response(server):
+    """GET /separate is an empty ACK, then a confirmable 2.05."""
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            request = coap_message(1, 0x21, b"\xa1", [(11, b"separate")])
+            if sock.sendto(request, address) != len(request):
+                raise AssertionError("separate GET was not completely sent")
+            ack = await_datagram(sock, address, 2)
+            if len(ack) != 4 or ack[1] != 0 or ((ack[0] >> 4) & 3) != 2 or int.from_bytes(ack[2:4], "big") != 0x21:
+                raise AssertionError(f"separate response did not start with an empty ACK: {ack!r}")
+            con = await_datagram(sock, address, 2)
+            if ((con[0] >> 4) & 3) != 0 or con[1] != 69 or coap_payload(con) != b"separate-payload":
+                raise AssertionError(f"separate CON was not 2.05 separate-payload: {con!r}")
+            mid = int.from_bytes(con[2:4], "big")
+            empty = bytes([0x60, 0, mid >> 8, mid & 0xFF])
+            if sock.sendto(empty, address) != len(empty):
+                raise AssertionError("ACK of the separate CON was not completely sent")
+        finally:
+            sock.close()
+    return {"ack_mid": 0x21, "payload": "separate-payload"}
 
 
 def problem_details_mix(server):
@@ -1328,6 +1353,7 @@ def main():
     case("no-response:coaptic", lambda: no_response_counter(peers["coaptic"]))
     case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
+    case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
          lambda: concurrent_counter(peers["coaptic"], peers["coaptic"], peers["coap-rs"]))
