@@ -17,6 +17,39 @@ static METHOD_RESOURCE: std::sync::Mutex<support::MethodResource> =
 static UPLOAD_RESOURCE: std::sync::Mutex<support::UploadResource> =
     std::sync::Mutex::new(support::UploadResource::new());
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+/// `/cond` body and its one-byte ETag version.
+static CONDITIONAL: std::sync::Mutex<(Option<Vec<u8>>, u8)> = std::sync::Mutex::new((None, 0));
+fn conditional(request: Request<'_>) -> Response<'static> {
+    let mut state = CONDITIONAL.lock().expect("fixture lock");
+    let version = [state.1];
+    let etag = state.0.as_ref().map(|_| &version[..]);
+    if !request.precondition(state.0.is_some(), etag).holds() {
+        return Response::precondition_failed();
+    }
+    match request.method() {
+        Some(Method::Get) => match &state.0 {
+            Some(body) => Response::content_copy(body).etag(&version),
+            None => Response::not_found(),
+        },
+        Some(Method::Put) => {
+            let created = state.0.is_none();
+            state.0 = Some(request.payload().to_vec());
+            state.1 = state.1.wrapping_add(1);
+            if created {
+                Response::created()
+            } else {
+                Response::changed()
+            }
+        }
+        _ => {
+            if state.0.take().is_some() {
+                Response::deleted()
+            } else {
+                Response::not_found()
+            }
+        }
+    }
+}
 fn count(_: Request<'_>) -> Response<'static> {
     counter_snapshot().observe(0)
 }
@@ -275,11 +308,11 @@ fn echo_retry_requires_protection_challenge_and_unused_budget() {
     }
 }
 
-fn fixture(io: Io) -> Result<App<profiles::Default, Io, 7, true>, Error> {
+fn fixture(io: Io) -> Result<App<profiles::Default, Io, 8, true>, Error> {
     App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
-        .routes::<7>()
+        .routes::<8>()
         .route(
             "/test",
             get(|_: Request<'_>| Response::content(support::BODY)),
@@ -312,6 +345,10 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 7, true>, Error> {
             }),
         )
         .route("/fail", get(|_: Request<'_>| Response::internal_error()))
+        .route(
+            "/cond",
+            get(conditional).put(conditional).delete(conditional),
+        )
         .well_known_core()
         .bind(io)
         .map_err(|e| format!("bind: {e:?}").into())
