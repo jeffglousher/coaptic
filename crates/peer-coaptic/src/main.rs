@@ -182,8 +182,13 @@ async fn run() -> Result<(), Error> {
             .request_tag(coaptic::storage::BodyTag::new(b"upload-1").expect("upload tag"))
             .q_block1();
     }
+    if a.observe {
+        outgoing = outgoing.observe();
+    }
     let mut call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
     let mut echo_retried = false;
+    // Observe prints the registration reply and two notifications, comma-separated.
+    let mut observed: Vec<Vec<u8>> = Vec::new();
     while start.elapsed() < Duration::from_millis(a.timeout) {
         app.poll(start.elapsed().as_millis() as u64 + 1)
             .map_err(|e| format!("poll: {e}"))?;
@@ -222,6 +227,14 @@ async fn run() -> Result<(), Error> {
                     .map_err(|e| format!("Echo retry: {e}"))?;
                 echo_retried = true;
                 continue;
+            }
+            if a.observe {
+                observed.push(body);
+                if observed.len() < 3 {
+                    continue;
+                }
+                support::response(code, &observed.join(&b","[..]), elapsed, None);
+                return Ok(());
             }
             // Flush CloseNotify before the runtime exits. Response timing ends
             // at assembly; host timing includes this bounded session shutdown.

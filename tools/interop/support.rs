@@ -24,12 +24,21 @@ pub struct Args {
     pub payload: Vec<u8>,
     pub timeout: u64,
     pub q_block1: bool,
+    pub observe: bool,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let mut a: Vec<_> = std::env::args().skip(1).collect();
-        let q_block1 = a.last().is_some_and(|item| item == "qblock1");
-        if q_block1 {
+        let (mut q_block1, mut observe) = (false, false);
+        while let Some(flag) = a
+            .last()
+            .filter(|item| matches!(item.as_str(), "qblock1" | "observe"))
+        {
+            if flag == "qblock1" {
+                q_block1 = true;
+            } else {
+                observe = true;
+            }
             a.pop();
         }
         if !(7..=10).contains(&a.len()) {
@@ -103,6 +112,7 @@ impl Args {
             payload,
             timeout,
             q_block1,
+            observe,
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {
