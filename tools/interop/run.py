@@ -1017,7 +1017,7 @@ def discovery(server):
     if decoded_options(reply).get(12) != [bytes([40])]:
         raise AssertionError("discovery content format was not link-format")
     body = coap_payload(reply).decode()
-    for path in ("/test", "/large", "/counter", "/upload", "/methods", "/separate", "/fail"):
+    for path in ("/test", "/large", "/counter", "/upload", "/methods", "/separate", "/fail", "/cond"):
         if f"<{path}>" not in body:
             raise AssertionError(f"discovery omitted {path}: {body}")
     if ".well-known" in body:
@@ -1195,6 +1195,55 @@ def observe_client(client, server, writer):
     event["exit_code"] = proc.returncode
     expect(event, 69, b"0,1,2")
     return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
+
+
+def conditional_workflow(server):
+    """RFC 7252 section 5.10.8 on /cond. A failed condition is 4.12 and changes nothing."""
+    IF_MATCH, ETAG, IF_NONE_MATCH = 1, 4, 5
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        mids = iter(range(0x60, 0x100))
+        steps = []
+        try:
+            def send(code, conditions=(), payload=b""):
+                options = sorted(list(conditions) + [(11, b"cond")])
+                reply = coap_roundtrip(sock, address,
+                                       coap_message(code, next(mids), b"\xc1", options, payload))
+                return reply[1], coap_payload(reply), decoded_options(reply).get(ETAG, [])
+
+            def step(label, code, conditions, payload, want):
+                got = send(code, conditions, payload)[0]
+                steps.append((label, got))
+                if got != want:
+                    raise AssertionError(f"{label} returned {got}, expected {want}")
+
+            def read(want_body, want_etag):
+                got = send(1)
+                if want_body is None:
+                    if got[0] != 132:
+                        raise AssertionError(f"GET /cond returned {got[0]}, expected 4.04")
+                elif got[:2] != (69, want_body) or got[2] != [want_etag]:
+                    raise AssertionError(f"GET /cond returned {got!r}")
+
+            read(None, None)
+            step("PUT If-Match empty on a missing resource", 3, [(IF_MATCH, b"")], b"a", 140)
+            read(None, None)
+            step("PUT If-None-Match on a missing resource", 3, [(IF_NONE_MATCH, b"")], b"a", 65)
+            step("PUT If-None-Match on an existing resource", 3, [(IF_NONE_MATCH, b"")], b"b", 140)
+            read(b"a", b"\x01")
+            step("PUT If-Match with a stale ETag", 3, [(IF_MATCH, b"\x09")], b"c", 140)
+            read(b"a", b"\x01")
+            step("PUT If-Match with the current ETag", 3, [(IF_MATCH, b"\x01")], b"c", 68)
+            read(b"c", b"\x02")
+            step("DELETE If-Match with the old ETag", 4, [(IF_MATCH, b"\x01")], b"", 140)
+            read(b"c", b"\x02")
+            step("DELETE If-Match with the current ETag", 4, [(IF_MATCH, b"\x02")], b"", 66)
+            read(None, None)
+        finally:
+            sock.close()
+    return {"steps": steps}
 
 
 def empty_request_tag(server):
@@ -1537,6 +1586,7 @@ def main():
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
+    case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
