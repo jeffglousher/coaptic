@@ -3127,6 +3127,38 @@
       "executable": "tools/interop/run.py:observe_counter"
     },
     {
+      "id": "observe-client:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["observe", "handler-effect"],
+      "positive_proof": [
+        "the Coaptic client registers on /counter and collects bodies 0, 1 and 2 on one Call"
+      ],
+      "failure_proof": ["fewer than three responses or other bodies fail"],
+      "executable": "tools/interop/run.py:observe_client"
+    },
+    {
+      "id": "observe-client:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["observe", "handler-effect"],
+      "positive_proof": [
+        "the Coaptic client registers on libcoap /counter and collects bodies 0, 1 and 2 on one Call"
+      ],
+      "failure_proof": ["fewer than three responses or other bodies fail"],
+      "executable": "tools/interop/run.py:observe_client"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3460,7 +3492,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "A hand-written client observes the Coaptic server only. The Coaptic client does not collect notifications from coap-rs or libcoap.",
+      "reason": "The coap-rs server does not send notifications. The libcoap client does not observe. Observe under OSCORE or DTLS is not a process case.",
       "issue": 200,
       "executable_cases": []
     },

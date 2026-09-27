@@ -39,6 +39,9 @@ async fn run() -> Result<(), Error> {
     if a.q_block1 {
         return Err("Q-Block1 is not implemented by this peer".into());
     }
+    if a.observe {
+        return Err("Observe collection is not implemented by this peer".into());
+    }
     if a.oscore || a.sequence != 0 {
         return Err("OSCORE unsupported by this peer".into());
     }
