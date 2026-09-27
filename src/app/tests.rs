@@ -1422,10 +1422,10 @@ fn well_known_q_block2_probe_returns_the_first_block() {
         })
         .expect("bind");
     app.poll(0).expect("poll");
+    consume_q_empty_ack(&mut app, MessageId::new(0x1400));
     assert_eq!(app.transport().send_n, 1);
     let response = last_wide(&app);
-    assert_eq!(response.ty(), Type::Acknowledgement);
-    assert_eq!(response.message_id(), MessageId::new(0x1400));
+    assert_eq!(response.ty(), Type::NonConfirmable);
     let block = response.q_block2().next().expect("Q-Block2").expect("val");
     assert_eq!(block.num(), 0);
     assert!(block.more());

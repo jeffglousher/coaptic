@@ -582,9 +582,8 @@ where
     /// [`Response`]. Empty CON (code 0.00) is answered with empty RST
     /// (RFC 7252 ping). Incomplete Q-Block1 gets an empty ACK for CON;
     /// NON payloads get 2.31 only after a complete payload set, with the
-    /// acknowledged Q-Block1 NUM. Successful Q-Block2 responses use NON
-    /// payloads. A CON request for one block is a piggybacked ACK (RFC 9177
-    /// section 4.4). A CON request for a set receives an empty ACK first.
+    /// acknowledged Q-Block1 NUM. Successful Q-Block2 responses use all-NON
+    /// payloads; a CON request receives a separate empty ACK before the set.
     /// Q recovery and partial-body expiry run after
     /// ingress; exhausted client Q downloads complete with [`CallFailure::TimedOut`].
     /// Incomplete classic Block1 is 2.31 (handler not
@@ -2663,10 +2662,6 @@ where
         let q = q.map_err(|e| Error::Block(e.into()))?;
         engine.reissue_q_block2(id, q.num()).map_err(Error::Block)?;
     }
-    let one_block = meta.q_block2.is_some_and(|block| !block.more())
-        && !meta
-            .q_request
-            .is_some_and(|parsed| parsed.q_block2().nth(1).is_some());
     let mut last_sent = None;
     for q in selections() {
         let q = q.map_err(|e| Error::Block(e.into()))?;
@@ -2682,49 +2677,15 @@ where
                 continue;
             }
             let issued = engine.reissue_q_block2(id, num).map_err(Error::Block)?;
-            if last_sent.is_none() && one_block && first_ty == Type::Acknowledgement {
-                let tx = encode_issued::<S, T>(
-                    engine,
-                    meta,
-                    response,
-                    Type::Acknowledgement,
-                    meta.mid,
-                    issued,
-                    true,
-                    oscore_ctx,
-                )?;
-                match remember_tx_reply(
-                    engine,
-                    tx,
-                    meta.dest,
-                    meta.mid,
-                    meta.ty,
-                    now_ms,
-                    meta.request,
-                    dedup_closed,
-                ) {
-                    KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest)?,
-                    KeepTx::No => finish_send(engine, io, tx, meta.dest, None)?,
-                }
+            let mid = if last_sent.is_none() {
+                q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
             } else {
-                let mid = if last_sent.is_none() {
-                    q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
-                } else {
-                    ids.next_for(engine, now_ms)?
-                };
-                send_issued(
-                    engine,
-                    io,
-                    meta,
-                    response,
-                    Type::NonConfirmable,
-                    mid,
-                    issued,
-                    true,
-                    None,
-                    oscore_ctx,
-                )?;
-            }
+                ids.next_for(engine, now_ms)?
+            };
+            let ty = Type::NonConfirmable;
+            send_issued(
+                engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
+            )?;
             last_sent = Some(num);
             if !issued.block().more() {
                 return Ok(());
