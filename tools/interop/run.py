@@ -1048,6 +1048,38 @@ def separate_response(server):
     return {"ack_mid": 0x21, "payload": "separate-payload"}
 
 
+def empty_request_tag(server):
+    """A missing Request-Tag is 4.00. An empty Request-Tag is accepted and the handler runs once."""
+    payload = bytes(range(16))
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            def post(mid, token, tag):
+                return coap_roundtrip(
+                    sock, address, qblock1_message(mid, token, 0, False, 0, payload, 16, tag))
+
+            def counts(mid, token):
+                return coap_exchange(
+                    sock, address, coap_message(1, mid, token, [(11, b"upload")]))
+
+            missing = post(2, b"\x96", None)
+            if missing[1] != 128:
+                raise AssertionError(f"missing Request-Tag returned {missing[1]}")
+            if counts(3, b"\x97") != (69, b"0:0"):
+                raise AssertionError("missing Request-Tag reached the handler")
+            accepted = post(4, b"\x98", b"")
+            if accepted[1] != 128:
+                raise AssertionError(f"empty Request-Tag returned {accepted[1]}")
+            code, readback = counts(5, b"\x99")
+        finally:
+            sock.close()
+    if (code, readback) != (69, b"0:1"):
+        raise AssertionError(f"empty Request-Tag was not delivered once: {code} {readback!r}")
+    return {"readback": readback.decode()}
+
+
 def problem_details_mix(server):
     """Block1 and Q-Block1 in one packet are 4.02 problem details. The handler stays cold."""
     block = block1_value(0, True, 0)
@@ -1354,6 +1386,7 @@ def main():
     case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
+    case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
          lambda: concurrent_counter(peers["coaptic"], peers["coaptic"], peers["coap-rs"]))

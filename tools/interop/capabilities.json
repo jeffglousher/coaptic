@@ -3093,6 +3093,20 @@
       "executable": "tools/interop/run.py:separate_response"
     },
     {
+      "id": "empty-request-tag:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["request-tag", "q-block1", "handler-effect"],
+      "positive_proof": ["an empty Request-Tag is accepted and the handler runs once"],
+      "failure_proof": ["a missing Request-Tag is 4.00 and the handler stays at 0:0"],
+      "executable": "tools/interop/run.py:empty_request_tag"
+    },
+    {
       "id": "problem-details:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3460,7 +3474,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Echo, Request-Tag, and 5.xx No-Response are not process cases.",
+      "reason": "Echo and 5.xx No-Response are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
