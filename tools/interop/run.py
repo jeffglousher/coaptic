@@ -1023,6 +1023,39 @@ def discovery(server):
     return {"links": body}
 
 
+def problem_details_mix(server):
+    """Block1 and Q-Block1 in one packet are 4.02 problem details. The handler stays cold."""
+    block = block1_value(0, True, 0)
+    payload = bytes(range(16))
+    options = [
+        (11, b"upload"),
+        (12, bytes([42])),
+        (19, block),
+        (27, block),
+        (60, bytes([16])),
+        (292, b"m"),
+    ]
+    with Server(server, "udp") as service:
+        address = ("127.0.0.1", service.number)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        try:
+            reply = coap_roundtrip(sock, address, coap_message(2, 2, b"\x94", options, payload))
+            if reply[1] != 130:
+                raise AssertionError(f"mixed Block and Q-Block returned {reply[1]}")
+            if decoded_options(reply).get(12) != [bytes([1, 1])]:
+                raise AssertionError("4.02 content format was not problem details")
+            if not coap_payload(reply):
+                raise AssertionError("4.02 problem details body was empty")
+            code, counts = coap_exchange(
+                sock, address, coap_message(1, 3, b"\x95", [(11, b"upload")]))
+        finally:
+            sock.close()
+    if (code, counts) != (69, b"0:0"):
+        raise AssertionError(f"mixed options reached the handler: {code} {counts!r}")
+    return {"code": 130, "readback": counts.decode()}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1295,6 +1328,7 @@ def main():
     case("no-response:coaptic", lambda: no_response_counter(peers["coaptic"]))
     case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
+    case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
          lambda: concurrent_counter(peers["coaptic"], peers["coaptic"], peers["coap-rs"]))
     case("concurrent-counter:coap-rs",
