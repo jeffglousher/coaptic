@@ -3077,6 +3077,20 @@
       "executable": "tools/interop/run.py:discovery"
     },
     {
+      "id": "problem-details:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["problem-details", "q-block1", "block1"],
+      "positive_proof": ["Block1 and Q-Block1 in one packet are 4.02 problem details"],
+      "failure_proof": ["the upload handler stays at 0:0"],
+      "executable": "tools/interop/run.py:problem_details_mix"
+    },
+    {
       "id": "concurrent-counter:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3430,7 +3444,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Echo, Request-Tag, problem details, and 5.xx No-Response are not process cases.",
+      "reason": "Echo, Request-Tag, and 5.xx No-Response are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
