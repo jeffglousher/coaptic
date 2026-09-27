@@ -3047,6 +3047,40 @@
       "executable": "tools/interop/run.py:no_response_counter"
     },
     {
+      "id": "concurrent-counter:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["counter", "concurrency", "handler-effect"],
+      "positive_proof": [
+        "a Coaptic client and a coap-rs client POST /counter at the same time",
+        "the following GET reads 2"
+      ],
+      "failure_proof": ["a readback other than 2 fails"],
+      "executable": "tools/interop/run.py:concurrent_counter"
+    },
+    {
+      "id": "concurrent-counter:coap-rs",
+      "client": "coap-rs",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["counter", "concurrency", "handler-effect"],
+      "positive_proof": [
+        "a coap-rs client and a Coaptic client POST /counter at the same time",
+        "the following GET reads 2"
+      ],
+      "failure_proof": ["a readback other than 2 fails"],
+      "executable": "tools/interop/run.py:concurrent_counter"
+    },
+    {
       "id": "block1-szx:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3462,7 +3496,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Serial sessions and 140-session churn are not a concurrent soak.",
+      "reason": "Two concurrent counter POSTs are covered on the Coaptic and coap-rs servers. Saturation and long soak are not.",
       "issue": 202,
       "executable_cases": []
     },
