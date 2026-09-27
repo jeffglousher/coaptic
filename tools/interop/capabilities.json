@@ -3093,6 +3093,54 @@
       "executable": "tools/interop/run.py:separate_response"
     },
     {
+      "id": "separate-client:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["separate-response"],
+      "positive_proof": [
+        "the coaptic client gets an empty ACK, then a confirmable 2.05 separate-payload, and acknowledges it"
+      ],
+      "failure_proof": ["a piggybacked reply or an unacknowledged separate response fails"],
+      "executable": "tools/interop/run.py:separate_client"
+    },
+    {
+      "id": "separate-client:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["separate-response"],
+      "positive_proof": [
+        "the coap-rs client gets an empty ACK, then a confirmable 2.05 separate-payload, and acknowledges it"
+      ],
+      "failure_proof": ["a piggybacked reply or an unacknowledged separate response fails"],
+      "executable": "tools/interop/run.py:separate_client"
+    },
+    {
+      "id": "separate-client:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["separate-response"],
+      "positive_proof": [
+        "the libcoap client gets an empty ACK, then a confirmable 2.05 separate-payload, and acknowledges it"
+      ],
+      "failure_proof": ["a piggybacked reply or an unacknowledged separate response fails"],
+      "executable": "tools/interop/run.py:separate_client"
+    },
+    {
       "id": "no-response-5:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3627,7 +3675,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Separate responses are Coaptic only.",
+      "reason": "Only the Coaptic server issues separate responses here.",
       "issue": 200,
       "executable_cases": []
     },

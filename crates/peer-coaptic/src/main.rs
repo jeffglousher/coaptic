@@ -192,6 +192,7 @@ async fn run() -> Result<(), Error> {
         "counter" => &["counter"][..],
         "methods" => &["methods"][..],
         "upload" => &["upload"][..],
+        "separate" => &["separate"][..],
         _ => &["missing"][..],
     };
     let method = match a.method {

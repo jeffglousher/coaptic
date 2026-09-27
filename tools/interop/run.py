@@ -1246,6 +1246,26 @@ def conditional_workflow(server):
     return {"steps": steps}
 
 
+def separate_client(client, server):
+    """The client reads /separate through a relay: empty ACK, then a confirmable 2.05 it acknowledges."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            result = request(client, "udp", relay.number, path="separate")
+        trace = relay.trace
+    expect(result, 69, b"separate-payload")
+    responses = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "response"]
+    requests = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "request"]
+    if not responses or len(responses[0]) != 4 or responses[0][1] != 0 or (responses[0][0] >> 4) & 3 != 2:
+        raise AssertionError(f"first response was not an empty ACK: {responses[:1]!r}")
+    later = [p for p in responses[1:] if (p[0] >> 4) & 3 == 0 and p[1] == 69]
+    if not later:
+        raise AssertionError("no confirmable 2.05 followed the empty ACK")
+    acked = later[0][2:4]
+    if not any(len(p) == 4 and p[1] == 0 and (p[0] >> 4) & 3 == 2 and p[2:4] == acked for p in requests):
+        raise AssertionError("the client did not acknowledge the separate response")
+    return {"responses": len(responses), "requests": len(requests)}
+
+
 def qblock1_interop(client, server):
     """Q-Block1 POST of the 2000-byte pattern through a relay, then readback 1:1."""
     with Server(server, "udp") as service:
@@ -1605,6 +1625,9 @@ def main():
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))
+    for client_name in ("coaptic", "coap-rs", "libcoap"):
+        case(f"separate-client:{client_name}->coaptic",
+             lambda client_name=client_name: separate_client(peers[client_name], peers["coaptic"]))
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         case(f"qblock1-interop:{client}->{server}",
              lambda client=client, server=server: qblock1_interop(peers[client], peers[server]))
