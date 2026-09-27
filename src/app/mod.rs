@@ -2143,6 +2143,24 @@ where
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
+    // RFC 9177 §4.4: every Q-Block2 payload carries the body's ETag. Without
+    // one the resource cannot serve Q-Block2, and 4.02 tells the client so.
+    let refusal;
+    let (meta, response) = if meta.q_block2.is_some()
+        && response.code().is_success()
+        && response.etag_bytes().is_none()
+    {
+        refusal = Response::problem(Code::BAD_OPTION).title("Q-Block2 needs an ETag");
+        let meta = SendResponse {
+            block2: None,
+            q_block2: None,
+            q_request: None,
+            ..meta
+        };
+        (meta, &refusal)
+    } else {
+        (meta, response)
+    };
     if meta.no_response.suppresses(response.code()) {
         return match meta.ty {
             Type::Confirmable => {
