@@ -168,6 +168,11 @@ async fn run() -> Result<(), Error> {
     if matches!(a.path.as_str(), "methods" | "upload") && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
         outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
     }
+    if a.q_block1 {
+        outgoing = outgoing
+            .request_tag(coaptic::storage::BodyTag::new(b"upload-1").expect("upload tag"))
+            .q_block1();
+    }
     let mut call = outgoing.send(1).map_err(|e| format!("send: {e}"))?;
     let mut echo_retried = false;
     while start.elapsed() < Duration::from_millis(a.timeout) {
@@ -195,6 +200,13 @@ async fn run() -> Result<(), Error> {
                     && matches!(a.method, 2 | 3 | 5 | 6 | 7)
                 {
                     retry = retry.content_format(ContentFormat::OCTET_STREAM);
+                }
+                if a.q_block1 {
+                    retry = retry
+                        .request_tag(
+                            coaptic::storage::BodyTag::new(b"upload-1").expect("upload tag"),
+                        )
+                        .q_block1();
                 }
                 call = retry
                     .send(start.elapsed().as_millis() as u64 + 1)
