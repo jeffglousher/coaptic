@@ -946,6 +946,32 @@ def no_response_counter(server):
     return {"readback": body.decode()}
 
 
+def concurrent_counter(server, first, second):
+    """Two clients POST /counter at once. The following GET is 2."""
+    with Server(server, "udp") as service:
+        replies = []
+        errors = []
+
+        def post(exe):
+            try:
+                replies.append(request(exe, "udp", service.number, path="counter", method="POST"))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=post, args=(exe,)) for exe in (first, second)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
+        for reply in replies:
+            expect(reply, 68, b"")
+        readback = request(first, "udp", service.number, path="counter")
+        expect(readback, 69, b"2")
+    return {"posts": len(replies), "readback": "2"}
+
+
 def oscore_upload_workflow(client, server):
     """Exact protected uploads. Each fresh client process has its own sender sequence."""
     changed = bytearray(LARGE)
@@ -1216,6 +1242,10 @@ def main():
     case("oscore-qblock1:coaptic", lambda: oscore_qblock1_upload(peers["coaptic"], peers["coaptic"]))
     case("oscore-qblock1-faults:coaptic", lambda: oscore_qblock1_faults(peers["coaptic"], peers["coaptic"]))
     case("no-response:coaptic", lambda: no_response_counter(peers["coaptic"]))
+    case("concurrent-counter:coaptic",
+         lambda: concurrent_counter(peers["coaptic"], peers["coaptic"], peers["coap-rs"]))
+    case("concurrent-counter:coap-rs",
+         lambda: concurrent_counter(peers["coap-rs"], peers["coap-rs"], peers["coaptic"]))
     for server_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"block1-szx:{server_name}",
              lambda server_name=server_name: smaller_block_upload(peers[server_name]))
