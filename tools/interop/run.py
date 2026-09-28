@@ -250,7 +250,7 @@ def qblock2_requests_num(packet, num):
 
 class Proxy:
     """One-client UDP relay, deterministic first-packet faults, bounded trace."""
-    def __init__(self, dest, mode, family="ipv4"):
+    def __init__(self, dest, mode, family="ipv4", qblock2_szx=None):
         if family not in ("ipv4", "ipv6"):
             raise ValueError("unsupported proxy address family")
         address_family = socket.AF_INET6 if family == "ipv6" else socket.AF_INET
@@ -264,6 +264,7 @@ class Proxy:
         self.number = self.front.getsockname()[1]
         self.dest = (address, dest, 0, 0) if family == "ipv6" else (address, dest)
         self.mode, self.trace, self.error = mode, [], None
+        self.qblock2_szx = qblock2_szx
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
@@ -326,6 +327,12 @@ class Proxy:
                     forwarded = data[:-1] + bytes([data[-1] ^ 0x80]) if action == "corrupt" else data
                     if self.mode == "drop-qblock2" and incoming and action == "forward" and packet_token(data) in large_tokens:
                         forwarded = shrink_qblock2_szx(data)
+                    elif self.qblock2_szx is not None and incoming and action == "forward":
+                        try:
+                            if len(data) > 1 and data[1] == 1 and b"large" in decoded_options(data).get(11, []):
+                                forwarded = shrink_qblock2_szx(data, self.qblock2_szx)
+                        except (AssertionError, IndexError):
+                            pass
                     self.trace.append({"direction": "request" if incoming else "response",
                                        "action": action, "hex": data.hex(), "forwarded_hex": forwarded.hex()})
                     if action != "drop":
@@ -1544,6 +1551,92 @@ def qblock2_missing(client, server):
     return {"missing": missing, "drops": len(dropped), "length": len(LARGE)}
 
 
+def qblock2_window(client, server):
+    """RFC 9177 section 4.4: a full window of 10 is confirmed with Q-Block2 NUM 10, M=1."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "dtls-reconnect", qblock2_szx=3) as relay:
+            result = request(client, "udp", relay.number, path="large", timeout=20000, qblock2=True)
+        trace = relay.trace
+    expect(result, 69, LARGE)
+    downloads = []
+    for row in trace:
+        if row["direction"] != "request":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if len(packet) > 4 and packet[1] == 1 and b"large" in decoded_options(packet).get(11, []):
+            downloads.append((row, packet))
+    if not downloads or any(31 not in decoded_options(packet) for _, packet in downloads):
+        raise AssertionError("the download did not use Q-Block2 on every /large GET")
+    if any(23 in decoded_options(packet) for _, packet in downloads):
+        raise AssertionError("the download fell back to Block2")
+    continues = []
+    continue_at = None
+    for index, row in enumerate(trace):
+        if row["direction"] != "request":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if len(packet) <= 4 or packet[1] != 1 or b"large" not in decoded_options(packet).get(11, []):
+            continue
+        parsed = [block1_fields(value) for value in decoded_options(packet).get(31, [])]
+        if any(num == 10 and more for num, more, _ in parsed):
+            continues.append(parsed)
+            if continue_at is None:
+                continue_at = index
+    if not continues or continue_at is None:
+        raise AssertionError("the client did not send Continue at Q-Block2 NUM 10")
+    for parsed in continues:
+        if parsed != [(10, True, 3)]:
+            raise AssertionError(f"Continue was {parsed}")
+    large_tokens = {packet_token(packet) for _, packet in downloads}
+    before = 0
+    for row in trace[:continue_at]:
+        if row["direction"] != "response":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        num = qblock2_content_num(packet)
+        if num is not None and packet_token(packet) in large_tokens:
+            before += 1
+    if before < 10:
+        raise AssertionError(f"only {before} Q-Block2 payloads arrived before Continue")
+    parts = {}
+    etag = None
+    for row in trace:
+        if row["direction"] != "response":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if packet_token(packet) not in large_tokens or len(packet) < 2 or packet[1] != 69:
+            continue
+        values = decoded_options(packet).get(31, [])
+        if len(values) != 1:
+            continue
+        num, _, szx = block1_fields(values[0])
+        if szx != 3:
+            raise AssertionError(f"block {num} SZX was {szx}")
+        payload = coap_payload(packet)
+        previous = parts.get(num)
+        if previous is not None and previous != payload:
+            raise AssertionError(f"duplicate Q-Block2 {num} differed")
+        parts[num] = payload
+        tags = decoded_options(packet).get(4, [])
+        if len(tags) != 1 or not tags[0]:
+            raise AssertionError(f"block {num} had no ETag")
+        if etag is None:
+            etag = tags[0]
+        elif etag != tags[0]:
+            raise AssertionError("Q-Block2 responses did not share one ETag")
+    if 10 not in parts:
+        raise AssertionError("block 10 was not delivered after Continue")
+    if sorted(parts) != list(range(max(parts) + 1)):
+        raise AssertionError(f"Q-Block2 numbers are not contiguous: {sorted(parts)}")
+    if b"".join(parts[i] for i in range(max(parts) + 1)) != LARGE:
+        raise AssertionError("forwarded Q-Block2 payloads are not the 2000-byte pattern")
+    if "peer-coaptic" in Path(server).name:
+        acks = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "response"]
+        if not any(len(p) == 4 and p[1] == 0 and (p[0] >> 4) & 3 == 2 for p in acks):
+            raise AssertionError("confirmable Q-Block2 did not get an empty ACK")
+    return {"continue_num": 10, "blocks": len(parts), "length": len(LARGE)}
+
+
 def qblock1_interop(client, server):
     """Q-Block1 POST of the 2000-byte pattern through a relay, then readback 1:1."""
     with Server(server, "udp") as service:
@@ -1915,6 +2008,9 @@ def main():
     for client, server in [("coaptic", "coaptic"), ("libcoap", "coaptic")]:
         case(f"qblock2-missing:{client}->{server}",
              lambda client=client, server=server: qblock2_missing(peers[client], peers[server]))
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        case(f"qblock2-window:{client}->{server}",
+             lambda client=client, server=server: qblock2_window(peers[client], peers[server]))
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
