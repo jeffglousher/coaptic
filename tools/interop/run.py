@@ -1304,6 +1304,60 @@ def observe_client(client, server, writer):
     return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
 
 
+def observe_protected(client, server, writer, transport):
+    """Observe /counter over OSCORE or DTLS. Two POSTs produce bodies 0, 1 and 2."""
+    def wait_responses(relay, count, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if sum(row["direction"] == "response" for row in relay.trace) >= count:
+                return
+            time.sleep(0.02)
+        raise AssertionError(f"relay saw fewer than {count} responses")
+
+    def dtls_app_data(relay):
+        return sum(row["direction"] == "response" and row["hex"].startswith("17") for row in relay.trace)
+
+    def wait_dtls(relay, count, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if dtls_app_data(relay) >= count:
+                return
+            time.sleep(0.02)
+        raise AssertionError(f"relay saw fewer than {count} DTLS application records")
+
+    with Server(server, transport) as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            proc = subprocess.Popen(
+                command(client, "client", transport, relay.number, path="counter", timeout=15000, observe=True),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                if transport == "dtls":
+                    wait_dtls(relay, 1, 12)
+                else:
+                    wait_responses(relay, 1, 8)
+                expect(request(writer, transport, service.number, path="counter", method="POST",
+                               sequence=100 if transport == "oscore" else None), 68, b"")
+                if transport == "dtls":
+                    wait_dtls(relay, 2, 8)
+                else:
+                    wait_responses(relay, 2, 8)
+                expect(request(writer, transport, service.number, path="counter", method="POST",
+                               sequence=200 if transport == "oscore" else None), 68, b"")
+                out, err = proc.communicate(timeout=20)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+            trace = relay.trace
+    lines = out.splitlines()
+    if len(lines) != 1:
+        raise RuntimeError(f"expected one observe event: {out[:400]!r} {err[-400:]!r}")
+    event = decode(lines[0])
+    event["exit_code"] = proc.returncode
+    expect(event, 69, b"0,1,2")
+    return {"transport": transport, "responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
+
+
 def observe_values(client, server, writer):
     """The client observes /counter. PUT replaces the representation; the client prints 0,1,2."""
     def wait_responses(relay, count, seconds):
@@ -2054,6 +2108,10 @@ def main():
          lambda: observe_client(peers["libcoap"], peers["coaptic"], peers["coaptic"]))
     case("observe-client:coaptic->coap-rs",
          lambda: observe_values(peers["coaptic"], peers["coap-rs"], peers["coaptic"]))
+    case("observe-oscore:coaptic->coaptic",
+         lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "oscore"))
+    case("observe-dtls:coaptic->coaptic",
+         lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "dtls"))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",

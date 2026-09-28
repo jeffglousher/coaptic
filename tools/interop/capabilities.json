@@ -3239,6 +3239,38 @@
       "executable": "tools/interop/run.py:observe_values"
     },
     {
+      "id": "observe-oscore:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["observe", "oscore"],
+      "positive_proof": [
+        "the Coaptic client registers on OSCORE /counter and collects bodies 0, 1 and 2"
+      ],
+      "failure_proof": ["fewer than three responses or other bodies fail"],
+      "executable": "tools/interop/run.py:observe_protected"
+    },
+    {
+      "id": "observe-dtls:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "dtls",
+      "security": "psk-dtls",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["observe", "dtls"],
+      "positive_proof": [
+        "the Coaptic client registers on DTLS /counter and collects bodies 0, 1 and 2"
+      ],
+      "failure_proof": ["fewer than three responses or other bodies fail"],
+      "executable": "tools/interop/run.py:observe_protected"
+    },
+    {
       "id": "conditional:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3783,7 +3815,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Observe under OSCORE or DTLS is not a process case.",
+      "reason": "Observe under OSCORE against libcoap, and Observe under DTLS against libcoap, are not process cases.",
       "issue": 200,
       "executable_cases": []
     },
@@ -3799,7 +3831,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Protected Observe, concurrent contexts, and persistent sender state are not process cases.",
+      "reason": "Concurrent OSCORE contexts and persistent sender state are not process cases.",
       "issue": 200,
       "executable_cases": []
     },

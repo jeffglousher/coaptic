@@ -114,9 +114,15 @@ async fn run() -> Result<(), Error> {
                     return;
                 };
                 let start = Instant::now();
+                let mut signalled = COUNTER.load(Ordering::SeqCst);
                 loop {
                     if app.poll(start.elapsed().as_millis() as u64 + 1).is_err() {
                         break;
+                    }
+                    let value = COUNTER.load(Ordering::SeqCst);
+                    if value != signalled {
+                        signalled = value;
+                        app.signal(&["counter"]);
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
@@ -261,6 +267,9 @@ async fn run() -> Result<(), Error> {
                 }
                 if a.q_block2 {
                     retry = retry.q_block2();
+                }
+                if a.observe {
+                    retry = retry.observe();
                 }
                 call = retry
                     .send(start.elapsed().as_millis() as u64 + 1)
