@@ -42,9 +42,9 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False, echo=False):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    if sequence is not None or qblock1 or qblock2 or observe:
+    if sequence is not None or qblock1 or qblock2 or observe or echo:
         result.append("0" if sequence is None else str(sequence))
     if qblock1:
         result.append("qblock1")
@@ -52,6 +52,8 @@ def command(exe, role, transport, number, key="sesame", path="test", method="GET
         result.append("qblock2")
     if observe:
         result.append("observe")
+    if echo:
+        result.append("echo")
     return result
 
 
@@ -65,11 +67,11 @@ def decode(line):
 
 
 class Server:
-    def __init__(self, exe, transport, number=None, family="ipv4"):
+    def __init__(self, exe, transport, number=None, family="ipv4", echo=False):
         self.number = number or port(family)
         self.stderr = tempfile.TemporaryFile()
         start = time.perf_counter_ns()
-        self.proc = subprocess.Popen(command(exe, "server", transport, self.number, family=family),
+        self.proc = subprocess.Popen(command(exe, "server", transport, self.number, family=family, echo=echo),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=self.stderr)
         events = queue.Queue(maxsize=1)
@@ -1358,6 +1360,20 @@ def observe_protected(client, server, writer, transport):
     return {"transport": transport, "responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
 
 
+def oscore_server_echo(client, server):
+    """The Coaptic server challenges the first OSCORE request. The retry is the one that changes state."""
+    with Server(server, "oscore", echo=True) as service:
+        posted = request(client, "oscore", service.number, sequence=0, path="counter", method="POST")
+        expect(posted, 68, b"")
+        if posted.get("echo_retries") != 1:
+            raise AssertionError(f"server Echo was not retried once: {posted}")
+        readback = request(client, "oscore", service.number, sequence=100, path="counter")
+        expect(readback, 69, b"1")
+        if readback.get("echo_retries") != 1:
+            raise AssertionError(f"readback was not challenged: {readback}")
+    return {"echo_retries": 1, "readback": "1"}
+
+
 def observe_values(client, server, writer):
     """The client observes /counter. PUT replaces the representation; the client prints 0,1,2."""
     def wait_responses(relay, count, seconds):
@@ -2112,6 +2128,8 @@ def main():
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "oscore"))
     case("observe-dtls:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "dtls"))
+    case("oscore-echo:coaptic->coaptic",
+         lambda: oscore_server_echo(peers["coaptic"], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
