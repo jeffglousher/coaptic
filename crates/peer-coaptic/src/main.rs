@@ -216,6 +216,9 @@ async fn run() -> Result<(), Error> {
             .request_tag(coaptic::storage::BodyTag::new(b"upload-1").expect("upload tag"))
             .q_block1();
     }
+    if a.q_block2 {
+        outgoing = outgoing.q_block2();
+    }
     if a.observe {
         outgoing = outgoing.observe();
     }
@@ -255,6 +258,9 @@ async fn run() -> Result<(), Error> {
                             coaptic::storage::BodyTag::new(b"upload-1").expect("upload tag"),
                         )
                         .q_block1();
+                }
+                if a.q_block2 {
+                    retry = retry.q_block2();
                 }
                 call = retry
                     .send(start.elapsed().as_millis() as u64 + 1)
@@ -320,7 +326,7 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 8, true>, Error> {
         )
         .route(
             "/large",
-            get(|_: Request<'_>| Response::content(&support::LARGE)),
+            get(|_: Request<'_>| Response::content(&support::LARGE).etag(b"lg-1")),
         )
         .route(
             "/counter",
