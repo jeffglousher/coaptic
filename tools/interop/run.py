@@ -1304,6 +1304,42 @@ def observe_client(client, server, writer):
     return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
 
 
+def observe_values(client, server, writer):
+    """The client observes /counter. PUT replaces the representation; the client prints 0,1,2."""
+    def wait_responses(relay, count, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if sum(row["direction"] == "response" for row in relay.trace) >= count:
+                return
+            time.sleep(0.02)
+        raise AssertionError(f"relay saw fewer than {count} responses")
+
+    with Server(server, "udp") as service:
+        expect(request(writer, "udp", service.number, path="counter", method="PUT", payload=b"0"), 68, b"")
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            proc = subprocess.Popen(
+                command(client, "client", "udp", relay.number, path="counter", timeout=15000, observe=True),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                wait_responses(relay, 1, 8)
+                expect(request(writer, "udp", service.number, path="counter", method="PUT", payload=b"1"), 68, b"")
+                wait_responses(relay, 2, 8)
+                expect(request(writer, "udp", service.number, path="counter", method="PUT", payload=b"2"), 68, b"")
+                out, err = proc.communicate(timeout=20)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+            trace = relay.trace
+    lines = out.splitlines()
+    if len(lines) != 1:
+        raise RuntimeError(f"expected one observe event: {out[:400]!r} {err[-400:]!r}")
+    event = decode(lines[0])
+    event["exit_code"] = proc.returncode
+    expect(event, 69, b"0,1,2")
+    return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
+
+
 def conditional_workflow(server):
     """RFC 7252 section 5.10.8 on /cond. A failed condition is 4.12 and changes nothing."""
     IF_MATCH, ETAG, IF_NONE_MATCH = 1, 4, 5
@@ -2014,6 +2050,10 @@ def main():
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
+    case("observe-client:libcoap->coaptic",
+         lambda: observe_client(peers["libcoap"], peers["coaptic"], peers["coaptic"]))
+    case("observe-client:coaptic->coap-rs",
+         lambda: observe_values(peers["coaptic"], peers["coap-rs"], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
