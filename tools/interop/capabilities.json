@@ -3816,7 +3816,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "coap-rs answers a skipped Block1 number with 2.31. A server-requested smaller Block1 size is not a process case.",
+      "reason": "coap-rs answers a skipped Block1 number with 2.31. libcoap capped at 64-byte blocks answers 2.31 SZX 2 on NUM 0; the continuation that starts at NUM 16 later gets 4.08 Missing interim block.",
       "issue": 200,
       "executable_cases": []
     },
