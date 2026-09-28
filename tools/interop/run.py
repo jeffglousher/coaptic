@@ -172,6 +172,82 @@ def expect(event, code=69, payload=BODY):
         raise AssertionError(f"incorrect response body: {event}")
 
 
+def packet_token(packet):
+    if len(packet) < 4 or packet[0] >> 6 != 1 or (packet[0] & 15) > 8:
+        return b""
+    length = packet[0] & 15
+    return packet[4:4 + length]
+
+
+def shrink_qblock2_szx(packet, szx=4):
+    """Ask the server for 256-byte blocks so one loss is a gap, not a missing tail."""
+    if len(packet) < 5 or packet[0] >> 6 != 1 or (packet[0] & 15) > 8 or not 0 <= szx <= 6:
+        return packet
+    out = bytearray(packet)
+    index = 4 + (out[0] & 15)
+    number = 0
+    while index < len(out) and out[index] != 0xFF:
+        delta_nibble = out[index] >> 4
+        length_nibble = out[index] & 15
+        index += 1
+        if delta_nibble == 15 or length_nibble == 15 or index > len(out):
+            return packet
+        delta, length = delta_nibble, length_nibble
+        if delta_nibble == 13:
+            if index >= len(out):
+                return packet
+            delta = out[index] + 13
+            index += 1
+        elif delta_nibble == 14:
+            if index + 2 > len(out):
+                return packet
+            delta = int.from_bytes(out[index:index + 2], "big") + 269
+            index += 2
+        if length_nibble == 13:
+            if index >= len(out):
+                return packet
+            length = out[index] + 13
+            index += 1
+        elif length_nibble == 14:
+            if index + 2 > len(out):
+                return packet
+            length = int.from_bytes(out[index:index + 2], "big") + 269
+            index += 2
+        if index + length > len(out):
+            return packet
+        number += delta
+        if number == 31 and length == 1:
+            out[index] = (out[index] & 0xF8) | szx
+        index += length
+    return bytes(out)
+
+
+def qblock2_content_num(packet):
+    """NUM of a 2.05 that carries one Q-Block2 payload, else None."""
+    if len(packet) < 5 or packet[0] >> 6 != 1 or packet[1] != 69:
+        return None
+    try:
+        values = decoded_options(packet).get(31, [])
+        if len(values) != 1 or not coap_payload(packet):
+            return None
+        num, _, _ = block1_fields(values[0])
+    except (AssertionError, IndexError, ValueError):
+        return None
+    return num
+
+
+def qblock2_requests_num(packet, num):
+    if len(packet) < 5 or packet[0] >> 6 != 1 or packet[1] != 1:
+        return False
+    try:
+        values = decoded_options(packet).get(31, [])
+        return any(
+            (got := block1_fields(value))[0] == num and not got[1] for value in values
+        )
+    except (AssertionError, IndexError, ValueError):
+        return False
+
+
 class Proxy:
     """One-client UDP relay, deterministic first-packet faults, bounded trace."""
     def __init__(self, dest, mode, family="ipv4"):
@@ -195,6 +271,9 @@ class Proxy:
     def run(self):
         client = None
         dropped = duplicated = False
+        large_tokens = set()
+        held_num = None
+        release_held = False
         try:
             while not self.stop.is_set():
                 ready, _, _ = select.select([self.front, self.back], [], [], .02)
@@ -204,7 +283,7 @@ class Proxy:
                     except ConnectionResetError:
                         # Windows reports late ICMP port-unreachable when a
                         # one-shot client exits after the first duplicate reply.
-                        if self.mode in ("duplicate-request", "dtls-reconnect") and sock is self.front:
+                        if self.mode in ("duplicate-request", "dtls-reconnect", "drop-qblock2") and sock is self.front:
                             continue
                         raise
                     incoming = sock is self.front
@@ -225,9 +304,28 @@ class Proxy:
                         action, dropped = "drop", True
                     elif self.mode == "duplicate-request" and incoming and not duplicated:
                         action, duplicated = "duplicate", True
+                    elif self.mode == "drop-qblock2":
+                        # Shrink the /large size hint, then drop block 1 until the client asks for it.
+                        # Block 0 still arrives, so Size2 is seen. The probe token is left alone.
+                        token = packet_token(data)
+                        if incoming:
+                            try:
+                                if data[1:2] == b"\x01" and b"large" in decoded_options(data).get(11, []):
+                                    large_tokens.add(token)
+                            except (AssertionError, IndexError):
+                                pass
+                            if held_num is not None and qblock2_requests_num(data, held_num):
+                                release_held = True
+                        elif not release_held:
+                            num = qblock2_content_num(data)
+                            if num == 1 and token in large_tokens:
+                                action = "drop"
+                                held_num = num
                     if len(self.trace) >= (8192 if self.mode == "dtls-reconnect" else 256):
                         raise RuntimeError("proxy trace limit exceeded")
                     forwarded = data[:-1] + bytes([data[-1] ^ 0x80]) if action == "corrupt" else data
+                    if self.mode == "drop-qblock2" and incoming and action == "forward" and packet_token(data) in large_tokens:
+                        forwarded = shrink_qblock2_szx(data)
                     self.trace.append({"direction": "request" if incoming else "response",
                                        "action": action, "hex": data.hex(), "forwarded_hex": forwarded.hex()})
                     if action != "drop":
@@ -1344,6 +1442,108 @@ def qblock2_interop(client, server):
     return {"gets": len(downloads), "blocks": len(blocks), "szx": szx, "length": len(LARGE)}
 
 
+def qblock2_missing(client, server):
+    """Drop one later Q-Block2 payload. The client asks for that block and the body completes."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "drop-qblock2") as relay:
+            result = request(client, "udp", relay.number, path="large", timeout=20000, qblock2=True)
+        trace = relay.trace
+    expect(result, 69, LARGE)
+    dropped = [row for row in trace if row["action"] == "drop"]
+    nums = []
+    for row in dropped:
+        num = qblock2_content_num(bytes.fromhex(row["hex"]))
+        if num != 1:
+            raise AssertionError(f"dropped datagram was not Q-Block2 block 1: {row['hex']}")
+        nums.append(num)
+    if len(set(nums)) != 1:
+        raise AssertionError(f"dropped Q-Block2 numbers were {nums}")
+    missing = nums[0]
+    downloads = []
+    for row in trace:
+        if row["direction"] != "request":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if len(packet) > 4 and packet[1] == 1 and b"large" in decoded_options(packet).get(11, []):
+            downloads.append(packet)
+    if not downloads or any(31 not in decoded_options(packet) for packet in downloads):
+        raise AssertionError("the download did not use Q-Block2 on every /large GET")
+    if any(23 in decoded_options(packet) for packet in downloads):
+        raise AssertionError("the download fell back to Block2")
+    large_tokens = {packet_token(packet) for packet in downloads}
+    recovers = []
+    recover_at = None
+    for index, row in enumerate(trace):
+        if row["direction"] != "request":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if packet_token(packet) not in large_tokens or not qblock2_requests_num(packet, missing):
+            continue
+        parsed = [block1_fields(value) for value in decoded_options(packet).get(31, [])]
+        recovers.append(parsed)
+        if recover_at is None:
+            recover_at = index
+    if not recovers or recover_at is None:
+        raise AssertionError(f"client did not request missing Q-Block2 {missing}")
+    for parsed in recovers:
+        asked = [num for num, _, _ in parsed]
+        if asked != [missing]:
+            raise AssertionError(f"recovery asked for {asked}")
+        if any(more for _, more, _ in parsed):
+            raise AssertionError("recovery set the M bit")
+    drop_at = next(i for i, row in enumerate(trace) if row["action"] == "drop")
+    if drop_at > recover_at:
+        raise AssertionError("recovery request was not after the dropped payload")
+    if not any(
+        qblock2_content_num(bytes.fromhex(row["hex"])) not in (None, 0, missing)
+        and packet_token(bytes.fromhex(row["hex"])) in large_tokens
+        for row in trace[:recover_at]
+        if row["direction"] == "response" and row["action"] != "drop"
+    ):
+        raise AssertionError("no higher Q-Block2 block arrived before the recovery request")
+    parts = {}
+    etag = None
+    resent = False
+    for index, row in enumerate(trace):
+        if row["direction"] != "response" or row["action"] == "drop":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        if packet_token(packet) not in large_tokens or packet[1:2] != b"\x45":
+            continue
+        if 23 in decoded_options(packet):
+            raise AssertionError("a response used Block2")
+        values = decoded_options(packet).get(31, [])
+        if len(values) != 1:
+            continue
+        num, _, _ = block1_fields(values[0])
+        payload = coap_payload(packet)
+        previous = parts.get(num)
+        if previous is not None and previous != payload:
+            raise AssertionError(f"duplicate Q-Block2 {num} differed")
+        parts[num] = payload
+        tags = decoded_options(packet).get(4, [])
+        if len(tags) != 1 or not tags[0]:
+            raise AssertionError(f"block {num} had no ETag")
+        if etag is None:
+            etag = tags[0]
+        elif etag != tags[0]:
+            raise AssertionError("Q-Block2 responses did not share one ETag")
+        if num == missing and index > recover_at:
+            resent = True
+    if not resent:
+        raise AssertionError("the missing block was not delivered after the recovery request")
+    if sorted(parts) != list(range(max(parts) + 1)):
+        raise AssertionError(f"Q-Block2 numbers are not contiguous: {sorted(parts)}")
+    if b"".join(parts[i] for i in range(max(parts) + 1)) != LARGE:
+        raise AssertionError("forwarded Q-Block2 payloads are not the 2000-byte pattern")
+    if "peer-coaptic" in Path(server).name:
+        acks = [bytes.fromhex(row["hex"]) for row in trace
+                if row["direction"] == "response" and row["action"] == "forward"]
+        if not any(len(p) == 4 and p[1] == 0 and (p[0] >> 4) & 3 == 2 for p in acks):
+            raise AssertionError("confirmable Q-Block2 did not get an empty ACK")
+    return {"missing": missing, "drops": len(dropped), "length": len(LARGE)}
+
+
 def qblock1_interop(client, server):
     """Q-Block1 POST of the 2000-byte pattern through a relay, then readback 1:1."""
     with Server(server, "udp") as service:
@@ -1712,6 +1912,9 @@ def main():
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         case(f"qblock2-interop:{client}->{server}",
              lambda client=client, server=server: qblock2_interop(peers[client], peers[server]))
+    for client, server in [("coaptic", "coaptic"), ("libcoap", "coaptic")]:
+        case(f"qblock2-missing:{client}->{server}",
+             lambda client=client, server=server: qblock2_missing(peers[client], peers[server]))
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
