@@ -110,7 +110,8 @@ async fn run() -> Result<(), Error> {
             tokio::spawn(async move {
                 // CoAP exchange/dedup/Observe state belongs to this authenticated
                 // association. Resource contents (COUNTER) remain shared.
-                let Ok(mut app) = fixture(Io::Dtls(dtls::DtlsIo::accepted(conn, peer))) else {
+                let Ok(mut app) = fixture(Io::Dtls(dtls::DtlsIo::accepted(conn, peer)), false)
+                else {
                     return;
                 };
                 let start = Instant::now();
@@ -149,7 +150,7 @@ async fn run() -> Result<(), Error> {
         socket.set_nonblocking(true)?;
         Io::Udp(socket)
     };
-    let mut app = fixture(io)?;
+    let mut app = fixture(io, a.server && a.echo)?;
     if a.oscore {
         // Public RFC 8613 C.1 fixture material, never production credentials.
         let mut secret = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
@@ -324,8 +325,24 @@ fn echo_retry_requires_protection_challenge_and_unused_budget() {
     }
 }
 
-fn fixture(io: Io) -> Result<App<profiles::Default, Io, 8, true>, Error> {
-    App::profile::<profiles::Default>()
+fn server_echo(check: coaptic::EchoCheck) -> coaptic::EchoDecision {
+    if check.oscore_protected
+        && !check
+            .echo
+            .ok()
+            .flatten()
+            .is_some_and(|echo| echo.as_slice() == b"srv-echo")
+    {
+        coaptic::EchoDecision::Challenge(
+            coaptic::message::Echo::new(b"srv-echo").expect("challenge"),
+        )
+    } else {
+        coaptic::EchoDecision::Accept
+    }
+}
+
+fn fixture(io: Io, echo: bool) -> Result<App<profiles::Default, Io, 8, true>, Error> {
+    let app = App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .routes::<8>()
@@ -365,9 +382,13 @@ fn fixture(io: Io) -> Result<App<profiles::Default, Io, 8, true>, Error> {
             "/cond",
             get(conditional).put(conditional).delete(conditional),
         )
-        .well_known_core()
-        .bind(io)
-        .map_err(|e| format!("bind: {e:?}").into())
+        .well_known_core();
+    if echo {
+        app.echo_policy(server_echo).bind(io)
+    } else {
+        app.bind(io)
+    }
+    .map_err(|e| format!("bind: {e:?}").into())
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> std::process::ExitCode {

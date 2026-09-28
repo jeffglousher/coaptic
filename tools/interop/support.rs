@@ -26,19 +26,21 @@ pub struct Args {
     pub q_block1: bool,
     pub q_block2: bool,
     pub observe: bool,
+    pub echo: bool,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let mut a: Vec<_> = std::env::args().skip(1).collect();
-        let (mut q_block1, mut q_block2, mut observe) = (false, false, false);
+        let (mut q_block1, mut q_block2, mut observe, mut echo) = (false, false, false, false);
         while let Some(flag) = a
             .last()
-            .filter(|item| matches!(item.as_str(), "qblock1" | "qblock2" | "observe"))
+            .filter(|item| matches!(item.as_str(), "qblock1" | "qblock2" | "observe" | "echo"))
         {
             match flag.as_str() {
                 "qblock1" => q_block1 = true,
                 "qblock2" => q_block2 = true,
-                _ => observe = true,
+                "observe" => observe = true,
+                _ => echo = true,
             }
             a.pop();
         }
@@ -115,6 +117,7 @@ impl Args {
             q_block1,
             q_block2,
             observe,
+            echo,
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {

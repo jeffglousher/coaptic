@@ -3271,6 +3271,23 @@
       "executable": "tools/interop/run.py:observe_protected"
     },
     {
+      "id": "oscore-echo:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["echo", "oscore", "handler-effect"],
+      "positive_proof": [
+        "the Coaptic server returns one authenticated Echo challenge",
+        "the retry is the POST that increments /counter, and the following GET reads 1"
+      ],
+      "failure_proof": ["a readback other than 1 means the challenged request also changed state"],
+      "executable": "tools/interop/run.py:oscore_server_echo"
+    },
+    {
       "id": "conditional:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3848,22 +3865,6 @@
         "embedded"
       ],
       "reason": "Q-Block2 recovery against a libcoap server is not a process case. coap-rs has no Q-Block.",
-      "issue": 200,
-      "executable_cases": []
-    },
-    {
-      "feature": "echo-request-tag-no-response-problem-details",
-      "status": "unqualified",
-      "role": "both",
-      "transport_security": "all",
-      "peers": "all",
-      "platforms": [
-        "linux",
-        "windows",
-        "macos",
-        "embedded"
-      ],
-      "reason": "libcoap Echo retry is asserted on oscore-state:coaptic->libcoap. A Coaptic server does not issue Echo.",
       "issue": 200,
       "executable_cases": []
     },
