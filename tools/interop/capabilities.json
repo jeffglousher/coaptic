@@ -3278,6 +3278,59 @@
       "executable": "tools/interop/run.py:qblock1_interop"
     },
     {
+      "id": "qblock2-interop:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2"],
+      "positive_proof": [
+        "the coaptic client gets the exact 2000-byte pattern from coaptic",
+        "every /large GET carries Q-Block2 and the wire payloads reassemble to that pattern under one ETag",
+        "a confirmable Q-Block2 request gets an empty ACK and the payloads are NON"
+      ],
+      "failure_proof": ["a /large GET without Q-Block2 or with Block2 fails"],
+      "executable": "tools/interop/run.py:qblock2_interop"
+    },
+    {
+      "id": "qblock2-interop:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2"],
+      "positive_proof": [
+        "the coaptic client gets the exact 2000-byte pattern from libcoap",
+        "every /large GET carries Q-Block2 and the wire payloads reassemble to that pattern under one ETag"
+      ],
+      "failure_proof": ["a /large GET without Q-Block2 or with Block2 fails"],
+      "executable": "tools/interop/run.py:qblock2_interop"
+    },
+    {
+      "id": "qblock2-interop:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2"],
+      "positive_proof": [
+        "the libcoap client gets the exact 2000-byte pattern from coaptic",
+        "every /large GET carries Q-Block2 and the wire payloads reassemble to that pattern under one ETag",
+        "a confirmable Q-Block2 request gets an empty ACK and the payloads are NON"
+      ],
+      "failure_proof": ["a /large GET without Q-Block2 or with Block2 fails"],
+      "executable": "tools/interop/run.py:qblock2_interop"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3643,7 +3696,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Q-Block2, missing-block recovery, and window continuation against libcoap are not process cases. coap-rs has no Q-Block.",
+      "reason": "Missing-block recovery and window continuation for Q-Block2 against libcoap are not process cases. coap-rs has no Q-Block.",
       "issue": 200,
       "executable_cases": []
     },

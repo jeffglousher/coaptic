@@ -207,7 +207,9 @@ static coap_oscore_conf_t *oscore_config(int server, int wrong_key, uint64_t seq
 
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
-  const int q_block = argc > 8 && strcmp(argv[argc-1],"qblock1")==0;
+  const int q_block1 = argc > 8 && strcmp(argv[argc-1],"qblock1")==0;
+  const int q_block2 = argc > 8 && strcmp(argv[argc-1],"qblock2")==0;
+  const int q_block = q_block1 || q_block2;
   if(q_block) argc--;
   if(argc<8 || argc>11){failure("invalid arguments");return 2;}
   const char *family = argc >= 9 ? argv[8] : "ipv4";
@@ -298,6 +300,11 @@ int main(int argc,char **argv) {
     if((!strcmp(argv[5], "methods") || !strcmp(argv[5], "upload")) && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
       const uint8_t format = 42;
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
+    }
+    if(q_block2) {
+      /* NUM=0, M=0, SZX=6. libcoap sets M after the Q-Block probe. */
+      const uint8_t qblock2 = 0x06;
+      if(!coap_add_option(pdu, COAP_OPTION_Q_BLOCK2, 1, &qblock2)) { coap_delete_pdu(pdu); failure("Q-Block2 option failed"); coap_session_release(session); status=1; goto done; }
     }
     if(payload_length && !coap_add_data_large_request(session, pdu, payload_length, payload, NULL, NULL)) { coap_delete_pdu(pdu); failure("payload failed"); coap_session_release(session); status=1; goto done; }
     if(coap_send(session,pdu)==COAP_INVALID_MID){failure("send failed");status=1;} else {

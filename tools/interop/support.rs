@@ -24,20 +24,21 @@ pub struct Args {
     pub payload: Vec<u8>,
     pub timeout: u64,
     pub q_block1: bool,
+    pub q_block2: bool,
     pub observe: bool,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let mut a: Vec<_> = std::env::args().skip(1).collect();
-        let (mut q_block1, mut observe) = (false, false);
+        let (mut q_block1, mut q_block2, mut observe) = (false, false, false);
         while let Some(flag) = a
             .last()
-            .filter(|item| matches!(item.as_str(), "qblock1" | "observe"))
+            .filter(|item| matches!(item.as_str(), "qblock1" | "qblock2" | "observe"))
         {
-            if flag == "qblock1" {
-                q_block1 = true;
-            } else {
-                observe = true;
+            match flag.as_str() {
+                "qblock1" => q_block1 = true,
+                "qblock2" => q_block2 = true,
+                _ => observe = true,
             }
             a.pop();
         }
@@ -112,6 +113,7 @@ impl Args {
             payload,
             timeout,
             q_block1,
+            q_block2,
             observe,
         })
     }

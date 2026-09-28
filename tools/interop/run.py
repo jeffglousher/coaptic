@@ -42,12 +42,14 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, observe=False):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    if sequence is not None or qblock1 or observe:
+    if sequence is not None or qblock1 or qblock2 or observe:
         result.append("0" if sequence is None else str(sequence))
     if qblock1:
         result.append("qblock1")
+    if qblock2:
+        result.append("qblock2")
     if observe:
         result.append("observe")
     return result
@@ -1266,6 +1268,82 @@ def separate_client(client, server):
     return {"responses": len(responses), "requests": len(requests)}
 
 
+def qblock2_interop(client, server):
+    """Q-Block2 GET of the 2000-byte pattern through a relay. The body is reassembled from the wire."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "dtls-reconnect") as relay:
+            result = request(client, "udp", relay.number, path="large", timeout=12000, qblock2=True)
+        trace = relay.trace
+    expect(result, 69, LARGE)
+    requests = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "request"]
+    responses = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "response"]
+    downloads = []
+    for packet in requests:
+        if len(packet) <= 4 or packet[0] >> 6 != 1 or packet[1] != 1:
+            continue
+        if b"large" in decoded_options(packet).get(11, []):
+            downloads.append(packet)
+    if not downloads or any(31 not in decoded_options(packet) for packet in downloads):
+        raise AssertionError("the download did not use Q-Block2 on every /large GET")
+    if any(23 in decoded_options(packet) for packet in downloads):
+        raise AssertionError("the download fell back to Block2")
+
+    def token_of(packet):
+        length = packet[0] & 15
+        return packet[4:4 + length]
+
+    # libcoap's Q-Block probe is a separate GET /.well-known/core. Its token is not an application token.
+    large_tokens = {token_of(packet) for packet in downloads}
+    blocks = []
+    for packet in responses:
+        if len(packet) <= 4 or packet[1] != 69 or token_of(packet) not in large_tokens:
+            continue
+        options = decoded_options(packet)
+        if 23 in options:
+            raise AssertionError("a response used Block2")
+        if 31 in options:
+            blocks.append(packet)
+    if len(blocks) < 2:
+        raise AssertionError("the 2000-byte body was not split across Q-Block2 responses")
+    parts = {}
+    etag = szx = None
+    for packet in blocks:
+        values = decoded_options(packet).get(31, [])
+        if len(values) != 1:
+            raise AssertionError(f"Q-Block2 count was {len(values)}")
+        num, more, this_szx = block1_fields(values[0])
+        if szx is None:
+            szx = this_szx
+        elif szx != this_szx:
+            raise AssertionError(f"Q-Block2 SZX changed from {szx} to {this_szx}")
+        payload = coap_payload(packet)
+        size = 1 << (szx + 4)
+        if more and len(payload) != size or not more and len(payload) > size:
+            raise AssertionError(f"block {num} length {len(payload)} does not match SZX {szx}")
+        previous = parts.get(num)
+        if previous is not None and previous != payload:
+            raise AssertionError(f"duplicate Q-Block2 {num} differed")
+        parts[num] = payload
+        tags = decoded_options(packet).get(4, [])
+        if len(tags) != 1 or not tags[0]:
+            raise AssertionError(f"block {num} had no ETag")
+        if etag is None:
+            etag = tags[0]
+        elif etag != tags[0]:
+            raise AssertionError("Q-Block2 responses did not share one ETag")
+    if not parts or sorted(parts) != list(range(max(parts) + 1)):
+        raise AssertionError(f"Q-Block2 numbers are not contiguous: {sorted(parts)}")
+    if b"".join(parts[i] for i in range(max(parts) + 1)) != LARGE:
+        raise AssertionError("wire Q-Block2 payloads are not the 2000-byte pattern")
+    if "peer-coaptic" in Path(server).name:
+        acks = [p for p in responses if len(p) == 4 and p[1] == 0 and (p[0] >> 4) & 3 == 2]
+        if not acks:
+            raise AssertionError("confirmable Q-Block2 did not get an empty ACK")
+        if any((p[0] >> 4) & 3 != 1 for p in blocks):
+            raise AssertionError("Q-Block2 payload was piggybacked on an ACK")
+    return {"gets": len(downloads), "blocks": len(blocks), "szx": szx, "length": len(LARGE)}
+
+
 def qblock1_interop(client, server):
     """Q-Block1 POST of the 2000-byte pattern through a relay, then readback 1:1."""
     with Server(server, "udp") as service:
@@ -1631,6 +1709,9 @@ def main():
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         case(f"qblock1-interop:{client}->{server}",
              lambda client=client, server=server: qblock1_interop(peers[client], peers[server]))
+    for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
+        case(f"qblock2-interop:{client}->{server}",
+             lambda client=client, server=server: qblock2_interop(peers[client], peers[server]))
     for server_name in ("coaptic", "libcoap"):
         case(f"observe-client:coaptic->{server_name}",
              lambda server_name=server_name: observe_client(peers["coaptic"], peers[server_name], peers["coaptic"]))
