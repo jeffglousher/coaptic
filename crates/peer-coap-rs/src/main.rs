@@ -130,6 +130,7 @@ async fn run() -> Result<(), Error> {
                                     counter.fetch_add(1, Ordering::SeqCst);
                                     (ResponseType::Changed, vec![])
                                 }
+                                (RequestType::Put, "counter") => (ResponseType::Changed, vec![]),
                                 _ => (ResponseType::NotFound, vec![]),
                             };
                             r.message.header.code = MessageClass::Response(code);

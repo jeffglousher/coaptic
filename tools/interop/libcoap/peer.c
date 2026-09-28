@@ -20,6 +20,10 @@ static int method_exists;
 static uint8_t large_body[2000];
 static const uint8_t small_body[] = "core-test-payload";
 static int complete;
+static int observe_mode;
+static char observe_joined[192];
+static size_t observe_joined_len;
+static int observe_count;
 static uint8_t pending_token[8];
 static size_t pending_token_len;
 static uint64_t started;
@@ -184,6 +188,17 @@ static coap_response_t response_handler(coap_session_t *session,
   const uint8_t *data=NULL;size_t len=0,offset=0,total=0;
   coap_get_data_large(received,&len,&data,&offset,&total);
   if (offset || total>len) return COAP_RESPONSE_FAIL;
+  if(observe_mode) {
+    if(observe_count >= 3) return COAP_RESPONSE_OK;
+    if(observe_count && observe_joined_len + 1 < sizeof(observe_joined))
+      observe_joined[observe_joined_len++] = ',';
+    if(observe_joined_len + len >= sizeof(observe_joined)) return COAP_RESPONSE_FAIL;
+    if(len && data) memcpy(observe_joined + observe_joined_len, data, len);
+    observe_joined_len += len;
+    if(++observe_count < 3) return COAP_RESPONSE_OK;
+    data = (const uint8_t *)observe_joined;
+    len = observe_joined_len;
+  }
   uint64_t elapsed = elapsed_ns();
   printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"response\",\"code\":%u,\"payload_hex\":\"",(unsigned)coap_pdu_get_code(received));
   for(size_t i=0;i<len;i++)printf("%02x",data[i]);
@@ -207,10 +222,15 @@ static coap_oscore_conf_t *oscore_config(int server, int wrong_key, uint64_t seq
 
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
-  const int q_block1 = argc > 8 && strcmp(argv[argc-1],"qblock1")==0;
-  const int q_block2 = argc > 8 && strcmp(argv[argc-1],"qblock2")==0;
+  int q_block1 = 0, q_block2 = 0, observe = 0;
+  while(argc > 8 && (!strcmp(argv[argc-1],"qblock1") || !strcmp(argv[argc-1],"qblock2") || !strcmp(argv[argc-1],"observe"))) {
+    if(!strcmp(argv[argc-1],"qblock1")) q_block1 = 1;
+    else if(!strcmp(argv[argc-1],"qblock2")) q_block2 = 1;
+    else observe = 1;
+    argc--;
+  }
   const int q_block = q_block1 || q_block2;
-  if(q_block) argc--;
+  observe_mode = observe;
   if(argc<8 || argc>11){failure("invalid arguments");return 2;}
   const char *family = argc >= 9 ? argv[8] : "ipv4";
   if(strcmp(family,"ipv4") && strcmp(family,"ipv6")){failure("invalid address family");return 2;}
@@ -296,7 +316,9 @@ int main(int argc,char **argv) {
     if(!pdu){failure("PDU allocation failed");coap_session_release(session);status=1;goto done;}
     uint8_t token[8];size_t token_len=sizeof(token);coap_session_new_token(session,&token_len,token);
     memcpy(pending_token, token, token_len); pending_token_len = token_len;
-    if(!coap_add_token(pdu,token_len,token)||!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
+    if(!coap_add_token(pdu,token_len,token)){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
+    if(observe && !coap_add_option(pdu,COAP_OPTION_OBSERVE,0,(const uint8_t *)"")){coap_delete_pdu(pdu);failure("Observe option failed");coap_session_release(session);status=1;goto done;}
+    if(!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
     if((!strcmp(argv[5], "methods") || !strcmp(argv[5], "upload")) && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
       const uint8_t format = 42;
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
