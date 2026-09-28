@@ -3331,6 +3331,42 @@
       "executable": "tools/interop/run.py:qblock2_interop"
     },
     {
+      "id": "qblock2-missing:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2", "missing-block"],
+      "positive_proof": [
+        "Q-Block2 block 1 is dropped and a higher block is delivered",
+        "the client requests only block 1, with M unset",
+        "the resent payload completes the 2000-byte body under the same ETag"
+      ],
+      "failure_proof": ["a recovery request for any other block, or with M set, fails"],
+      "executable": "tools/interop/run.py:qblock2_missing"
+    },
+    {
+      "id": "qblock2-missing:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2", "missing-block"],
+      "positive_proof": [
+        "Q-Block2 block 1 is dropped and a higher block is delivered",
+        "the libcoap client requests only block 1, with M unset",
+        "the resent payload completes the 2000-byte body under the same ETag"
+      ],
+      "failure_proof": ["a recovery request for any other block, or with M set, fails"],
+      "executable": "tools/interop/run.py:qblock2_missing"
+    },
+    {
       "id": "empty-request-tag:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3696,7 +3732,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Missing-block recovery and window continuation for Q-Block2 against libcoap are not process cases. coap-rs has no Q-Block.",
+      "reason": "Q-Block2 recovery against a libcoap server, and window continuation against libcoap, are not process cases. coap-rs has no Q-Block.",
       "issue": 200,
       "executable_cases": []
     },
