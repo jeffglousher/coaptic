@@ -193,6 +193,30 @@ static int parse_merge_n(const uint8_t *data, size_t len, int *present, unsigned
   *value = n;
   return 1;
 }
+static int parse_json_patch(const uint8_t *data, size_t len, int *remove, unsigned *value) {
+  static const char prefix[] = "[{\"op\":\"replace\",\"path\":\"/n\",\"value\":";
+  static const char remove_doc[] = "[{\"op\":\"remove\",\"path\":\"/n\"}]";
+  const size_t prefix_len = sizeof(prefix) - 1;
+  size_t digits, i;
+  unsigned n = 0;
+  if (len == sizeof(remove_doc) - 1 && memcmp(data, remove_doc, len) == 0) {
+    *remove = 1;
+    return 1;
+  }
+  if (len < prefix_len + 3 || memcmp(data, prefix, prefix_len) || data[len - 2] != '}' || data[len - 1] != ']')
+    return 0;
+  digits = len - prefix_len - 2;
+  if (digits == 0 || digits > 10 || (digits > 1 && data[prefix_len] == '0')) return 0;
+  for (i = 0; i < digits; i++) {
+    unsigned char digit = data[prefix_len + i];
+    if (digit < '0' || digit > '9') return 0;
+    if (n > 429496729u || (n == 429496729u && digit > '5')) return 0;
+    n = n * 10u + (unsigned)(digit - '0');
+  }
+  *remove = 0;
+  *value = n;
+  return 1;
+}
 static void patch_resource(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
                         coap_pdu_t *response) {
@@ -214,16 +238,31 @@ static void patch_resource(coap_resource_t *resource, coap_session_t *session,
     size_t len = 0; const uint8_t *data = NULL;
     coap_opt_iterator_t it;
     coap_opt_t *format = coap_check_option(request, COAP_OPTION_CONTENT_FORMAT, &it);
-    int present = 0; unsigned value = 0;
+    int present = 0; unsigned value = 0; int remove = 0;
+    unsigned format_id;
     coap_get_data(request, &len, &data);
-    if (!format || coap_opt_length(format) > 2 || coap_decode_var_bytes(coap_opt_value(format), coap_opt_length(format)) != 52) {
+    if (!format || coap_opt_length(format) > 2) {
       coap_pdu_set_code(response, COAP_RESPONSE_CODE_UNSUPPORTED_CONTENT_FORMAT); return;
     }
-    if (!data || !parse_merge_n(data, len, &present, &value)) {
+    format_id = coap_decode_var_bytes(coap_opt_value(format), coap_opt_length(format));
+    if (format_id == 52) {
+      if (!data || !parse_merge_n(data, len, &present, &value)) {
+        coap_pdu_set_code(response, (coap_pdu_code_t)128); return;
+      }
+      patch_present = present;
+      patch_n = value;
+      coap_pdu_set_code(response, (coap_pdu_code_t)68);
+      return;
+    }
+    if (format_id != 51) {
+      coap_pdu_set_code(response, COAP_RESPONSE_CODE_UNSUPPORTED_CONTENT_FORMAT); return;
+    }
+    if (!data || !parse_json_patch(data, len, &remove, &value)) {
       coap_pdu_set_code(response, (coap_pdu_code_t)128); return;
     }
-    patch_present = present;
-    patch_n = value;
+    if (!patch_present) { coap_pdu_set_code(response, (coap_pdu_code_t)132); return; }
+    if (remove) patch_present = 0;
+    else patch_n = value;
     coap_pdu_set_code(response, (coap_pdu_code_t)68);
     return;
   }
@@ -351,11 +390,12 @@ static coap_oscore_conf_t *oscore_config(int server, int wrong_key, uint64_t seq
 
 int main(int argc,char **argv) {
   setvbuf(stdout,NULL,_IONBF,0);
-  int q_block1 = 0, q_block2 = 0, observe = 0;
-  while(argc > 8 && (!strcmp(argv[argc-1],"qblock1") || !strcmp(argv[argc-1],"qblock2") || !strcmp(argv[argc-1],"observe"))) {
+  int q_block1 = 0, q_block2 = 0, observe = 0, json_patch = 0;
+  while(argc > 8 && (!strcmp(argv[argc-1],"qblock1") || !strcmp(argv[argc-1],"qblock2") || !strcmp(argv[argc-1],"observe") || !strcmp(argv[argc-1],"jsonpatch"))) {
     if(!strcmp(argv[argc-1],"qblock1")) q_block1 = 1;
     else if(!strcmp(argv[argc-1],"qblock2")) q_block2 = 1;
-    else observe = 1;
+    else if(!strcmp(argv[argc-1],"observe")) observe = 1;
+    else json_patch = 1;
     argc--;
   }
   const int q_block = q_block1 || q_block2;
@@ -464,7 +504,7 @@ int main(int argc,char **argv) {
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
     }
     if(!strcmp(argv[5], "patch") && method == 6) {
-      const uint8_t format = 52;
+      const uint8_t format = json_patch ? 51 : 52;
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
     }
     if(q_block2) {

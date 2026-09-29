@@ -28,11 +28,13 @@ pub struct Args {
     pub observe: bool,
     pub echo: bool,
     pub replay: Option<(u64, u32)>,
+    pub jsonpatch: bool,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let mut a: Vec<_> = std::env::args().skip(1).collect();
-        let (mut q_block1, mut q_block2, mut observe, mut echo) = (false, false, false, false);
+        let (mut q_block1, mut q_block2, mut observe, mut echo, mut jsonpatch) =
+            (false, false, false, false, false);
         let mut replay = None;
         while let Some(flag) = a.last().cloned() {
             match flag.as_str() {
@@ -40,6 +42,7 @@ impl Args {
                 "qblock2" => q_block2 = true,
                 "observe" => observe = true,
                 "echo" => echo = true,
+                "jsonpatch" => jsonpatch = true,
                 _ => {
                     let Some(rest) = flag.strip_prefix("replay:") else {
                         break;
@@ -134,6 +137,7 @@ impl Args {
             observe,
             echo,
             replay,
+            jsonpatch,
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {
@@ -260,21 +264,52 @@ impl MergePatch {
                 Some(n) => (69, format!("{{\"n\":{n}}}").into_bytes(), Some(50)),
                 None => (132, vec![], None),
             },
-            6 => {
-                if format != Some(52) {
-                    return (143, vec![], None);
-                }
-                match parse_merge_n(payload) {
+            6 => match format {
+                Some(52) => match parse_merge_n(payload) {
                     Some(next) => {
                         self.value = next;
                         (68, vec![], None)
                     }
                     None => (128, vec![], None),
-                }
-            }
+                },
+                Some(51) => match parse_json_patch(payload) {
+                    Some(JsonPatch::Replace(n)) if self.value.is_some() => {
+                        self.value = Some(n);
+                        (68, vec![], None)
+                    }
+                    Some(JsonPatch::Remove) if self.value.is_some() => {
+                        self.value = None;
+                        (68, vec![], None)
+                    }
+                    Some(_) => (132, vec![], None),
+                    None => (128, vec![], None),
+                },
+                _ => (143, vec![], None),
+            },
             _ => (133, vec![], None),
         }
     }
+}
+enum JsonPatch {
+    Replace(u32),
+    Remove,
+}
+fn parse_json_patch(payload: &[u8]) -> Option<JsonPatch> {
+    if payload == b"[{\"op\":\"remove\",\"path\":\"/n\"}]" {
+        return Some(JsonPatch::Remove);
+    }
+    let digits = payload
+        .strip_prefix(b"[{\"op\":\"replace\",\"path\":\"/n\",\"value\":")?
+        .strip_suffix(b"}]")?;
+    if digits.is_empty() || digits.len() > 10 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if digits.len() > 1 && digits[0] == b'0' {
+        return None;
+    }
+    Some(JsonPatch::Replace(
+        core::str::from_utf8(digits).ok()?.parse().ok()?,
+    ))
 }
 fn parse_merge_n(payload: &[u8]) -> Option<Option<u32>> {
     if payload == b"{\"n\":null}" {
@@ -343,6 +378,19 @@ fn merge_patch_replaces_and_deletes_one_decimal_member() {
     );
     assert_eq!(patch.respond(1, b"", None).0, 132);
     assert_eq!(patch.value, None);
+}
+
+#[test]
+fn json_patch_replaces_and_removes_one_member() {
+    let mut patch = MergePatch::new();
+    let replace = b"[{\"op\":\"replace\",\"path\":\"/n\",\"value\":3}]";
+    let remove = b"[{\"op\":\"remove\",\"path\":\"/n\"}]";
+    assert_eq!(patch.respond(6, replace, Some(51)), (68, vec![], None));
+    assert_eq!(patch.respond(1, b"", None).1, b"{\"n\":3}".to_vec());
+    assert_eq!(patch.respond(6, b"{\"n\":1}", Some(51)).0, 128);
+    assert_eq!(patch.respond(1, b"", None).1, b"{\"n\":3}".to_vec());
+    assert_eq!(patch.respond(6, remove, Some(51)), (68, vec![], None));
+    assert_eq!(patch.respond(6, replace, Some(51)).0, 132);
 }
 
 #[test]

@@ -246,7 +246,11 @@ async fn run() -> Result<(), Error> {
         outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
     }
     if a.path == "patch" && a.method == 6 {
-        outgoing = outgoing.content_format(ContentFormat::MERGE_PATCH);
+        outgoing = outgoing.content_format(if a.jsonpatch {
+            ContentFormat::JSON_PATCH
+        } else {
+            ContentFormat::MERGE_PATCH
+        });
     }
     if a.q_block1 {
         outgoing = outgoing
@@ -290,7 +294,11 @@ async fn run() -> Result<(), Error> {
                     retry = retry.content_format(ContentFormat::OCTET_STREAM);
                 }
                 if a.path == "patch" && a.method == 6 {
-                    retry = retry.content_format(ContentFormat::MERGE_PATCH);
+                    retry = retry.content_format(if a.jsonpatch {
+                        ContentFormat::JSON_PATCH
+                    } else {
+                        ContentFormat::MERGE_PATCH
+                    });
                 }
                 if a.q_block1 {
                     retry = retry
