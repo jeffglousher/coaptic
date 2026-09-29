@@ -2102,6 +2102,7 @@ def main():
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))
+    case("conditional:libcoap", lambda: conditional_workflow(peers["libcoap"]))
     for client_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"separate-client:{client_name}->coaptic",
              lambda client_name=client_name: separate_client(peers[client_name], peers["coaptic"]))
