@@ -42,9 +42,9 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False, echo=False, replay=None):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False, echo=False, replay=None, jsonpatch=False):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    if sequence is not None or qblock1 or qblock2 or observe or echo or replay is not None:
+    if sequence is not None or qblock1 or qblock2 or observe or echo or replay is not None or jsonpatch:
         result.append("0" if sequence is None else str(sequence))
     if qblock1:
         result.append("qblock1")
@@ -57,6 +57,8 @@ def command(exe, role, transport, number, key="sesame", path="test", method="GET
     if replay is not None:
         left, bits = replay
         result.append(f"replay:{left}:{bits}")
+    if jsonpatch:
+        result.append("jsonpatch")
     return result
 
 
@@ -1456,6 +1458,33 @@ def merge_patch(client, server):
     return {"replaced": "1", "deleted": True, "refused_format": 42}
 
 
+def json_patch(client, server):
+    """RFC 8132 JSON Patch on /patch. Content-format 51 may replace or remove /n."""
+    replace = b'[{"op":"replace","path":"/n","value":3}]'
+    remove = b'[{"op":"remove","path":"/n"}]'
+    with Server(server, "udp") as service:
+        expect(request(client, "udp", service.number, path="patch"), 69, b'{"n":0}')
+        expect(request(client, "udp", service.number, path="patch", method="PATCH",
+                       payload=replace, jsonpatch=True), 68, b"")
+        expect(request(client, "udp", service.number, path="patch"), 69, b'{"n":3}')
+        address = ("127.0.0.1", service.number)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            refused = coap_roundtrip(sock, address, coap_message(
+                6, 0x81, b"\xc5", [(11, b"patch"), (12, bytes([51]))], b'{"n":1}'))
+            if refused[1] != 128:
+                raise AssertionError(f"merge document at content-format 51 returned {refused[1]}")
+            shown = coap_roundtrip(sock, address, coap_message(1, 0x82, b"\xc6", [(11, b"patch")]))
+            if shown[1] != 69 or coap_payload(shown) != b'{"n":3}':
+                raise AssertionError(f"GET /patch returned {shown[1]} {coap_payload(shown)!r}")
+        expect(request(client, "udp", service.number, path="patch", method="PATCH",
+                       payload=remove, jsonpatch=True), 68, b"")
+        expect(request(client, "udp", service.number, path="patch"), 132, b"")
+        expect(request(client, "udp", service.number, path="patch", method="PATCH",
+                       payload=replace, jsonpatch=True), 132, b"")
+    return {"replaced": "3", "removed": True}
+
+
 def conditional_workflow(server):
     """RFC 7252 section 5.10.8 on /cond. A failed condition is 4.12 and changes nothing."""
     IF_MATCH, ETAG, IF_NONE_MATCH = 1, 4, 5
@@ -2157,6 +2186,14 @@ def main():
          lambda: merge_patch(peers["libcoap"], peers["coaptic"]))
     case("merge-patch:coaptic->coap-rs",
          lambda: merge_patch(peers["coaptic"], peers["coap-rs"]))
+    case("json-patch:coaptic->coaptic",
+         lambda: json_patch(peers["coaptic"], peers["coaptic"]))
+    case("json-patch:coaptic->libcoap",
+         lambda: json_patch(peers["coaptic"], peers["libcoap"]))
+    case("json-patch:libcoap->coaptic",
+         lambda: json_patch(peers["libcoap"], peers["coaptic"]))
+    case("json-patch:coaptic->coap-rs",
+         lambda: json_patch(peers["coaptic"], peers["coap-rs"]))
     for client_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"separate-client:{client_name}->coaptic",
              lambda client_name=client_name: separate_client(peers[client_name], peers["coaptic"]))

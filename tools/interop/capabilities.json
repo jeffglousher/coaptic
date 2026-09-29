@@ -3493,6 +3493,74 @@
       "executable": "tools/interop/run.py:merge_patch"
     },
     {
+      "id": "json-patch:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "json-patch"],
+      "positive_proof": [
+        "PATCH content-format 51 replace of /n sets the member to 3",
+        "remove of /n deletes the resource, and a later replace is 4.04"
+      ],
+      "failure_proof": ["a merge-patch document at content-format 51 is 4.00 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:json_patch"
+    },
+    {
+      "id": "json-patch:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "json-patch"],
+      "positive_proof": [
+        "PATCH content-format 51 replace of /n sets the member to 3",
+        "remove of /n deletes the resource, and a later replace is 4.04"
+      ],
+      "failure_proof": ["a merge-patch document at content-format 51 is 4.00 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:json_patch"
+    },
+    {
+      "id": "json-patch:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "json-patch"],
+      "positive_proof": [
+        "PATCH content-format 51 replace of /n sets the member to 3",
+        "remove of /n deletes the resource, and a later replace is 4.04"
+      ],
+      "failure_proof": ["a merge-patch document at content-format 51 is 4.00 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:json_patch"
+    },
+    {
+      "id": "json-patch:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "json-patch"],
+      "positive_proof": [
+        "PATCH content-format 51 replace of /n sets the member to 3",
+        "remove of /n deletes the resource, and a later replace is 4.04"
+      ],
+      "failure_proof": ["a merge-patch document at content-format 51 is 4.00 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:json_patch"
+    },
+    {
       "id": "qblock1-interop:coaptic->coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3985,7 +4053,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "JSON Patch (content-format 51) is not a process case. The merge-patch fixture accepts only {\"n\":<number>} or {\"n\":null}.",
+      "reason": "JSON Patch and merge-patch in the process fixture accept only replace, remove, or null of the member /n.",
       "issue": 200,
       "executable_cases": []
     },

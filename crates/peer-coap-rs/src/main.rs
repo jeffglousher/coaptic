@@ -194,7 +194,10 @@ async fn run() -> Result<(), Error> {
             None,
         )
         .options(if a.path == "patch" && a.method == 6 {
-            vec![(CoapOption::ContentFormat, vec![52])]
+            vec![(
+                CoapOption::ContentFormat,
+                vec![if a.jsonpatch { 51 } else { 52 }],
+            )]
         } else if matches!(a.path.as_str(), "methods" | "upload")
             && matches!(a.method, 2 | 3 | 5 | 6 | 7)
         {
