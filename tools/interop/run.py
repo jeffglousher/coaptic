@@ -1306,7 +1306,7 @@ def observe_client(client, server, writer):
     return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
 
 
-def observe_protected(client, server, writer, transport):
+def observe_protected(client, server, writer, transport, ready=1):
     """Observe /counter over OSCORE or DTLS. Two POSTs produce bodies 0, 1 and 2."""
     def wait_responses(relay, count, seconds):
         deadline = time.monotonic() + seconds
@@ -1334,15 +1334,15 @@ def observe_protected(client, server, writer, transport):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
                 if transport == "dtls":
-                    wait_dtls(relay, 1, 12)
+                    wait_dtls(relay, ready, 12)
                 else:
-                    wait_responses(relay, 1, 8)
+                    wait_responses(relay, ready, 12)
                 expect(request(writer, transport, service.number, path="counter", method="POST",
                                sequence=100 if transport == "oscore" else None), 68, b"")
                 if transport == "dtls":
-                    wait_dtls(relay, 2, 8)
+                    wait_dtls(relay, ready + 1, 8)
                 else:
-                    wait_responses(relay, 2, 8)
+                    wait_responses(relay, ready + 1, 8)
                 expect(request(writer, transport, service.number, path="counter", method="POST",
                                sequence=200 if transport == "oscore" else None), 68, b"")
                 out, err = proc.communicate(timeout=20)
@@ -2129,6 +2129,10 @@ def main():
          lambda: observe_values(peers["coaptic"], peers["coap-rs"], peers["coaptic"]))
     case("observe-oscore:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "oscore"))
+    case("observe-oscore:coaptic->libcoap",
+         lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "oscore", ready=2))
+    case("observe-oscore:libcoap->coaptic",
+         lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "oscore"))
     case("observe-dtls:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "dtls"))
     case("oscore-echo:coaptic->coaptic",
