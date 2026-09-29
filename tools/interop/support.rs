@@ -27,20 +27,35 @@ pub struct Args {
     pub q_block2: bool,
     pub observe: bool,
     pub echo: bool,
+    pub replay: Option<(u64, u32)>,
 }
 impl Args {
     pub fn parse() -> Result<Self, Error> {
         let mut a: Vec<_> = std::env::args().skip(1).collect();
         let (mut q_block1, mut q_block2, mut observe, mut echo) = (false, false, false, false);
-        while let Some(flag) = a
-            .last()
-            .filter(|item| matches!(item.as_str(), "qblock1" | "qblock2" | "observe" | "echo"))
-        {
+        let mut replay = None;
+        while let Some(flag) = a.last().cloned() {
             match flag.as_str() {
                 "qblock1" => q_block1 = true,
                 "qblock2" => q_block2 = true,
                 "observe" => observe = true,
-                _ => echo = true,
+                "echo" => echo = true,
+                _ => {
+                    let Some(rest) = flag.strip_prefix("replay:") else {
+                        break;
+                    };
+                    let mut parts = rest.split(':');
+                    let (Some(left), Some(bits), None) = (parts.next(), parts.next(), parts.next())
+                    else {
+                        return Err("replay checkpoint must be LEFT:BITS".into());
+                    };
+                    if replay.is_some() {
+                        return Err("duplicate replay checkpoint".into());
+                    }
+                    let left = left.parse::<u64>()?;
+                    let bits = bits.parse::<u32>()?;
+                    replay = Some((left, bits));
+                }
             }
             a.pop();
         }
@@ -118,6 +133,7 @@ impl Args {
             q_block2,
             observe,
             echo,
+            replay,
         })
     }
     pub fn address(&self) -> std::net::SocketAddr {

@@ -45,6 +45,9 @@ async fn run() -> Result<(), Error> {
     if a.echo {
         return Err("Echo challenges are not issued by this peer".into());
     }
+    if a.replay.is_some() {
+        return Err("OSCORE replay restore is not implemented by this peer".into());
+    }
     if a.observe {
         return Err("Observe collection is not implemented by this peer".into());
     }

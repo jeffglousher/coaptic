@@ -42,9 +42,9 @@ def ipv6_probe(number):
     return {"sender": sender, "request_hex": wire.hex(), "response_hex": reply.hex()}
 
 
-def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False, echo=False):
+def command(exe, role, transport, number, key="sesame", path="test", method="GET", timeout=6000, family="ipv4", payload=b"", sequence=None, qblock1=False, qblock2=False, observe=False, echo=False, replay=None):
     result = [str(exe), role, transport, str(number), key, path, method, str(timeout), family, payload.hex()]
-    if sequence is not None or qblock1 or qblock2 or observe or echo:
+    if sequence is not None or qblock1 or qblock2 or observe or echo or replay is not None:
         result.append("0" if sequence is None else str(sequence))
     if qblock1:
         result.append("qblock1")
@@ -54,6 +54,9 @@ def command(exe, role, transport, number, key="sesame", path="test", method="GET
         result.append("observe")
     if echo:
         result.append("echo")
+    if replay is not None:
+        left, bits = replay
+        result.append(f"replay:{left}:{bits}")
     return result
 
 
@@ -67,11 +70,12 @@ def decode(line):
 
 
 class Server:
-    def __init__(self, exe, transport, number=None, family="ipv4", echo=False):
+    def __init__(self, exe, transport, number=None, family="ipv4", echo=False, sequence=None, replay=None):
         self.number = number or port(family)
         self.stderr = tempfile.TemporaryFile()
         start = time.perf_counter_ns()
-        self.proc = subprocess.Popen(command(exe, "server", transport, self.number, family=family, echo=echo),
+        self.proc = subprocess.Popen(
+            command(exe, "server", transport, self.number, family=family, echo=echo, sequence=sequence, replay=replay),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=self.stderr)
         events = queue.Queue(maxsize=1)
@@ -1374,6 +1378,22 @@ def oscore_server_echo(client, server):
     return {"echo_retries": 1, "readback": "1"}
 
 
+def oscore_replay_restore(client, server):
+    """RFC 8613 section 7.5: a restarted server restores the recipient window and the next sender sequence.
+
+    Accepting client sequence 0 marks bit 0 of a fresh window. The next process
+    starts at sender sequence 1 with that checkpoint. Sequence 0 is refused.
+    Sequence 1 is accepted.
+    """
+    with Server(server, "oscore") as service:
+        expect(request(client, "oscore", service.number, sequence=0, path="counter"), 69, b"0")
+    with Server(server, "oscore", sequence=1, replay=(0, 1)) as service:
+        refused = request(client, "oscore", service.number, sequence=0, path="counter", timeout=500)
+        expect_refusal(refused)
+        expect(request(client, "oscore", service.number, sequence=1, path="counter"), 69, b"0")
+    return {"restored": "0:1", "sender_seq": 1, "refused_sequence": 0}
+
+
 def observe_values(client, server, writer):
     """The client observes /counter. PUT replaces the representation; the client prints 0,1,2."""
     def wait_responses(relay, count, seconds):
@@ -2141,6 +2161,8 @@ def main():
          lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "dtls"))
     case("oscore-echo:coaptic->coaptic",
          lambda: oscore_server_echo(peers["coaptic"], peers["coaptic"]))
+    case("oscore-replay-restore:coaptic",
+         lambda: oscore_replay_restore(peers["coaptic"], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
