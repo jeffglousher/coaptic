@@ -14,6 +14,10 @@
 #endif
 
 static unsigned counter, upload_accepted, upload_calls;
+static uint8_t cond_body[64];
+static size_t cond_len;
+static int cond_exists;
+static uint8_t cond_etag;
 static uint8_t method_body[64];
 static size_t method_length;
 static int method_exists;
@@ -114,6 +118,63 @@ static void get_separate(coap_resource_t *resource, coap_session_t *session,
   }
   coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
   coap_add_data(response, sizeof("separate-payload") - 1, (const uint8_t *)"separate-payload");
+}
+static int cond_precondition(const coap_pdu_t *request) {
+  coap_opt_iterator_t it;
+  coap_opt_t *opt = coap_check_option(request, COAP_OPTION_IF_MATCH, &it);
+  int saw_match = 0, empty = 0, matched = 0;
+  while (opt) {
+    size_t n = coap_opt_length(opt);
+    saw_match = 1;
+    if (n == 0) empty = 1;
+    else if (cond_exists && n == 1 && coap_opt_value(opt)[0] == cond_etag) matched = 1;
+    opt = coap_option_next(&it);
+  }
+  if (coap_check_option(request, COAP_OPTION_IF_NONE_MATCH, &it) && cond_exists) return 0;
+  if (!saw_match) return 1;
+  return empty ? cond_exists : matched;
+}
+static void cond_resource(coap_resource_t *resource, coap_session_t *session,
+                        const coap_pdu_t *request, const coap_string_t *query,
+                        coap_pdu_t *response) {
+  (void)resource; (void)session; (void)query;
+  coap_string_t *path = coap_get_uri_path(request);
+  int is_cond = path && ((path->length == 4 && memcmp(path->s, "cond", 4) == 0) ||
+                         (path->length == 5 && memcmp(path->s, "/cond", 5) == 0));
+  if (path) coap_delete_string(path);
+  if (!is_cond) { coap_pdu_set_code(response, (coap_pdu_code_t)132); return; }
+  unsigned method = (unsigned)coap_pdu_get_code(request);
+  size_t len = 0; const uint8_t *data = NULL;
+  coap_get_data(request, &len, &data);
+  if (!cond_precondition(request)) {
+    coap_pdu_set_code(response, (coap_pdu_code_t)140);
+    return;
+  }
+  if (method == 1) {
+    if (!cond_exists) { coap_pdu_set_code(response, (coap_pdu_code_t)132); return; }
+    coap_pdu_set_code(response, (coap_pdu_code_t)69);
+    coap_add_option(response, COAP_OPTION_ETAG, 1, &cond_etag);
+    if (cond_len) coap_add_data(response, cond_len, cond_body);
+    return;
+  }
+  if (method == 3) {
+    int created = !cond_exists;
+    if (len > sizeof(cond_body)) { coap_pdu_set_code(response, (coap_pdu_code_t)141); return; }
+    if (len) memcpy(cond_body, data, len);
+    cond_len = len;
+    cond_exists = 1;
+    cond_etag++;
+    coap_pdu_set_code(response, (coap_pdu_code_t)(created ? 65 : 68));
+    return;
+  }
+  if (method == 4) {
+    if (!cond_exists) { coap_pdu_set_code(response, (coap_pdu_code_t)132); return; }
+    cond_exists = 0;
+    cond_len = 0;
+    coap_pdu_set_code(response, (coap_pdu_code_t)66);
+    return;
+  }
+  coap_pdu_set_code(response, (coap_pdu_code_t)133);
 }
 static void post_counter(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
@@ -323,6 +384,10 @@ int main(int argc,char **argv) {
     coap_resource_t *separate = coap_resource_init(coap_make_str_const("separate"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
     coap_register_handler(separate, COAP_REQUEST_GET, get_separate);
     coap_add_resource(ctx, separate);
+    coap_resource_t *unknown = coap_resource_unknown_init(cond_resource);
+    coap_register_handler(unknown, COAP_REQUEST_GET, cond_resource);
+    coap_register_handler(unknown, COAP_REQUEST_DELETE, cond_resource);
+    coap_add_resource(ctx, unknown);
     printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,oscore?"oscore":dtls?"dtls":"udp");
     while(coap_io_process(ctx,100)>=0) {}
     status=1;
