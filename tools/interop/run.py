@@ -1459,11 +1459,11 @@ def conditional_workflow(server):
     return {"steps": steps}
 
 
-def separate_client(client, server):
+def separate_client(client, server, timeout=6000):
     """The client reads /separate through a relay: empty ACK, then a confirmable 2.05 it acknowledges."""
     with Server(server, "udp") as service:
         with Proxy(service.number, "dtls-reconnect") as relay:
-            result = request(client, "udp", relay.number, path="separate")
+            result = request(client, "udp", relay.number, path="separate", timeout=timeout)
         trace = relay.trace
     expect(result, 69, b"separate-payload")
     responses = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "response"]
@@ -2105,6 +2105,8 @@ def main():
     for client_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"separate-client:{client_name}->coaptic",
              lambda client_name=client_name: separate_client(peers[client_name], peers["coaptic"]))
+    case("separate-client:coaptic->libcoap",
+         lambda: separate_client(peers["coaptic"], peers["libcoap"], timeout=8000))
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         case(f"qblock1-interop:{client}->{server}",
              lambda client=client, server=server: qblock1_interop(peers[client], peers[server]))
