@@ -3425,6 +3425,74 @@
       "executable": "tools/interop/run.py:conditional_workflow"
     },
     {
+      "id": "merge-patch:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "merge-patch"],
+      "positive_proof": [
+        "PATCH content-format 52 {\"n\":1} replaces the member and GET returns application/json {\"n\":1}",
+        "{\"n\":null} removes the resource"
+      ],
+      "failure_proof": ["content-format 42 is 4.15 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:merge_patch"
+    },
+    {
+      "id": "merge-patch:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "merge-patch"],
+      "positive_proof": [
+        "PATCH content-format 52 {\"n\":1} replaces the member and GET returns application/json {\"n\":1}",
+        "{\"n\":null} removes the resource"
+      ],
+      "failure_proof": ["content-format 42 is 4.15 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:merge_patch"
+    },
+    {
+      "id": "merge-patch:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "merge-patch"],
+      "positive_proof": [
+        "PATCH content-format 52 {\"n\":1} replaces the member and GET returns application/json {\"n\":1}",
+        "{\"n\":null} removes the resource"
+      ],
+      "failure_proof": ["content-format 42 is 4.15 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:merge_patch"
+    },
+    {
+      "id": "merge-patch:coaptic->coap-rs",
+      "client": "coaptic",
+      "server": "coap-rs",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["patch", "merge-patch"],
+      "positive_proof": [
+        "PATCH content-format 52 {\"n\":1} replaces the member and GET returns application/json {\"n\":1}",
+        "{\"n\":null} removes the resource"
+      ],
+      "failure_proof": ["content-format 42 is 4.15 and leaves the member unchanged"],
+      "executable": "tools/interop/run.py:merge_patch"
+    },
+    {
       "id": "qblock1-interop:coaptic->coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3917,7 +3985,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Standardized patch formats are not in the method workflows.",
+      "reason": "JSON Patch (content-format 51) is not a process case. The merge-patch fixture accepts only {\"n\":<number>} or {\"n\":null}.",
       "issue": 200,
       "executable_cases": []
     },

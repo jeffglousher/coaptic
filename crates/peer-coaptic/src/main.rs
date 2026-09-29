@@ -17,6 +17,8 @@ static METHOD_RESOURCE: std::sync::Mutex<support::MethodResource> =
 static UPLOAD_RESOURCE: std::sync::Mutex<support::UploadResource> =
     std::sync::Mutex::new(support::UploadResource::new());
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+static MERGE_PATCH: std::sync::Mutex<support::MergePatch> =
+    std::sync::Mutex::new(support::MergePatch::new());
 /// `/cond` body and its one-byte ETag version.
 static CONDITIONAL: std::sync::Mutex<(Option<Vec<u8>>, u8)> = std::sync::Mutex::new((None, 0));
 fn conditional(request: Request<'_>) -> Response<'static> {
@@ -68,6 +70,23 @@ fn method_resource(request: Request<'_>) -> Response<'static> {
         request.content_format() == Some(Ok(ContentFormat::OCTET_STREAM)),
     );
     Response::new(Code::from_raw(code)).payload_copy(&bytes)
+}
+fn merge_patch(request: Request<'_>) -> Response<'static> {
+    let format = request
+        .content_format()
+        .and_then(Result::ok)
+        .map(ContentFormat::get);
+    let (code, bytes, response_format) = MERGE_PATCH.lock().expect("fixture lock").respond(
+        request.method().expect("routed method").code().as_raw(),
+        request.payload(),
+        format,
+    );
+    let response = Response::new(Code::from_raw(code)).payload_copy(&bytes);
+    match response_format {
+        Some(50) => response.content_format(ContentFormat::JSON),
+        Some(id) => response.content_format(ContentFormat::new(id)),
+        None => response,
+    }
 }
 fn upload_resource(request: Request<'_>) -> Response<'static> {
     let (code, bytes) = UPLOAD_RESOURCE.lock().expect("fixture lock").respond(
@@ -207,6 +226,7 @@ async fn run() -> Result<(), Error> {
         "methods" => &["methods"][..],
         "upload" => &["upload"][..],
         "separate" => &["separate"][..],
+        "patch" => &["patch"][..],
         _ => &["missing"][..],
     };
     let method = match a.method {
@@ -224,6 +244,9 @@ async fn run() -> Result<(), Error> {
         .to(Endpoint::from(a.address()));
     if matches!(a.path.as_str(), "methods" | "upload") && matches!(a.method, 2 | 3 | 5 | 6 | 7) {
         outgoing = outgoing.content_format(ContentFormat::OCTET_STREAM);
+    }
+    if a.path == "patch" && a.method == 6 {
+        outgoing = outgoing.content_format(ContentFormat::MERGE_PATCH);
     }
     if a.q_block1 {
         outgoing = outgoing
@@ -265,6 +288,9 @@ async fn run() -> Result<(), Error> {
                     && matches!(a.method, 2 | 3 | 5 | 6 | 7)
                 {
                     retry = retry.content_format(ContentFormat::OCTET_STREAM);
+                }
+                if a.path == "patch" && a.method == 6 {
+                    retry = retry.content_format(ContentFormat::MERGE_PATCH);
                 }
                 if a.q_block1 {
                     retry = retry
@@ -348,11 +374,11 @@ fn server_echo(check: coaptic::EchoCheck) -> coaptic::EchoDecision {
     }
 }
 
-fn fixture(io: Io, echo: bool) -> Result<App<profiles::Default, Io, 8, true>, Error> {
+fn fixture(io: Io, echo: bool) -> Result<App<profiles::Default, Io, 9, true>, Error> {
     let app = App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
-        .routes::<8>()
+        .routes::<9>()
         .route(
             "/test",
             get(|_: Request<'_>| Response::content(support::BODY)),
@@ -385,6 +411,7 @@ fn fixture(io: Io, echo: bool) -> Result<App<profiles::Default, Io, 8, true>, Er
             }),
         )
         .route("/fail", get(|_: Request<'_>| Response::internal_error()))
+        .route("/patch", get(merge_patch).patch(merge_patch))
         .route(
             "/cond",
             get(conditional).put(conditional).delete(conditional),
