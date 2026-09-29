@@ -2135,6 +2135,10 @@ def main():
          lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "oscore"))
     case("observe-dtls:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "dtls"))
+    case("observe-dtls:coaptic->libcoap",
+         lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "dtls"))
+    case("observe-dtls:libcoap->coaptic",
+         lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "dtls"))
     case("oscore-echo:coaptic->coaptic",
          lambda: oscore_server_echo(peers["coaptic"], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
