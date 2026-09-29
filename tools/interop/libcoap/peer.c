@@ -14,6 +14,8 @@
 #endif
 
 static unsigned counter, upload_accepted, upload_calls;
+static int patch_present = 1;
+static unsigned patch_n;
 static uint8_t cond_body[64];
 static size_t cond_len;
 static int cond_exists;
@@ -176,6 +178,57 @@ static void cond_resource(coap_resource_t *resource, coap_session_t *session,
   }
   coap_pdu_set_code(response, (coap_pdu_code_t)133);
 }
+static int parse_merge_n(const uint8_t *data, size_t len, int *present, unsigned *value) {
+  unsigned n = 0;
+  size_t i;
+  if (len == 10 && memcmp(data, "{\"n\":null}", 10) == 0) { *present = 0; return 1; }
+  if (len < 7 || len > 16 || memcmp(data, "{\"n\":", 5) || data[len - 1] != '}') return 0;
+  if (len > 7 && data[5] == '0') return 0;
+  for (i = 5; i + 1 < len; i++) {
+    if (data[i] < '0' || data[i] > '9') return 0;
+    if (n > 429496729u || (n == 429496729u && data[i] > '5')) return 0;
+    n = n * 10u + (unsigned)(data[i] - '0');
+  }
+  *present = 1;
+  *value = n;
+  return 1;
+}
+static void patch_resource(coap_resource_t *resource, coap_session_t *session,
+                        const coap_pdu_t *request, const coap_string_t *query,
+                        coap_pdu_t *response) {
+  (void)resource; (void)session; (void)query;
+  unsigned method = (unsigned)coap_pdu_get_code(request);
+  char body[24];
+  int n;
+  if (method == 1) {
+    if (!patch_present) { coap_pdu_set_code(response, (coap_pdu_code_t)132); return; }
+    n = snprintf(body, sizeof(body), "{\"n\":%u}", patch_n);
+    if (n < 0 || (size_t)n >= sizeof(body)) { coap_pdu_set_code(response, (coap_pdu_code_t)160); return; }
+    coap_pdu_set_code(response, (coap_pdu_code_t)69);
+    const uint8_t format = 50;
+    coap_add_option(response, COAP_OPTION_CONTENT_FORMAT, 1, &format);
+    coap_add_data(response, (size_t)n, (const uint8_t *)body);
+    return;
+  }
+  if (method == 6) {
+    size_t len = 0; const uint8_t *data = NULL;
+    coap_opt_iterator_t it;
+    coap_opt_t *format = coap_check_option(request, COAP_OPTION_CONTENT_FORMAT, &it);
+    int present = 0; unsigned value = 0;
+    coap_get_data(request, &len, &data);
+    if (!format || coap_opt_length(format) > 2 || coap_decode_var_bytes(coap_opt_value(format), coap_opt_length(format)) != 52) {
+      coap_pdu_set_code(response, COAP_RESPONSE_CODE_UNSUPPORTED_CONTENT_FORMAT); return;
+    }
+    if (!data || !parse_merge_n(data, len, &present, &value)) {
+      coap_pdu_set_code(response, (coap_pdu_code_t)128); return;
+    }
+    patch_present = present;
+    patch_n = value;
+    coap_pdu_set_code(response, (coap_pdu_code_t)68);
+    return;
+  }
+  coap_pdu_set_code(response, (coap_pdu_code_t)133);
+}
 static void post_counter(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
                         coap_pdu_t *response) {
@@ -318,7 +371,7 @@ int main(int argc,char **argv) {
   if(*end || port<1 || port>65535){failure("invalid port");return 2;}
   long timeout=strtol(argv[7],&end,10);
   if(*end || timeout<100 || timeout>30000){failure("invalid timeout");return 2;}
-  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods") && strcmp(argv[5],"upload") && strcmp(argv[5],"separate")){failure("unsupported path");return 2;}
+  if(strcmp(argv[5],"test") && strcmp(argv[5],"large") && strcmp(argv[5],"counter") && strcmp(argv[5],"missing") && strcmp(argv[5],"methods") && strcmp(argv[5],"upload") && strcmp(argv[5],"separate") && strcmp(argv[5],"patch")){failure("unsupported path");return 2;}
   const char *methods[] = {"GET", "POST", "PUT", "DELETE", "FETCH", "PATCH", "IPATCH"};
   unsigned method = 0;
   for(unsigned i = 0; i < 7; i++) if(!strcmp(argv[6], methods[i])) method = i + 1;
@@ -381,6 +434,10 @@ int main(int argc,char **argv) {
     coap_register_handler(upload, COAP_REQUEST_GET, upload_resource);
     coap_register_handler(upload, COAP_REQUEST_POST, upload_resource);
     coap_add_resource(ctx, upload);
+    coap_resource_t *patch = coap_resource_init(coap_make_str_const("patch"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
+    coap_register_handler(patch, COAP_REQUEST_GET, patch_resource);
+    coap_register_handler(patch, (coap_request_t)6, patch_resource);
+    coap_add_resource(ctx, patch);
     coap_resource_t *separate = coap_resource_init(coap_make_str_const("separate"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
     coap_register_handler(separate, COAP_REQUEST_GET, get_separate);
     coap_add_resource(ctx, separate);
@@ -404,6 +461,10 @@ int main(int argc,char **argv) {
     if(!coap_add_option(pdu,COAP_OPTION_URI_PATH,strlen(argv[5]),(const uint8_t *)argv[5])){coap_delete_pdu(pdu);failure("PDU construction failed");coap_session_release(session);status=1;goto done;}
     if((!strcmp(argv[5], "methods") || !strcmp(argv[5], "upload")) && (method == 2 || method == 3 || method == 5 || method == 6 || method == 7)) {
       const uint8_t format = 42;
+      if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
+    }
+    if(!strcmp(argv[5], "patch") && method == 6) {
+      const uint8_t format = 52;
       if(!coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, 1, &format)) { coap_delete_pdu(pdu); failure("format option failed"); coap_session_release(session); status=1; goto done; }
     }
     if(q_block2) {

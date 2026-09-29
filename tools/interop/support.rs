@@ -72,7 +72,7 @@ impl Args {
         }
         if !matches!(
             a[4].as_str(),
-            "test" | "large" | "counter" | "missing" | "methods" | "upload" | "separate"
+            "test" | "large" | "counter" | "missing" | "methods" | "upload" | "separate" | "patch"
         ) {
             return Err("unsupported fixture path".into());
         }
@@ -240,6 +240,56 @@ impl MethodResource {
     }
 }
 
+/// RFC 8132 merge-patch fixture. Only `{"n":null}` and `{"n":<u32>}` at content-format 52.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MergePatch {
+    value: Option<u32>,
+}
+impl MergePatch {
+    pub const fn new() -> Self {
+        Self { value: Some(0) }
+    }
+    pub fn respond(
+        &mut self,
+        method: u8,
+        payload: &[u8],
+        format: Option<u16>,
+    ) -> (u8, Vec<u8>, Option<u16>) {
+        match method {
+            1 => match self.value {
+                Some(n) => (69, format!("{{\"n\":{n}}}").into_bytes(), Some(50)),
+                None => (132, vec![], None),
+            },
+            6 => {
+                if format != Some(52) {
+                    return (143, vec![], None);
+                }
+                match parse_merge_n(payload) {
+                    Some(next) => {
+                        self.value = next;
+                        (68, vec![], None)
+                    }
+                    None => (128, vec![], None),
+                }
+            }
+            _ => (133, vec![], None),
+        }
+    }
+}
+fn parse_merge_n(payload: &[u8]) -> Option<Option<u32>> {
+    if payload == b"{\"n\":null}" {
+        return Some(None);
+    }
+    let digits = payload.strip_prefix(b"{\"n\":")?.strip_suffix(b"}")?;
+    if digits.is_empty() || digits.len() > 10 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if digits.len() > 1 && digits[0] == b'0' {
+        return None;
+    }
+    Some(Some(core::str::from_utf8(digits).ok()?.parse().ok()?))
+}
+
 /// Bounded upload oracle: exact public byte pattern and accepted/handler counts.
 #[derive(Default)]
 pub struct UploadResource {
@@ -276,6 +326,25 @@ impl UploadResource {
         (65, vec![])
     }
 }
+#[test]
+fn merge_patch_replaces_and_deletes_one_decimal_member() {
+    let mut patch = MergePatch::new();
+    assert_eq!(
+        patch.respond(1, b"", None),
+        (69, b"{\"n\":0}".to_vec(), Some(50))
+    );
+    assert_eq!(patch.respond(6, b"{\"n\":1}", Some(42)).0, 143);
+    assert_eq!(patch.respond(6, b"{\"n\":1}", Some(52)), (68, vec![], None));
+    assert_eq!(patch.respond(1, b"", None).1, b"{\"n\":1}".to_vec());
+    assert_eq!(patch.respond(6, b"{\"n\":01}", Some(52)).0, 128);
+    assert_eq!(
+        patch.respond(6, b"{\"n\":null}", Some(52)),
+        (68, vec![], None)
+    );
+    assert_eq!(patch.respond(1, b"", None).0, 132);
+    assert_eq!(patch.value, None);
+}
+
 #[test]
 fn upload_oracle_checks_every_byte_length_format_and_handler_effect() {
     let mut resource = UploadResource::new();

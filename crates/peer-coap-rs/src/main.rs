@@ -14,7 +14,7 @@ mod dtls_listener;
 #[path = "../../../tools/interop/support.rs"]
 mod support;
 use coap::{Server, client::CoAPClient, request::RequestBuilder};
-use coap_lite::{CoapOption, MessageClass, RequestType, ResponseType};
+use coap_lite::{CoapOption, ContentFormat, MessageClass, RequestType, ResponseType};
 use std::{
     sync::{
         Arc,
@@ -25,6 +25,16 @@ use std::{
 use support::{Args, Error};
 use webrtc_dtls::{cipher_suite::CipherSuiteId, config::Config};
 use webrtc_util::conn::Listener;
+static MERGE_PATCH: std::sync::Mutex<support::MergePatch> =
+    std::sync::Mutex::new(support::MergePatch::new());
+fn content_format_id(values: Option<&std::collections::LinkedList<Vec<u8>>>) -> Option<u16> {
+    let bytes = values?.front()?;
+    match bytes.as_slice() {
+        [b] => Some(u16::from(*b)),
+        [hi, lo] => Some(u16::from_be_bytes([*hi, *lo])),
+        _ => None,
+    }
+}
 fn config(key: &str) -> Config {
     let key = key.as_bytes().to_vec();
     Config {
@@ -101,6 +111,24 @@ async fn run() -> Result<(), Error> {
                             }
                             return req;
                         }
+                        if path == "patch" {
+                            let method: u8 = MessageClass::Request(method).into();
+                            let format = content_format_id(
+                                req.message.get_option(CoapOption::ContentFormat),
+                            );
+                            let (code, body, response_format) = MERGE_PATCH
+                                .lock()
+                                .expect("fixture lock")
+                                .respond(method, &req.message.payload, format);
+                            if let Some(r) = req.response.as_mut() {
+                                r.message.header.code = code.into();
+                                r.message.payload = body;
+                                if response_format == Some(50) {
+                                    r.message.set_content_format(ContentFormat::ApplicationJSON);
+                                }
+                            }
+                            return req;
+                        }
                         if path == "methods" {
                             let method: u8 = MessageClass::Request(method).into();
                             let format_ok = req
@@ -165,15 +193,15 @@ async fn run() -> Result<(), Error> {
             vec![],
             None,
         )
-        .options(
-            if matches!(a.path.as_str(), "methods" | "upload")
-                && matches!(a.method, 2 | 3 | 5 | 6 | 7)
-            {
-                vec![(CoapOption::ContentFormat, vec![42])]
-            } else {
-                vec![]
-            },
-        )
+        .options(if a.path == "patch" && a.method == 6 {
+            vec![(CoapOption::ContentFormat, vec![52])]
+        } else if matches!(a.path.as_str(), "methods" | "upload")
+            && matches!(a.method, 2 | 3 | 5 | 6 | 7)
+        {
+            vec![(CoapOption::ContentFormat, vec![42])]
+        } else {
+            vec![]
+        })
         .build();
         let response = if a.dtls {
             let transport = coap_dtls::Client::connect(a.address(), config(&a.key)).await?;

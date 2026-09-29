@@ -1430,6 +1430,32 @@ def observe_values(client, server, writer):
     return {"responses": sum(row["direction"] == "response" for row in trace), "bodies": "0,1,2"}
 
 
+def merge_patch(client, server):
+    """RFC 8132 merge-patch on /patch. Content-format 52 replaces or deletes the one decimal member."""
+    with Server(server, "udp") as service:
+        expect(request(client, "udp", service.number, path="patch"), 69, b'{"n":0}')
+        expect(request(client, "udp", service.number, path="patch", method="PATCH",
+                       payload=b'{"n":1}'), 68, b"")
+        expect(request(client, "udp", service.number, path="patch"), 69, b'{"n":1}')
+        address = ("127.0.0.1", service.number)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            refused = coap_roundtrip(sock, address, coap_message(
+                6, 0x71, b"\xc3", [(11, b"patch"), (12, bytes([42]))], b'{"n":2}'))
+            if refused[1] != 143:
+                raise AssertionError(f"octet-stream PATCH returned {refused[1]}")
+            shown = coap_roundtrip(sock, address, coap_message(1, 0x72, b"\xc4", [(11, b"patch")]))
+            if shown[1] != 69 or coap_payload(shown) != b'{"n":1}':
+                raise AssertionError(f"GET /patch returned {shown[1]} {coap_payload(shown)!r}")
+            formats = decoded_options(shown).get(12, [])
+            if formats != [bytes([50])]:
+                raise AssertionError(f"GET /patch content-format was {formats!r}")
+        expect(request(client, "udp", service.number, path="patch", method="PATCH",
+                       payload=b'{"n":null}'), 68, b"")
+        expect(request(client, "udp", service.number, path="patch"), 132, b"")
+    return {"replaced": "1", "deleted": True, "refused_format": 42}
+
+
 def conditional_workflow(server):
     """RFC 7252 section 5.10.8 on /cond. A failed condition is 4.12 and changes nothing."""
     IF_MATCH, ETAG, IF_NONE_MATCH = 1, 4, 5
@@ -2123,6 +2149,14 @@ def main():
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))
     case("conditional:libcoap", lambda: conditional_workflow(peers["libcoap"]))
+    case("merge-patch:coaptic->coaptic",
+         lambda: merge_patch(peers["coaptic"], peers["coaptic"]))
+    case("merge-patch:coaptic->libcoap",
+         lambda: merge_patch(peers["coaptic"], peers["libcoap"]))
+    case("merge-patch:libcoap->coaptic",
+         lambda: merge_patch(peers["libcoap"], peers["coaptic"]))
+    case("merge-patch:coaptic->coap-rs",
+         lambda: merge_patch(peers["coaptic"], peers["coap-rs"]))
     for client_name in ("coaptic", "coap-rs", "libcoap"):
         case(f"separate-client:{client_name}->coaptic",
              lambda client_name=client_name: separate_client(peers[client_name], peers["coaptic"]))
