@@ -100,6 +100,21 @@ static void get_fixture(coap_resource_t *resource, coap_session_t *session,
         COAP_MEDIATYPE_APPLICATION_OCTET_STREAM,60,0,len,body,NULL,NULL);
   }
 }
+static void get_separate(coap_resource_t *resource, coap_session_t *session,
+                        const coap_pdu_t *request, const coap_string_t *query,
+                        coap_pdu_t *response) {
+  (void)resource; (void)query;
+  coap_bin_const_t token = coap_pdu_get_token(request);
+  coap_async_t *async = coap_find_async(session, token);
+  if (!async) {
+    /* Leaving the code unset sends an empty ACK. The handler runs again after the delay. */
+    if (!coap_register_async(session, request, COAP_TICKS_PER_SECOND))
+      coap_pdu_set_code(response, COAP_RESPONSE_CODE_INTERNAL_ERROR);
+    return;
+  }
+  coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
+  coap_add_data(response, sizeof("separate-payload") - 1, (const uint8_t *)"separate-payload");
+}
 static void post_counter(coap_resource_t *resource, coap_session_t *session,
                         const coap_pdu_t *request, const coap_string_t *query,
                         coap_pdu_t *response) {
@@ -305,6 +320,9 @@ int main(int argc,char **argv) {
     coap_register_handler(upload, COAP_REQUEST_GET, upload_resource);
     coap_register_handler(upload, COAP_REQUEST_POST, upload_resource);
     coap_add_resource(ctx, upload);
+    coap_resource_t *separate = coap_resource_init(coap_make_str_const("separate"), oscore?COAP_RESOURCE_FLAGS_OSCORE_ONLY:0);
+    coap_register_handler(separate, COAP_REQUEST_GET, get_separate);
+    coap_add_resource(ctx, separate);
     printf("{\"schema\":\"coaptic-peer/2\",\"event\":\"ready\",\"peer\":\"libcoap\",\"stack\":\"libcoap %s\",\"port\":%ld,\"transport\":\"%s\"}\n",LIBCOAP_PACKAGE_VERSION,port,oscore?"oscore":dtls?"dtls":"udp");
     while(coap_io_process(ctx,100)>=0) {}
     status=1;

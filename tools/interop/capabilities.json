@@ -3141,6 +3141,22 @@
       "executable": "tools/interop/run.py:separate_client"
     },
     {
+      "id": "separate-client:coaptic->libcoap",
+      "client": "coaptic",
+      "server": "libcoap",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["separate-response"],
+      "positive_proof": [
+        "the Coaptic client gets an empty ACK from libcoap, then a confirmable 2.05 separate-payload, and acknowledges it"
+      ],
+      "failure_proof": ["a piggybacked reply or an unacknowledged separate response fails"],
+      "executable": "tools/interop/run.py:separate_client"
+    },
+    {
       "id": "no-response-5:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3880,7 +3896,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Only the Coaptic server issues separate responses here.",
+      "reason": "The coap-rs server does not issue separate responses.",
       "issue": 200,
       "executable_cases": []
     },
