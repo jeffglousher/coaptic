@@ -311,6 +311,8 @@ class Proxy:
                         action = "drop"
                     elif self.mode == "drop-reply" and not incoming and not dropped:
                         action, dropped = "drop", True
+                    elif self.mode == "delay-reply" and not incoming and not dropped:
+                        action, dropped = "delay", True
                     elif self.mode == "duplicate-request" and incoming and not duplicated:
                         action, duplicated = "duplicate", True
                     elif self.mode == "drop-qblock2":
@@ -343,6 +345,8 @@ class Proxy:
                             pass
                     self.trace.append({"direction": "request" if incoming else "response",
                                        "action": action, "hex": data.hex(), "forwarded_hex": forwarded.hex()})
+                    if action == "delay":
+                        time.sleep(0.25)
                     if action != "drop":
                         target = self.back if incoming else self.front
                         address = self.dest if incoming else client
@@ -362,6 +366,20 @@ class Proxy:
         self.back.close()
         if self.thread.is_alive() or self.error:
             raise RuntimeError(f"proxy failed: {self.error}")
+
+
+def delayed_reply(client, server):
+    """Hold the first UDP response for 250 ms. The client still accepts /test."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "delay-reply") as relay:
+            event = request(client, "udp", relay.number, path="test")
+        expect(event, 69, BODY)
+        delayed = [row for row in relay.trace if row["action"] == "delay"]
+        if len(delayed) != 1:
+            raise AssertionError(f"response was not held once: {relay.trace}")
+        if event["elapsed_ns"] < 150_000_000:
+            raise AssertionError(f"held response arrived too quickly: {event['elapsed_ns']}")
+    return {"delayed": 1, "elapsed_ns": event["elapsed_ns"]}
 
 
 def expect_identical_requests(trace, require_repeat=False):
@@ -2339,6 +2357,9 @@ def main():
                 expect(request(peers[client], "udp", service.number, path="counter"), 69, b"0")
             return {"port": number, "note": "fresh in-memory fixture after process restart; no durability claim"}
         case(f"reliability:{label}->restart", restart)
+    for client_name in ("coaptic", "coap-rs", "libcoap"):
+        case(f"delay-reply:{client_name}->coaptic",
+             lambda client_name=client_name: delayed_reply(peers[client_name], peers["coaptic"]))
     report["coverage"] = evaluate(manifest, report["cases"],
         libcoap_dtls=not args.libcoap_udp_only, libcoap_oscore=not (args.libcoap_udp_only or args.libcoap_oscore_unavailable), system=platform.system().lower())
     report["passed"] = report["coverage"]["complete"]

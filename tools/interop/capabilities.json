@@ -513,6 +513,54 @@
       "executable": "tools/interop/run.py:main.c_server_reconnect"
     },
     {
+      "id": "delay-reply:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["delay"],
+      "positive_proof": [
+        "the relay holds the first /test response for 250 ms and the client still accepts it"
+      ],
+      "failure_proof": ["a missing hold or a response faster than 150 ms fails"],
+      "executable": "tools/interop/run.py:delayed_reply"
+    },
+    {
+      "id": "delay-reply:coap-rs->coaptic",
+      "client": "coap-rs",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["delay"],
+      "positive_proof": [
+        "the relay holds the first /test response for 250 ms and the client still accepts it"
+      ],
+      "failure_proof": ["a missing hold or a response faster than 150 ms fails"],
+      "executable": "tools/interop/run.py:delayed_reply"
+    },
+    {
+      "id": "delay-reply:libcoap->coaptic",
+      "client": "libcoap",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["delay"],
+      "positive_proof": [
+        "the relay holds the first /test response for 250 ms and the client still accepts it"
+      ],
+      "failure_proof": ["a missing hold or a response faster than 150 ms fails"],
+      "executable": "tools/interop/run.py:delayed_reply"
+    },
+    {
       "id": "reliability:coaptic->drop-reply",
       "client": "coaptic",
       "server": "coaptic",
@@ -4181,7 +4229,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Scoped IPv6, reorder, delay, and MTU cases are absent.",
+      "reason": "Scoped IPv6, reorder, and MTU cases are absent.",
       "issue": 200,
       "executable_cases": []
     },
