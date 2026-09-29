@@ -3368,6 +3368,23 @@
       "executable": "tools/interop/run.py:oscore_server_echo"
     },
     {
+      "id": "oscore-replay-restore:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["oscore", "replay"],
+      "positive_proof": [
+        "a restarted Coaptic server restores recipient replay bit 0 and sender sequence 1",
+        "client sequence 0 is refused and sequence 1 reads /counter"
+      ],
+      "failure_proof": ["an accepted sequence 0, or a sequence 1 other than body 0, fails"],
+      "executable": "tools/interop/run.py:oscore_replay_restore"
+    },
+    {
       "id": "conditional:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -3932,7 +3949,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Concurrent OSCORE contexts and persistent sender state are not process cases.",
+      "reason": "Concurrent OSCORE contexts are not process cases.",
       "issue": 200,
       "executable_cases": []
     },

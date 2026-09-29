@@ -168,6 +168,13 @@ async fn run() -> Result<(), Error> {
         context
             .set_sender_seq(a.sequence)
             .map_err(|e| format!("OSCORE sequence: {e:?}"))?;
+        if let Some((left, bits)) = a.replay {
+            let checkpoint = coaptic::oscore::ReplayCheckpoint::from_parts(left, bits)
+                .map_err(|e| format!("OSCORE replay checkpoint: {e:?}"))?;
+            context
+                .restore_replay(checkpoint)
+                .map_err(|e| format!("OSCORE replay restore: {e:?}"))?;
+        }
         app.set_oscore(context);
     }
     if a.server {
