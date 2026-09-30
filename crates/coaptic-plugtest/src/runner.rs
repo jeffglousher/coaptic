@@ -125,6 +125,21 @@ pub fn run_td(id: &str, pair: Pair) -> TdResult {
         }
     };
     let run = drive_td(id, addr, client.as_mut(), server.as_mut());
+    // coap-rs ACKs a separate CON before `send` returns, on its own socket.
+    // The coaptic server records that ACK on a later poll. Wait until the
+    // empty ACK is in the server log so the snapshot is the whole exchange.
+    if matches!(
+        id,
+        "TD_COAP_CORE_09" | "TD_COAP_CORE_11" | "TD_COAP_CORE_16"
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            if exchange_has_response_ack(&client.take_capture(), &server.take_capture()) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
     let capture = Capture::new();
     capture.extend_from(&client.take_capture());
     capture.extend_from(&server.take_capture());
@@ -142,6 +157,27 @@ pub fn run_td(id: &str, pair: Pair) -> TdResult {
         error,
         capture,
     }
+}
+
+/// True when some datagram is an empty ACK of a CON 2.05.
+fn exchange_has_response_ack(client: &Capture, server: &Capture) -> bool {
+    let mut packets = client.snapshot();
+    packets.extend(server.snapshot());
+    let response_mid = packets.iter().find_map(|packet| {
+        let bytes = packet.bytes.as_slice();
+        (bytes.len() >= 4 && (bytes[0] >> 4) == 0x04 && bytes[1] == 0x45)
+            .then_some(u16::from_be_bytes([bytes[2], bytes[3]]))
+    });
+    let Some(mid) = response_mid else {
+        return false;
+    };
+    packets.iter().any(|packet| {
+        let bytes = packet.bytes.as_slice();
+        bytes.len() == 4
+            && bytes[0] == 0x60
+            && bytes[1] == 0
+            && u16::from_be_bytes([bytes[2], bytes[3]]) == mid
+    })
 }
 
 fn drive_td(
@@ -198,16 +234,7 @@ fn drive_td(
             expect_codes(id, got.code, &[Code::CREATED, Code::CHANGED])
         }
         "TD_COAP_CORE_09" | "TD_COAP_CORE_11" | "TD_COAP_CORE_17" => {
-            let mut r = ClientRequest::get(&["separate"]);
-            if id == "TD_COAP_CORE_17" {
-                r.ty = Type::NonConfirmable;
-            }
-            if id == "TD_COAP_CORE_11" {
-                r.token_len = Some(8);
-            } else {
-                r.token_len = Some(4);
-            }
-            basic(client, dest, r, Code::CONTENT)
+            separate_get(client, dest, id, Duration::from_secs(3))
         }
         "TD_COAP_CORE_10" => {
             let mut r = ClientRequest::get(&["test"]);
@@ -230,10 +257,20 @@ fn drive_td(
             r.query = vec!["first=1".into(), "second=2".into(), "third=3".into()];
             basic(client, dest, r, Code::CONTENT)
         }
-        "TD_COAP_CORE_15" | "TD_COAP_CORE_16" => {
-            // Lossy TDs: still a GET; retransmission is implementation-owned.
-            // Grade the successful exchange (retransmit optional on the tap).
-            basic(client, dest, ClientRequest::get(&["test"]), Code::CONTENT)
+        "TD_COAP_CORE_15" => {
+            let _loss = crate::pcap::RequestLoss::arm(1);
+            let mut r = ClientRequest::get(&["test"]);
+            r.timeout = Duration::from_secs(8);
+            let got = client.send_request(dest, &r)?;
+            expect_codes(id, got.code, &[Code::CONTENT])?;
+            if got.payload != site::TEST_BODY {
+                return Err(PeerError("CORE_15 payload".into()));
+            }
+            Ok(())
+        }
+        "TD_COAP_CORE_16" => {
+            let _loss = crate::pcap::RequestLoss::arm(1);
+            separate_get(client, dest, id, Duration::from_secs(8))
         }
         "TD_COAP_CORE_20" => {
             let mut r = ClientRequest::get(&["test"]);
@@ -336,6 +373,29 @@ fn expect_codes(id: &str, got: Code, want: &[Code]) -> Result<(), PeerError> {
     }
 }
 
+fn separate_get(
+    client: &mut dyn Peer,
+    dest: SocketAddr,
+    id: &str,
+    timeout: Duration,
+) -> Result<(), PeerError> {
+    let mut r = ClientRequest::get(&["separate"]);
+    r.timeout = timeout;
+    if id == "TD_COAP_CORE_17" {
+        r.ty = Type::NonConfirmable;
+    }
+    r.token_len = Some(if id == "TD_COAP_CORE_11" { 8 } else { 4 });
+    let got = client.send_request(dest, &r)?;
+    expect_codes(id, got.code, &[Code::CONTENT])?;
+    if got.payload != site::SEP_BODY {
+        return Err(PeerError(format!(
+            "{id}: payload {:?}",
+            String::from_utf8_lossy(&got.payload)
+        )));
+    }
+    Ok(())
+}
+
 fn block2(
     client: &mut dyn Peer,
     dest: SocketAddr,
@@ -346,14 +406,16 @@ fn block2(
     if early {
         r.block2 = Some((0, false, size));
     }
-    r.timeout = Duration::from_secs(4);
+    r.timeout = Duration::from_secs(20);
     let got = client.send_request(dest, &r)?;
     expect_codes("block2", got.code, &[Code::CONTENT])?;
     let body = got.body.as_deref().unwrap_or(&got.payload);
-    if body.len() < 64 {
+    let expect = site::large_body();
+    if body != expect {
         return Err(PeerError(format!(
-            "block2 assembled only {} bytes",
-            body.len()
+            "block2 assembled {} bytes, want {}",
+            body.len(),
+            expect.len()
         )));
     }
     Ok(())
@@ -369,9 +431,30 @@ fn block1(
     let mut r = ClientRequest::request(method, path);
     r.payload = site::large_body();
     r.content_format = Some(0);
-    r.timeout = Duration::from_secs(4);
+    r.timeout = Duration::from_secs(20);
     let got = client.send_request(dest, &r)?;
-    expect_codes("block1", got.code, &[want])
+    expect_codes("block1", got.code, &[want])?;
+    if path == ["large-update"] {
+        let stored = site::large_update().ok_or("BLOCK_03 stored no updated resource")?;
+        if stored != r.payload {
+            return Err(PeerError(format!(
+                "BLOCK_03 application effect stored {} bytes, sent {}",
+                stored.len(),
+                r.payload.len()
+            )));
+        }
+    }
+    if path == ["large-post"] {
+        let body = got.body.as_deref().unwrap_or(&got.payload);
+        if body != r.payload {
+            return Err(PeerError(format!(
+                "BLOCK_05 response representation {} bytes, sent {}",
+                body.len(),
+                r.payload.len()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn link(client: &mut dyn Peer, dest: SocketAddr, query: &[&str]) -> Result<(), PeerError> {
@@ -451,16 +534,12 @@ fn observe(
     client: &mut dyn Peer,
     server: &mut dyn Peer,
 ) -> Result<(), PeerError> {
-    let path: &[&str] = if id == "TD_COAP_OBS_02" {
-        &["obs-non"]
-    } else {
-        &["obs"]
-    };
+    if id == "TD_COAP_OBS_02" {
+        return observe_non(dest, client, server);
+    }
+    let path: &[&str] = &["obs"];
     let mut reg = ClientRequest::get(path);
     reg.observe = Some(0);
-    if id == "TD_COAP_OBS_02" {
-        reg.ty = Type::NonConfirmable;
-    }
     let first = client.send_request(dest, &reg)?;
     expect_codes(id, first.code, &[Code::CONTENT])?;
     match id {
@@ -490,6 +569,44 @@ fn observe(
             Ok(())
         }
     }
+}
+
+fn observe_non(
+    dest: SocketAddr,
+    client: &mut dyn Peer,
+    server: &mut dyn Peer,
+) -> Result<(), PeerError> {
+    if client.name() != "coaptic" || server.name() != "coaptic" {
+        return Err(PeerError(
+            "SKIP: coap-rs wrapper does not collect notifications".into(),
+        ));
+    }
+    let mut reg = ClientRequest::get(&["obs-non"]);
+    reg.ty = Type::NonConfirmable;
+    reg.observe = Some(0);
+    reg.timeout = Duration::from_secs(3);
+    let first = client.begin_observe(dest, &reg)?;
+    expect_codes("TD_COAP_OBS_02", first.code, &[Code::CONTENT])?;
+    if first.ty != Type::NonConfirmable || first.payload != site::OBS_BODY {
+        return Err(PeerError("OBS_02 initial NON notification".into()));
+    }
+    server.notify(&["obs-non"], site::OBS_BODY_2)?;
+    let second = client.take_notification(Duration::from_secs(3))?;
+    expect_codes("TD_COAP_OBS_02", second.code, &[Code::CONTENT])?;
+    if second.ty != Type::NonConfirmable || second.payload != site::OBS_BODY_2 {
+        return Err(PeerError("OBS_02 next NON notification".into()));
+    }
+    let (Some(a), Some(b)) = (first.observe, second.observe) else {
+        return Err(PeerError("OBS_02 missing Observe sequence".into()));
+    };
+    let delta = b.wrapping_sub(a) & 0x00ff_ffff;
+    if !(1..0x0080_0000).contains(&delta) {
+        return Err(PeerError(format!("OBS_02 sequence {a} then {b}")));
+    }
+    if first.content_format != Some(0) || second.content_format != Some(0) {
+        return Err(PeerError("OBS_02 content-format".into()));
+    }
+    Ok(())
 }
 
 /// Run every in-scope TD on `pairs`. DTLS TDs need `feature = "dtls"`.
