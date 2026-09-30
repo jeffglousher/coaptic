@@ -143,29 +143,20 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
         return Some("enable crate feature dtls (harness webrtc-dtls adapter)");
     }
     match id {
-        "TD_COAP_CORE_09" | "TD_COAP_CORE_11" | "TD_COAP_CORE_17" => {
-            Some("coverage gap #199: separate-response sequence not qualified on every peer")
-        }
-        "TD_COAP_CORE_15" | "TD_COAP_CORE_16" => {
-            Some("coverage gap #199: required loss injection is not implemented")
-        }
-        "TD_COAP_DTLS_01" => Some(
-            "coverage gap #199: cipher offer/selection and Finished handshake evidence not captured",
+        "TD_COAP_OBS_01" => Some(
+            "coverage gap #199: server notifications stay NON until the 24-hour confirm point; this TD requires CON notifications",
         ),
         "TD_COAP_DTLS_02" => Some(
-            "coverage gap #199: dtls authentication failure lacks authenticated alert evidence",
+            "coverage gap #199: prescribed decrypt_error alert is not visible as a plaintext fatal alert",
         ),
         "TD_COAP_DTLS_03" => {
-            Some("coverage gap #199: dtls handshake loss injection is not implemented")
+            Some("coverage gap #199: dtls handshake loss of each flight packet is not implemented")
         }
-        "TD_COAP_DTLS_04" | "TD_COAP_DTLS_05" | "TD_COAP_DTLS_06" | "TD_COAP_DTLS_07" => {
-            Some("coverage gap #199: dtls backend uses X.509, not required raw public keys")
-        }
-        _ if BLOCK.contains(&id) => {
-            Some("coverage gap #199: full block sequence and exact-body assertions incomplete")
-        }
-        _ if OBS.contains(&id) => {
-            Some("coverage gap #199: Observe scenario steps and notification assertions incomplete")
+        "TD_COAP_DTLS_04" | "TD_COAP_DTLS_05" | "TD_COAP_DTLS_06" | "TD_COAP_DTLS_07" => Some(
+            "coverage gap #199: DTLS backend has no RFC 7250 raw public key; an X.509 run is a different test",
+        ),
+        _ if OBS.contains(&id) && id != "TD_COAP_OBS_02" => {
+            Some("coverage gap #199: Observe cancel, Max-Age, re-registration, restart, loss, or large notifications are not qualified; coap-rs does not collect notifications")
         }
         _ => None,
     }

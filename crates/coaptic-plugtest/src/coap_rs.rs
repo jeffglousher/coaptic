@@ -1,13 +1,15 @@
 //! [`CoapRsPeer`]: first external backend (`coap` / coap-rs on crates.io).
 
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use coap::Server;
 use coap::client::UdpCoAPClient;
 use coap::request::RequestBuilder;
+use coap::server::{Listener, Responder, TransportRequestSender};
 use coap_lite::{
     CoapOption, CoapRequest, ContentFormat as LiteCf, MessageClass, MessageType as LiteType,
     RequestType, ResponseType,
@@ -63,19 +65,22 @@ impl Peer for CoapRsPeer {
     fn start_server(&mut self) -> Result<SocketAddr, PeerError> {
         self.stop_server();
         site::reset();
-        let probe = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-        let addr = probe.local_addr().map_err(|e| e.to_string())?;
-        drop(probe);
         let (tx, rx) = oneshot::channel();
+        let (addr_tx, addr_rx) = std::sync::mpsc::channel();
         let notify = Arc::clone(&self.notify);
         self.rt.spawn(async move {
-            let mut server = match Server::new_udp(addr) {
-                Ok(s) => s,
+            let listener = match SeparateListener::bind("127.0.0.1:0").await {
+                Ok(listener) => listener,
                 Err(e) => {
-                    eprintln!("coap-rs Server::new_udp: {e}");
+                    eprintln!("coap-rs bind: {e}");
                     return;
                 }
             };
+            let Ok(addr) = listener.local_addr() else {
+                return;
+            };
+            let _ = addr_tx.send(addr);
+            let mut server = Server::from_listeners(vec![Box::new(listener)]);
             // Built-in observe returns 4.04 unless the resource was PUTted first.
             // Plugtest /obs is GET-only; the handler owns Observe.
             server.automatic_observe_handling(true).await;
@@ -88,7 +93,10 @@ impl Peer for CoapRsPeer {
                 _ = rx => {}
             }
         });
-        // Bind retry window.
+        let addr = addr_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
+        // Let the listen task enter recv before the first client datagram.
         std::thread::sleep(Duration::from_millis(40));
         self.stop = Some(tx);
         self.addr = Some(addr);
@@ -211,6 +219,20 @@ fn handle_request(
                 resp.set_status(ResponseType::Content);
                 resp.message.payload = site::SEP_BODY.to_vec();
                 resp.message.set_content_format(LiteCf::TextPlain);
+                let req_ty = request.message.header.get_type();
+                let req_mid = request.message.header.message_id;
+                let fresh = next_server_mid(req_mid);
+                match req_ty {
+                    LiteType::Confirmable => {
+                        resp.message.header.set_type(LiteType::Confirmable);
+                        resp.message.header.message_id = fresh;
+                    }
+                    LiteType::NonConfirmable => {
+                        resp.message.header.set_type(LiteType::NonConfirmable);
+                        resp.message.header.message_id = fresh;
+                    }
+                    LiteType::Acknowledgement | LiteType::Reset => {}
+                }
             }
             (RequestType::Get, "query") => {
                 resp.set_status(ResponseType::Content);
@@ -259,10 +281,15 @@ fn handle_request(
                 resp.message.set_content_format(LiteCf::TextPlain);
             }
             (RequestType::Put, "large-update") => {
+                site::set_large_update(&request.message.payload);
                 resp.set_status(ResponseType::Changed);
             }
             (RequestType::Post, "large-create") => {
                 resp.set_status(ResponseType::Created);
+                resp.message
+                    .add_option(CoapOption::LocationPath, b"large-create".to_vec());
+                resp.message
+                    .add_option(CoapOption::LocationPath, b"ps".to_vec());
             }
             (RequestType::Post, "large-post") => {
                 resp.set_status(ResponseType::Changed);
@@ -481,3 +508,127 @@ fn raw_ping(
 /// Silence unused-import noise when `ContentFormat` try_from needs a path.
 #[allow(dead_code)]
 static _KEEP: AtomicBool = AtomicBool::new(false);
+
+static SERVER_MID: AtomicU16 = AtomicU16::new(0x4000);
+
+fn next_server_mid(avoid: u16) -> u16 {
+    let mid = SERVER_MID.fetch_add(1, Ordering::Relaxed);
+    if mid == avoid {
+        SERVER_MID.fetch_add(1, Ordering::Relaxed)
+    } else {
+        mid
+    }
+}
+
+fn empty_ack_wire(mid: u16) -> [u8; 4] {
+    let bytes = mid.to_be_bytes();
+    [0x60, 0x00, bytes[0], bytes[1]]
+}
+
+fn uri_path(packet: &coap_lite::Packet) -> String {
+    packet
+        .get_option(CoapOption::UriPath)
+        .map(|vals| {
+            vals.iter()
+                .filter_map(|v| std::str::from_utf8(v).ok())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
+}
+
+/// CON GET `/separate` → request Message ID, so the listener can empty-ACK
+/// before the handler's separate CON.
+fn separate_con_mid(bytes: &[u8]) -> Option<u16> {
+    let packet = coap_lite::Packet::from_bytes(bytes).ok()?;
+    if packet.header.get_type() != LiteType::Confirmable {
+        return None;
+    }
+    if packet.header.code != MessageClass::Request(RequestType::Get) {
+        return None;
+    }
+    (uri_path(&packet) == "separate").then_some(packet.header.message_id)
+}
+
+struct SeparateListener {
+    socket: tokio::net::UdpSocket,
+    response_rx: tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>,
+    response_tx: tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>,
+}
+
+impl SeparateListener {
+    async fn bind(addr: &str) -> std::io::Result<Self> {
+        let socket = tokio::net::UdpSocket::bind(addr).await?;
+        let (response_tx, response_rx) = tokio::sync::mpsc::unbounded_channel();
+        Ok(Self {
+            socket,
+            response_rx,
+            response_tx,
+        })
+    }
+
+    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+}
+
+struct SeparateResponder {
+    address: SocketAddr,
+    tx: tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>,
+}
+
+#[async_trait]
+impl Responder for SeparateResponder {
+    async fn respond(&self, response: Vec<u8>) {
+        let _ = self.tx.send((response, self.address));
+    }
+
+    fn address(&self) -> SocketAddr {
+        self.address
+    }
+}
+
+#[async_trait]
+impl Listener for SeparateListener {
+    async fn listen(
+        mut self: Box<Self>,
+        sender: TransportRequestSender,
+    ) -> std::io::Result<tokio::task::JoinHandle<std::io::Result<()>>> {
+        Ok(tokio::spawn(async move { self.receive_loop(sender).await }))
+    }
+}
+
+impl SeparateListener {
+    async fn receive_loop(
+        &mut self,
+        sender: TransportRequestSender,
+    ) -> std::io::Result<()> {
+        let mut buf = vec![0u8; 2048];
+        loop {
+            tokio::select! {
+                message = self.socket.recv_from(&mut buf) => {
+                    let (n, from) = message?;
+                    let bytes = buf[..n].to_vec();
+                    if let Some(mid) = separate_con_mid(&bytes) {
+                        self.socket.send_to(&empty_ack_wire(mid), from).await?;
+                    }
+                    sender
+                        .send((
+                            bytes,
+                            Arc::new(SeparateResponder {
+                                address: from,
+                                tx: self.response_tx.clone(),
+                            }),
+                        ))
+                        .map_err(|_| std::io::Error::other("server channel error"))?;
+                }
+                response = self.response_rx.recv() => {
+                    let Some((bytes, to)) = response else {
+                        return Ok(());
+                    };
+                    self.socket.send_to(&bytes, to).await?;
+                }
+            }
+        }
+    }
+}

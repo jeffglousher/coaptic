@@ -6,9 +6,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use coaptic::app::DEFAULT_ROUTES;
 use coaptic::message::{BlockValue, Code, ContentFormat, Message, MessageId, Type, decode, encode};
 use coaptic::storage::{DatagramIo, Endpoint, Engine, EngineBuilder, Memory};
-use coaptic::{App, Method, Response, profiles};
+use coaptic::{App, Call, Method, Response, profiles};
+
+type ClientApp<T> = App<profiles::Default, T, DEFAULT_ROUTES, true>;
 
 use crate::pcap::{Capture, CapturingIo, bind_loopback};
 use crate::peer::{ClientRequest, ClientResponse, Peer, PeerError};
@@ -19,6 +22,13 @@ pub struct CoapticPeer {
     capture: Capture,
     server: Option<ServerCtl>,
     client_addr: Option<SocketAddr>,
+    observe: Option<ObserveHold>,
+}
+
+struct ObserveHold {
+    app: ClientApp<CapturingIo<UdpSocket>>,
+    call: Call,
+    origin: Instant,
 }
 
 struct ServerCtl {
@@ -42,6 +52,7 @@ impl CoapticPeer {
             capture: Capture::new(),
             server: None,
             client_addr: None,
+            observe: None,
         }
     }
 }
@@ -89,10 +100,35 @@ impl Peer for CoapticPeer {
         dest: SocketAddr,
         req: &ClientRequest,
     ) -> Result<ClientResponse, PeerError> {
+        self.observe = None;
         let (sock, local) = bind_loopback().map_err(|e| e.to_string())?;
         self.client_addr = Some(local);
         let io = CapturingIo::new(sock, local, self.capture.clone());
         app_exchange(io, dest, req)
+    }
+
+    fn begin_observe(
+        &mut self,
+        dest: SocketAddr,
+        req: &ClientRequest,
+    ) -> Result<ClientResponse, PeerError> {
+        self.observe = None;
+        let (sock, local) = bind_loopback().map_err(|e| e.to_string())?;
+        self.client_addr = Some(local);
+        let io = CapturingIo::new(sock, local, self.capture.clone());
+        let (mut app, call) = start_client(io, dest, req)?;
+        let origin = Instant::now();
+        let response = wait_response(&mut app, call, origin, req.timeout)?;
+        self.observe = Some(ObserveHold { app, call, origin });
+        Ok(response)
+    }
+
+    fn take_notification(&mut self, timeout: Duration) -> Result<ClientResponse, PeerError> {
+        let hold = self
+            .observe
+            .as_mut()
+            .ok_or("no observe client")?;
+        wait_response(&mut hold.app, hold.call, hold.origin, timeout)
     }
 
     fn poll(&mut self, _now_ms: u64) -> Result<(), PeerError> {
@@ -192,6 +228,17 @@ pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
         let mut io = io;
         return client_ping(&mut io, dest_ep, req.timeout);
     }
+    let (mut app, call) = start_client(io, dest, req)?;
+    let origin = Instant::now();
+    wait_response(&mut app, call, origin, req.timeout)
+}
+
+fn start_client<T: DatagramIo<Error = std::io::Error>>(
+    io: T,
+    dest: SocketAddr,
+    req: &ClientRequest,
+) -> Result<(ClientApp<T>, Call), PeerError> {
+    let dest_ep = Endpoint::from(dest);
     let mut app = App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
@@ -242,8 +289,16 @@ pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
     let call = outgoing
         .send(1)
         .map_err(|e| format!("send {} {}: {e}", req.code, req.path.join("/")))?;
-    let origin = Instant::now();
-    let deadline = origin + req.timeout;
+    Ok((app, call))
+}
+
+fn wait_response<T: DatagramIo<Error = std::io::Error>>(
+    app: &mut ClientApp<T>,
+    call: Call,
+    origin: Instant,
+    timeout: Duration,
+) -> Result<ClientResponse, PeerError> {
+    let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         let now = u64::try_from(origin.elapsed().as_millis())
             .unwrap_or(u64::MAX)
@@ -254,11 +309,8 @@ pub(crate) fn app_exchange<T: DatagramIo<Error = std::io::Error>>(
         }
         thread::sleep(Duration::from_millis(2));
     }
-    Err(PeerError(format!(
-        "timeout waiting for {} {}",
-        req.code,
-        req.path.join("/")
-    )))
+    let _ = call;
+    Err(PeerError("timeout waiting for response".into()))
 }
 
 fn intern_path(path: &[String]) -> Result<&'static str, PeerError> {
