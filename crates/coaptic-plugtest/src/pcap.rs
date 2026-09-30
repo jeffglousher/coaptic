@@ -1,8 +1,51 @@
 //! UDP datagram capture, PCAP writer, and a [`DatagramIo`] tap.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// How many CoAP requests the next captures should accept and then not deliver.
+static REQUEST_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+/// Drops the next `n` CoAP requests seen by a [`CapturingIo`] (logged, not delivered).
+///
+/// The guard clears the counter on drop so a failed TD cannot leak loss into the next one.
+pub struct RequestLoss;
+
+impl RequestLoss {
+    /// Arm `n` request drops. One drop is one lost request, which forces a retransmission.
+    #[must_use]
+    pub fn arm(n: usize) -> Self {
+        REQUEST_DROPS.store(n, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for RequestLoss {
+    fn drop(&mut self) {
+        REQUEST_DROPS.store(0, Ordering::SeqCst);
+    }
+}
+
+fn take_request_drop(bytes: &[u8]) -> bool {
+    if !is_coap_request(bytes) {
+        return false;
+    }
+    REQUEST_DROPS
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        .is_ok()
+}
+
+/// CON/NON request (class 0, not empty). Responses and empty ACKs are never dropped.
+fn is_coap_request(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 || bytes[0] >> 6 != 1 {
+        return false;
+    }
+    let ty = (bytes[0] >> 4) & 0b11;
+    let code = bytes[1];
+    ty <= 1 && code >> 5 == 0 && code != 0
+}
 
 use coaptic::storage::{DatagramIo, Endpoint};
 
@@ -206,6 +249,9 @@ impl<T: DatagramIo> DatagramIo for CapturingIo<T> {
                 let src = SocketAddr::from(ep);
                 self.capture
                     .push(src, self.local, &buf[..n], self.decrypted);
+                if take_request_drop(&buf[..n]) {
+                    return Ok(None);
+                }
                 Ok(Some((n, ep)))
             }
             other => other,
@@ -218,6 +264,9 @@ impl<T: DatagramIo> DatagramIo for CapturingIo<T> {
         // request in the pcap, response missing, client already succeeded).
         self.capture
             .push(self.local, SocketAddr::from(dest), bytes, self.decrypted);
+        if take_request_drop(bytes) {
+            return Ok(bytes.len());
+        }
         self.inner.send(dest, bytes)
     }
 }

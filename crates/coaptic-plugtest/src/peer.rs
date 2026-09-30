@@ -184,6 +184,22 @@ pub trait Peer {
     /// Take captured datagrams (wire UDP and/or decrypted CoAP).
     fn take_capture(&mut self) -> Capture;
 
+    /// Register Observe and return the first notification, keeping the client up.
+    fn begin_observe(
+        &mut self,
+        dest: SocketAddr,
+        req: &ClientRequest,
+    ) -> Result<ClientResponse, PeerError> {
+        let _ = (dest, req);
+        Err(PeerError("observe collect not supported".into()))
+    }
+
+    /// Next notification on the client started by [`Self::begin_observe`].
+    fn take_notification(&mut self, timeout: Duration) -> Result<ClientResponse, PeerError> {
+        let _ = timeout;
+        Err(PeerError("observe collect not supported".into()))
+    }
+
     /// Ask a running server to emit an Observe notification for `path`.
     fn notify(&mut self, path: &[&str], payload: &[u8]) -> Result<(), PeerError> {
         let _ = (path, payload);

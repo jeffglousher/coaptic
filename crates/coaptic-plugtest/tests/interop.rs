@@ -64,7 +64,8 @@ fn unqualified_scenarios_cannot_report_pass() {
             }
         }
     }
-    assert!(catalog::skip_reason("TD_COAP_DTLS_01").is_some());
+    assert!(catalog::skip_reason("TD_COAP_DTLS_01").is_none());
+    assert!(catalog::skip_reason("TD_COAP_DTLS_04").is_some());
 }
 
 fn assert_suite(name: &str, ids: &[&str], pairs: &[Pair]) {

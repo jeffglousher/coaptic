@@ -34,11 +34,15 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 ### Qualification boundary
 
 The App TD runner reports known incomplete scenarios as `SKIP: coverage gap #199`.
-These are unfinished work, not conformance passes: CORE separate responses and
-loss scenarios; full BLOCK and OBS scenarios; DTLS cipher/Finished capture, loss, authenticated
-failure evidence and raw-public-key scenarios. The X.509 fixture does not prove
-raw-public-key support. The Engine tests, dogfood and process tests retain their
-separate, narrower coverage. See [#199](https://github.com/jeffglousher/coaptic/issues/199).
+Still unfinished, not conformance passes: OBS_01 (notifications stay NON until the
+24-hour confirm point); the rest of OBS except a coaptic↔coaptic OBS_02 NON
+notification (coap-rs does not collect notifications); DTLS_02 (no plaintext
+`decrypt_error` alert); DTLS_03 (each handshake flight is not dropped); and
+DTLS_04–07 (no RFC 7250 raw public key). An X.509 run is a different test.
+CORE separate responses, loss and retransmission, BLOCK trains, and DTLS_01
+cipher offer, selection, and Finished are graded from the capture. The Engine
+tests, dogfood and process tests retain their separate, narrower coverage. See
+[#199](https://github.com/jeffglousher/coaptic/issues/199).
 The DTLS grader requires captured decrypted responses for success and visible
 plaintext fatal alerts for its alert expectation. It does not interpret encrypted
 alerts or reassemble fragmented handshakes; unavailable evidence fails grading.

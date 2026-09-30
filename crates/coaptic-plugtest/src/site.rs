@@ -41,6 +41,7 @@ pub const LINK_CATALOG: &[&str] = &[
 
 static VALIDATE_BODY: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
 static VALIDATE_ETAG: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
+static LARGE_UPDATE: OnceLock<Mutex<Option<Vec<u8>>>> = OnceLock::new();
 static TEST_EXISTS: AtomicBool = AtomicBool::new(true);
 static OBS_SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -52,10 +53,26 @@ fn validate_etag() -> &'static Mutex<Vec<u8>> {
     VALIDATE_ETAG.get_or_init(|| Mutex::new(b"etag1".to_vec()))
 }
 
+fn large_update_slot() -> &'static Mutex<Option<Vec<u8>>> {
+    LARGE_UPDATE.get_or_init(|| Mutex::new(None))
+}
+
+/// Body stored by the last completed PUT `/large-update`.
+#[must_use]
+pub fn large_update() -> Option<Vec<u8>> {
+    large_update_slot().lock().expect("large-update").clone()
+}
+
+/// Record the assembled PUT `/large-update` body (the TD's application effect).
+pub fn set_large_update(body: &[u8]) {
+    *large_update_slot().lock().expect("large-update") = Some(body.to_vec());
+}
+
 /// Reset per-TD resource state.
 pub fn reset() {
     *validate_body().lock().expect("body") = TEST_BODY.to_vec();
     *validate_etag().lock().expect("etag") = b"etag1".to_vec();
+    *large_update_slot().lock().expect("large-update") = None;
     TEST_EXISTS.store(true, Ordering::SeqCst);
     OBS_SEQ.store(0, Ordering::SeqCst);
 }
@@ -143,13 +160,16 @@ fn get_large(_req: Request<'_>) -> Response<'static> {
 }
 
 fn put_large(req: Request<'_>) -> Response<'static> {
-    let _ = req.body().or(Some(req.payload()));
+    let body = req.body().unwrap_or(req.payload());
+    set_large_update(body);
     Response::changed()
 }
 
 fn post_large_create(req: Request<'_>) -> Response<'static> {
     let _ = req.body().or(Some(req.payload()));
     Response::created()
+        .location_path("large-create")
+        .location_path("ps")
 }
 
 fn post_large_post(req: Request<'_>) -> Response<'static> {

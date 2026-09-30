@@ -9,9 +9,11 @@
 //! PSK TDs use identity `password` / key `sesame` and
 //! `TLS_PSK_WITH_AES_128_CCM_8` (ETSI CoAP#4).
 //!
-//! Literal DTLS TDs remain skipped pending complete handshake evidence.
-//! Separate qualification tests exercise PSK and mutually authenticated X.509.
-//! X.509 is not RFC 7250 raw-public-key coverage; RPK TDs remain skipped.
+//! `TD_COAP_DTLS_01` records the handshake on the UDP socket (cipher offer,
+//! selection, and Finished) plus the decrypted GET. `TD_COAP_DTLS_02`–`03`
+//! and the raw-public-key TDs stay skipped: a plaintext `decrypt_error` is
+//! not graded, each-flight loss is not injected, and this backend has no
+//! RFC 7250 raw public key. X.509 qualification is a different test.
 
 #[path = "../../../tools/interop/coap_dtls.rs"]
 mod coap_dtls;
@@ -22,11 +24,13 @@ use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use tokio::sync::mpsc as tokio_mpsc;
 use webrtc_dtls::cipher_suite::CipherSuiteId;
 use webrtc_dtls::config::{ClientAuthType, Config, ExtendedMasterSecretType};
 use webrtc_dtls::conn::DTLSConn;
 use webrtc_dtls::crypto::Certificate;
+use webrtc_util::conn::conn_udp_listener::ListenConfig;
 use webrtc_util::conn::{Conn, Listener};
 
 use crate::pcap::{Capture, CapturingIo};
@@ -69,10 +73,11 @@ impl DtlsIo {
     /// Listen for one DTLS handshake, then pump decrypted CoAP.
     ///
     /// `accept` runs in the background so the caller can bind [`App`] first.
-    pub async fn listen(config: Config) -> Result<(SocketAddr, Self), PeerError> {
-        use webrtc_dtls::listener::listen;
-
-        let listener = listen("127.0.0.1:0", config)
+    /// Handshake datagrams are copied into `capture` before DTLS consumes them.
+    pub async fn listen(config: Config, capture: Capture) -> Result<(SocketAddr, Self), PeerError> {
+        let mut lc = ListenConfig::default();
+        let listener = lc
+            .listen("127.0.0.1:0")
             .await
             .map_err(|e| format!("dtls listen: {e}"))?;
         let addr = listener
@@ -83,10 +88,15 @@ impl DtlsIo {
         let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
         let peer = Arc::new(Mutex::new(addr));
         let peer_t = Arc::clone(&peer);
+        let capture_t = capture.clone();
         tokio::spawn(async move {
             if let Ok((conn, raddr)) = listener.accept().await {
                 *peer_t.lock().expect("dtls peer") = raddr;
-                pump(conn, in_tx, out_rx).await;
+                let tapped = Arc::new(TapConn::new(conn, capture_t, addr, raddr));
+                if let Ok(dtls) = DTLSConn::new(tapped, config, false, None).await {
+                    let dtls: Arc<dyn Conn + Send + Sync> = Arc::new(dtls);
+                    pump(dtls, in_tx, out_rx).await;
+                }
             }
         });
         Ok((
@@ -101,7 +111,11 @@ impl DtlsIo {
     }
 
     /// Client handshake, then pump decrypted CoAP.
-    pub async fn connect(dest: SocketAddr, config: Config) -> Result<Self, PeerError> {
+    pub async fn connect(
+        dest: SocketAddr,
+        config: Config,
+        capture: Capture,
+    ) -> Result<Self, PeerError> {
         let sock = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .map_err(|e| format!("dtls bind: {e}"))?;
@@ -109,13 +123,12 @@ impl DtlsIo {
         sock.connect(dest)
             .await
             .map_err(|e| format!("dtls connect: {e}"))?;
-        let conn = tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            DTLSConn::new(Arc::new(sock), config, true, None),
-        )
-        .await
-        .map_err(|_| PeerError("handshake: timeout".into()))?
-        .map_err(|e| PeerError(format!("handshake: {e}")))?;
+        let tapped = Arc::new(TapConn::new(Arc::new(sock), capture, local, dest));
+        let conn =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, DTLSConn::new(tapped, config, true, None))
+                .await
+                .map_err(|_| PeerError("handshake: timeout".into()))?
+                .map_err(|e| PeerError(format!("handshake: {e}")))?;
         let conn: Arc<dyn Conn + Send + Sync> = Arc::new(conn);
         let (in_tx, in_rx) = std_mpsc::channel();
         let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
@@ -129,6 +142,77 @@ impl DtlsIo {
             peer: Arc::new(Mutex::new(dest)),
             local,
         })
+    }
+}
+
+/// UDP [`Conn`] that records datagrams before DTLS encrypts or decrypts them.
+struct TapConn {
+    inner: Arc<dyn Conn + Send + Sync>,
+    capture: Capture,
+    local: SocketAddr,
+    peer: Mutex<SocketAddr>,
+}
+
+impl TapConn {
+    fn new(
+        inner: Arc<dyn Conn + Send + Sync>,
+        capture: Capture,
+        local: SocketAddr,
+        peer: SocketAddr,
+    ) -> Self {
+        Self {
+            inner,
+            capture,
+            local,
+            peer: Mutex::new(peer),
+        }
+    }
+}
+
+#[async_trait]
+impl Conn for TapConn {
+    async fn connect(&self, addr: SocketAddr) -> webrtc_util::Result<()> {
+        self.inner.connect(addr).await
+    }
+
+    async fn recv(&self, buf: &mut [u8]) -> webrtc_util::Result<usize> {
+        let n = self.inner.recv(buf).await?;
+        let peer = *self.peer.lock().expect("dtls peer");
+        self.capture.push(peer, self.local, &buf[..n], false);
+        Ok(n)
+    }
+
+    async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
+        let (n, addr) = self.inner.recv_from(buf).await?;
+        self.capture.push(addr, self.local, &buf[..n], false);
+        Ok((n, addr))
+    }
+
+    async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
+        let peer = *self.peer.lock().expect("dtls peer");
+        self.capture.push(self.local, peer, buf, false);
+        self.inner.send(buf).await
+    }
+
+    async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
+        self.capture.push(self.local, target, buf, false);
+        self.inner.send_to(buf, target).await
+    }
+
+    fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    fn remote_addr(&self) -> Option<SocketAddr> {
+        Some(*self.peer.lock().expect("dtls peer"))
+    }
+
+    async fn close(&self) -> webrtc_util::Result<()> {
+        self.inner.close().await
+    }
+
+    fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+        self
     }
 }
 
@@ -257,7 +341,8 @@ fn run_one(id: &str, pair: Pair) -> TdResult {
         };
     }
     let err = match id {
-        "TD_COAP_DTLS_01" => dtls_psk(pair),
+        "TD_COAP_DTLS_01" => dtls_psk(pair, PSK_KEY, true),
+        "TD_COAP_DTLS_02" => dtls_psk(pair, b"wrong", false),
         other => Err(PeerError(format!("unknown DTLS id {other}"))),
     };
     match err {
@@ -287,14 +372,17 @@ fn runtime() -> Result<tokio::runtime::Runtime, PeerError> {
         .map_err(|e| PeerError(e.to_string()))
 }
 
-fn dtls_psk(pair: Pair) -> Result<Capture, PeerError> {
+fn dtls_psk(pair: Pair, client_key: &[u8], require_get: bool) -> Result<Capture, PeerError> {
     let capture = Capture::new();
-    runtime()?.block_on(run_pair(
+    let outcome = runtime()?.block_on(run_pair(
         pair,
-        psk_config(PSK_KEY),
+        psk_config(client_key),
         psk_config(PSK_KEY),
         &capture,
-    ))?;
+    ));
+    if require_get {
+        outcome?;
+    }
     Ok(capture)
 }
 
@@ -317,7 +405,7 @@ async fn rs_to_coaptic(
     server_cfg: Config,
     capture: &Capture,
 ) -> Result<(), PeerError> {
-    let (addr, io) = DtlsIo::listen(server_cfg).await?;
+    let (addr, io) = DtlsIo::listen(server_cfg, capture.clone()).await?;
     let io = CapturingIo::new(io, addr, capture.clone()).decrypted();
     let server = spawn_coaptic_server(io);
     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -332,7 +420,7 @@ async fn coaptic_to_rs(
     capture: &Capture,
 ) -> Result<(), PeerError> {
     let addr = start_rs_server(server_cfg).await?;
-    let io = DtlsIo::connect(addr, client_cfg).await?;
+    let io = DtlsIo::connect(addr, client_cfg, capture.clone()).await?;
     let local = io.local_addr();
     let io = CapturingIo::new(io, local, capture.clone()).decrypted();
     tokio::task::spawn_blocking(move || coaptic_get_secure(io, addr))
@@ -345,12 +433,12 @@ async fn coaptic_to_coaptic(
     server_cfg: Config,
     capture: &Capture,
 ) -> Result<(), PeerError> {
-    let (addr, server_io) = DtlsIo::listen(server_cfg).await?;
+    let (addr, server_io) = DtlsIo::listen(server_cfg, capture.clone()).await?;
     let server_io = CapturingIo::new(server_io, addr, capture.clone()).decrypted();
     let server = spawn_coaptic_server(server_io);
     tokio::time::sleep(Duration::from_millis(20)).await;
     let outcome = async {
-        let io = DtlsIo::connect(addr, client_cfg).await?;
+        let io = DtlsIo::connect(addr, client_cfg, capture.clone()).await?;
         let local = io.local_addr();
         let io = CapturingIo::new(io, local, capture.clone()).decrypted();
         tokio::task::spawn_blocking(move || coaptic_get_secure(io, addr))
@@ -486,7 +574,8 @@ pub fn adapter_note() -> &'static str {
     "DTLS: harness webrtc-dtls DatagramIo adapter. coaptic library has no DTLS dep; \
      App::poll / App client see plaintext CoAP over a DTLS-wrapped socket in this crate. \
      Mixed pairs (coap-rs→coaptic, coaptic→coap-rs, coaptic→coaptic) run handshake + GET /secure. \
-     Literal DTLS TDs remain skipped; separate X.509 tests do not establish RPK support."
+     TD_COAP_DTLS_01 grades the UDP handshake and decrypted GET. DTLS_02–03 and \
+     raw-public-key TDs stay skipped; X.509 tests do not establish RPK support."
 }
 
 #[cfg(test)]
@@ -497,27 +586,28 @@ mod qualification_tests {
     fn psk_authentication_preserves_mixed_coap_get() {
         let _guard = crate::runner::harness_lock();
         for pair in crate::runner::default_pairs() {
-            let capture = dtls_psk(pair).unwrap();
+            let capture = dtls_psk(pair, PSK_KEY, true).unwrap();
             assert!(capture.snapshot().iter().any(|packet| packet.decrypted));
-            assert!(
-                crate::grade::Catalog::load()
-                    .unwrap()
-                    .grade("TD_COAP_DTLS_01", &capture)
-                    .is_err(),
-                "decrypted GET success cannot replace missing cipher captures"
-            );
+            crate::grade::Catalog::load()
+                .unwrap()
+                .grade("TD_COAP_DTLS_01", &capture)
+                .unwrap();
         }
     }
 
     #[test]
     fn unqualified_dtls_tds_and_uncaptured_pairs_cannot_pass() {
         for id in crate::catalog::DTLS {
+            if crate::catalog::skip_reason(id).is_none() {
+                continue;
+            }
             for result in run_dtls_pairs(id, &crate::runner::default_pairs()) {
                 assert!(
                     result
                         .error
                         .as_deref()
-                        .is_some_and(|e| e.starts_with("SKIP:"))
+                        .is_some_and(|e| e.starts_with("SKIP:")),
+                    "{id}"
                 );
                 assert!(result.capture.snapshot().is_empty());
             }

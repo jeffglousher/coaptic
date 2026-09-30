@@ -50,13 +50,12 @@
 //! [`coaptic::storage::DatagramIo`] (`DtlsIo`) so `App::poll` and the App
 //! client see plaintext CoAP. Mixed pairs (`coap-rs→coaptic`,
 //! `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure`.
-//! There is no wire tap on the webrtc-dtls socket, so ClientHello cipher
-//! lists are not graded.
-//!
-//! Literal DTLS TDs remain skipped until all required handshake evidence is
-//! captured. Separate tests exercise PSK and mutual X.509 GET/refusal paths.
-//! The backend has no RFC 7250 RPK certificate type; X.509 tests cannot
-//! qualify raw-public-key TDs (`TD_COAP_DTLS_04`–`07`).
+//! `TD_COAP_DTLS_01` records the UDP handshake (cipher offer, selection, and
+//! Finished) plus the decrypted GET. `TD_COAP_DTLS_02`–`03` stay skipped:
+//! a plaintext `decrypt_error` alert is not graded, and each-flight handshake
+//! loss is not injected. The backend has no RFC 7250 raw public key, so
+//! `TD_COAP_DTLS_04`–`07` stay skipped. Separate X.509 tests are a different
+//! qualification and do not relabel those TDs.
 //!
 //! # 6LoWPAN
 //!
