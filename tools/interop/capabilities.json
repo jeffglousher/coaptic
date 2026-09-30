@@ -4198,7 +4198,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "The library has no DTLS or mutual X.509, and the process peer speaks PSK only, so there is no Coaptic-to-Coaptic X.509 case and none against libcoap.",
+      "reason": "The process peers speak DTLS-PSK only. Mutual X.509 between two Coaptic stacks is a plugtest, not a process case, and there is no X.509 process case against libcoap.",
       "issue": 200,
       "executable_cases": []
     },
