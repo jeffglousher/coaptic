@@ -3433,6 +3433,27 @@
       "executable": "tools/interop/run.py:oscore_replay_restore"
     },
     {
+      "id": "concurrent-oscore:coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "oscore",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["oscore", "replay", "concurrent-servers"],
+      "positive_proof": [
+        "two Coaptic OSCORE server processes stay live on different ports",
+        "client sequence 0 succeeds on both replay windows",
+        "client sequence 1 then succeeds on both"
+      ],
+      "failure_proof": [
+        "repeating sequence 0 is refused by each window",
+        "one server exiting, or either sequence 1 failing, fails"
+      ],
+      "executable": "tools/interop/run.py:concurrent_oscore_servers"
+    },
+    {
       "id": "conditional:coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -4150,7 +4171,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Concurrent OSCORE contexts are not process cases.",
+      "reason": "One App holds one SecurityContext, so concurrent OSCORE contexts are two processes each with its own replay window, while older concurrent OSCORE request bindings stay inside that single context.",
       "issue": 200,
       "executable_cases": []
     },
