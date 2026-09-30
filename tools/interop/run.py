@@ -1436,6 +1436,55 @@ def oscore_replay_restore(client, server):
     return {"restored": "0:1", "sender_seq": 1, "refused_sequence": 0}
 
 
+def concurrent_oscore_servers(client, server):
+    """Two OSCORE server processes stay up together. Each process is one App and one replay window.
+
+    Client sequence 0 is accepted by both. Repeating sequence 0 is refused by each
+    window, and sequence 1 is then accepted by both.
+    """
+    with Server(server, "oscore") as left, Server(server, "oscore") as right:
+        if left.number == right.number or left.proc.pid == right.proc.pid:
+            raise AssertionError("OSCORE servers did not start as two processes")
+        if left.proc.poll() is not None or right.proc.poll() is not None:
+            raise AssertionError("an OSCORE server exited before the exchanges")
+        replies = []
+        errors = []
+
+        def exchange(service):
+            try:
+                replies.append(request(client, "oscore", service.number, sequence=0, path="counter"))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=exchange, args=(service,)) for service in (left, right)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
+        if len(replies) != 2:
+            raise AssertionError(f"expected two OSCORE responses, got {len(replies)}")
+        for reply in replies:
+            expect(reply, 69, b"0")
+        if left.proc.poll() is not None or right.proc.poll() is not None:
+            raise AssertionError("an OSCORE server exited during sequence 0")
+        for service in (left, right):
+            expect_refusal(request(
+                client, "oscore", service.number, sequence=0, path="counter", timeout=500))
+        for service in (left, right):
+            expect(request(client, "oscore", service.number, sequence=1, path="counter"), 69, b"0")
+        if left.proc.poll() is not None or right.proc.poll() is not None:
+            raise AssertionError("an OSCORE server exited during sequence 1")
+        return {
+            "ports": [left.number, right.number],
+            "pids": [left.proc.pid, right.proc.pid],
+            "sequence0": "2.05,2.05",
+            "replay_sequence0": "refused,refused",
+            "sequence1": "2.05,2.05",
+        }
+
+
 def observe_values(client, server, writer):
     """The client observes /counter. PUT replaces the representation; the client prints 0,1,2."""
     def wait_responses(relay, count, seconds):
@@ -2308,6 +2357,8 @@ def main():
          lambda: oscore_server_echo(peers["coaptic"], peers["coaptic"]))
     case("oscore-replay-restore:coaptic",
          lambda: oscore_replay_restore(peers["coaptic"], peers["coaptic"]))
+    case("concurrent-oscore:coaptic",
+         lambda: concurrent_oscore_servers(peers["coaptic"], peers["coaptic"]))
     case("empty-request-tag:coaptic", lambda: empty_request_tag(peers["coaptic"]))
     case("problem-details:coaptic", lambda: problem_details_mix(peers["coaptic"]))
     case("concurrent-counter:coaptic",
