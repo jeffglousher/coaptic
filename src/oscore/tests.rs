@@ -5672,3 +5672,49 @@ fn protected_observe_aggregation_preserves_binding_sequence_and_queued_reply() {
     );
     assert!(client.cancel(next));
 }
+
+#[test]
+fn older_concurrent_request_binding_is_not_authenticated() {
+    let token = Token::new(&[7]).unwrap();
+    let observe = RequestRef::from_kid(&[], PartialIv::from_seq(1).unwrap()).unwrap();
+    let older = RequestRef::from_kid(&[], PartialIv::from_seq(2).unwrap()).unwrap();
+    let latest = RequestRef::from_kid(&[], PartialIv::from_seq(4).unwrap()).unwrap();
+    let mut client = client_c1();
+    client.remember_live(token, observe, true).unwrap();
+    client.remember_download(token, older).unwrap();
+    client.remember_download(token, latest).unwrap();
+    assert_eq!(client.lookup(token), Some(latest));
+    assert_eq!(client.observe_request(token), Some(observe));
+
+    let server = server_c1();
+    let plain = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(9))
+        .with_token(token)
+        .with_payload(b"old");
+    let mut wire = [0u8; WIRE];
+    let mut out = [0u8; WIRE];
+    let n = server.protect_response(&plain, older, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    assert_eq!(
+        client.unprotect_bound_response(&protected, &mut out),
+        Err(Error::Decrypt)
+    );
+    let n = server.protect_response(&plain, latest, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    assert_eq!(
+        client
+            .unprotect_bound_response(&protected, &mut out)
+            .unwrap()
+            .0
+            .payload(),
+        b"old"
+    );
+    let n = server.protect_response(&plain, observe, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    assert_eq!(
+        client
+            .unprotect_bound_response(&protected, &mut out)
+            .unwrap()
+            .1,
+        observe
+    );
+}

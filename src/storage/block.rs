@@ -489,6 +489,16 @@ struct QWindow {
     mask: u16,
     final_num: Option<u32>,
     final_payload_len: u16,
+    /// NUM whose first acceptance completed a `MAX_PAYLOADS_SET`.
+    continue_trigger: Option<u32>,
+    /// Q-Block NUM acknowledged by that completion.
+    continue_ack: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NotificationSnapshot {
+    format: Option<crate::message::ContentFormat>,
+    max_age: Option<u32>,
 }
 
 /// Exact bounded request matchability context, not a hash. Token/MID and block
@@ -566,6 +576,7 @@ pub struct BlockTransfer {
     // Highest authenticated request PIV and its Token for timed Q-Block1 reports.
     #[cfg(feature = "oscore")]
     pub(crate) oscore_request: Option<(Token, crate::oscore::RequestRef)>,
+    notification: Option<NotificationSnapshot>,
 }
 
 impl BlockTransfer {
@@ -611,6 +622,7 @@ impl BlockTransfer {
             request_binding: None,
             #[cfg(feature = "oscore")]
             oscore_request: None,
+            notification: None,
         };
         transfer.accept_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -686,11 +698,14 @@ impl BlockTransfer {
                 mask: 0,
                 final_num: None,
                 final_payload_len: 0,
+                continue_trigger: None,
+                continue_ack: None,
             }),
             q_receive: None,
             request_binding: None,
             #[cfg(feature = "oscore")]
             oscore_request: None,
+            notification: None,
         };
         transfer.accept_q_incoming(block, payload_len, capacity)?;
         Ok(transfer)
@@ -779,6 +794,8 @@ impl BlockTransfer {
                 mask: 0,
                 final_num: None,
                 final_payload_len: 0,
+                continue_trigger: None,
+                continue_ack: None,
             }),
         )
     }
@@ -811,6 +828,7 @@ impl BlockTransfer {
                 request_binding: None,
                 #[cfg(feature = "oscore")]
                 oscore_request: None,
+                notification: None,
             })
         } else {
             Err(BlockTransferError::Overflow)
@@ -960,6 +978,33 @@ impl BlockTransfer {
         match self.q {
             Some(q) => q.mask,
             None => 0,
+        }
+    }
+
+    /// Acknowledged NUM when `num` is the block that completed the latest set.
+    pub(crate) fn q_continue_for(self, num: u32) -> Option<u32> {
+        match self.q {
+            Some(q) if q.continue_trigger == Some(num) => q.continue_ack,
+            _ => None,
+        }
+    }
+
+    /// Retain Content-Format and Max-Age for a large Observe notification body.
+    pub(crate) fn remember_notification(
+        &mut self,
+        format: Option<crate::message::ContentFormat>,
+        max_age: Option<u32>,
+    ) {
+        self.notification = Some(NotificationSnapshot { format, max_age });
+    }
+
+    /// Notification Content-Format and Max-Age, including absence of either.
+    pub(crate) const fn notification_metadata(
+        self,
+    ) -> Option<(Option<crate::message::ContentFormat>, Option<u32>)> {
+        match self.notification {
+            Some(snapshot) => Some((snapshot.format, snapshot.max_age)),
+            None => None,
         }
     }
 
@@ -1225,6 +1270,12 @@ impl BlockTransfer {
 
         let window_full = (1u16 << Self::MAX_PAYLOADS) - 1;
         while q.mask == window_full && q.final_num.is_none() {
+            let ack = q
+                .base
+                .checked_add(u32::from(Self::MAX_PAYLOADS) - 1)
+                .ok_or(BlockTransferError::Overflow)?;
+            q.continue_trigger = Some(block.num());
+            q.continue_ack = Some(ack);
             q.base = q
                 .base
                 .checked_add(u32::from(Self::MAX_PAYLOADS))
@@ -2453,5 +2504,25 @@ mod tests {
         assert!(b.is_bert());
         assert!(!b.more());
         assert_eq!(len, 4096);
+    }
+
+    #[test]
+    fn q_set_completion_remembers_only_the_finishing_block() {
+        let mut transfer =
+            BlockTransfer::incoming_q_block1(key(), szx16(9, true), 16, 4096, Some(176))
+                .expect("first");
+        for num in (0..9).rev() {
+            transfer
+                .accept_q_incoming(szx16(num, true), 16, 4096)
+                .expect("fill");
+        }
+        assert_eq!(transfer.window_base(), 10);
+        assert_eq!(transfer.window_mask(), 0);
+        assert_eq!(transfer.q_continue_for(0), Some(9));
+        assert_eq!(transfer.q_continue_for(9), None);
+        assert_eq!(
+            transfer.accept_q_incoming(szx16(0, true), 16, 4096),
+            Err(BlockTransferError::Duplicate)
+        );
     }
 }

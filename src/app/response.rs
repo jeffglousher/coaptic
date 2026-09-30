@@ -527,6 +527,16 @@ impl<'a> Response<'a> {
         self
     }
 
+    pub(crate) const fn retain_format(mut self, format: Option<ContentFormat>) -> Self {
+        self.content_format = format;
+        self
+    }
+
+    pub(crate) const fn retain_max_age(mut self, seconds: Option<u32>) -> Self {
+        self.max_age = seconds;
+        self
+    }
+
     /// Append a Location-Path segment.
     ///
     /// Empty segments are retained. More than [`LOCATION_MAX`] segments, a
