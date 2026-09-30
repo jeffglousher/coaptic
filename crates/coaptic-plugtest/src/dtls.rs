@@ -124,13 +124,11 @@ impl DtlsIo {
             .await
             .map_err(|e| format!("dtls connect: {e}"))?;
         let tapped = Arc::new(TapConn::new(Arc::new(sock), capture, local, dest));
-        let conn = tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            DTLSConn::new(tapped, config, true, None),
-        )
-        .await
-        .map_err(|_| PeerError("handshake: timeout".into()))?
-        .map_err(|e| PeerError(format!("handshake: {e}")))?;
+        let conn =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, DTLSConn::new(tapped, config, true, None))
+                .await
+                .map_err(|_| PeerError("handshake: timeout".into()))?
+                .map_err(|e| PeerError(format!("handshake: {e}")))?;
         let conn: Arc<dyn Conn + Send + Sync> = Arc::new(conn);
         let (in_tx, in_rx) = std_mpsc::channel();
         let (out_tx, out_rx) = tokio_mpsc::unbounded_channel();
@@ -576,7 +574,8 @@ pub fn adapter_note() -> &'static str {
     "DTLS: harness webrtc-dtls DatagramIo adapter. coaptic library has no DTLS dep; \
      App::poll / App client see plaintext CoAP over a DTLS-wrapped socket in this crate. \
      Mixed pairs (coap-rs→coaptic, coaptic→coap-rs, coaptic→coaptic) run handshake + GET /secure. \
-     Literal DTLS TDs remain skipped; separate X.509 tests do not establish RPK support."
+     TD_COAP_DTLS_01 grades the UDP handshake and decrypted GET. DTLS_02–03 and \
+     raw-public-key TDs stay skipped; X.509 tests do not establish RPK support."
 }
 
 #[cfg(test)]

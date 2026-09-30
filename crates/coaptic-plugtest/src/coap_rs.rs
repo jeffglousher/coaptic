@@ -599,10 +599,7 @@ impl Listener for SeparateListener {
 }
 
 impl SeparateListener {
-    async fn receive_loop(
-        &mut self,
-        sender: TransportRequestSender,
-    ) -> std::io::Result<()> {
+    async fn receive_loop(&mut self, sender: TransportRequestSender) -> std::io::Result<()> {
         let mut buf = vec![0u8; 2048];
         loop {
             tokio::select! {

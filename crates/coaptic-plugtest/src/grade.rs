@@ -478,7 +478,11 @@ fn distinct_coap(packets: &[Packet]) -> Vec<ParsedView> {
     out
 }
 
-fn grade_block_train(td: &str, expect: &ExpectBlockTrain, packets: &[Packet]) -> Result<(), String> {
+fn grade_block_train(
+    td: &str,
+    expect: &ExpectBlockTrain,
+    packets: &[Packet],
+) -> Result<(), String> {
     let views = distinct_coap(packets);
     let min_slices = expect.min_slices.unwrap_or(2);
     match expect.kind.as_str() {
@@ -509,9 +513,9 @@ fn grade_block2(
         return Err(format!("{td}: block2 train missing request or 2.05"));
     }
     if early {
-        let first = requests[0].block2.ok_or_else(|| {
-            format!("{td}: early Block2 request has no Block2 option")
-        })?;
+        let first = requests[0]
+            .block2
+            .ok_or_else(|| format!("{td}: early Block2 request has no Block2 option"))?;
         if first.0 != 0 || first.1 {
             return Err(format!(
                 "{td}: early Block2 request must be NUM 0 M=0, got num {} more {}",
@@ -527,22 +531,27 @@ fn grade_block2(
             }
         }
     } else if requests[0].block2.is_some() {
-        return Err(format!(
-            "{td}: late negotiation request must omit Block2"
-        ));
+        return Err(format!("{td}: late negotiation request must omit Block2"));
     }
-    check_slice_train(td, &responses, |view| view.block2, min_slices, expect.desired_size)?;
-    let nums: BTreeSet<u32> = requests.iter().filter_map(|view| view.block2.map(|b| b.0)).collect();
+    check_slice_train(
+        td,
+        &responses,
+        |view| view.block2,
+        min_slices,
+        expect.desired_size,
+    )?;
+    let nums: BTreeSet<u32> = requests
+        .iter()
+        .filter_map(|view| view.block2.map(|b| b.0))
+        .collect();
     let last = responses
         .iter()
         .filter_map(|view| view.block2.map(|b| b.0))
         .max()
         .unwrap_or(0);
     for num in 0..=last {
-        if early || num > 0 {
-            if !nums.contains(&num) {
-                return Err(format!("{td}: no request for block {num}"));
-            }
+        if (early || num > 0) && !nums.contains(&num) {
+            return Err(format!("{td}: no request for block {num}"));
         }
     }
     Ok(())
@@ -557,21 +566,33 @@ fn grade_block1(
 ) -> Result<(), String> {
     let requests: Vec<&ParsedView> = views
         .iter()
-        .filter(|view| view.code.is_request() && view.uri_path == expect.path && view.block1.is_some())
+        .filter(|view| {
+            view.code.is_request() && view.uri_path == expect.path && view.block1.is_some()
+        })
         .collect();
     if requests.is_empty() {
         return Err(format!("{td}: block1 train has no request"));
     }
-    check_slice_train(td, &requests, |view| view.block1, min_slices, expect.desired_size)?;
-    let last = requests.last().and_then(|view| view.block1).ok_or_else(|| {
-        format!("{td}: block1 train ended without a block")
-    })?;
+    check_slice_train(
+        td,
+        &requests,
+        |view| view.block1,
+        min_slices,
+        expect.desired_size,
+    )?;
+    let last = requests
+        .last()
+        .and_then(|view| view.block1)
+        .ok_or_else(|| format!("{td}: block1 train ended without a block"))?;
     if last.1 {
         return Err(format!("{td}: final Block1 request still has M=1"));
     }
     let final_code = expect.final_code.as_deref().unwrap_or("2.04");
     let final_resp = views.iter().rev().find(|view| {
-        view.code.to_string() == final_code && view.block1.is_some_and(|block| block.0 == last.0 && !block.1)
+        view.code.to_string() == final_code
+            && view
+                .block1
+                .is_some_and(|block| block.0 == last.0 && !block.1)
     });
     let Some(final_resp) = final_resp else {
         return Err(format!(
@@ -610,7 +631,9 @@ fn check_slice_train(
             continue;
         };
         if size_max.is_some_and(|max| size > max) {
-            return Err(format!("{td}: block {num} size {size} exceeds {size_max:?}"));
+            return Err(format!(
+                "{td}: block {num} size {size} exceeds {size_max:?}"
+            ));
         }
         if more && message.payload.len() != usize::from(size) {
             return Err(format!(
@@ -638,9 +661,7 @@ fn check_slice_train(
             return Err(format!("{td}: block train gap at NUM {num}"));
         };
         if *more == (num == last) {
-            return Err(format!(
-                "{td}: block {num} more={more}, last is {last}"
-            ));
+            return Err(format!("{td}: block {num} more={more}, last is {last}"));
         }
     }
     Ok(())
@@ -811,7 +832,7 @@ fn server_hello_suite(record: &[u8]) -> Option<u16> {
 }
 
 fn plaintext_fatal_alert(datagram: &[u8]) -> bool {
-    iter_records(datagram).any(|record| {
+    iter_records(datagram).into_iter().any(|record| {
         record.content_type == 21
             && record.epoch == 0
             && record.body.len() == 2
@@ -821,7 +842,7 @@ fn plaintext_fatal_alert(datagram: &[u8]) -> bool {
 }
 
 fn plaintext_alert_description(datagram: &[u8], description: u8) -> bool {
-    iter_records(datagram).any(|record| {
+    iter_records(datagram).into_iter().any(|record| {
         record.content_type == 21
             && record.epoch == 0
             && record.body.len() == 2

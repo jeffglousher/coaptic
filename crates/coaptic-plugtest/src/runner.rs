@@ -125,6 +125,21 @@ pub fn run_td(id: &str, pair: Pair) -> TdResult {
         }
     };
     let run = drive_td(id, addr, client.as_mut(), server.as_mut());
+    // coap-rs ACKs a separate CON before `send` returns, on its own socket.
+    // The coaptic server records that ACK on a later poll. Wait until the
+    // empty ACK is in the server log so the snapshot is the whole exchange.
+    if matches!(
+        id,
+        "TD_COAP_CORE_09" | "TD_COAP_CORE_11" | "TD_COAP_CORE_16"
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            if exchange_has_response_ack(&client.take_capture(), &server.take_capture()) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
     let capture = Capture::new();
     capture.extend_from(&client.take_capture());
     capture.extend_from(&server.take_capture());
@@ -142,6 +157,27 @@ pub fn run_td(id: &str, pair: Pair) -> TdResult {
         error,
         capture,
     }
+}
+
+/// True when some datagram is an empty ACK of a CON 2.05.
+fn exchange_has_response_ack(client: &Capture, server: &Capture) -> bool {
+    let mut packets = client.snapshot();
+    packets.extend(server.snapshot());
+    let response_mid = packets.iter().find_map(|packet| {
+        let bytes = packet.bytes.as_slice();
+        (bytes.len() >= 4 && (bytes[0] >> 4) == 0x04 && bytes[1] == 0x45)
+            .then_some(u16::from_be_bytes([bytes[2], bytes[3]]))
+    });
+    let Some(mid) = response_mid else {
+        return false;
+    };
+    packets.iter().any(|packet| {
+        let bytes = packet.bytes.as_slice();
+        bytes.len() == 4
+            && bytes[0] == 0x60
+            && bytes[1] == 0
+            && u16::from_be_bytes([bytes[2], bytes[3]]) == mid
+    })
 }
 
 fn drive_td(

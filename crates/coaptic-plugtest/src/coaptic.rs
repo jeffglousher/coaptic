@@ -124,10 +124,7 @@ impl Peer for CoapticPeer {
     }
 
     fn take_notification(&mut self, timeout: Duration) -> Result<ClientResponse, PeerError> {
-        let hold = self
-            .observe
-            .as_mut()
-            .ok_or("no observe client")?;
+        let hold = self.observe.as_mut().ok_or("no observe client")?;
         wait_response(&mut hold.app, hold.call, hold.origin, timeout)
     }
 
