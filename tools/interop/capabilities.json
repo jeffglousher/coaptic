@@ -4198,7 +4198,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "No process X.509 cases against libcoap.",
+      "reason": "The library has no DTLS or mutual X.509, and the process peer speaks PSK only, so there is no Coaptic-to-Coaptic X.509 case and none against libcoap.",
       "issue": 200,
       "executable_cases": []
     },
@@ -4246,7 +4246,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Scoped IPv6 and MTU cases are absent.",
+      "reason": "Scoped IPv6 zone identifiers are not a loopback case. MTU cases are absent: a relay that refuses datagrams above 256 bytes drops the 1024-byte blocks, and Coaptic, coap-rs, and libcoap retransmit that size until timeout instead of shrinking.",
       "issue": 200,
       "executable_cases": []
     },
