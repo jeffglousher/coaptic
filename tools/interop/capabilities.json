@@ -3749,6 +3749,23 @@
       "executable": "tools/interop/run.py:qblock2_missing"
     },
     {
+      "id": "qblock2-reorder:coaptic->coaptic",
+      "client": "coaptic",
+      "server": "coaptic",
+      "transport": "udp",
+      "security": "none",
+      "address_family": "ipv4-loopback",
+      "execution_platforms": ["linux", "windows"],
+      "requires": [],
+      "features": ["q-block2", "reorder"],
+      "positive_proof": [
+        "Q-Block2 NUM 1 is delivered before NUM 0",
+        "the client still reassembles the 2000-byte body"
+      ],
+      "failure_proof": ["delivery that starts at NUM 0, or a body other than the 2000-byte pattern, fails"],
+      "executable": "tools/interop/run.py:qblock2_reorder"
+    },
+    {
       "id": "qblock2-window:coaptic->coaptic",
       "client": "coaptic",
       "server": "coaptic",
@@ -4229,7 +4246,7 @@
         "macos",
         "embedded"
       ],
-      "reason": "Scoped IPv6, reorder, and MTU cases are absent.",
+      "reason": "Scoped IPv6 and MTU cases are absent.",
       "issue": 200,
       "executable_cases": []
     },

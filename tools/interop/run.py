@@ -283,6 +283,8 @@ class Proxy:
         large_tokens = set()
         held_num = None
         release_held = False
+        held_q0 = None
+        q0_released = False
         try:
             while not self.stop.is_set():
                 ready, _, _ = select.select([self.front, self.back], [], [], .02)
@@ -292,7 +294,7 @@ class Proxy:
                     except ConnectionResetError:
                         # Windows reports late ICMP port-unreachable when a
                         # one-shot client exits after the first duplicate reply.
-                        if self.mode in ("duplicate-request", "dtls-reconnect", "drop-qblock2") and sock is self.front:
+                        if self.mode in ("duplicate-request", "dtls-reconnect", "drop-qblock2", "reorder-qblock2") and sock is self.front:
                             continue
                         raise
                     incoming = sock is self.front
@@ -332,6 +334,18 @@ class Proxy:
                             if num == 1 and token in large_tokens:
                                 action = "drop"
                                 held_num = num
+                    elif self.mode == "reorder-qblock2":
+                        # Hold /large Q-Block2 NUM 0 until a later payload of that transfer is forwarded.
+                        token = packet_token(data)
+                        if incoming:
+                            try:
+                                if data[1:2] == b"\x01" and b"large" in decoded_options(data).get(11, []):
+                                    large_tokens.add(token)
+                            except (AssertionError, IndexError):
+                                pass
+                        elif not q0_released and held_q0 is None and token in large_tokens and qblock2_content_num(data) == 0:
+                            action = "hold"
+                            held_q0 = data
                     if len(self.trace) >= (8192 if self.mode == "dtls-reconnect" else 256):
                         raise RuntimeError("proxy trace limit exceeded")
                     forwarded = data[:-1] + bytes([data[-1] ^ 0x80]) if action == "corrupt" else data
@@ -347,12 +361,20 @@ class Proxy:
                                        "action": action, "hex": data.hex(), "forwarded_hex": forwarded.hex()})
                     if action == "delay":
                         time.sleep(0.25)
-                    if action != "drop":
+                    if action not in ("drop", "hold"):
                         target = self.back if incoming else self.front
                         address = self.dest if incoming else client
                         target.sendto(forwarded, address)
                         if action == "duplicate":
                             target.sendto(forwarded, address)
+                        if (self.mode == "reorder-qblock2" and not incoming and held_q0 is not None
+                                and packet_token(data) in large_tokens
+                                and (later := qblock2_content_num(data)) is not None and later > 0):
+                            self.trace.append({"direction": "response", "action": "release",
+                                               "hex": held_q0.hex(), "forwarded_hex": held_q0.hex()})
+                            target.sendto(held_q0, client)
+                            held_q0 = None
+                            q0_released = True
         except Exception as error:
             self.error = str(error)
 
@@ -1648,6 +1670,38 @@ def qblock2_interop(client, server):
     return {"gets": len(downloads), "blocks": len(blocks), "szx": szx, "length": len(LARGE)}
 
 
+def qblock2_reorder(client, server):
+    """RFC 9177: deliver Q-Block2 NUM 1 before NUM 0. The body is still the 2000-byte pattern."""
+    with Server(server, "udp") as service:
+        with Proxy(service.number, "reorder-qblock2") as relay:
+            result = request(client, "udp", relay.number, path="large", timeout=12000, qblock2=True)
+        trace = relay.trace
+    expect(result, 69, LARGE)
+    large = set()
+    for row in trace:
+        if row["direction"] != "request":
+            continue
+        packet = bytes.fromhex(row["hex"])
+        try:
+            if packet[1:2] == b"\x01" and b"large" in decoded_options(packet).get(11, []):
+                large.add(packet_token(packet))
+        except (AssertionError, IndexError):
+            pass
+    nums = []
+    for row in trace:
+        if row["direction"] != "response" or row["action"] == "hold":
+            continue
+        packet = bytes.fromhex(row["forwarded_hex"])
+        if packet_token(packet) not in large:
+            continue
+        num = qblock2_content_num(packet)
+        if num is not None:
+            nums.append(num)
+    if not nums or nums[0] != 1 or 0 not in nums[1:]:
+        raise AssertionError(f"Q-Block2 was not delivered 1 then 0: {nums}")
+    return {"order": nums}
+
+
 def qblock2_missing(client, server):
     """Drop one later Q-Block2 payload. The client asks for that block and the body completes."""
     with Server(server, "udp") as service:
@@ -2226,6 +2280,8 @@ def main():
     for client, server in [("coaptic", "coaptic"), ("libcoap", "coaptic")]:
         case(f"qblock2-missing:{client}->{server}",
              lambda client=client, server=server: qblock2_missing(peers[client], peers[server]))
+    case("qblock2-reorder:coaptic->coaptic",
+         lambda: qblock2_reorder(peers["coaptic"], peers["coaptic"]))
     for client, server in [("coaptic", "coaptic"), ("coaptic", "libcoap"), ("libcoap", "coaptic")]:
         case(f"qblock2-window:{client}->{server}",
              lambda client=client, server=server: qblock2_window(peers[client], peers[server]))
