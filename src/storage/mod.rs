@@ -335,6 +335,16 @@ pub trait BodySlots {
     /// Outgoing Block1 / Block2 sidecar, if `id` holds a transfer.
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
 
+    /// Write the sidecar into an already-occupied outgoing body slot.
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        let _ = (id, transfer);
+        Err(SlotError::InvalidSlot)
+    }
+
     /// Incoming body slot matching `key`, if any. O(n) in RX body occupancy.
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId>;
 

@@ -538,6 +538,17 @@ impl BodySlots for AllocMemory {
         self.tx_body.as_ref()?.transfer(id)
     }
 
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .set_transfer(id, transfer)
+    }
+
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.rx_body.as_ref()?.lookup(key)
     }

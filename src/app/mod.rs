@@ -72,7 +72,9 @@
 //! attach [`MethodRouter::observe`]; later representations are
 //! [`App::notify`]. Server re-registration with the same peer, Token and route
 //! advances the retained 24-bit sequence while replacing scheduling and OSCORE
-//! request state. Sequence continuity after removal or restart is not retained.
+//! request state. After that relation is removed, or when a new App is
+//! constructed, the next registration starts at sequence 0. Notifications are
+//! selected by exact path segments; Uri-Query is not stored on the relation.
 //! Client subscribe/refresh uses [`Outgoing::observe`] /
 //! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
@@ -587,7 +589,9 @@ where
     /// Q recovery and partial-body expiry run after
     /// ingress; exhausted client Q downloads complete with [`CallFailure::TimedOut`].
     /// Incomplete classic Block1 is 2.31 (handler not
-    /// run); a complete body is [`Request::body`]. Unrecognized critical
+    /// run) and echoes the stored Block1 SZX; a complete body is [`Request::body`].
+    /// The server does not advertise a smaller SZX: an accepted block already
+    /// fits the fixed datagram and body slot. Unrecognized critical
     /// options (not in the implemented set) and an OSCORE option with no
     /// attached context are 4.02 before the handler. A large response ships
     /// as Block2 / Q-Block2 from the TX body. Site misses are 4.04 / 4.05
@@ -651,9 +655,9 @@ where
     ///
     /// Retained Q-Block2 representations support block-zero and repeated
     /// Continue reselection without acknowledging the current set again.
-    /// Future Continue sets must follow the issued window. Representation
-    /// changes, retention after the final set and endpoint-wide congestion
-    /// qualification remain separate from this bounded reselection behavior.
+    /// Future Continue sets must follow the issued window. Missing-block
+    /// reports are Non-confirmable, at most one per progress pass, and are
+    /// not gated by endpoint NSTART or PROBING_RATE.
     ///
     /// **Retransmit.** Engine schedules CON RTO inside [`Engine::progress`]
     /// / [`Engine::poll_retransmit`] and does not send. This poll sends on
@@ -696,8 +700,9 @@ where
     /// protected notification block zero uses a fresh OSCORE Partial IV. The
     /// route handler must serve the same payload and ETag on retained-body
     /// follow-ups. Changes return `BlockTransferError::IdentityMismatch` before
-    /// body output or transfer advancement. Other retained snapshot metadata
-    /// and final-block recovery are not guaranteed.
+    /// body output or transfer advancement. Content-Format and Max-Age from
+    /// that notification, including absence, are repeated on each follow-up
+    /// through the final block.
     /// The body snapshot survives incomplete same-Token follow-up blocks,
     /// including send failure. Final-reply caching/completion, cancellation, replacement registration,
     /// matching notification RST or CON give-up releases it.
@@ -911,7 +916,7 @@ where
                     engine.remember_qblock1_request(progress.id(), parsed.token(), request);
                 }
                 let _ = engine.note_q_receive(progress.id(), now_ms);
-                qblock1_wait(engine, rx, parsed)
+                qblock1_wait(engine, rx, parsed, false)
             }
             Err(BlockTransferError::Duplicate) => {
                 #[cfg(feature = "oscore")]
@@ -928,7 +933,7 @@ where
                         }
                     }
                 }
-                qblock1_wait(engine, rx, parsed)
+                qblock1_wait(engine, rx, parsed, true)
             }
             Err(BlockTransferError::MissingBlock) => InboundBody::None,
             Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
@@ -943,22 +948,30 @@ where
 
 // An empty ACK acknowledges a CON payload without promising a complete
 // body. NON Continue is only due after a whole MAX_PAYLOADS_SET is present.
+// A duplicate repeats that Continue only for the block that completed the set.
 fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
     engine: &Engine<Mem>,
     rx: SlotId,
     parsed: &ParsedMessage<'_>,
+    duplicate: bool,
 ) -> InboundBody {
     let next = if parsed.ty() == Type::NonConfirmable {
         let peer = engine.rx_endpoint(rx);
         let tag = parsed.request_tag().next();
+        let request_num = parsed.q_block1().and_then(Result::ok).map(|block| block.num());
         (0..engine.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
             let transfer = engine.rx_body_transfer(SlotId::from_index(index))?;
             if transfer.role() != BlockRole::IncomingQBlock1
                 || Some(transfer.endpoint()) != peer
                 || transfer.identity().as_slice() != tag
-                || transfer.window_base() == 0
-                || transfer.window_mask() != 0
             {
+                return None;
+            }
+            if duplicate {
+                let ack = request_num.and_then(|num| transfer.q_continue_for(num))?;
+                return BlockValue::new(ack, true, transfer.szx()).ok();
+            }
+            if transfer.window_base() == 0 || transfer.window_mask() != 0 {
                 return None;
             }
             BlockValue::new(transfer.window_base() - 1, true, transfer.szx()).ok()
@@ -1989,6 +2002,13 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
+    if let Some(mut transfer) = engine.tx_body_transfer(id) {
+        transfer.remember_notification(response.format(), response.max_age_secs());
+        engine
+            .storage_mut()
+            .set_tx_body_transfer(id, transfer)
+            .map_err(Error::Slot)?;
+    }
     let outcome = issue_classic(
         engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
     );
@@ -2501,11 +2521,17 @@ where
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
+            let retained = match transfer.notification_metadata() {
+                Some((format, max_age)) => {
+                    response.retain_format(format).retain_max_age(max_age)
+                }
+                None => *response,
+            };
             issue_classic(
                 engine,
                 io,
                 meta,
-                response,
+                &retained,
                 ty,
                 meta.mid,
                 id,

@@ -844,6 +844,14 @@ where
         self.bodies.tx.transfer(id)
     }
 
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.bodies.tx.set_transfer(id, transfer)
+    }
+
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.bodies.rx.lookup(key)
     }
