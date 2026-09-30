@@ -11111,3 +11111,427 @@ fn replay_cache_admission_distinguishes_eviction_from_real_saturation() {
         }
     }
 }
+
+#[test]
+fn observe_reregistration_after_removal_starts_a_new_relation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let register = [Opt::observe_register()];
+    for by_rst in [true, false] {
+        let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &register, 0x1101);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route(&["sensors", "temp"], get(get_obs))
+            .bind(WideLoopback::default())
+            .unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                1,
+                &["sensors", "temp"],
+                Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+        let mid = last_wide(&app).message_id();
+        app.transport_mut().send_n = 0;
+        if by_rst {
+            inject_empty_rst(&mut app, peer, mid);
+            app.poll(2).unwrap();
+        } else {
+            let (bye, len) = encode_wide(
+                Code::GET,
+                &["sensors", "temp"],
+                &[Opt::observe_deregister()],
+                0x1102,
+            );
+            app.transport_mut().inbox = Some((peer, bye, len));
+            app.poll(2).unwrap();
+        }
+        assert!(!observe_registered(&app, peer));
+        assert_eq!(
+            app.notify(
+                3,
+                &["sensors", "temp"],
+                Response::content(b"gone").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            0
+        );
+        let (again, again_n) = encode_wide(Code::GET, &["sensors", "temp"], &register, 0x1103);
+        app.transport_mut().send_n = 0;
+        app.transport_mut().inbox = Some((peer, again, again_n));
+        app.poll(4).unwrap();
+        assert!(observe_registered(&app, peer));
+        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                5,
+                &["sensors", "temp"],
+                Response::content(b"again").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).payload(), b"again");
+        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    }
+}
+
+#[test]
+fn observe_notifications_use_the_path_not_the_query() {
+    let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
+    let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
+    let token_a = Token::new(&[0xa1]).unwrap();
+    let token_b = Token::new(&[0xb1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register(), Opt::uri_query("u=c")],
+        0x1201,
+        token_a,
+    );
+    app.transport_mut().inbox = Some((peer_a, wire, n));
+    app.poll(0).unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register(), Opt::uri_query("u=f")],
+        0x1202,
+        token_b,
+    );
+    app.transport_mut().inbox = Some((peer_b, wire, n));
+    app.poll(1).unwrap();
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            2,
+            &["sensors", "temp"],
+            Response::content(b"same").content_format(ContentFormat::TEXT_PLAIN),
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(app.transport().send_n, 2);
+    for index in 0..2 {
+        let parsed =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        assert_eq!(parsed.payload(), b"same");
+        assert!(parsed.uri_query().next().is_none());
+    }
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register(), Opt::uri_query("u=z")],
+        0x1203,
+        token_a,
+    );
+    app.transport_mut().inbox = Some((peer_a, wire, n));
+    app.poll(3).unwrap();
+    assert_eq!(last_wide(&app).observe(), Some(Ok(2)));
+    assert!(observe_live(&app, peer_a, token_a));
+    assert!(observe_live(&app, peer_b, token_b));
+    let live = (0..app.engine().capacities().observe_entries)
+        .filter(|index| {
+            app.engine()
+                .observe_interest(crate::storage::SlotId::from_index(*index))
+                .is_some()
+        })
+        .count();
+    assert_eq!(live, 2);
+}
+
+#[test]
+fn observe_sequence_starts_at_zero_on_a_new_app() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1301);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    for step in 1..=3u32 {
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                u64::from(step) * 3_001,
+                &["sensors", "temp"],
+                Response::content(b"n").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).observe(), Some(Ok(step)));
+    }
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+}
+
+#[test]
+fn large_notification_metadata_is_repeated_through_the_final_block() {
+    use crate::storage::ObserveInterest;
+    static BODY: [u8; 4096] = [b'N'; 4096];
+    fn follow(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY)
+            .etag(b"v1")
+            .content_format(ContentFormat::OCTET_STREAM)
+            .max_age(60)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for (format, max_age) in [(Some(ContentFormat::TEXT_PLAIN), Some(15u32)), (None, None)] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("note", get(follow))
+            .bind(WideLoopback::default())
+            .unwrap();
+        let resource = app.site.observe_resource(&["note"]);
+        app.engine
+            .insert_observe(
+                ObserveInterest::new(Token::new(&[0xa1]).unwrap(), peer)
+                    .with_resource(resource)
+                    .with_content_format(format),
+            )
+            .unwrap();
+        let mut note = Response::content(&BODY).etag(b"v1");
+        if let Some(format) = format {
+            note = note.content_format(format);
+        }
+        if let Some(seconds) = max_age {
+            note = note.max_age(seconds);
+        }
+        assert_eq!(app.notify(0, &["note"], note).unwrap(), 1);
+        let first = last_wide(&app);
+        assert_eq!(first.content_format().transpose().unwrap(), format);
+        assert_eq!(first.max_age().transpose().unwrap(), max_age);
+        assert!(first.observe().is_some());
+        assert_eq!(first.payload(), &BODY[..1024]);
+        for num in 1..=3u8 {
+            let block = [(num << 4) | 6];
+            let (wire, n) = encode_wide(
+                Code::GET,
+                &["note"],
+                &[Opt::opaque(OptionNumber::BLOCK2, &block)],
+                0x7700 + u16::from(num),
+            );
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(u64::from(num)).unwrap();
+            let response = last_wide(&app);
+            let start = usize::from(num) * 1024;
+            assert_eq!(response.payload(), &BODY[start..start + 1024]);
+            assert_eq!(response.content_format().transpose().unwrap(), format);
+            assert_eq!(response.max_age().transpose().unwrap(), max_age);
+            assert!(response.observe().is_none());
+            assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+        }
+    }
+}
+
+#[test]
+fn qblock1_duplicate_after_set_repeats_continue_only_for_the_finishing_block() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .bind(Loopback::default())
+        .unwrap();
+    for num in 0..10u32 {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, true, 0x3e00 + num as u16, 176));
+        wire[0] |= 0x10;
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num)).unwrap();
+        if num < 9 {
+            assert!(app.transport().last_send.is_none());
+        } else {
+            let (_, bytes, len) = app.transport().last_send.unwrap();
+            let reply = decode(&bytes[..len]).unwrap();
+            assert_eq!(reply.code(), Code::CONTINUE);
+            assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+        }
+    }
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3e10, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(20).unwrap();
+    assert!(app.transport().last_send.is_none());
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 9, true, 0x3e19, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(21).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.code(), Code::CONTINUE);
+    assert_eq!(reply.ty(), Type::NonConfirmable);
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (wire, n) = encode_block_req(q_block1(&[b'A'; 16], 3, true, 0x3e23, 176));
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(22).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let ack = decode(&bytes[..len]).unwrap();
+    assert!(ack.is_empty_ack());
+
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .bind(Loopback::default())
+        .unwrap();
+    for num in 1..=9u32 {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, true, 0x3f00 + num as u16, 176));
+        wire[0] |= 0x10;
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num)).unwrap();
+        assert!(app.transport().last_send.is_none());
+    }
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3f00, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(10).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.code(), Code::CONTINUE);
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3f10, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(11).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 1, true, 0x3f11, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(app.transport().last_send.is_none());
+}
+
+#[test]
+fn qblock1_missing_reports_are_one_per_poll_and_not_held_for_nstart() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .bind(Loopback::default())
+        .unwrap();
+    struct Step {
+        token: &'static [u8],
+        tag: &'static [u8],
+        num: u32,
+        more: bool,
+        mid: u16,
+        now: u64,
+    }
+    let steps = [
+        Step {
+            token: &[0x11],
+            tag: b"tag-a",
+            num: 0,
+            more: true,
+            mid: 100,
+            now: 0,
+        },
+        Step {
+            token: &[0x22],
+            tag: b"tag-b",
+            num: 0,
+            more: true,
+            mid: 110,
+            now: 0,
+        },
+        Step {
+            token: &[0x11],
+            tag: b"tag-a",
+            num: 2,
+            more: false,
+            mid: 102,
+            now: 1,
+        },
+        Step {
+            token: &[0x22],
+            tag: b"tag-b",
+            num: 2,
+            more: false,
+            mid: 112,
+            now: 1,
+        },
+    ];
+    for step in steps {
+        let Step {
+            token,
+            tag,
+            num,
+            more,
+            mid,
+            now,
+        } = step;
+        let payload = [b'A'; 16];
+        let block = BlockValue::from_size(num, more, 16).unwrap().encode();
+        let size = encode_uint(48);
+        let mut opts = OptionsBuilder::<8>::new();
+        opts.push(Opt::uri_path("leds")).unwrap();
+        opts.push(Opt::uri_path("0")).unwrap();
+        opts.push(Opt::q_block1(&block)).unwrap();
+        opts.push(Opt::size1(&size)).unwrap();
+        opts.push(Opt::request_tag(tag)).unwrap();
+        let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(mid))
+            .with_token(Token::new(token).unwrap())
+            .with_options(opts.as_slice())
+            .with_payload(&payload);
+        let mut wire = [0u8; 256];
+        let n = encode(&msg, &mut wire).unwrap();
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(now).unwrap();
+        assert!(app.transport().last_send.is_none());
+    }
+    let due = 1 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+    let mut tokens = [Token::EMPTY; 2];
+    for slot in &mut tokens {
+        app.transport_mut().last_send = None;
+        app.poll(due).unwrap();
+        let (_, bytes, n) = app.transport().last_send.expect("report");
+        let reply = decode(&bytes[..n]).unwrap();
+        assert_eq!(reply.ty(), Type::NonConfirmable);
+        assert_eq!(reply.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+        *slot = reply.token();
+    }
+    assert_ne!(tokens[0], tokens[1]);
+    app.transport_mut().last_send = None;
+    app.poll(due).unwrap();
+    assert!(app.transport().last_send.is_none());
+}

@@ -958,7 +958,10 @@ fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
     let next = if parsed.ty() == Type::NonConfirmable {
         let peer = engine.rx_endpoint(rx);
         let tag = parsed.request_tag().next();
-        let request_num = parsed.q_block1().and_then(Result::ok).map(|block| block.num());
+        let request_num = parsed
+            .q_block1()
+            .and_then(Result::ok)
+            .map(|block| block.num());
         (0..engine.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
             let transfer = engine.rx_body_transfer(SlotId::from_index(index))?;
             if transfer.role() != BlockRole::IncomingQBlock1
@@ -2522,9 +2525,7 @@ where
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
             let retained = match transfer.notification_metadata() {
-                Some((format, max_age)) => {
-                    response.retain_format(format).retain_max_age(max_age)
-                }
+                Some((format, max_age)) => response.retain_format(format).retain_max_age(max_age),
                 None => *response,
             };
             issue_classic(

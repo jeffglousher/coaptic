@@ -982,7 +982,7 @@ impl BlockTransfer {
     }
 
     /// Acknowledged NUM when `num` is the block that completed the latest set.
-    pub(crate) const fn q_continue_for(self, num: u32) -> Option<u32> {
+    pub(crate) fn q_continue_for(self, num: u32) -> Option<u32> {
         match self.q {
             Some(q) if q.continue_trigger == Some(num) => q.continue_ack,
             _ => None,
@@ -1001,10 +1001,7 @@ impl BlockTransfer {
     /// Notification Content-Format and Max-Age, including absence of either.
     pub(crate) const fn notification_metadata(
         self,
-    ) -> Option<(
-        Option<crate::message::ContentFormat>,
-        Option<u32>,
-    )> {
+    ) -> Option<(Option<crate::message::ContentFormat>, Option<u32>)> {
         match self.notification {
             Some(snapshot) => Some((snapshot.format, snapshot.max_age)),
             None => None,
@@ -2511,14 +2508,9 @@ mod tests {
 
     #[test]
     fn q_set_completion_remembers_only_the_finishing_block() {
-        let mut transfer = BlockTransfer::incoming_q_block1(
-            key(),
-            szx16(9, true),
-            16,
-            4096,
-            Some(176),
-        )
-        .expect("first");
+        let mut transfer =
+            BlockTransfer::incoming_q_block1(key(), szx16(9, true), 16, 4096, Some(176))
+                .expect("first");
         for num in (0..9).rev() {
             transfer
                 .accept_q_incoming(szx16(num, true), 16, 4096)
