@@ -61,7 +61,7 @@
 //!
 //! `TD_6LoWPAN_*` stay skipped (`future/backlog: 6LoWPAN (contributor opportunity)`).
 //!
-//! Tracking: <https://github.com/jeffglousher/coaptic/issues/56>.
+//! Tracking: <https://github.com/jeffglousher/coaptic/issues/199>.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

@@ -4160,22 +4160,6 @@
       "executable_cases": []
     },
     {
-      "feature": "pairwise-oscore",
-      "status": "unqualified",
-      "role": "both",
-      "transport_security": "oscore",
-      "peers": "all",
-      "platforms": [
-        "linux",
-        "windows",
-        "macos",
-        "embedded"
-      ],
-      "reason": "One App holds one SecurityContext, so concurrent OSCORE contexts are two processes each with its own replay window, while older concurrent OSCORE request bindings stay inside that single context.",
-      "issue": 200,
-      "executable_cases": []
-    },
-    {
       "feature": "q-block",
       "status": "unqualified",
       "role": "both",

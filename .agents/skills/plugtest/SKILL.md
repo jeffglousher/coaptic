@@ -6,9 +6,9 @@ license: MIT OR Apache-2.0
 
 # Plugtest
 
-Tracking: <https://github.com/jeffglousher/coaptic/issues/49>. Protocol copies: `knowledge/rfcs/`.
+Tracking: <https://github.com/jeffglousher/coaptic/issues/199>. Protocol copies: `knowledge/rfcs/`.
 
-In-repo harness: `cargo test --test block_sweep` and `cargo test --test plugtest` (Engine↔Engine; inventory prints RUN vs SKIP). App SUT + pcap: `cargo test -p coaptic-plugtest` and `cargo test -p coaptic-plugtest --features dtls` (tracking #56).
+In-repo harness: `cargo test --test block_sweep` and `cargo test --test plugtest` (Engine↔Engine; inventory prints RUN vs SKIP). App SUT + pcap: `cargo test -p coaptic-plugtest` and `cargo test -p coaptic-plugtest --features dtls` (tracking #199).
 
 - TD identifiers come from `tests/plugtest/td-coap4/*.yml`. Do not invent TD identifiers.
 - Map each TD to the local RFC copies in `knowledge/rfcs/`. Open the `.txt`, not a rewrite.

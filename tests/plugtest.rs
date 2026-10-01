@@ -19,8 +19,7 @@
 //! cargo test --test plugtest inventory -- --nocapture
 //! ```
 //!
-//! Tracking: <https://github.com/jeffglousher/coaptic/issues/49>,
-//! <https://github.com/jeffglousher/coaptic/issues/56>.
+//! Tracking: <https://github.com/jeffglousher/coaptic/issues/199>.
 
 #![allow(clippy::too_many_lines)]
 
