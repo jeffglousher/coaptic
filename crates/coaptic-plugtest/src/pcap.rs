@@ -32,9 +32,11 @@ fn take_request_drop(bytes: &[u8]) -> bool {
     if !is_coap_request(bytes) {
         return false;
     }
-    REQUEST_DROPS
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-        .is_ok()
+    // `try_update` is Rust 1.95. This crate's rust-version is 1.85, where `fetch_update` is that operation.
+    #[allow(deprecated)]
+    let updated =
+        REQUEST_DROPS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+    updated.is_ok()
 }
 
 /// CON/NON request (class 0, not empty). Responses and empty ACKs are never dropped.
