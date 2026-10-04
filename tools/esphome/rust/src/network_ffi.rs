@@ -13,6 +13,23 @@ unsafe extern "C" {
     fn coaptic_socket_send(context: *mut c_void, bytes: *const u8, length: u32, peer: u64) -> i32;
     fn coaptic_socket_clock(context: *mut c_void) -> u64;
     fn coaptic_socket_random(bytes: *mut u8, length: u32) -> bool;
+    fn coaptic_enter_critical();
+    fn coaptic_leave_critical();
+}
+
+struct EspHomeCriticalSection;
+critical_section::set_impl!(EspHomeCriticalSection);
+
+/// ESP-IDF's portMUX serializes all cores and nests on the owning task.
+/// Acquire/release callbacks must use the same process-lifetime mutex, restore
+/// interrupt state on exit, and never unwind across this boundary.
+unsafe impl critical_section::Impl for EspHomeCriticalSection {
+    unsafe fn acquire() -> critical_section::RawRestoreState {
+        unsafe { coaptic_enter_critical() }
+    }
+    unsafe fn release(_: critical_section::RawRestoreState) {
+        unsafe { coaptic_leave_critical() }
+    }
 }
 
 struct Socket(*mut c_void);

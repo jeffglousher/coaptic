@@ -23,9 +23,11 @@
 
 use coaptic::storage::DatagramIo;
 use coaptic::{App, Request, Response, get, post, profiles};
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::cell::Cell;
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use critical_section::Mutex;
 
-static ACTIVE: AtomicBool = AtomicBool::new(false);
+static ACTIVE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 static ID: [AtomicU8; 32] = [const { AtomicU8::new(0) }; 32];
 static TICKS: AtomicU32 = AtomicU32::new(0);
 const LARGE: [u8; 2000] = [0x5a; 2000];
@@ -33,7 +35,7 @@ const LARGE: [u8; 2000] = [0x5a; 2000];
 struct Owner;
 impl Drop for Owner {
     fn drop(&mut self) {
-        ACTIVE.store(false, Ordering::Release);
+        critical_section::with(|section| ACTIVE.borrow(section).set(false));
     }
 }
 
@@ -86,7 +88,7 @@ pub fn run<T: DatagramIo>(
     mut clock: impl FnMut() -> Option<u64>,
     id: &[u8; 32],
 ) -> Result<(), &'static str> {
-    if ACTIVE.swap(true, Ordering::Acquire) {
+    if critical_section::with(|section| ACTIVE.borrow(section).replace(true)) {
         return Err("already running");
     }
     let _owner = Owner;
@@ -108,6 +110,7 @@ pub fn run<T: DatagramIo>(
         .map_err(|_| "bind")?;
     let mut next = 0;
     let mut errors = 0;
+    let mut tick = 0u32;
     while let Some(now) = clock() {
         if app.poll(now).is_err() {
             errors += 1;
@@ -118,12 +121,9 @@ pub fn run<T: DatagramIo>(
             errors = 0;
         }
         if now >= next {
-            let value = TICKS.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-            let _ = app.notify(
-                now,
-                &["ticks"],
-                Response::content_copy(&value.to_be_bytes()),
-            );
+            tick = tick.wrapping_add(1);
+            TICKS.store(tick, Ordering::Relaxed);
+            let _ = app.notify(now, &["ticks"], Response::content_copy(&tick.to_be_bytes()));
             next = now.saturating_add(250);
         }
     }
@@ -165,5 +165,33 @@ mod tests {
                 Ok(())
             );
         }
+        let (started, ready) = std::sync::mpsc::sync_channel(0);
+        let (release, stopped) = std::sync::mpsc::sync_channel(0);
+        std::thread::scope(|scope| {
+            let owner = scope.spawn(move || {
+                run(
+                    Idle,
+                    |bytes| {
+                        bytes.fill(42);
+                        true
+                    },
+                    || {
+                        started.send(()).unwrap();
+                        stopped
+                            .recv_timeout(std::time::Duration::from_secs(5))
+                            .unwrap();
+                        None
+                    },
+                    &id,
+                )
+            });
+            ready
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            assert_eq!(run(Idle, |_| false, || None, &id), Err("already running"));
+            release.send(()).unwrap();
+            assert_eq!(owner.join().unwrap(), Ok(()));
+        });
+        assert_eq!(run(Idle, |_| false, || None, &id), Err("bind"));
     }
 }

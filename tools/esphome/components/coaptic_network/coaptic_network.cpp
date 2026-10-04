@@ -84,10 +84,10 @@ int32_t CoapticNetwork::receive(uint8_t *bytes, uint32_t capacity, uint64_t *pee
   int length = recvfrom(socket_, packet, sizeof(packet), 0, reinterpret_cast<sockaddr *>(&address), &size);
   if (length < 0)
     return errno == EAGAIN || errno == EWOULDBLOCK ? -1 : -2;
-  rx_.fetch_add(1, std::memory_order_relaxed);
+  rx_.store(rx_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
   if (length >= sizeof(packet) || static_cast<uint32_t>(length) > capacity ||
       size != sizeof(address) || address.sin_family != AF_INET) {
-    dropped_.fetch_add(1, std::memory_order_relaxed);
+    dropped_.store(dropped_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     return -1;
   }
   std::memcpy(bytes, packet, length);
@@ -102,7 +102,7 @@ int32_t CoapticNetwork::send(const uint8_t *bytes, uint32_t length, uint64_t pee
   address.sin_port = htons(static_cast<uint16_t>(peer));
   int sent = sendto(socket_, bytes, length, 0, reinterpret_cast<sockaddr *>(&address), sizeof(address));
   if (sent == static_cast<int>(length))
-    tx_.fetch_add(1, std::memory_order_relaxed);
+    tx_.store(tx_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
   return sent;
 }
 
@@ -139,4 +139,12 @@ extern "C" uint64_t coaptic_socket_clock(void *context) {
 extern "C" bool coaptic_socket_random(uint8_t *bytes, uint32_t length) {
   esp_fill_random(bytes, length);
   return true;
+}
+
+static portMUX_TYPE COAPTIC_MUX = portMUX_INITIALIZER_UNLOCKED;
+extern "C" void coaptic_enter_critical() {
+  portENTER_CRITICAL(&COAPTIC_MUX);
+}
+extern "C" void coaptic_leave_critical() {
+  portEXIT_CRITICAL(&COAPTIC_MUX);
 }
