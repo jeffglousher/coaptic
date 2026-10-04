@@ -11,7 +11,8 @@ class ChipSelectionTests(unittest.TestCase):
     def test_unprepared_riscv_chips_do_not_select_c3(self):
         self.assertEqual(chip_name("ESP32-C3"), "esp32c3")
         self.assertEqual(chip_name("ESP32-C6"), "esp32c6")
-        for name in ["ESP32", "ESP32-S3", "ESP32-H2", "ESP32-C5", "RISC-V"]:
+        self.assertEqual(chip_name("ESP32-S3"), "esp32s3")
+        for name in ["ESP32", "ESP32-H2", "ESP32-C5", "RISC-V"]:
             with self.assertRaises(ValueError):
                 chip_name(name)
 
@@ -74,7 +75,7 @@ class ChipSelectionTests(unittest.TestCase):
             path = root / "build.json"
             path.write_text(json.dumps({"schema": "coaptic-esphome-qualification/1", "chip": "esp32c6",
                                         "build_passed": True, "cases": cases}))
-            self.assertEqual(select_images(path, "esp32c6")[0]["flash_image"], str(root / cases[0]["flash_image"]))
+            self.assertEqual(select_images(path, "esp32c6")[0]["flash_image"], str((root / cases[0]["flash_image"]).resolve()))
             (root / cases[0]["flash_image"]).write_bytes(b"changed")
             with self.assertRaises(ValueError):
                 select_images(path, "esp32c6")

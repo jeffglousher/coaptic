@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from esp32 import CHIPS
+from esp32 import ESPHOME_CHIPS as CHIPS
 
 ESPTOOL = "5.4.0"
 

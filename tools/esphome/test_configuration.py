@@ -12,7 +12,7 @@ from esphome_probe import configuration
 class ConfigurationRefusalTests(unittest.TestCase):
     def test_unprepared_variants_invalid_identity_and_other_toolchains_refuse(self):
         for field, value, message in [
-            ("variant", "esp32h2", "only available on ESP32C3, ESP32C6"),
+            ("variant", "esp32h2", "only available on ESP32C3, ESP32C6, ESP32S3"),
             ("framework", {"type": "arduino"}, "only available with framework(s) esp-idf"),
             ("toolchain", "platformio", "requires the native esp-idf toolchain"),
             ("run_id", "stale", "32 lowercase hexadecimal characters"),

@@ -12,6 +12,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 TOOLCHAIN = "1.97.1"
 CHIPS = {"esp32c3": "riscv32imc-unknown-none-elf", "esp32c6": "riscv32imac-unknown-none-elf"}
+ESPHOME_CHIPS = {**CHIPS, "esp32s3": "xtensa-esp32s3-none-elf"}
 MANIFEST = ROOT / "tools" / "qualification" / "esp32" / "Cargo.toml"
 
 

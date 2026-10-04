@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from esp32 import CHIPS, record_captures
+from esp32 import ESPHOME_CHIPS as CHIPS, record_captures
 from host import binary_identity
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,8 +77,9 @@ def main():
                     images = list(directory.rglob("firmware.elf"))
                     if len(images) != 1:
                         raise ValueError("one fresh linked firmware ELF is required")
-                    if binary_identity(images[0].read_bytes()) != ("elf", 32, 243, "little"):
-                        raise ValueError("firmware is not a 32-bit RISC-V ELF")
+                    machine = 94 if args.chip == "esp32s3" else 243
+                    if binary_identity(images[0].read_bytes()) != ("elf", 32, machine, "little"):
+                        raise ValueError("firmware ISA does not match the selected chip")
                     name = args.chip + ("-esphome-oscore.elf" if secured else "-esphome-core.elf")
                     shutil.copyfile(images[0], args.output.parent / name)
                     factory = list(directory.rglob("firmware.factory.bin"))

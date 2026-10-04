@@ -3,7 +3,7 @@ import re
 
 import esphome.codegen as cg
 from esphome.components import esp32
-from esphome.components.esp32.const import VARIANT_ESP32C3, VARIANT_ESP32C6
+from esphome.components.esp32.const import VARIANT_ESP32C3, VARIANT_ESP32C6, VARIANT_ESP32S3
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 from esphome.core import CORE
@@ -35,7 +35,7 @@ CONFIG_SCHEMA = cv.All(
     }).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
     cv.only_with_framework("esp-idf"),
-    esp32.only_on_variant(supported=[VARIANT_ESP32C3, VARIANT_ESP32C6]),
+    esp32.only_on_variant(supported=[VARIANT_ESP32C3, VARIANT_ESP32C6, VARIANT_ESP32S3]),
     native_toolchain,
 )
 

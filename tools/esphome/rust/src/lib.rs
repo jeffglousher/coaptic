@@ -5,8 +5,8 @@
 //! or a Taldra gateway. ESPHome owns its task, console and stack accounting.
 //!
 //! Generate a pinned ESPHome configuration with `tools/qualification/esphome_probe.py`.
-//! The resulting component links this crate using Rust 1.97.1 for the selected
-//! C3/C6 target. Only scalar values cross the ABI; no Rust-owned pointers escape.
+//! The component links this crate using Rust 1.97.1 for C3/C6 or Espressif Rust
+//! 1.97.0.0 for S3. Only scalar values cross the ABI; no Rust-owned pointers escape.
 //! A panic terminates through ESP-IDF's `abort`, so missing captures cannot pass.
 #![cfg_attr(target_os = "none", no_std)]
 

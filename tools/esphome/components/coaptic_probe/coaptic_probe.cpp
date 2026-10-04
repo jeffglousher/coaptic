@@ -10,8 +10,10 @@ extern "C" int32_t coaptic_probe_run();
 static constexpr const char *CHIP = "esp32c3";
 #elif CONFIG_IDF_TARGET_ESP32C6
 static constexpr const char *CHIP = "esp32c6";
+#elif CONFIG_IDF_TARGET_ESP32S3
+static constexpr const char *CHIP = "esp32s3";
 #else
-#error "Coaptic qualification requires ESP32-C3 or ESP32-C6"
+#error "Coaptic qualification requires ESP32-C3, ESP32-C6 or ESP32-S3"
 #endif
 
 namespace esphome::coaptic_probe {

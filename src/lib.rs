@@ -158,11 +158,16 @@
 //! validates and generates an ESPHome external-component configuration. Add
 //! `--compile` to link complete ESPHome/ESP-IDF firmware against the Rust probe;
 //! code generation alone leaves `build_passed` false. C6 uses `--chip esp32c6`.
+//! S3 uses `--chip esp32s3` and the Xtensa toolchain installed with
+//! `espup install --targets esp32s3 --toolchain-version 1.97.0.0
+//! --name coaptic-esp-1.97 --std`. C3/C6 use Rust 1.97.1. The S3 build compiles
+//! `core` for `xtensa-esp32s3-none-elf`; its ELF machine must be Xtensa, while
+//! C3/C6 must be RISC-V. ESPHome reports include a hashed factory image with
+//! bootloader and partitions for installation as well as the linked ELF.
 //! The component owns one 96 KiB FreeRTOS task with a 30-second work deadline,
 //! deletes it on the ESPHome loop after completion or timeout, and records used
 //! stack bytes from ESP-IDF's minimum free-stack measurement. Recording uses the
-//! same
-//! `--record --capture-core ... --capture-oscore ...` options and additionally
+//! same `--record --capture-core ... --capture-oscore ...` options and additionally
 //! binds the result to the ESPHome runtime. Hardware execution remains pending
 //! until both configurations produce matching captures.
 //!
