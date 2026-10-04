@@ -64,6 +64,19 @@
 //! let _ = app.take_response(call);
 //! ```
 //!
+//! [`App::builder`] starts with fixed default datagram storage. Adjust the
+//! same builder with [`AppBuilder::block_wise`], [`AppBuilder::bind_storage`]
+//! or [`AppBuilder::bind_alloc`] (`alloc` independently of `std`). No separate
+//! advanced reactor is needed for custom storage. [`AppBuilder::full_responses`]
+//! and [`App::take_response_into`] collect exact bytes into caller storage;
+//! insufficient capacity leaves the complete reply available for retry.
+//!
+//! [`App::poll_with`] admits caller-owned asynchronous/durable work without
+//! blocking the reactor. Return [`Response::deferred`] with a supplied
+//! [`DeferredReply`], then [`App::complete`] with [`Response::payload_borrowed`].
+//! A deferred Block2 reply retains one bounded snapshot and serves matching
+//! follow-ups without dispatching the durable operation again.
+//!
 //! Site capacity defaults to [`DEFAULT_ROUTES`] (8); raise it with
 //! [`.routes::<16>()`](AppBuilder::routes) before bind. Paths accept
 //! `"sensors/temp"` or `&["sensors", "temp"]` ([`IntoPath`]).
@@ -101,15 +114,14 @@ use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, Echo, EncodedUint, Message, MessageId, NoResponse, Opt, OptionsBuilder,
-    ParsedMessage, Transmission, Type, decode, encode, encode_uint,
+    BlockValue, Code, ContentFormat, Echo, EncodedUint, Message, MessageId, NoResponse, Opt,
+    OptionsBuilder, ParsedMessage, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
-    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, Memory, MemoryLayout,
-    MemoryProfile, Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots,
-    OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
-    WithBodies,
+    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout, MemoryProfile,
+    Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
+    PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -117,7 +129,7 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 
 pub use client::{
     Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
-    RESPONSE_OPTION_COUNT,
+    RESPONSE_OPTION_COUNT, ResponseBufferError,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 use identity::{AppIds, Source as IdentitySource};
@@ -136,8 +148,190 @@ pub use site::{
 
 use response::AssembledField;
 
+/// Storage capabilities used by the single [`App`] interface.
+///
+/// Fixed [`crate::storage::Memory`] and allocator-backed [`crate::storage::AllocMemory`] use
+/// the same routing, request builders and protocol reactor.
+pub trait AppStorage:
+    Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots
+{
+}
+impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots>
+    AppStorage for S
+{
+}
+
+/// Opaque completion authority for work admitted by [`App::poll_with`].
+///
+/// Retain only with the originating App. Handles include a fresh random nonce
+/// and monotonic generation; a removed/reused row never accepts an old handle.
+/// This is local scheduling identity, not application durable idempotency.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeferredReply {
+    nonce: crate::message::Token,
+    generation: u64,
+}
+
+type AppDispatch<'a> = dyn FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static> + 'a;
+
+const DEFERRED_REPLIES: usize = 4;
+#[derive(Clone, Copy)]
+struct DeferredRow {
+    handle: DeferredReply,
+    meta: SendResponse<'static>,
+    deadline_ms: u64,
+    selection: DeferredSelection,
+    completed: Option<(SlotId, client::ReplyMeta)>,
+    attempted_body: Option<SlotId>,
+}
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct DeferredSelection {
+    bytes: [u8; client::RESPONSE_OPTION_BYTES],
+    len: usize,
+}
+impl DeferredSelection {
+    fn from_request(parsed: &ParsedMessage<'_>) -> Result<Self, EncodeError> {
+        let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
+        for option in parsed.options().filter(|option| {
+            matches!(
+                option.number(),
+                crate::message::OptionNumber::IF_MATCH
+                    | crate::message::OptionNumber::IF_NONE_MATCH
+                    | crate::message::OptionNumber::URI_PATH
+                    | crate::message::OptionNumber::URI_QUERY
+                    | crate::message::OptionNumber::CONTENT_FORMAT
+                    | crate::message::OptionNumber::ACCEPT
+            )
+        }) {
+            push_opt(&mut options, option)?;
+        }
+        let message = Message::new(Type::NonConfirmable, parsed.code(), MessageId::new(0))
+            .with_options(options.as_slice())
+            .with_payload(if parsed.code() == Code::FETCH {
+                parsed.payload()
+            } else {
+                &[]
+            });
+        let mut selection = Self {
+            bytes: [0; client::RESPONSE_OPTION_BYTES],
+            len: 0,
+        };
+        selection.len = encode(&message, &mut selection.bytes)?;
+        Ok(selection)
+    }
+}
+
+fn deferred_reply_metadata(
+    response: &Response<'_>,
+    meta: SendResponse,
+    now_ms: u64,
+) -> Result<client::ReplyMeta, ResponseError> {
+    let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
+    let cf = response.format().map(ContentFormat::encode);
+    let age = response.max_age_secs().map(encode_uint);
+    let echo = response.echo_option();
+    let result = (|| -> Result<(), EncodeError> {
+        if let Some(tag) = response.etag_bytes() {
+            push_opt(&mut options, Opt::etag(tag))?;
+        }
+        for location in response.location_paths() {
+            push_opt(&mut options, Opt::location_path(location))?;
+        }
+        if let Some(cf) = cf.as_ref() {
+            push_opt(&mut options, Opt::content_format(cf))?;
+        }
+        if let Some(age) = age.as_ref() {
+            push_opt(&mut options, Opt::max_age(age))?;
+        }
+        for query in response.location_queries() {
+            push_opt(&mut options, Opt::location_query(query))?;
+        }
+        if let Some(echo) = echo.as_ref() {
+            push_opt(&mut options, Opt::echo(echo.as_slice()))?;
+        }
+        Ok(())
+    })();
+    result.map_err(|_| ResponseError::DeferredMetadataBounds)?;
+    let message = Message::new(Type::NonConfirmable, response.code(), meta.mid)
+        .with_token(meta.token)
+        .with_options(options.as_slice());
+    let mut bytes = [0; client::RESPONSE_OPTION_BYTES];
+    let n = encode(&message, &mut bytes).map_err(|_| ResponseError::DeferredMetadataBounds)?;
+    let parsed = decode(&bytes[..n]).map_err(|_| ResponseError::DeferredMetadataBounds)?;
+    client::ReplyMeta::from_parsed(&parsed, meta.dest, now_ms)
+        .map_err(|_| ResponseError::DeferredMetadataBounds)
+}
+
+struct DeferredTable {
+    rows: [Option<DeferredRow>; DEFERRED_REPLIES],
+    generation: u64,
+}
+impl DeferredTable {
+    const fn new() -> Self {
+        Self {
+            rows: [None; DEFERRED_REPLIES],
+            generation: 0,
+        }
+    }
+    fn expire<S: AppStorage>(&mut self, engine: &mut Engine<S>, now_ms: u64) {
+        for row in &mut self.rows {
+            let Some(value) = *row else {
+                continue;
+            };
+            let body = value
+                .completed
+                .map(|(body, _)| body)
+                .or(value.attempted_body);
+            let body_live = body.is_some_and(|body| {
+                engine.tx_body_transfer(body).is_some_and(|transfer| {
+                    transfer.key().token() == value.meta.token
+                        && transfer.key().endpoint() == value.meta.dest
+                })
+            });
+            if now_ms >= value.deadline_ms || (value.completed.is_some() && !body_live) {
+                if body_live {
+                    let _ = engine.release_tx_body(body.expect("live body"));
+                }
+                *row = None;
+            }
+        }
+    }
+    fn candidate(&mut self, ids: &mut AppIds) -> Result<Option<DeferredReply>, IdentityError> {
+        if self.rows.iter().all(Option::is_some) {
+            return Ok(None);
+        }
+        let Some(generation) = self.generation.checked_add(1) else {
+            return Ok(None);
+        };
+        let nonce = ids.token()?;
+        self.generation = generation;
+        Ok(Some(DeferredReply { nonce, generation }))
+    }
+    fn insert(
+        &mut self,
+        handle: DeferredReply,
+        meta: SendResponse<'static>,
+        deadline_ms: u64,
+        selection: DeferredSelection,
+    ) {
+        let row = self
+            .rows
+            .iter_mut()
+            .find(|row| row.is_none())
+            .expect("reserved capacity");
+        *row = Some(DeferredRow {
+            handle,
+            meta,
+            deadline_ms,
+            selection,
+            completed: None,
+            attempted_body: None,
+        });
+    }
+}
+
 /// Engine storage selected by [`AppBuilder::block_wise`].
-pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_WISE>>::Store;
+pub type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_WISE>>::Store;
 
 /// CoAP app: profile memory + transport + a bounded [`Site`].
 ///
@@ -149,7 +343,7 @@ pub(crate) type AppStore<P, const BLOCK_WISE: bool> = <P as MemoryLayout<BLOCK_W
 /// [`Response::body`]. The reactor owns per-slot state machines
 /// inside [`Self::poll`]. `N` is the maximum number of routes (default 8);
 /// raise it with [`AppBuilder::routes`]. `BLOCK_WISE` is
-/// [`AppBuilder::block_wise`]: `false` stores only [`Memory<P>`] (no body
+/// [`AppBuilder::block_wise`]: `false` stores only [`crate::storage::Memory<P>`] (no body
 /// pool arrays and no client Block2 assembled hold). You do not need
 /// [`crate::storage::Access`] on this path — [`Self::engine_mut`] is the
 /// advanced escape hatch.
@@ -158,16 +352,19 @@ pub struct App<
     T = (),
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
+    S: AppStorage = AppStore<P, BLOCK_WISE>,
 > where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    engine: Engine<AppStore<P, BLOCK_WISE>>,
+    engine: Engine<S>,
     io: T,
     site: Site<N>,
     ids: AppIds,
     inbox: client::ClientInbox,
     lives: client::ClientLives,
     echo_policy: Option<EchoPolicy>,
+    full_responses: bool,
+    deferred_lifetime_ms: u64,
     /// Last POST/PATCH/FETCH whose Dedup insert failed. A CON retransmit
     /// of that Message ID + peer is ACKed without a handler re-run until
     /// `due_ms` (fail-closed, not Miss). Not a seventh memory area.
@@ -177,6 +374,7 @@ pub struct App<
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
     assembled: AssembledField<P, BLOCK_WISE>,
+    deferred: DeferredTable,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
@@ -195,18 +393,32 @@ pub struct AppBuilder<
 > {
     site: Site<N>,
     echo_policy: Option<EchoPolicy>,
+    full_responses: bool,
+    deferred_lifetime_ms: u64,
     identity: Option<IdentitySource>,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
 
 impl App {
+    /// Start with the default fixed profile and datagram-only storage.
+    ///
+    /// Supply [`AppBuilder::randomness`] and [`AppBuilder::bind`] for simple
+    /// requests, or adjust [`AppBuilder::block_wise`], routes, storage and
+    /// full-response retention through the same builder.
+    #[must_use]
+    pub fn builder() -> AppBuilder<crate::profiles::Default, Present> {
+        Self::profile::<crate::profiles::Default>().block_wise::<false>()
+    }
+
     /// Start from a memory profile. Next: [`AppBuilder::block_wise`].
     #[must_use]
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
         AppBuilder {
             site: Site::new(),
             echo_policy: None,
+            full_responses: false,
+            deferred_lifetime_ms: Transmission::EXCHANGE_LIFETIME_MS as u64,
             identity: None,
             _p: PhantomData,
             _b: PhantomData,
@@ -237,10 +449,36 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         AppBuilder {
             site,
             echo_policy: self.echo_policy,
+            full_responses: self.full_responses,
+            deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
             _p: PhantomData,
             _b: PhantomData,
         }
+    }
+
+    /// Retain complete client representations for [`App::take_response_into`].
+    ///
+    /// Ordinary responses keep one bounded RX datagram occupied until collection;
+    /// Block2 retains its existing RX body. Untaken replies apply backpressure.
+    /// This removes the legacy 128-byte snapshot / 4096-byte hold restrictions,
+    /// while the selected storage still bounds every representation.
+    #[must_use]
+    pub const fn full_responses(mut self) -> Self {
+        self.full_responses = true;
+        self
+    }
+
+    /// Bound how long a deferred response handle remains usable.
+    ///
+    /// Defaults to EXCHANGE_LIFETIME. Application identity and durable
+    /// idempotency remain caller-owned; increasing this bound does not extend
+    /// protocol duplicate history after completion or change retransmission.
+    /// Zero refuses deferred admission. Uses the caller monotonic clock.
+    #[must_use]
+    pub const fn deferred_lifetime(mut self, milliseconds: u64) -> Self {
+        self.deferred_lifetime_ms = milliseconds;
+        self
     }
 
     /// Bind `methods` on Uri-Path `path`.
@@ -308,7 +546,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
     }
 }
 
-impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, N, PREV> {
+impl<P: MemoryProfile, Block, const N: usize, const PREV: bool> AppBuilder<P, Block, N, PREV> {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
     /// Shipped profiles use 4096 bytes per body slot, even
@@ -328,6 +566,8 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
+            full_responses: self.full_responses,
+            deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
             _p: PhantomData,
             _b: PhantomData,
@@ -335,41 +575,72 @@ impl<P: MemoryProfile, const N: usize, const PREV: bool> AppBuilder<P, Missing, 
     }
 }
 
-impl<P, const N: usize> AppBuilder<P, Present, N, false>
+impl<P, const N: usize, const BLOCK_WISE: bool> AppBuilder<P, Present, N, BLOCK_WISE>
 where
-    P: MemoryProfile + MemoryLayout<false, Store = Memory<P>>,
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    /// Construct profile [`Memory`] (datagram pools only) and bind `io`.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, false>, BuildError> {
+    /// Bind the profile's fixed memory, with or without body pools.
+    ///
+    /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
+    /// without changing request builders, response types or the reactor.
+    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, BLOCK_WISE>, BuildError> {
         let engine = EngineBuilder::new()
             .profile::<P>()
-            .block_wise(false)
-            .build(Memory::<P>::new())?;
-        Ok(App {
-            engine,
-            io,
-            site: self.site,
-            ids: AppIds::new(self.identity)?,
-            inbox: client::ClientInbox::new(),
-            lives: client::ClientLives::new(),
-            echo_policy: self.echo_policy,
-            dedup_closed: None,
-            oscore: oscore::empty_field(),
-            assembled: Default::default(),
-        })
+            .block_wise(BLOCK_WISE)
+            .build(AppStore::<P, BLOCK_WISE>::default())?;
+        self.bind_built(io, engine)
     }
-}
 
-impl<P, const N: usize> AppBuilder<P, Present, N, true>
-where
-    P: MemoryProfile + MemoryLayout<true, Store = Memory<P, WithBodies<P>>>,
-{
-    /// Construct profile [`Memory`] with body pools and bind `io`.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, true>, BuildError> {
+    /// Bind caller-selected storage without changing the App interface.
+    ///
+    /// Storage sizes, scratch and body presence are validated by the same
+    /// Engine builder as fixed profiles. `P` remains the default-memory marker;
+    /// the selected `S` supplies actual datagram/body dimensions and scratch.
+    /// With `alloc`, use [`Self::bind_alloc`] for one-time bounded allocation.
+    pub fn bind_storage<T, S: AppStorage>(
+        self,
+        io: T,
+        storage: S,
+    ) -> Result<App<P, T, N, BLOCK_WISE, S>, BuildError> {
+        let c = storage.capacities();
         let engine = EngineBuilder::new()
-            .profile::<P>()
-            .block_wise(true)
-            .build(Memory::<P>::with_block_wise())?;
+            .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
+            .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
+            .dedup(c.dedup_entries)
+            .observe(c.observe_entries)
+            .rx_body(c.rx_body_slots.unwrap_or(0), c.rx_body_bytes.unwrap_or(0))
+            .tx_body(c.tx_body_slots.unwrap_or(0), c.tx_body_bytes.unwrap_or(0))
+            .block_wise(BLOCK_WISE)
+            .build(storage)?;
+        self.bind_built(io, engine)
+    }
+
+    /// Allocate bounded pools once, then use the ordinary App API.
+    ///
+    /// Requires `alloc`, independently of `std`. There is no growth during poll.
+    #[cfg(feature = "alloc")]
+    pub fn bind_alloc<T>(
+        self,
+        io: T,
+        c: crate::storage::Capacities,
+    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory>, BuildError> {
+        let engine = EngineBuilder::new()
+            .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
+            .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
+            .dedup(c.dedup_entries)
+            .observe(c.observe_entries)
+            .rx_body(c.rx_body_slots.unwrap_or(0), c.rx_body_bytes.unwrap_or(0))
+            .tx_body(c.tx_body_slots.unwrap_or(0), c.tx_body_bytes.unwrap_or(0))
+            .block_wise(BLOCK_WISE)
+            .build_alloc(c)?;
+        self.bind_built(io, engine)
+    }
+
+    fn bind_built<T, S: AppStorage>(
+        self,
+        io: T,
+        engine: Engine<S>,
+    ) -> Result<App<P, T, N, BLOCK_WISE, S>, BuildError> {
         Ok(App {
             engine,
             io,
@@ -378,9 +649,12 @@ where
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_policy: self.echo_policy,
+            full_responses: self.full_responses,
+            deferred_lifetime_ms: self.deferred_lifetime_ms,
             dedup_closed: None,
             oscore: oscore::empty_field(),
             assembled: Default::default(),
+            deferred: DeferredTable::new(),
         })
     }
 }
@@ -390,7 +664,8 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-> App<P, T, N, BLOCK_WISE>
+    S: AppStorage,
+> App<P, T, N, BLOCK_WISE, S>
 {
     /// Bind `methods` on Uri-Path `path`.
     ///
@@ -430,7 +705,7 @@ impl<
     /// The happy path is [`Self::poll`]. Use this when you need explicit
     /// slots or [`crate::storage::Access`].
     #[must_use]
-    pub const fn engine(&self) -> &Engine<AppStore<P, BLOCK_WISE>> {
+    pub const fn engine(&self) -> &Engine<S> {
         &self.engine
     }
 
@@ -440,7 +715,7 @@ impl<
     /// [`crate::storage::AccessMut`], custom RST / remaining 4.xx, and
     /// BERT edges (future / backlog). [`Self::poll`] already pins and
     /// releases; App handlers do not need this.
-    pub const fn engine_mut(&mut self) -> &mut Engine<AppStore<P, BLOCK_WISE>> {
+    pub const fn engine_mut(&mut self) -> &mut Engine<S> {
         &mut self.engine
     }
 
@@ -570,7 +845,7 @@ impl<
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: AppStorage> App<P, T, N, BLOCK_WISE, S>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -602,8 +877,8 @@ where
     /// Location-Query on the [`Response`]
     /// are written on the wire. [`Response::separate`] is an empty ACK
     /// to a CON request, then the completed representation in a new CON in
-    /// the same poll (NON request → NON). Handlers are synchronous; App
-    /// does not provide a deferred response completion handle. A retransmitted CON request (same
+    /// the same poll (NON request â†’ NON). Use [`Self::poll_with`] and
+    /// [`Self::complete`] for work completed outside the reactor. A retransmitted CON request (same
     /// Message ID + peer) is answered from the Dedup Table without a
     /// second handler call while the row is live (`EXCHANGE_LIFETIME`):
     /// the cached ACK bytes, or a pinned TX slot when the ACK does not
@@ -681,8 +956,133 @@ where
             &mut self.oscore,
             self.echo_policy,
             &mut self.dedup_closed,
+            self.full_responses,
+            &mut self.deferred,
+            self.deferred_lifetime_ms,
+            None,
             now_ms,
         )
+    }
+
+    /// Poll with caller-owned stateful application dispatch and optional deferral.
+    ///
+    /// The callback replaces site handler dispatch, after protocol/option/body
+    /// validation. It borrows the complete request only during the callback.
+    /// Copy work into caller-owned bounded storage, retain the supplied handle,
+    /// and return [`Response::deferred`] to finish through [`Self::complete`].
+    /// Four deferred replies are bounded independently of client Calls. A handle
+    /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
+    /// zero, or Observe/Q-Block2 selection needs
+    /// synchronous dispatch. Returning deferred without a handle produces 5.03.
+    /// Empty ACK/retransmission is protocol reception, never durable completion.
+    pub fn poll_with(
+        &mut self,
+        now_ms: u64,
+        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+    ) -> Result<(), Error<T::Error>> {
+        poll_engine(
+            &mut self.engine,
+            &mut self.io,
+            &self.site,
+            &mut self.ids,
+            &mut self.inbox,
+            &mut self.lives,
+            &mut self.oscore,
+            self.echo_policy,
+            &mut self.dedup_closed,
+            self.full_responses,
+            &mut self.deferred,
+            self.deferred_lifetime_ms,
+            Some(&mut dispatch),
+            now_ms,
+        )
+    }
+
+    /// Complete admitted work through the same separate-response/Block2 sender.
+    ///
+    /// The payload may borrow caller memory for this call; oversized bodies are
+    /// copied into bounded TX body storage. Success retires the handle, retaining
+    /// any pending CON retransmissions in App. A large response retains bounded
+    /// header metadata and its TX-body snapshot until matching Block2 follow-ups
+    /// finish or the original deferred deadline expires. Matching method/path/
+    /// queries/selection never dispatch domain work again. Metadata is bounded
+    /// to 24 options and 512 encoded bytes; overflow fails before sending.
+    /// Failure leaves the handle available for
+    /// retry until its deadline; remote effects can already have happened. Never
+    /// re-run durable work on a send failure. OSCORE sequences are never rewound.
+    /// Observe registration and Q-Block2 multi-selection deferral are unsupported.
+    pub fn complete(
+        &mut self,
+        handle: DeferredReply,
+        response: Response<'_>,
+        now_ms: u64,
+    ) -> Result<(), Error<T::Error>> {
+        self.deferred.expire(&mut self.engine, now_ms);
+        let index = self
+            .deferred
+            .rows
+            .iter()
+            .position(|row| row.is_some_and(|row| row.handle == handle && row.completed.is_none()))
+            .ok_or(Error::DeferredUnknown)?;
+        response.validate().map_err(Error::Response)?;
+        if response.is_deferred() {
+            return Err(Error::DeferredUnknown);
+        }
+        if response.payload_truncated() {
+            return Err(Error::Response(ResponseError::PayloadTruncated));
+        }
+        let response = response.with_fresh_piv();
+        let row = self.deferred.rows[index].expect("matched row");
+        let metadata =
+            deferred_reply_metadata(&response, row.meta, now_ms).map_err(Error::Response)?;
+        let outcome = send_separate(
+            &mut self.engine,
+            &mut self.io,
+            &mut self.ids,
+            now_ms,
+            row.meta,
+            &response,
+            &mut self.oscore,
+            &mut self.dedup_closed,
+            true,
+        );
+        let body = response_body_for(&self.engine, BlockKey::new(row.meta.token, row.meta.dest));
+        if let Some(body) = body {
+            self.deferred.rows[index]
+                .as_mut()
+                .expect("matched row")
+                .attempted_body = Some(body);
+        }
+        outcome?;
+        if let Some(body) = body {
+            self.deferred.rows[index]
+                .as_mut()
+                .expect("matched row")
+                .completed = Some((body, metadata));
+        } else {
+            self.deferred.rows[index] = None;
+        }
+        Ok(())
+    }
+
+    /// Retire a deferred local handle without claiming remote cancellation.
+    ///
+    /// Caller owns accepted application work and must decide whether it can be
+    /// cancelled. A previously sent empty ACK remains only proof of reception.
+    pub fn cancel_deferred(&mut self, handle: DeferredReply) -> bool {
+        let Some(row) = self
+            .deferred
+            .rows
+            .iter_mut()
+            .find(|row| row.is_some_and(|row| row.handle == handle && row.completed.is_none()))
+        else {
+            return false;
+        };
+        if let Some(body) = row.and_then(|row| row.attempted_body) {
+            let _ = self.engine.release_tx_body(body);
+        }
+        *row = None;
+        true
     }
 
     /// Send the current representation to server-side observers of `path`.
@@ -748,6 +1148,10 @@ fn poll_engine<Mem, T, const N: usize>(
     oscore: &mut oscore::Field,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
+    full_responses: bool,
+    deferred: &mut DeferredTable,
+    deferred_lifetime_ms: u64,
+    mut dispatch: Option<&mut AppDispatch<'_>>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -757,6 +1161,7 @@ where
     // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
     // Saturated after those timers still run (RFC 7252 §4.2).
     // Local deadlines must progress even if receiving the next packet fails.
+    deferred.expire(engine, now_ms);
     expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
     let (received, recv_saturated) = match engine.recv_from(io) {
@@ -791,7 +1196,9 @@ where
         }
     }
 
-    if let Some(rx) = progress.rx_ready().or(received) {
+    if let Some(rx) =
+        received.or_else(|| progress.rx_ready().filter(|rx| !inbox.holds_datagram(*rx)))
+    {
         dispatch_rx(
             engine,
             io,
@@ -802,6 +1209,12 @@ where
             oscore,
             echo_policy,
             dedup_closed,
+            full_responses,
+            deferred,
+            deferred_lifetime_ms,
+            dispatch
+                .as_mut()
+                .map(|dispatch| &mut **dispatch as &mut AppDispatch<'_>),
             now_ms,
             rx,
         )?;
@@ -1156,6 +1569,10 @@ fn dispatch_rx<Mem, T, const N: usize>(
     oscore: &mut oscore::Field,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
+    full_responses: bool,
+    deferred: &mut DeferredTable,
+    deferred_lifetime_ms: u64,
+    dispatch: Option<&mut AppDispatch<'_>>,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -1226,6 +1643,25 @@ where
     if parsed.is_empty() {
         let outcome = if parsed.ty() == Type::Confirmable {
             send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
+
+    // Keep accepted pending work independent of expiring ACK-cache rows.
+    // Check the authenticated request's retained outer identity before OSCORE
+    // replay rejection; duplicates never invoke application work again.
+    if parsed.code().is_request()
+        && deferred
+            .rows
+            .iter()
+            .flatten()
+            .any(|row| row.meta.dest == peer && row.meta.mid == parsed.message_id())
+    {
+        let outcome = if parsed.ty() == Type::Confirmable {
+            send_empty_ack(engine, io, peer, parsed.message_id())
         } else {
             Ok(())
         };
@@ -1322,6 +1758,7 @@ where
             ids,
             oscore,
             response_state,
+            full_responses,
             now_ms,
             peer,
             &parsed,
@@ -1484,6 +1921,61 @@ where
         }
     }
 
+    // Deferred responses own a stable bounded TX snapshot. Authenticated
+    // classic Block2 follow-ups select it without re-running application work.
+    if meta.block2.is_some() {
+        if let Some(index) = deferred.rows.iter().position(|row| {
+            row.is_some_and(|row| {
+                row.completed.is_some() && row.meta.token == meta.token && row.meta.dest == peer
+            })
+        }) {
+            let row = deferred.rows[index].expect("matched snapshot");
+            let (body, retained) = row.completed.expect("completed snapshot");
+            let outcome = if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
+                || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
+            {
+                send_response(
+                    engine,
+                    io,
+                    ids,
+                    meta,
+                    &Response::bad_request(),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
+                )
+            } else {
+                let response = retained.response();
+                let ty = if meta.ty == Type::Confirmable {
+                    Type::Acknowledgement
+                } else {
+                    Type::NonConfirmable
+                };
+                let mid = if ty == Type::Acknowledgement {
+                    meta.mid
+                } else {
+                    ids.next_for(engine, now_ms)?
+                };
+                issue_classic(
+                    engine,
+                    io,
+                    meta,
+                    &response,
+                    ty,
+                    mid,
+                    body,
+                    None,
+                    true,
+                    Some((now_ms, dedup_closed)),
+                    oscore,
+                )
+            };
+            let _ = engine.release_rx(rx);
+            deferred.expire(engine, now_ms);
+            return outcome;
+        }
+    }
+
     let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
     match assembled {
         InboundBody::Continue => {
@@ -1562,6 +2054,26 @@ where
         InboundBody::None | InboundBody::Complete(_) => {}
     }
 
+    let selection = DeferredSelection::from_request(&parsed).ok();
+    let deferred_handle = if selection.is_some()
+        && dispatch.is_some()
+        && deferred_lifetime_ms != 0
+        && parsed.observe().is_none()
+        && meta.q_block2.is_none()
+    {
+        match deferred.candidate(ids) {
+            Ok(handle) => handle,
+            Err(error) => {
+                if let InboundBody::Complete(id) = assembled {
+                    let _ = engine.release_rx_body(id);
+                }
+                let _ = engine.release_rx(rx);
+                return Err(Error::Identity(error));
+            }
+        }
+    } else {
+        None
+    };
     let mut catalog = site::LinkFormatScratch::<N>::new();
     let (response, plan) = {
         let body = match assembled {
@@ -1574,7 +2086,11 @@ where
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
                 let plan = ObservePlan::from_request(site, &request);
-                (site.dispatch(request, catalog.as_mut()), plan)
+                let response = match dispatch {
+                    Some(dispatch) => dispatch(request, deferred_handle),
+                    None => site.dispatch(request, catalog.as_mut()),
+                };
+                (response, plan)
             }
             Err(request::PathError::BadUtf8 | request::PathError::EmptySegment) => (
                 Response::problem(Code::BAD_REQUEST).title("Bad Request"),
@@ -1586,6 +2102,55 @@ where
             ),
         }
     };
+    if response.is_deferred() {
+        let outcome = if let Some(handle) = deferred_handle {
+            // Record before sending ACK: a failed send cannot cause durable work
+            // to be dispatched twice when the request is retransmitted.
+            deferred.insert(
+                handle,
+                SendResponse {
+                    dest: meta.dest,
+                    ty: meta.ty,
+                    mid: meta.mid,
+                    token: meta.token,
+                    no_response: meta.no_response,
+                    block2: meta.block2,
+                    q_block2: meta.q_block2,
+                    q_request: None,
+                    block1: meta.block1,
+                    oscore: meta.oscore,
+                    request: meta.request,
+                },
+                now_ms.saturating_add(deferred_lifetime_ms),
+                selection.expect("admitted selection"),
+            );
+            if meta.ty == Type::Confirmable {
+                let outcome = send_empty_ack(engine, io, peer, meta.mid);
+                if outcome.is_ok() {
+                    remember_empty_ack(engine, peer, meta.mid, now_ms, meta.request, dedup_closed);
+                }
+                outcome
+            } else {
+                Ok(())
+            }
+        } else {
+            send_response(
+                engine,
+                io,
+                ids,
+                meta,
+                &Response::new(Code::SERVICE_UNAVAILABLE),
+                now_ms,
+                oscore,
+                dedup_closed,
+            )
+        };
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
+        }
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
     if let Err(error) = response.validate() {
         if let InboundBody::Complete(id) = assembled {
             let _ = engine.release_rx_body(id);
@@ -1605,6 +2170,7 @@ where
             &response,
             oscore,
             dedup_closed,
+            false,
         )
     } else {
         send_response(
@@ -2031,6 +2597,7 @@ fn send_separate<S, T>(
     response: &Response<'_>,
     oscore_ctx: &mut oscore::Field,
     dedup_closed: &mut Option<DedupClosed>,
+    acknowledged: bool,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -2060,12 +2627,13 @@ where
             )
         }) {
             let ty = match meta.ty {
+                Type::Confirmable if acknowledged => Type::Confirmable,
                 Type::Confirmable => Type::Acknowledgement,
                 Type::NonConfirmable => Type::NonConfirmable,
                 Type::Acknowledgement | Type::Reset => return Ok(()),
             };
             let mut meta = meta;
-            if ty == Type::NonConfirmable {
+            if ty != Type::Acknowledgement {
                 meta.mid = ids.next_for(engine, now_ms)?;
             }
             return continue_outgoing(
@@ -2085,7 +2653,9 @@ where
 
     let ty = match meta.ty {
         Type::Confirmable => {
-            send_empty_ack(engine, io, meta.dest, meta.mid)?;
+            if !acknowledged {
+                send_empty_ack(engine, io, meta.dest, meta.mid)?;
+            }
             remember_empty_ack(
                 engine,
                 meta.dest,
@@ -2410,8 +2980,8 @@ where
             ty,
             meta.mid,
             id,
-            None,
-            response.observe_seq().is_some(),
+            (ty == Type::Confirmable).then_some((now_ms, meta.mid, ids.jitter())),
+            response.fresh_piv() || response.observe_seq().is_some(),
             Some((now_ms, dedup_closed)),
             oscore_ctx,
         )
@@ -2929,7 +3499,8 @@ fn encode_response<S: Storage + DatagramSlots, E>(
                 .with_token(token)
                 .with_options(opts.as_slice())
                 .with_payload(payload);
-            if block.is_some_and(|b| b.q_block)
+            if response.fresh_piv()
+                || block.is_some_and(|b| b.q_block)
                 || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
             {
                 oscore::encode_notification(oscore_ctx, oscore_req, engine, tx, &msg)
@@ -3628,6 +4199,8 @@ where
 pub enum Error<E> {
     /// Fresh identity or randomized transmission schedule could not be obtained.
     Identity(IdentityError),
+    /// Deferred handle is unknown, expired, already completed or invalid.
+    DeferredUnknown,
     /// Handler/notification response contains an invalid bounded option.
     Response(ResponseError),
     /// Absolute caller deadline has already elapsed; no request was sent.
@@ -3709,6 +4282,7 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Identity(error) => write!(f, "{error}"),
+            Self::DeferredUnknown => f.write_str("deferred response handle is unavailable"),
             Self::Io(e) => write!(f, "{e}"),
             Self::Slot(e) => write!(f, "{e}"),
             Self::Message(e) => write!(f, "{e}"),
@@ -3760,7 +4334,7 @@ where
             Self::Io(e) => Some(e),
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
-            Self::Saturated | Self::DeadlineElapsed => None,
+            Self::Saturated | Self::DeadlineElapsed | Self::DeferredUnknown => None,
             Self::Block(e) => Some(e),
             Self::Response(e) => Some(e),
             Self::Path
