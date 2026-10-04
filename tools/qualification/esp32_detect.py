@@ -20,6 +20,7 @@ def chip_name(name):
 
 
 def select_images(path, chip):
+    chip = chip_name(chip)
     report = json.loads(path.read_text(encoding="utf-8"))
     schemas = {"coaptic-esp32-qualification/1", "coaptic-esphome-qualification/1"}
     if report.get("schema") not in schemas or report.get("chip", "esp32c3") != chip:
@@ -40,14 +41,22 @@ def select_images(path, chip):
             firmware = path.parent / firmware
         if hashlib.sha256(firmware.read_bytes()).hexdigest() != case["firmware_sha256"]:
             raise ValueError("firmware changed after build")
-        selected.append({"oscore": secured, "firmware": str(firmware.resolve()), "run_id": case["run_id"]})
+        image = {"oscore": secured, "firmware": str(firmware.resolve()), "run_id": case["run_id"]}
+        if "flash_image" in case:
+            flash_image = Path(case["flash_image"])
+            if not flash_image.is_absolute():
+                flash_image = path.parent / flash_image
+            if hashlib.sha256(flash_image.read_bytes()).hexdigest() != case["flash_image_sha256"]:
+                raise ValueError("flash image changed after build")
+            image["flash_image"] = str(flash_image.resolve())
+        selected.append(image)
     return selected
 
 
 def identify(port, connector, reset):
     with connector(port=port, chip="auto", connect_attempts=3) as device:
         try:
-            return {"chip": chip_name(device.CHIP_NAME), "description": device.get_chip_description()}
+            return {"chip": device.CHIP_NAME.lower().replace("-", ""), "description": device.get_chip_description()}
         finally:
             reset(device, "hard-reset")
 
@@ -75,7 +84,8 @@ def main():
                 raise ValueError("requested port is not connected")
             with contextlib.redirect_stdout(transcript), contextlib.redirect_stderr(transcript):
                 report.update(identify(args.port, connect_esp, reset_chip))
-            report["target"] = CHIPS[report["chip"]]
+            report["target"] = CHIPS.get(report["chip"])
+            report["qualification_supported"] = report["chip"] in CHIPS
             report["detected"] = True
             if args.firmware_report:
                 report["images"] = select_images(args.firmware_report.resolve(), report["chip"])

@@ -81,7 +81,13 @@ def main():
                         raise ValueError("firmware is not a 32-bit RISC-V ELF")
                     name = args.chip + ("-esphome-oscore.elf" if secured else "-esphome-core.elf")
                     shutil.copyfile(images[0], args.output.parent / name)
+                    factory = list(directory.rglob("firmware.factory.bin"))
+                    if len(factory) != 1:
+                        raise ValueError("one fresh ESPHome factory image is required")
+                    flash_name = name.removesuffix(".elf") + ".factory.bin"
+                    shutil.copyfile(factory[0], args.output.parent / flash_name)
                     case.update(firmware=name, firmware_sha256=hashlib.sha256(images[0].read_bytes()).hexdigest(),
+                                flash_image=flash_name, flash_image_sha256=hashlib.sha256(factory[0].read_bytes()).hexdigest(),
                                 build_passed=True)
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 case["error"] = str(error)

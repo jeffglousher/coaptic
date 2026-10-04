@@ -347,7 +347,11 @@ jobs:
         if: always()
         with:
           name: esphome-${{ matrix.chip }}-probe
-          path: ${{ runner.temp }}/esphome-probe/
+          path: |
+            ${{ runner.temp }}/esphome-probe/build.json
+            ${{ runner.temp }}/esphome-probe/*.elf
+            ${{ runner.temp }}/esphome-probe/*.factory.bin
+            ${{ runner.temp }}/esphome-probe/esphome-*/probe.yaml
           if-no-files-found: error
 
   process-interop:

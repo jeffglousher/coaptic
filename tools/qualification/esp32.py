@@ -48,6 +48,12 @@ def record_captures(report, output, captures):
                 firmware = output.parent / firmware
             if hashlib.sha256(firmware.read_bytes()).hexdigest() != case["firmware_sha256"]:
                 raise ValueError("firmware changed after build")
+            if "flash_image" in case:
+                flash_image = Path(case["flash_image"])
+                if not flash_image.is_absolute():
+                    flash_image = output.parent / flash_image
+                if hashlib.sha256(flash_image.read_bytes()).hexdigest() != case["flash_image_sha256"]:
+                    raise ValueError("flash image changed after build")
             raw = capture.read_text(encoding="utf-8")
             case["capture"] = str(capture.resolve())
             case["capture_sha256"] = hashlib.sha256(raw.encode()).hexdigest()

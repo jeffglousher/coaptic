@@ -45,6 +45,8 @@ async def to_code(config):
     await cg.register_component(component, config)
     cg.add(component.set_run_id(config["run_id"]))
     root = Path(__file__).resolve().parents[2]
-    esp32.add_idf_component(name="coaptic_rust_probe", path=str(root / "idf"))
+    rust_component = root / "coaptic_rust_probe"
+    esp32.add_idf_component(name="coaptic_rust_probe", path=str(rust_component))
+    cg.add_cmake_arg("EXTRA_COMPONENT_DIRS", f"{CORE.relative_build_path('src').as_posix()};{rust_component.as_posix()}")
     cg.add_cmake_arg("COAPTIC_RUST_MANIFEST", str(root / "rust" / "Cargo.toml"))
     cg.add_cmake_arg("COAPTIC_OSCORE", "ON" if config["oscore"] else "OFF")

@@ -4,7 +4,7 @@
 //! static library. It is a qualification component, not a networked CoAP driver
 //! or a Taldra gateway. ESPHome owns its task, console and stack accounting.
 //!
-//! Generate a pinned ESPHome configuration with `tools/qualification/esphome.py`.
+//! Generate a pinned ESPHome configuration with `tools/qualification/esphome_probe.py`.
 //! The resulting component links this crate using Rust 1.97.1 for the selected
 //! C3/C6 target. Only scalar values cross the ABI; no Rust-owned pointers escape.
 //! A panic terminates through ESP-IDF's `abort`, so missing captures cannot pass.
