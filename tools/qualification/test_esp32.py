@@ -61,7 +61,7 @@ class DeviceEvidenceTests(unittest.TestCase):
                 capture.write_bytes(raw)
                 cases.append(case)
                 captures.append(capture)
-            report = {"cases": cases}
+            report = {"build_passed": True, "cases": cases}
             record_captures(report, root / "build.json", captures)
             self.assertTrue(report["runtime_passed"])
             for case, capture in zip(cases, captures, strict=True):
