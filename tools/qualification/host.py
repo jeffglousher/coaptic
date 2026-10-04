@@ -91,6 +91,7 @@ def run_case(name, flags, execute=subprocess.run, *, target=None):
         environment = os.environ.copy()
         environment["CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUNNER"] = " ".join(RUNNER)
         environment["CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_LINKER"] = LINKER
+        environment["QEMU_LD_PREFIX"] = RUNNER[2]
         execution["env"] = environment
     timed_out = False
     try:
