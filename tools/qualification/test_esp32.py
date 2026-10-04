@@ -1,6 +1,9 @@
+import hashlib
 import json
+from pathlib import Path
+import tempfile
 import unittest
-from esp32 import read_capture
+from esp32 import read_capture, record_captures
 
 
 class DeviceEvidenceTests(unittest.TestCase):
@@ -40,6 +43,29 @@ class DeviceEvidenceTests(unittest.TestCase):
         result["runtime"] = "standalone"
         with self.assertRaises(ValueError):
             read_capture("COAPTIC_DEVICE " + json.dumps(result), case)
+
+    def test_capture_hash_preserves_serial_console_line_endings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            firmware = root / "image.elf"
+            firmware.write_bytes(b"firmware")
+            cases = []
+            captures = []
+            for secured in [False, True]:
+                case, result = self.fixture()
+                case["oscore"] = result["oscore"] = secured
+                case.update(build_passed=True, firmware=firmware.name,
+                            firmware_sha256=hashlib.sha256(b"firmware").hexdigest())
+                capture = root / f"capture-{secured}.log"
+                raw = ("boot\r\nCOAPTIC_DEVICE " + json.dumps(result) + "\r\n").encode()
+                capture.write_bytes(raw)
+                cases.append(case)
+                captures.append(capture)
+            report = {"cases": cases}
+            record_captures(report, root / "build.json", captures)
+            self.assertTrue(report["runtime_passed"])
+            for case, capture in zip(cases, captures, strict=True):
+                self.assertEqual(case["capture_sha256"], hashlib.sha256(capture.read_bytes()).hexdigest())
 
 
 if __name__ == "__main__":

@@ -55,9 +55,10 @@ def record_captures(report, output, captures):
                     flash_image = output.parent / flash_image
                 if hashlib.sha256(flash_image.read_bytes()).hexdigest() != case["flash_image_sha256"]:
                     raise ValueError("flash image changed after build")
-            raw = capture.read_text(encoding="utf-8")
+            capture_bytes = capture.read_bytes()
+            raw = capture_bytes.decode("utf-8")
             case["capture"] = str(capture.resolve())
-            case["capture_sha256"] = hashlib.sha256(raw.encode()).hexdigest()
+            case["capture_sha256"] = hashlib.sha256(capture_bytes).hexdigest()
             case["runtime"] = read_capture(raw, case)
             case["runtime_passed"] = True
             case.pop("runtime_error", None)
