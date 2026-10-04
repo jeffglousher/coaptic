@@ -12,9 +12,11 @@ crate-type = ["staticlib"]
 [features]
 default = []
 oscore = ["qualification-no-std/oscore"]
+network = ["dep:coaptic"]
 
 [dependencies]
 qualification-no-std = { path = "../../../crates/qualification-no-std" }
+coaptic = { path = "../../..", default-features = false, optional = true }
 
 [profile.release]
 opt-level = 3

@@ -350,8 +350,11 @@ jobs:
           cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml
           cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml --features oscore
           cargo clippy --locked --manifest-path tools/esphome/rust/Cargo.toml --all-targets --features oscore -- -D warnings
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml --features network,oscore
+          cargo clippy --locked --manifest-path tools/esphome/rust/Cargo.toml --all-targets --features network,oscore -- -D warnings
           "${{ runner.temp }}/esphome-env/bin/python" -m unittest discover -s tools/esphome -p 'test_*.py'
       - run: '"${{ runner.temp }}/esphome-env/bin/python" tools/qualification/esphome_probe.py --compile --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esphome-probe/build.json"'
+      - run: '"${{ runner.temp }}/esphome-env/bin/python" tools/qualification/esphome_network.py --compile --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esphome-network/build.json"'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -361,6 +364,8 @@ jobs:
             ${{ runner.temp }}/esphome-probe/*.elf
             ${{ runner.temp }}/esphome-probe/*.factory.bin
             ${{ runner.temp }}/esphome-probe/esphome-*/probe.yaml
+            ${{ runner.temp }}/esphome-network/build.json
+            ${{ runner.temp }}/esphome-network/compile.log
           if-no-files-found: error
 
   process-interop:

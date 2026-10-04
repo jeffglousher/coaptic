@@ -1313,7 +1313,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         result
     }
 
-    /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
+    /// Decode occupied RX `id` and assemble the matching Block1 operation.
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
     /// separate). Request-Tag, when present, is stored on the body sidecar.
@@ -1321,6 +1321,8 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// cache-key options are retained exactly, bounded by
     /// [`BlockTransfer::REQUEST_IDENTITY_BYTES`]. A changed operation is refused
     /// before body mutation; integer leading-zero encodings compare equally.
+    /// A continuation without Request-Tag can change Token when endpoint,
+    /// method and retained cache-key options still identify the same operation.
     /// Direct range APIs require the caller to enforce operation matchability.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
@@ -2120,7 +2122,7 @@ impl<S: Storage + BodySlots> Engine<S> {
                 payload.len(),
             )
         };
-        let key = BlockKey::new(token, endpoint).with_identity(identity);
+        let mut key = BlockKey::new(token, endpoint).with_identity(identity);
         if let Some(binding) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
@@ -2131,7 +2133,15 @@ impl<S: Storage + BodySlots> Engine<S> {
                 (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
                     let id = SlotId::from_index(i);
                     let transfer = self.storage.rx_body_transfer(id)?;
-                    same_body_identity(transfer, key, role).then_some(id)
+                    (same_body_identity(transfer, key, role)
+                        || (matches!(which, RxBlockOpt::Block1)
+                            && block.num() != 0
+                            && identity.is_absent()
+                            && transfer.identity().is_absent()
+                            && transfer.role() == role
+                            && transfer.endpoint() == endpoint
+                            && transfer.request_binding == Some(binding)))
+                    .then_some(id)
                 })
             });
             if let Some(id) = existing {
@@ -2142,6 +2152,7 @@ impl<S: Storage + BodySlots> Engine<S> {
                 if transfer.request_binding != Some(binding) {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
+                key = transfer.key();
             }
         }
         let progress = match which {

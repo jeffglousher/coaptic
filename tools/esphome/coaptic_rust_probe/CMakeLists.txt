@@ -25,6 +25,9 @@ set(COAPTIC_FEATURE_ARGS)
 if(COAPTIC_OSCORE)
   list(APPEND COAPTIC_FEATURE_ARGS --features oscore)
 endif()
+if(COAPTIC_NETWORK)
+  list(APPEND COAPTIC_FEATURE_ARGS --features network)
+endif()
 
 add_custom_target(coaptic_rust_build
   COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${COAPTIC_RUST_DIR}" CARGO_INCREMENTAL=0

@@ -1,14 +1,22 @@
 //! Scalar C ABI for running the bounded Coaptic probe inside ESPHome/ESP-IDF.
 //!
 //! This adapter exercises real App loopback and optional OSCORE through a Rust
-//! static library. It is a qualification component, not a networked CoAP driver
-//! or a Taldra gateway. ESPHome owns its task, console and stack accounting.
+//! static library. Feature `network` also supplies a live IPv4 UDP qualification
+//! service. ESPHome owns sockets, tasks, console and stack accounting. This is
+//! not yet a device driver, Home Assistant entity integration or Taldra gateway.
 //!
 //! Generate a pinned ESPHome configuration with `tools/qualification/esphome_probe.py`.
 //! The component links this crate using Rust 1.97.1 for C3/C6 or Espressif Rust
-//! 1.97.0.0 for S3. Only scalar values cross the ABI; no Rust-owned pointers escape.
+//! 1.97.0.0 for S3. Network callbacks borrow buffers synchronously; no Rust-owned
+//! pointers escape. The loopback ABI uses only scalar values.
 //! A panic terminates through ESP-IDF's `abort`, so missing captures cannot pass.
 #![cfg_attr(target_os = "none", no_std)]
+
+#[cfg(feature = "network")]
+pub mod network;
+
+#[cfg(all(feature = "network", target_os = "none"))]
+mod network_ffi;
 
 /// ABI revision required by the ESPHome qualification component.
 #[unsafe(no_mangle)]

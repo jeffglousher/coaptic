@@ -81,6 +81,7 @@ dependencies = [
 name = "coaptic-esphome-probe"
 version = "0.0.0"
 dependencies = [
+ "coaptic",
  "qualification-no-std",
 ]
 
