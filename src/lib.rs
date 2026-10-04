@@ -123,6 +123,26 @@
 //! placement are on the App path. Alternative networks (6LoWPAN,
 //! LoRaWAN, …) are the same future / backlog.
 //!
+//! # Qualification
+//!
+//! The repository retains compiler, command and result artifacts for finite
+//! campaigns. `tools/qualification/seeded.py` includes compound lifecycle soak
+//! and caller-owned replay-storage barriers across process termination.
+//! `tools/qualification/coverage.py --branches` records LLVM branch counters
+//! and execution of the named contracts in `contracts.json`. That contract
+//! list covers selected App and OSCORE behavior; it is not a complete RFC audit.
+//! `tools/qualification/fuzz.py` runs coverage-guided datagram, CBOR and OSCORE
+//! campaigns with address sanitization. Test counts and percentages establish
+//! neither exhaustive inputs nor protocol completeness.
+//!
+//! `tools/qualification/esp32.py --output REPORT.json` builds separate ESP32-C3
+//! core and OSCORE firmware images with distinct run identities. Flash each ELF,
+//! retain UART output, then run the same command with `--record --capture-core
+//! CORE.log --capture-oscore OSCORE.log`. A build report has no device runtime
+//! pass until both captures match their firmware identity and contain valid
+//! stack measurements. These probes use loopback traffic; radio, platform
+//! entropy, allocators and flash power-loss recovery need separate evidence.
+//!
 //! # Features
 //!
 //! - `alloc` — enable the allocator. Off by default.

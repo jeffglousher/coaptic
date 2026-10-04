@@ -1630,17 +1630,33 @@ def separate_client(client, server, timeout=6000):
             result = request(client, "udp", relay.number, path="separate", timeout=timeout)
         trace = relay.trace
     expect(result, 69, b"separate-payload")
+    return grade_separate_trace(trace)
+
+
+def grade_separate_trace(trace):
     responses = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "response"]
     requests = [bytes.fromhex(row["hex"]) for row in trace if row["direction"] == "request"]
+    registrations = [p for p in requests if len(p) >= 4 and p[1] == 1 and (p[0] >> 4) & 3 == 0]
+    if not registrations:
+        raise AssertionError("no confirmable request")
+    registration = registrations[0]
     if not responses or len(responses[0]) != 4 or responses[0][1] != 0 or (responses[0][0] >> 4) & 3 != 2:
         raise AssertionError(f"first response was not an empty ACK: {responses[:1]!r}")
+    if responses[0][2:4] != registration[2:4]:
+        raise AssertionError("empty ACK did not bind the request MID")
     later = [p for p in responses[1:] if (p[0] >> 4) & 3 == 0 and p[1] == 69]
     if not later:
         raise AssertionError("no confirmable 2.05 followed the empty ACK")
+    token = registration[4:4 + (registration[0] & 15)]
+    response = later[0]
+    if response[2:4] == registration[2:4] or response[4:4 + (response[0] & 15)] != token:
+        raise AssertionError("separate response MID/Token binding mismatch")
+    if coap_payload(response) != b"separate-payload":
+        raise AssertionError("separate response payload mismatch")
     acked = later[0][2:4]
     if not any(len(p) == 4 and p[1] == 0 and (p[0] >> 4) & 3 == 2 and p[2:4] == acked for p in requests):
         raise AssertionError("the client did not acknowledge the separate response")
-    return {"responses": len(responses), "requests": len(requests)}
+    return {"responses": len(responses), "requests": len(requests), "trace": trace}
 
 
 def qblock2_interop(client, server):
@@ -2295,6 +2311,8 @@ def main():
     case("no-response-4:coaptic", lambda: no_response_not_found(peers["coaptic"]))
     case("discovery:coaptic", lambda: discovery(peers["coaptic"]))
     case("separate:coaptic", lambda: separate_response(peers["coaptic"]))
+    case("separate:coap-rs", lambda: separate_response(peers["coap-rs"]))
+    case("separate-client:coaptic->coap-rs", lambda: separate_client(peers["coaptic"], peers["coap-rs"]))
     case("no-response-5:coaptic", lambda: no_response_internal(peers["coaptic"]))
     case("observe:coaptic", lambda: observe_counter(peers["coaptic"]))
     case("conditional:coaptic", lambda: conditional_workflow(peers["coaptic"]))

@@ -527,6 +527,14 @@ impl SecurityContext {
     /// context. Use a fresh cryptographic context if recovery is uncertain
     /// (RFC 8613 section 7.5). App does not provide a durable pre-handler barrier;
     /// use the lower-level unprotect API to commit before application effects.
+    ///
+    /// A caller using that API must reserve its sender range durably, restore
+    /// this checkpoint, authenticate a request, and commit the updated checkpoint
+    /// before performing effects or sending a success response. If the write
+    /// fails, stop using the live context until recovery; its in-memory replay
+    /// window has already advanced. Termination after a successful commit can
+    /// leave the effect unapplied. Exactly-once application effects require a
+    /// caller-owned transaction joining replay state and the application state.
     pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
         if checkpoint.left < self.replay_left {
             return Err(Error::ReplayRollback);

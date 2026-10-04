@@ -27,3 +27,5 @@ rustc-ice-*.txt
 
 # Python process harness bytecode
 __pycache__/
+fuzz/corpus/
+fuzz/artifacts/

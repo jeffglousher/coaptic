@@ -95,6 +95,8 @@ mod routing;
 mod site;
 
 #[cfg(test)]
+mod lifecycle_soak;
+#[cfg(test)]
 mod tests;
 
 use core::marker::PhantomData;

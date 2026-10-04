@@ -169,6 +169,64 @@ jobs:
           path: ${{ runner.temp }}/seeded.json
           if-no-files-found: error
 
+  branch-coverage:
+    name: branch coverage evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly-2026-10-01
+          components: llvm-tools
+      - run: python3 tools/qualification/coverage.py --branches --work-root "${{ runner.temp }}/branch-build" --output "${{ runner.temp }}/branches/branch-coverage.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: branch-coverage
+          path: ${{ runner.temp }}/branches/
+          if-no-files-found: error
+
+  fuzz:
+    name: coverage-guided fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly-2026-10-01
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - run: python3 tools/qualification/fuzz.py --seconds 60 --output target/fuzz.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: coverage-guided-fuzzing
+          path: |
+            target/fuzz.json
+            fuzz/corpus/
+            fuzz/artifacts/
+          if-no-files-found: error
+
+  esp32-build:
+    name: ESP32-C3 probe build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.97.1
+          targets: riscv32imc-unknown-none-elf
+      - run: cargo run --locked -p qualification-no-std --example runtime
+      - run: cargo run --locked -p qualification-no-std --example runtime --features oscore
+      - run: python3 tools/qualification/esp32.py --output "${{ runner.temp }}/esp32/build.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: esp32c3-probe
+          path: ${{ runner.temp }}/esp32/
+          if-no-files-found: error
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -179,6 +237,8 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path tools/qualification/esp32/Cargo.toml -- --check
 
   clippy:
     name: clippy
