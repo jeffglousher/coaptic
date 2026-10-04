@@ -2,7 +2,9 @@
 //!
 //! Build with `cargo +1.97.1 build --release --target riscv32imc-unknown-none-elf`
 //! from this directory; add `--features oscore` for the protected-message checks.
-//! Flash and retain UART output with `espflash flash --monitor PATH_TO_ELF`.
+//! Flash and retain console output with `espflash flash --monitor PATH_TO_ELF`.
+//! Output uses native USB Serial/JTAG when connected, otherwise UART0. A board
+//! exposing native USB also supports the built-in JTAG debugger without a probe.
 //! The report covers loopback execution and stack use after HAL initialization.
 //! Radio, allocator, entropy and flash durability remain separate campaigns.
 #![no_std]

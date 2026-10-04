@@ -13,7 +13,7 @@ oscore = ["qualification-no-std/oscore"]
 [dependencies]
 qualification-no-std = { path = "../../../crates/qualification-no-std" }
 esp-hal = { version = "=1.2.2", features = ["esp32c3"] }
-esp-println = { version = "=0.18.0", default-features = false, features = ["esp32c3", "uart"] }
+esp-println = { version = "=0.18.0", default-features = false, features = ["esp32c3", "auto"] }
 esp-bootloader-esp-idf = { version = "=0.6.0", features = ["esp32c3"] }
 
 [profile.release]
