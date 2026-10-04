@@ -1,7 +1,9 @@
-//! ESP32-C3 runtime and stack-paint launcher for the bounded protocol probe.
+//! ESP32-C3/C6 runtime and stack-paint launcher for the bounded protocol probe.
 //!
 //! Build with `cargo +1.97.1 build --release --target riscv32imc-unknown-none-elf`
-//! from this directory; add `--features oscore` for the protected-message checks.
+//! from this directory for C3. For C6, use `--no-default-features --features
+//! esp32c6 --target riscv32imac-unknown-none-elf`. Add `oscore` to the features
+//! for the protected-message checks. Never select the chip from its ISA alone.
 //! Flash and retain console output with `espflash flash --monitor PATH_TO_ELF`.
 //! Output uses native USB Serial/JTAG when connected, otherwise UART0. A board
 //! exposing native USB also supports the built-in JTAG debugger without a probe.
@@ -11,6 +13,16 @@
 #![no_main]
 
 use esp_println::println;
+
+#[cfg(all(feature = "esp32c3", feature = "esp32c6"))]
+compile_error!("select exactly one ESP32 chip");
+#[cfg(not(any(feature = "esp32c3", feature = "esp32c6")))]
+compile_error!("select an ESP32 chip");
+
+#[cfg(feature = "esp32c3")]
+const CHIP: &str = "esp32c3";
+#[cfg(all(feature = "esp32c6", not(feature = "esp32c3")))]
+const CHIP: &str = "esp32c6";
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -29,8 +41,8 @@ impl StackPaint {
     /// Paint unused CPU0 stack below the current frame, leaving a 1024-byte gap.
     ///
     /// # Safety
-    /// Must run on the ESP32-C3 CPU0 main stack after HAL initialization, before
-    /// any other execution context can use this stack region. Linker stack bounds
+    /// Must run on the selected chip's CPU0 main stack after HAL initialization,
+    /// before any other execution context can use this region. Linker stack bounds
     /// must describe writable RAM; the first 256 bytes contain the stack guard.
     unsafe fn initialize() -> Self {
         let pointer: usize;
@@ -71,7 +83,8 @@ fn main() -> ! {
     let passed = result.is_ok();
     let high_water = unsafe { paint.high_water() };
     println!(
-        "COAPTIC_DEVICE {{\"schema\":\"coaptic-device/1\",\"chip\":\"esp32c3\",\"run_id\":\"{}\",\"passed\":{},\"oscore\":{},\"stack_high_water_bytes\":{},\"stack_capacity_bytes\":{}}}",
+        "COAPTIC_DEVICE {{\"schema\":\"coaptic-device/1\",\"chip\":\"{}\",\"run_id\":\"{}\",\"passed\":{},\"oscore\":{},\"stack_high_water_bytes\":{},\"stack_capacity_bytes\":{}}}",
+        CHIP,
         option_env!("COAPTIC_DEVICE_RUN_ID").unwrap_or("manual"),
         passed,
         cfg!(feature = "oscore"),

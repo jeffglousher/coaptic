@@ -209,21 +209,29 @@ jobs:
           if-no-files-found: error
 
   esp32-build:
-    name: ESP32-C3 probe build
+    name: ESP32 probe build (${{ matrix.chip }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: 1.97.1
-          targets: riscv32imc-unknown-none-elf
+          targets: ${{ matrix.target }}
       - run: cargo run --locked -p qualification-no-std --example runtime
       - run: cargo run --locked -p qualification-no-std --example runtime --features oscore
-      - run: python3 tools/qualification/esp32.py --output "${{ runner.temp }}/esp32/build.json"
+      - run: python3 tools/qualification/esp32.py --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esp32/build.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: esp32c3-probe
+          name: ${{ matrix.chip }}-probe
           path: ${{ runner.temp }}/esp32/
           if-no-files-found: error
 
@@ -239,6 +247,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
       - run: cargo fmt --manifest-path tools/qualification/esp32/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path tools/esphome/rust/Cargo.toml -- --check
 
   clippy:
     name: clippy
@@ -306,6 +315,40 @@ jobs:
             exit 1
           fi
       - run: cargo package -p coaptic --locked
+
+  esphome-build:
+    name: ESPHome Coaptic probe (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - run: |
+          python3 -m venv "${{ runner.temp }}/esphome-env"
+          "${{ runner.temp }}/esphome-env/bin/python" -m pip install esphome==2026.9.1
+      - run: |
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml --features oscore
+          cargo clippy --locked --manifest-path tools/esphome/rust/Cargo.toml --all-targets --features oscore -- -D warnings
+          "${{ runner.temp }}/esphome-env/bin/python" -m unittest discover -s tools/esphome -p 'test_*.py'
+      - run: '"${{ runner.temp }}/esphome-env/bin/python" tools/qualification/esphome_probe.py --compile --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esphome-probe/build.json"'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: esphome-${{ matrix.chip }}-probe
+          path: ${{ runner.temp }}/esphome-probe/
+          if-no-files-found: error
 
   process-interop:
     name: independent process interop

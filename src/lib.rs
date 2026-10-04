@@ -135,13 +135,42 @@
 //! campaigns with address sanitization. Test counts and percentages establish
 //! neither exhaustive inputs nor protocol completeness.
 //!
-//! `tools/qualification/esp32.py --output REPORT.json` builds separate ESP32-C3
-//! core and OSCORE firmware images with distinct run identities. Flash each ELF,
-//! retain UART output, then run the same command with `--record --capture-core
+//! `tools/qualification/esp32.py --chip esp32c3 --output REPORT.json` builds core
+//! and OSCORE firmware images with distinct run identities. Use `--chip esp32c6`
+//! for C6; the HAL features and Rust targets differ. An ISA description does not
+//! identify the chip. `uv run --python 3.13 --with esptool==5.4.0 python
+//! tools/qualification/esp32_detect.py --output PORTS.json` inventories ports.
+//! Add `--port COM7` to query that device's ROM and reset it afterward without
+//! writing flash. Add `--firmware-report REPORT.json` to verify chip selection
+//! and image hashes. Unprepared chip families refuse image selection.
+//!
+//! Flash each selected ELF, retain console output, then run the build-report
+//! command with `--record --capture-core
 //! CORE.log --capture-oscore OSCORE.log`. A build report has no device runtime
 //! pass until both captures match their firmware identity and contain valid
 //! stack measurements. These probes use loopback traffic; radio, platform
 //! entropy, allocators and flash power-loss recovery need separate evidence.
+//! Firmware paths in new reports are relative, so a downloaded artifact can be
+//! moved as a directory before selecting images or recording captures.
+//!
+//! `uv run --python 3.13 --with esphome==2026.9.1 python
+//! tools/qualification/esphome_probe.py --chip esp32c3 --output REPORT.json`
+//! validates and generates an ESPHome external-component configuration. Add
+//! `--compile` to link complete ESPHome/ESP-IDF firmware against the Rust probe;
+//! code generation alone leaves `build_passed` false. C6 uses `--chip esp32c6`.
+//! The component owns one 96 KiB FreeRTOS task with a 30-second work deadline,
+//! deletes it on the ESPHome loop after completion or timeout, and records used
+//! stack bytes from ESP-IDF's minimum free-stack measurement. Recording uses the
+//! same
+//! `--record --capture-core ... --capture-oscore ...` options and additionally
+//! binds the result to the ESPHome runtime. Hardware execution remains pending
+//! until both configurations produce matching captures.
+//!
+//! This component qualifies Coaptic inside ESPHome; the networked CoAP driver
+//! and Taldra gateway are tracked in [#333]. No Taldra streaming or durability
+//! guarantee is inferred from a CoAP acknowledgement or a loopback result.
+//!
+//! [#333]: https://github.com/jeffglousher/coaptic/issues/333
 //!
 //! # Features
 //!

@@ -603,6 +603,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a8733fdeadc349ba1e4a345c7bfb74d195d8c98fd3be9d2c15bfd78601cbc44"
 dependencies = [
  "document-features",
+ "object",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -649,6 +650,7 @@ dependencies = [
  "document-features",
  "esp-metadata-generated",
  "esp32c3",
+ "esp32c6",
 ]
 
 [[package]]
@@ -664,6 +666,7 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp32c3",
+ "esp32c6",
 ]
 
 [[package]]
@@ -1046,6 +1049,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
