@@ -174,7 +174,6 @@ pub struct DeferredReply {
 
 type AppDispatch<'a> = dyn FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static> + 'a;
 
-const DEFERRED_REPLIES: usize = 4;
 #[derive(Clone, Copy)]
 struct DeferredRow {
     handle: DeferredReply,
@@ -262,14 +261,14 @@ fn deferred_reply_metadata(
         .map_err(|_| ResponseError::DeferredMetadataBounds)
 }
 
-struct DeferredTable {
-    rows: [Option<DeferredRow>; DEFERRED_REPLIES],
+struct DeferredTable<const DEFERRED: usize> {
+    rows: [Option<DeferredRow>; DEFERRED],
     generation: u64,
 }
-impl DeferredTable {
+impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
     const fn new() -> Self {
         Self {
-            rows: [None; DEFERRED_REPLIES],
+            rows: [None; DEFERRED],
             generation: 0,
         }
     }
@@ -353,6 +352,7 @@ pub struct App<
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
     S: AppStorage = AppStore<P, BLOCK_WISE>,
+    const DEFERRED: usize = 0,
 > where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -374,7 +374,7 @@ pub struct App<
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
     assembled: AssembledField<P, BLOCK_WISE>,
-    deferred: DeferredTable,
+    deferred: DeferredTable<DEFERRED>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
@@ -390,6 +390,7 @@ pub struct AppBuilder<
     Block = Missing,
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
+    const DEFERRED: usize = 0,
 > {
     site: Site<N>,
     echo_policy: Option<EchoPolicy>,
@@ -426,8 +427,8 @@ impl App {
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
-    AppBuilder<P, Block, N, BLOCK_WISE>
+impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize>
+    AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED>
 {
     /// Site table size (default [`DEFAULT_ROUTES`]). Call before
     /// [`Self::route`].
@@ -436,7 +437,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
     ///
     /// If a route is already registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE> {
+    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -448,6 +449,32 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
         }
         AppBuilder {
             site,
+            echo_policy: self.echo_policy,
+            full_responses: self.full_responses,
+            deferred_lifetime_ms: self.deferred_lifetime_ms,
+            identity: self.identity,
+            _p: PhantomData,
+            _b: PhantomData,
+        }
+    }
+
+    /// Configure bounded deferred server work on the same App builder.
+    ///
+    /// Defaults to zero rows: ordinary clients reserve no request/response
+    /// header arrays for deferred work. Four rows is a useful server starting
+    /// point. Each enabled row reserves bounded 512-byte request selection and
+    /// 512-byte response-header metadata; body bytes stay in existing TX pools.
+    /// The slot count is independent of storage allocation and `std`.
+    ///
+    /// TX slots are shared by pending CONs, encoded dedup replies and response
+    /// workspace. Reserve at least pending-CON slots plus one workspace slot;
+    /// adding dedup-entry capacity preserves every cached wire reply. With a
+    /// smaller pool, App reclaims a dedup wire pin into an empty-ACK tombstone:
+    /// the original request is acknowledged without repeating its handler.
+    #[must_use]
+    pub fn deferred<const SLOTS: usize>(self) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS> {
+        AppBuilder {
+            site: self.site,
             echo_policy: self.echo_policy,
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
@@ -471,6 +498,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
 
     /// Bound how long a deferred response handle remains usable.
     ///
+    /// Enable slots with [`Self::deferred`] before accepting deferred work.
     /// Defaults to EXCHANGE_LIFETIME. Application identity and durable
     /// idempotency remain caller-owned; increasing this bound does not extend
     /// protocol duplicate history after completion or change retransmission.
@@ -546,7 +574,9 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool>
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize, const PREV: bool> AppBuilder<P, Block, N, PREV> {
+impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: usize>
+    AppBuilder<P, Block, N, PREV, DEFERRED>
+{
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
     /// Shipped profiles use 4096 bytes per body slot, even
@@ -562,7 +592,7 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool> AppBuilder<P, Bl
     /// [`App::take_response`] in either mode; enable Block2 and read
     /// [`Response::body`] for the full representation.
     #[must_use]
-    pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED> {
+    pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED, DEFERRED> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -575,7 +605,8 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool> AppBuilder<P, Bl
     }
 }
 
-impl<P, const N: usize, const BLOCK_WISE: bool> AppBuilder<P, Present, N, BLOCK_WISE>
+impl<P, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize>
+    AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -583,7 +614,10 @@ where
     ///
     /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
     /// without changing request builders, response types or the reactor.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, BLOCK_WISE>, BuildError> {
+    pub fn bind<T>(
+        self,
+        io: T,
+    ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED>, BuildError> {
         let engine = EngineBuilder::new()
             .profile::<P>()
             .block_wise(BLOCK_WISE)
@@ -601,7 +635,7 @@ where
         self,
         io: T,
         storage: S,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
         let c = storage.capacities();
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
@@ -623,7 +657,7 @@ where
         self,
         io: T,
         c: crate::storage::Capacities,
-    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED>, BuildError> {
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -640,7 +674,7 @@ where
         self,
         io: T,
         engine: Engine<S>,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
         Ok(App {
             engine,
             io,
@@ -665,7 +699,8 @@ impl<
     const N: usize,
     const BLOCK_WISE: bool,
     S: AppStorage,
-> App<P, T, N, BLOCK_WISE, S>
+    const DEFERRED: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED>
 {
     /// Bind `methods` on Uri-Path `path`.
     ///
@@ -845,7 +880,8 @@ impl<
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: AppStorage> App<P, T, N, BLOCK_WISE, S>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: AppStorage, const DEFERRED: usize>
+    App<P, T, N, BLOCK_WISE, S, DEFERRED>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -970,7 +1006,8 @@ where
     /// validation. It borrows the complete request only during the callback.
     /// Copy work into caller-owned bounded storage, retain the supplied handle,
     /// and return [`Response::deferred`] to finish through [`Self::complete`].
-    /// Four deferred replies are bounded independently of client Calls. A handle
+    /// Deferred rows selected by [`AppBuilder::deferred`] are bounded
+    /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
     /// zero, or Observe/Q-Block2 selection needs
     /// synchronous dispatch. Returning deferred without a handle produces 5.03.
@@ -1138,7 +1175,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn poll_engine<Mem, T, const N: usize>(
+fn poll_engine<Mem, T, const N: usize, const DEFERRED: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
@@ -1149,7 +1186,7 @@ fn poll_engine<Mem, T, const N: usize>(
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
-    deferred: &mut DeferredTable,
+    deferred: &mut DeferredTable<DEFERRED>,
     deferred_lifetime_ms: u64,
     mut dispatch: Option<&mut AppDispatch<'_>>,
     now_ms: u64,
@@ -1559,7 +1596,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dispatch_rx<Mem, T, const N: usize>(
+fn dispatch_rx<Mem, T, const N: usize, const DEFERRED: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
@@ -1570,7 +1607,7 @@ fn dispatch_rx<Mem, T, const N: usize>(
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
-    deferred: &mut DeferredTable,
+    deferred: &mut DeferredTable<DEFERRED>,
     deferred_lifetime_ms: u64,
     dispatch: Option<&mut AppDispatch<'_>>,
     now_ms: u64,
@@ -2677,7 +2714,7 @@ where
     let mid = ids.next_for(engine, now_ms)?;
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
 
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = acquire_tx_or_evict(engine) else {
         return Err(Error::Saturated);
     };
 
@@ -4148,7 +4185,7 @@ pub(crate) fn send_empty_ack<S, T>(
     mid: crate::message::MessageId,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots,
+    S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     send_empty(engine, io, dest, Message::empty_ack(mid))
@@ -4161,7 +4198,7 @@ fn send_empty_rst<S, T>(
     mid: crate::message::MessageId,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots,
+    S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     send_empty(engine, io, dest, Message::empty_rst(mid))
@@ -4174,10 +4211,10 @@ fn send_empty<S, T>(
     msg: Message<'static>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots,
+    S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = acquire_tx_or_evict(engine) else {
         return Err(Error::Saturated);
     };
     if let Err(e) = engine.encode_tx(tx, &msg) {

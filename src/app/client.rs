@@ -768,10 +768,11 @@ pub struct Outgoing<
     Dest = Missing,
     const BLOCK_WISE: bool = false,
     S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
+    const DEFERRED: usize = 0,
 > where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE, S>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -796,7 +797,8 @@ pub struct Outgoing<
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage> App<P, T, N, BLOCK_WISE, S>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    App<P, T, N, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -805,44 +807,65 @@ where
     /// Distinct from the site router [`get`](super::get).
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
-    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn get(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn put(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn post(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn delete(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Delete, path)
     }
 
     /// CON FETCH builder. Set [`Outgoing::content_format`] for the selection
     /// body (also required for an empty selection), then [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn fetch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn patch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    pub fn ipatch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::IPatch, path)
     }
 
@@ -852,7 +875,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -881,7 +904,8 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage> App<P, T, N, BLOCK_WISE, S>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    App<P, T, N, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1050,14 +1074,22 @@ where
     }
 }
 
-impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool, S: super::AppStorage>
-    Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S>
+impl<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S> {
+    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -1298,8 +1330,8 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage>
-    Outgoing<'_, P, T, N, Present, BLOCK_WISE, S>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1532,7 +1564,8 @@ impl<
     const N: usize,
     const BLOCK_WISE: bool,
     S: super::AppStorage,
-> App<P, T, N, BLOCK_WISE, S>
+    const DEFERRED: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
@@ -1856,7 +1889,13 @@ pub(crate) fn complete_client<Mem, T>(
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + Exchanges
+        + BodySlots
+        + ObserveSlots
+        + crate::storage::DedupSlots,
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);

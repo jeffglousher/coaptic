@@ -11654,6 +11654,7 @@ fn deferred_completion_acknowledges_once_and_retransmits_only_wire_response() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
+        .deferred::<4>()
         .block_wise::<false>()
         .bind(RecordIo::default())
         .unwrap();
@@ -11712,6 +11713,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
+        .deferred::<4>()
         .deferred_lifetime(10)
         .block_wise::<false>()
         .bind(RecordIo::default())
@@ -11795,12 +11797,14 @@ fn deferred_oscore_completion_preserves_authenticated_request_binding() {
     };
     let mut client = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
+        .deferred::<4>()
         .block_wise::<false>()
         .full_responses()
         .bind(WideLoopback::default())
         .unwrap();
     let mut server = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
+        .deferred::<4>()
         .block_wise::<false>()
         .bind(WideLoopback::default())
         .unwrap();
@@ -11870,16 +11874,20 @@ fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
             continue;
         }
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
-        let capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
+        let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
             .with_block_wise::<profiles::Default>();
+        capacities.rx_body_bytes = Some(81920);
+        capacities.tx_body_bytes = Some(81920);
         let mut client = crate::App::builder()
             .deterministic_for_tests()
+            .deferred::<4>()
             .block_wise::<true>()
             .full_responses()
             .bind_alloc(WideLoopback::default(), capacities)
             .unwrap();
         let mut server = crate::App::builder()
             .deterministic_for_tests()
+            .deferred::<4>()
             .block_wise::<true>()
             .bind_alloc(WideLoopback::default(), capacities)
             .unwrap();
@@ -11900,79 +11908,84 @@ fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
             client.set_oscore(make(&[1], &[2]));
             server.set_oscore(make(&[2], &[1]));
         }
-        let body: [u8; 3500] = core::array::from_fn(|index| (index % 251) as u8);
-        let call = client
-            .post("durable")
-            .to(peer)
-            .payload(b"domain-command")
-            .content_format(ContentFormat::CBOR)
-            .send(0)
-            .unwrap();
-        let transport = client.transport_mut();
-        let mut queued = VecDeque::from([(transport.sends[0], transport.send_lens[0])]);
-        transport.send_n = 0;
         let mut domain_calls = 0;
-        let mut finished = false;
-        let mut output = [0; 3500];
-        for now in 1..30 {
-            let Some((wire, n)) = queued.pop_front() else {
-                break;
-            };
-            server.transport_mut().send_n = 0;
-            server.transport_mut().inbox = Some((peer, wire, n));
-            let mut handle = None;
-            server
-                .poll_with(now, |request, candidate| {
-                    domain_calls += 1;
-                    assert_eq!(request.payload(), b"domain-command");
-                    handle = candidate;
-                    Response::deferred()
-                })
+        // Reuse the same four TX slots while more than eight dedup replies
+        // pass through each large transfer and a subsequent durable request.
+        for round in 0..2 {
+            let body: alloc::vec::Vec<u8> = (0..70001).map(|index| (index % 251) as u8).collect();
+            let call = client
+                .post("durable")
+                .to(peer)
+                .payload(b"domain-command")
+                .content_format(ContentFormat::CBOR)
+                .send(round * 1000)
                 .unwrap();
-            if let Some(handle) = handle {
+            let transport = client.transport_mut();
+            let mut queued = VecDeque::from([(transport.sends[0], transport.send_lens[0])]);
+            transport.send_n = 0;
+            let mut finished = false;
+            let mut output = alloc::vec![0; 70001];
+            for now in (round * 1000 + 1)..(round * 1000 + 300) {
+                let Some((wire, n)) = queued.pop_front() else {
+                    break;
+                };
+                server.transport_mut().send_n = 0;
+                server.transport_mut().inbox = Some((peer, wire, n));
+                let mut handle = None;
                 server
-                    .complete(
-                        handle,
-                        Response::new(Code::CHANGED)
-                            .payload_borrowed(&body)
-                            .content_format(ContentFormat::CBOR)
-                            .etag(b"stable"),
-                        now,
-                    )
+                    .poll_with(now, |request, candidate| {
+                        domain_calls += 1;
+                        assert_eq!(request.payload(), b"domain-command");
+                        handle = candidate;
+                        Response::deferred()
+                    })
                     .unwrap();
-            }
-            let transport = server.transport_mut();
-            let replies = transport.sends;
-            let lengths = transport.send_lens;
-            let count = transport.send_n;
-            for i in 0..count {
-                client.transport_mut().inbox = Some((peer, replies[i], lengths[i]));
-                client.poll(now).unwrap();
-                let transport = client.transport_mut();
-                for i in 0..transport.send_n {
-                    queued.push_back((transport.sends[i], transport.send_lens[i]));
+                if let Some(handle) = handle {
+                    server
+                        .complete(
+                            handle,
+                            Response::new(Code::CHANGED)
+                                .payload_borrowed(&body)
+                                .content_format(ContentFormat::CBOR)
+                                .etag(b"stable"),
+                            now,
+                        )
+                        .unwrap();
                 }
-                transport.send_n = 0;
-                if let Some(response) = client.take_response_into(call, &mut output).unwrap() {
-                    let response = response.unwrap();
-                    assert_eq!(response.code(), Code::CHANGED);
-                    assert_eq!(response.payload(), body);
-                    assert_eq!(response.format(), Some(ContentFormat::CBOR));
-                    assert_eq!(response.etag_bytes(), Some(&b"stable"[..]));
-                    finished = true;
+                let transport = server.transport_mut();
+                let replies = transport.sends;
+                let lengths = transport.send_lens;
+                let count = transport.send_n;
+                for i in 0..count {
+                    client.transport_mut().inbox = Some((peer, replies[i], lengths[i]));
+                    client.poll(now).unwrap();
+                    let transport = client.transport_mut();
+                    for i in 0..transport.send_n {
+                        queued.push_back((transport.sends[i], transport.send_lens[i]));
+                    }
+                    transport.send_n = 0;
+                    if let Some(response) = client.take_response_into(call, &mut output).unwrap() {
+                        let response = response.unwrap();
+                        assert_eq!(response.code(), Code::CHANGED);
+                        assert_eq!(response.payload(), body);
+                        assert_eq!(response.format(), Some(ContentFormat::CBOR));
+                        assert_eq!(response.etag_bytes(), Some(&b"stable"[..]));
+                        finished = true;
+                    }
                 }
             }
-        }
-        assert!(finished, "protected={protected}");
-        assert_eq!(domain_calls, 1);
-        assert!(server.deferred.rows.iter().all(Option::is_none));
-        for i in 0..capacities.tx_body_slots.unwrap() {
-            assert!(
-                server
-                    .engine()
-                    .tx_body_transfer(crate::storage::SlotId::from_index(i))
-                    .is_none()
-            );
+            assert!(finished, "protected={protected}");
+            assert_eq!(domain_calls, round + 1);
+            assert!(server.deferred.rows.iter().all(Option::is_none));
+            for i in 0..capacities.tx_body_slots.unwrap() {
+                assert!(
+                    server
+                        .engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            assert!(server.engine_mut().tx_occupied() <= capacities.tx_datagram_slots);
         }
     }
 }
@@ -12000,6 +12013,7 @@ fn failed_deferred_ack_retains_work_and_completion_send_failure_keeps_handle() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = crate::App::builder()
         .deterministic_for_tests()
+        .deferred::<4>()
         .bind(Failable::default())
         .unwrap();
     let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
@@ -12038,6 +12052,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = crate::App::builder()
         .deterministic_for_tests()
+        .deferred::<4>()
         .block_wise::<true>()
         .deferred_lifetime(10)
         .bind(WideLoopback::default())
@@ -12132,6 +12147,7 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
     let mut client = make(&[1], &[2]);
     let mut app = crate::App::builder()
         .deterministic_for_tests()
+        .deferred::<4>()
         .bind(Failable::default())
         .unwrap();
     app.set_oscore(make(&[2], &[1]));
