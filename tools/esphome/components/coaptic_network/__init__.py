@@ -72,7 +72,7 @@ async def to_code(config):
     if config["rust_runtime"] == "bundled":
         root = Path(__file__).resolve().parent
         archive = root / "lib" / "libcoaptic_esphome_probe.a"
-        esp32.add_idf_component(name="coaptic_rust_network", path=str(root / "rust"))
+        esp32.add_idf_component(name="coaptic_rust_network", path=str(root / "coaptic_rust_network"))
         cg.add_cmake_arg("COAPTIC_RUST_ARCHIVE", archive.as_posix())
         return
     root = Path(__file__).resolve().parents[2]

@@ -57,7 +57,7 @@ class ConfigurationRefusalTests(unittest.TestCase):
                 manifest = (root / "build/src/idf_component.yml").read_text()
                 if runtime == "bundled":
                     self.assertIn("coaptic_rust_network", manifest)
-                    self.assertIn((components / "coaptic_network/rust").as_posix(), manifest.replace("\\", "/"))
+                    self.assertIn((components / "coaptic_network/coaptic_rust_network").as_posix(), manifest.replace("\\", "/"))
                 else:
                     self.assertNotIn("coaptic_rust_network", manifest)
 
