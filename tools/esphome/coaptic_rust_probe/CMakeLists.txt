@@ -21,7 +21,7 @@ endif()
 find_program(COAPTIC_CARGO cargo REQUIRED)
 set(COAPTIC_RUST_DIR "${CMAKE_BINARY_DIR}/coaptic-rust")
 set(COAPTIC_ARCHIVE "${COAPTIC_RUST_DIR}/${COAPTIC_RUST_TARGET}/release/libcoaptic_esphome_probe.a")
-set(COAPTIC_FEATURE_ARGS)
+set(COAPTIC_FEATURE_ARGS --features standalone)
 if(COAPTIC_OSCORE)
   list(APPEND COAPTIC_FEATURE_ARGS --features oscore)
 endif()
@@ -31,8 +31,8 @@ endif()
 
 add_custom_target(coaptic_rust_build
   COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${COAPTIC_RUST_DIR}" CARGO_INCREMENTAL=0
-    "${COAPTIC_CARGO}" "+${COAPTIC_RUST_TOOLCHAIN}" build ${COAPTIC_BUILD_STD_ARGS} --locked --manifest-path "${COAPTIC_RUST_MANIFEST}"
-    --release --target "${COAPTIC_RUST_TARGET}" --no-default-features ${COAPTIC_FEATURE_ARGS}
+    "${COAPTIC_CARGO}" "+${COAPTIC_RUST_TOOLCHAIN}" rustc ${COAPTIC_BUILD_STD_ARGS} --locked --manifest-path "${COAPTIC_RUST_MANIFEST}"
+    --release --target "${COAPTIC_RUST_TARGET}" --no-default-features ${COAPTIC_FEATURE_ARGS} --crate-type staticlib
   BYPRODUCTS "${COAPTIC_ARCHIVE}"
   VERBATIM)
 

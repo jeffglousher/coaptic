@@ -1,4 +1,6 @@
 from pathlib import Path
+import hashlib
+import json
 import re
 
 import esphome.codegen as cg
@@ -27,17 +29,36 @@ def native_toolchain(config):
     return config
 
 
+def validate_runtime(config):
+    if config["rust_runtime"] == "bundled":
+        if esp32.get_esp32_variant() != VARIANT_ESP32S3:
+            raise cv.Invalid("bundled Rust is prepared only for ESP32-S3")
+        root = Path(__file__).resolve().parent / "lib"
+        try:
+            report = json.loads((root / "build.json").read_text())
+            if (report["target"] != "xtensa-esp32s3-none-elf" or
+                    report["features"] != ["network", "standalone"]):
+                raise cv.Invalid("Coaptic Rust archive target or features mismatch")
+            if hashlib.sha256((root / "libcoaptic_esphome_probe.a").read_bytes()).hexdigest() != report["archive_sha256"]:
+                raise cv.Invalid("Coaptic Rust archive checksum mismatch")
+        except (OSError, KeyError, ValueError) as error:
+            raise cv.Invalid(f"Coaptic Rust archive is unavailable: {error}") from error
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(CoapticNetwork),
         cv.Required("run_id"): run_id,
         cv.Required("qualification_only"): cv.All(cv.boolean, cv.one_of(True)),
+        cv.Optional("rust_runtime", default="source"): cv.one_of("source", "bundled", "external"),
         cv.Optional("port", default=5683): cv.int_range(min=1, max=65535),
     }).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
     cv.only_with_framework("esp-idf"),
     esp32.only_on_variant(supported=[VARIANT_ESP32C3, VARIANT_ESP32C6, VARIANT_ESP32S3]),
     native_toolchain,
+    validate_runtime,
 )
 
 
@@ -46,6 +67,14 @@ async def to_code(config):
     await cg.register_component(component, config)
     cg.add(component.set_run_id(config["run_id"]))
     cg.add(component.set_port(config["port"]))
+    if config["rust_runtime"] == "external":
+        return
+    if config["rust_runtime"] == "bundled":
+        root = Path(__file__).resolve().parent
+        archive = root / "lib" / "libcoaptic_esphome_probe.a"
+        esp32.add_idf_component(name="coaptic_rust_network", path=str(root / "rust"))
+        cg.add_cmake_arg("COAPTIC_RUST_ARCHIVE", archive.as_posix())
+        return
     root = Path(__file__).resolve().parents[2]
     rust_component = root / "coaptic_rust_probe"
     esp32.add_idf_component(name="coaptic_rust_probe", path=str(rust_component))

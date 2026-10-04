@@ -7,12 +7,14 @@ publish = false
 [workspace]
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
 
 [features]
 default = []
 oscore = ["qualification-no-std/oscore"]
 network = ["dep:coaptic", "dep:critical-section"]
+library-only = []
+standalone = []
 
 [dependencies]
 qualification-no-std = { path = "../../../crates/qualification-no-std" }

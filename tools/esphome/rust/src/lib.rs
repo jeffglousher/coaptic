@@ -10,6 +10,29 @@
 //! 1.97.0.0 for S3. Network callbacks borrow buffers synchronously; no Rust-owned
 //! pointers escape. The loopback ABI uses only scalar values.
 //! A panic terminates through ESP-IDF's `abort`, so missing captures cannot pass.
+//!
+//! ESP32-S3 builders without Cargo can import `coaptic_network` from this Git
+//! repository using `external_components.source.path: tools/esphome/components`,
+//! an immutable Git ref, and `coaptic_network.rust_runtime: bundled`. Generate the
+//! bundled archive with `tools/esphome/build_archive.py`; its checked SHA-256,
+//! compiler identity and source hashes live beside it. The import uses ESP-IDF's
+//! local component dependency mechanism and does not replace
+//! `EXTRA_COMPONENT_DIRS`, allowing other native components in the same build.
+//! The bundled service requires `qualification_only: true` and a fresh 32-digit
+//! hexadecimal `run_id`. It remains a private-network test service, not a
+//! supported Home Assistant integration.
+//!
+//! To combine this service with another Rust subsystem, consume this crate as
+//! an `rlib` dependency with features `network,library-only`, produce one
+//! enclosing `staticlib`, and configure `coaptic_network.rust_runtime: external`.
+//! The enclosing crate owns the single panic handler and must retain this
+//! crate's exported C ABI. Do not link the standalone archive beside another
+//! Rust static library: their panic runtimes can conflict. `library-only` is
+//! intended for dependency builds, not a standalone `no_std` staticlib build.
+//! Source and archive tooling explicitly enables `standalone` and requests
+//! `--crate-type staticlib`; normal dependency builds produce only an `rlib`.
+//! Qualify the final link, stack and simultaneous transports; separate firmware
+//! tests alone do not establish combined HID reliability.
 #![cfg_attr(target_os = "none", no_std)]
 
 #[cfg(feature = "network")]
@@ -17,6 +40,9 @@ pub mod network;
 
 #[cfg(all(feature = "network", target_os = "none"))]
 mod network_ffi;
+
+#[cfg(all(feature = "network", target_os = "none"))]
+pub use network_ffi::coaptic_network_run;
 
 /// ABI revision required by the ESPHome qualification component.
 #[unsafe(no_mangle)]
@@ -44,12 +70,20 @@ pub extern "C" fn coaptic_probe_run() -> i32 {
     }
 }
 
-#[cfg(target_os = "none")]
+#[cfg(all(
+    target_os = "none",
+    feature = "standalone",
+    not(feature = "library-only")
+))]
 unsafe extern "C" {
     fn abort() -> !;
 }
 
-#[cfg(target_os = "none")]
+#[cfg(all(
+    target_os = "none",
+    feature = "standalone",
+    not(feature = "library-only")
+))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     unsafe { abort() }
