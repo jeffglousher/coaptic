@@ -231,6 +231,9 @@ pub fn as_str(bytes: &[u8]) -> Result<&str, ValueError> {
 pub struct ContentFormat(u16);
 
 impl ContentFormat {
+    /// application/cbor (RFC 7049 / IANA Content-Format 60).
+    pub const CBOR: Self = Self(60);
+
     /// `text/plain; charset=utf-8`.
     pub const TEXT_PLAIN: Self = Self(0);
     /// `application/link-format`.
