@@ -128,6 +128,33 @@ impl Call {
     }
 }
 
+/// Caller-buffer collection failed without consuming the completed reply.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponseBufferError {
+    /// The complete representation does not fit; retry with a larger buffer.
+    TooSmall {
+        /// Exact complete representation length.
+        required: usize,
+        /// Supplied output capacity.
+        available: usize,
+    },
+    /// Complete bytes are unavailable (legacy truncated snapshot or invalid storage).
+    Unavailable,
+}
+impl core::fmt::Display for ResponseBufferError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TooSmall {
+                required,
+                available,
+            } => write!(f, "response needs {required} bytes; buffer has {available}"),
+            Self::Unavailable => f.write_str("complete response bytes unavailable"),
+        }
+    }
+}
+#[cfg(feature = "std")]
+impl std::error::Error for ResponseBufferError {}
+
 /// Local terminal outcome of a client call, distinct from a remote CoAP response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallFailure {
@@ -194,7 +221,7 @@ pub const RESPONSE_OPTION_BYTES: usize = 512;
 pub const OBSERVE_REQUEST_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
-struct ReplyMeta {
+pub(super) struct ReplyMeta {
     received_at_ms: u64,
     header: [u8; RESPONSE_OPTION_BYTES],
     header_len: u16,
@@ -205,7 +232,7 @@ struct ReplyMeta {
 }
 
 impl ReplyMeta {
-    fn from_parsed(
+    pub(super) fn from_parsed(
         parsed: &ParsedMessage<'_>,
         peer: Endpoint,
         received_at_ms: u64,
@@ -249,7 +276,7 @@ impl ReplyMeta {
         })
     }
 
-    fn response(&self) -> Response<'_> {
+    pub(super) fn response(&self) -> Response<'_> {
         // The stored header was produced by the encoder and is immutable.
         let parsed = crate::message::decode(&self.header[..usize::from(self.header_len)])
             .expect("encoded response header");
@@ -299,6 +326,7 @@ struct InboxRow {
     call: Call,
     meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
+    datagram: Option<SlotId>,
 }
 
 /// Bounded completed-reply table (not a seventh memory area).
@@ -336,6 +364,7 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(prev);
         }
@@ -345,10 +374,34 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(None);
         }
         Err(())
+    }
+
+    pub(super) fn holds_datagram(&self, rx: SlotId) -> bool {
+        self.rows
+            .iter()
+            .flatten()
+            .any(|row| row.datagram == Some(rx))
+    }
+
+    fn take_datagram(&mut self, call: Call) -> Option<SlotId> {
+        self.rows
+            .iter_mut()
+            .flatten()
+            .find(|row| row.call == call)?
+            .datagram
+            .take()
+    }
+
+    fn completed(&self, call: Call) -> Option<&InboxRow> {
+        self.rows
+            .iter()
+            .flatten()
+            .find(|row| row.complete && row.call == call)
     }
 
     fn discard(&mut self, call: Call) {
@@ -707,11 +760,19 @@ enum OutgoingObserve {
 /// app.poll(0).unwrap();
 /// let _ = app.take_response(call);
 /// ```
-pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing, const BLOCK_WISE: bool = false>
-where
+pub struct Outgoing<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest = Missing,
+    const BLOCK_WISE: bool = false,
+    S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
+    const DEFERRED: usize = 0,
+> where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -736,7 +797,8 @@ where
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    App<P, T, N, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -745,44 +807,65 @@ where
     /// Distinct from the site router [`get`](super::get).
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
-    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn get(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn put(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn post(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn delete(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Delete, path)
     }
 
     /// CON FETCH builder. Set [`Outgoing::content_format`] for the selection
     /// body (also required for an empty selection), then [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn fetch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn patch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn ipatch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         self.request(Method::IPatch, path)
     }
 
@@ -792,7 +875,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -821,7 +904,8 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    App<P, T, N, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -862,12 +946,21 @@ where
     /// retain the first accepted fragment's header metadata; no response is
     /// exposed until assembly completes. Metadata and assembled bytes borrow App.
     pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
             super::oscore::cancel(&mut self.oscore, call.token());
         }
         if let Some(id) = body {
+            if rx_body_payload(&self.engine, id)
+                .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+            {
+                release_rx_body(&mut self.engine, id);
+                return Some(Err(CallFailure::ResponseBodyBounds));
+            }
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
                 P::store(&mut self.assembled, bytes);
             }
@@ -878,6 +971,86 @@ where
         }
         Some(response)
     }
+    /// Collect a complete representation into caller-owned storage.
+    ///
+    /// Enable [`super::AppBuilder::full_responses`] before bind to retain full
+    /// ordinary datagrams and bodies larger than the legacy assembled hold.
+    /// An insufficient buffer leaves the reply and all bytes available for a
+    /// later attempt; no bytes are copied and no partial success is returned.
+    /// Metadata borrows App; `payload()` (and block `body()`) borrows `output`.
+    /// The nested outcome distinguishes local Call failure from remote 4.xx/5.xx.
+    pub fn take_response_into<'a>(
+        &'a mut self,
+        call: Call,
+        output: &'a mut [u8],
+    ) -> Result<Option<Result<Response<'a>, CallFailure>>, ResponseBufferError> {
+        let Some(row) = self.inbox.completed(call) else {
+            return Ok(None);
+        };
+        let body = row.body;
+        let datagram = row.datagram;
+        if let Ok(meta) = row.meta {
+            let bytes = if let Some(body) = body {
+                self.engine
+                    .rx_body_payload(body)
+                    .ok_or(ResponseBufferError::Unavailable)?
+            } else if let Some(rx) = datagram {
+                self.engine
+                    .decode_rx(rx)
+                    .map_err(|_| ResponseBufferError::Unavailable)?
+                    .payload()
+            } else {
+                if meta.payload_src_len > meta.payload_len {
+                    return Err(ResponseBufferError::Unavailable);
+                }
+                &meta.payload[..usize::from(meta.payload_len)]
+            };
+            if bytes.len() > output.len() {
+                return Err(ResponseBufferError::TooSmall {
+                    required: bytes.len(),
+                    available: output.len(),
+                });
+            }
+        }
+        // Copy before releasing the occupied storage; bounds were proven above.
+        let len = if let Some(body) = body {
+            let bytes = self
+                .engine
+                .rx_body_payload(body)
+                .ok_or(ResponseBufferError::Unavailable)?;
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Some(rx) = datagram {
+            let parsed = self
+                .engine
+                .decode_rx(rx)
+                .map_err(|_| ResponseBufferError::Unavailable)?;
+            let bytes = parsed.payload();
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Ok(meta) = row.meta {
+            let len = usize::from(meta.payload_len);
+            output[..len].copy_from_slice(&meta.payload[..len]);
+            len
+        } else {
+            0
+        };
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
+        let (response, _) = self.inbox.take(call).expect("completed reply");
+        if let Some(body) = body {
+            let _ = self.engine.release_rx_body(body);
+        }
+        if !client_observe_live(&self.engine, call) {
+            self.lives.remove(call);
+            super::oscore::cancel(&mut self.oscore, call.token());
+        }
+        Ok(Some(response.map(|response| {
+            response.with_complete_payload(&output[..len], body.is_some())
+        })))
+    }
+
     /// Cancel an active call and reclaim its exchange, body, Observe and OSCORE
     /// state. The next `take_response` yields `Err(CallFailure::Cancelled)`.
     /// No wire message is sent; use `Outgoing::deregister` for Observe signaling.
@@ -901,13 +1074,22 @@ where
     }
 }
 
-impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool> Outgoing<'a, P, T, N, Dest, BLOCK_WISE>
+impl<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE> {
+    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -1148,7 +1330,8 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> Outgoing<'_, P, T, N, Present, BLOCK_WISE>
+impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
+    Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1341,6 +1524,9 @@ where
             }
         };
         if replacing {
+            if let Some(rx) = self.app.inbox.take_datagram(call) {
+                let _ = self.app.engine.release_rx(rx);
+            }
             self.app.inbox.discard(call);
         }
         self.app.lives.insert(LiveCall {
@@ -1377,7 +1563,9 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-> App<P, T, N, BLOCK_WISE>
+    S: super::AppStorage,
+    const DEFERRED: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
@@ -1694,13 +1882,20 @@ pub(crate) fn complete_client<Mem, T>(
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     response_state: super::oscore::ResponseState,
+    full_responses: bool,
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + Exchanges
+        + BodySlots
+        + ObserveSlots
+        + crate::storage::DedupSlots,
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
@@ -1889,11 +2084,15 @@ where
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1968,11 +2167,15 @@ where
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -2044,7 +2247,15 @@ where
         metadata,
         None,
     );
-    let _ = engine.release_rx(rx);
+    if full_responses {
+        if let Some(row) = inbox.rows.iter_mut().flatten().find(|row| row.call == call) {
+            row.datagram = Some(rx);
+        } else {
+            let _ = engine.release_rx(rx);
+        }
+    } else {
+        let _ = engine.release_rx(rx);
+    }
     Ok(())
 }
 
@@ -2060,13 +2271,15 @@ fn finish_assembled<Mem>(
     body: SlotId,
     metadata: ReplyMeta,
     via_exchange: bool,
+    full_responses: bool,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let call = Call::new(parsed.token(), peer);
-    if engine
-        .rx_body_payload(body)
-        .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+    if !full_responses
+        && engine
+            .rx_body_payload(body)
+            .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
     {
         fail_call(
             engine,
@@ -2102,13 +2315,16 @@ fn finish_assembled<Mem>(
     let _ = engine.release_rx(rx);
 }
 
-fn store_reply<Mem: Storage + BodySlots>(
+fn store_reply<Mem: Storage + BodySlots + DatagramSlots>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox,
     call: Call,
     meta: ReplyMeta,
     body: Option<SlotId>,
 ) {
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
             if let Some(id) = prev {
@@ -3134,6 +3350,9 @@ fn fail_call<Mem>(
         }
     }
     let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer()));
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
         let _ = engine.release_rx_body(body);
     }

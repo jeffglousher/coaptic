@@ -9914,7 +9914,7 @@ fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
             + MemoryLayout<true, Store = crate::storage::Memory<P, crate::storage::WithBodies<P>>>,
     >()
     where
-        crate::storage::Memory<P, crate::storage::WithBodies<P>>: crate::storage::BodySlots,
+        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage,
     {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
@@ -11534,4 +11534,650 @@ fn qblock1_missing_reports_are_one_per_poll_and_not_held_for_nstart() {
     app.transport_mut().last_send = None;
     app.poll(due).unwrap();
     assert!(app.transport().last_send.is_none());
+}
+
+#[test]
+fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
+    use crate::ResponseBufferError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .full_responses()
+        .bind(RecordIo::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let request = app.transport_mut().sent[0].unwrap();
+    let mid = decode(&request.1[..request.2]).unwrap().message_id();
+    let body: [u8; 200] = core::array::from_fn(|index| index as u8);
+    let format = ContentFormat::new(60).encode();
+    let opts = [Opt::location_path("receipt"), Opt::content_format(&format)];
+    let reply = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(&body);
+    let mut wire = [0; 256];
+    let n = encode(&reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    app.poll(2).unwrap(); // held RX must not be dispatched a second time
+    assert_eq!(app.engine_mut().rx_occupied(), 1);
+    let mut short = [0xA5; 199];
+    assert!(matches!(
+        app.take_response_into(call, &mut short),
+        Err(ResponseBufferError::TooSmall {
+            required: 200,
+            available: 199
+        })
+    ));
+    assert_eq!(short, [0xA5; 199]);
+    let mut output = [0; 200];
+    let response = app
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.payload(), body);
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 200);
+    assert_eq!(response.format(), Some(ContentFormat::new(60)));
+    assert_eq!(response.location_paths(), &["receipt"]);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert!(app.take_response_into(call, &mut output).unwrap().is_none());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn one_app_allocated_storage_collects_beyond_legacy_hold_without_truncation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
+        .with_block_wise::<profiles::Default>();
+    capacities.rx_body_bytes = Some(8192);
+    capacities.tx_body_bytes = Some(8192);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .full_responses()
+        .bind_alloc(WideLoopback::default(), capacities)
+        .unwrap();
+    let call = app.get("large").non().to(peer).send(0).unwrap();
+    let body: [u8; 6000] = core::array::from_fn(|index| (index % 251) as u8);
+    for (num, payload) in body.chunks(1024).enumerate() {
+        let block = BlockValue::from_size(num as u32, (num + 1) * 1024 < body.len(), 1024)
+            .unwrap()
+            .encode();
+        let size = encode_uint(body.len() as u32);
+        let opts = [Opt::etag(b"v1"), Opt::block2(&block), Opt::size2(&size)];
+        let response = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(100 + num as u16),
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&response, &mut wire).unwrap();
+        app.transport_mut().send_n = 0;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(num as u64 + 1).unwrap();
+    }
+    let mut output = [0xA5; 6000];
+    assert!(matches!(
+        app.take_response_into(call, &mut output[..5999]),
+        Err(crate::ResponseBufferError::TooSmall {
+            required: 6000,
+            available: 5999
+        })
+    ));
+    assert_eq!(output, [0xA5; 6000]);
+    let response = app
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.payload(), body);
+    assert_eq!(response.body(), Some(&body[..]));
+    assert_eq!(response.payload_src_len(), body.len());
+    assert!(!response.payload_truncated());
+    for i in 0..capacities.rx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .rx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn deferred_completion_acknowledges_once_and_retransmits_only_wire_response() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
+    let mut handle = None;
+    let mut calls = 0;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(0, |request, candidate| {
+        assert_eq!(request.payload(), b"work");
+        calls += 1;
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    let handle = handle.unwrap();
+    assert!(
+        decode(&app.transport_mut().sent[0].unwrap().1[..4])
+            .unwrap()
+            .is_empty_ack()
+    );
+    assert_eq!(app.transport_mut().sent_n, 1);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, _| {
+        calls += 1;
+        Response::changed()
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    app.complete(
+        handle,
+        Response::changed().payload_borrowed(b"durable-receipt"),
+        2,
+    )
+    .unwrap();
+    assert_eq!(app.transport_mut().sent_n, 3); // ACK, duplicate ACK, completed CON
+    let sent = app.transport_mut().sent[2].unwrap();
+    let response = decode(&sent.1[..sent.2]).unwrap();
+    assert_eq!(response.ty(), Type::Confirmable);
+    assert_eq!(response.payload(), b"durable-receipt");
+    app.poll(2002).unwrap(); // deliberate response loss
+    assert_eq!(app.transport_mut().sent[3], Some(sent));
+    assert!(matches!(
+        app.complete(handle, Response::changed(), 2003),
+        Err(Error::DeferredUnknown)
+    ));
+    let ack = Message::empty_ack(response.message_id());
+    let mut ack_wire = [0; 256];
+    let n = encode(&ack, &mut ack_wire).unwrap();
+    app.transport_mut().inbox = Some((peer, ack_wire, n));
+    app.poll(2004).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .deferred_lifetime(10)
+        .block_wise::<false>()
+        .bind(RecordIo::default())
+        .unwrap();
+    let mut handles = [None; 4];
+    for (index, handle) in handles.iter_mut().enumerate() {
+        let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 100 + index as u16);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll_with(0, |_, candidate| {
+            *handle = candidate;
+            Response::deferred()
+        })
+        .unwrap();
+        assert!(handle.is_some());
+    }
+    let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 104);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, candidate| {
+        assert!(candidate.is_none());
+        Response::deferred()
+    })
+    .unwrap();
+    let refusal = app.transport_mut().sent[4].unwrap();
+    assert_eq!(
+        decode(&refusal.1[..refusal.2]).unwrap().code(),
+        Code::SERVICE_UNAVAILABLE
+    );
+    assert!(app.cancel_deferred(handles[0].unwrap()));
+    assert!(!app.cancel_deferred(handles[0].unwrap()));
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut new = None;
+    // New MID is needed after the refusal's live duplicate history.
+    let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 105);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(2, |_, candidate| {
+        new = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_ne!(new, handles[0]);
+    assert!(matches!(
+        app.complete(handles[0].unwrap(), Response::changed(), 3),
+        Err(Error::DeferredUnknown)
+    ));
+    assert!(matches!(
+        app.complete(handles[1].unwrap(), Response::changed(), 10),
+        Err(Error::DeferredUnknown)
+    ));
+    let truncated = Response::content_copy(&[0; 129]);
+    assert!(matches!(
+        app.complete(new.unwrap(), truncated, 11),
+        Err(Error::Response(crate::ResponseError::PayloadTruncated))
+    ));
+    app.complete(new.unwrap(), Response::changed(), 11).unwrap();
+}
+
+#[test]
+fn borrowed_response_tracks_exact_large_payload_length() {
+    let body = [7; 70_000];
+    let response = Response::new(Code::CONTENT).payload_borrowed(&body);
+    assert_eq!(response.payload_src_len(), body.len());
+    assert_eq!(response.payload(), body);
+    assert!(!response.payload_truncated());
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_oscore_completion_preserves_authenticated_request_binding() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let secret = [3; 16];
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &secret,
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .full_responses()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut server = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(make(&[1], &[2]));
+    server.set_oscore(make(&[2], &[1]));
+    let call = client
+        .post("durable")
+        .to(peer)
+        .payload(b"request")
+        .content_format(ContentFormat::new(60))
+        .send(0)
+        .unwrap();
+    let transport = client.transport_mut();
+    let request_wire = transport.sends[0];
+    let request_len = transport.send_lens[0];
+    let mut handle = None;
+    server.transport_mut().inbox = Some((peer, request_wire, request_len));
+    server
+        .poll_with(1, |request, candidate| {
+            assert_eq!(request.payload(), b"request");
+            assert_eq!(request.content_format(), Some(Ok(ContentFormat::new(60))));
+            handle = candidate;
+            Response::deferred()
+        })
+        .unwrap();
+    let transport = server.transport_mut();
+    client.transport_mut().inbox = Some((peer, transport.sends[0], transport.send_lens[0]));
+    client.poll(2).unwrap();
+    assert!(client.take_response(call).is_none());
+    let body = [0xA3; 300];
+    server
+        .complete(
+            handle.unwrap(),
+            Response::new(Code::CHANGED)
+                .payload_borrowed(&body)
+                .content_format(ContentFormat::new(60)),
+            3,
+        )
+        .unwrap();
+    let transport = server.transport_mut();
+    assert!(
+        decode(&transport.sends[1][..transport.send_lens[1]])
+            .unwrap()
+            .oscore()
+            .is_some()
+    );
+    client.transport_mut().inbox = Some((peer, transport.sends[1], transport.send_lens[1]));
+    client.poll(4).unwrap();
+    let mut output = [0; 300];
+    let response = client
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.code(), Code::CHANGED);
+    assert_eq!(response.format(), Some(ContentFormat::new(60)));
+    assert_eq!(response.payload(), body);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
+    use alloc::collections::VecDeque;
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
+            .with_block_wise::<profiles::Default>();
+        capacities.rx_body_bytes = Some(81920);
+        capacities.tx_body_bytes = Some(81920);
+        let mut client = crate::App::builder()
+            .deterministic_for_tests()
+            .deferred::<4>()
+            .block_wise::<true>()
+            .full_responses()
+            .bind_alloc(WideLoopback::default(), capacities)
+            .unwrap();
+        let mut server = crate::App::builder()
+            .deterministic_for_tests()
+            .deferred::<4>()
+            .block_wise::<true>()
+            .bind_alloc(WideLoopback::default(), capacities)
+            .unwrap();
+        #[cfg(feature = "oscore")]
+        if protected {
+            use crate::oscore::{DeriveParams, SecurityContext};
+            let secret = [3; 16];
+            let make = |sender, recipient| {
+                SecurityContext::derive(DeriveParams {
+                    master_secret: &secret,
+                    master_salt: &[],
+                    sender_id: sender,
+                    recipient_id: recipient,
+                    id_context: &[],
+                })
+                .unwrap()
+            };
+            client.set_oscore(make(&[1], &[2]));
+            server.set_oscore(make(&[2], &[1]));
+        }
+        let mut domain_calls = 0;
+        // Reuse the same four TX slots while more than eight dedup replies
+        // pass through each large transfer and a subsequent durable request.
+        for round in 0..2 {
+            let body: alloc::vec::Vec<u8> = (0..70001).map(|index| (index % 251) as u8).collect();
+            let call = client
+                .post("durable")
+                .to(peer)
+                .payload(b"domain-command")
+                .content_format(ContentFormat::CBOR)
+                .send(round * 1000)
+                .unwrap();
+            let transport = client.transport_mut();
+            let mut queued = VecDeque::from([(transport.sends[0], transport.send_lens[0])]);
+            transport.send_n = 0;
+            let mut finished = false;
+            let mut output = alloc::vec![0; 70001];
+            for now in (round * 1000 + 1)..(round * 1000 + 300) {
+                let Some((wire, n)) = queued.pop_front() else {
+                    break;
+                };
+                server.transport_mut().send_n = 0;
+                server.transport_mut().inbox = Some((peer, wire, n));
+                let mut handle = None;
+                server
+                    .poll_with(now, |request, candidate| {
+                        domain_calls += 1;
+                        assert_eq!(request.payload(), b"domain-command");
+                        handle = candidate;
+                        Response::deferred()
+                    })
+                    .unwrap();
+                if let Some(handle) = handle {
+                    server
+                        .complete(
+                            handle,
+                            Response::new(Code::CHANGED)
+                                .payload_borrowed(&body)
+                                .content_format(ContentFormat::CBOR)
+                                .etag(b"stable"),
+                            now,
+                        )
+                        .unwrap();
+                }
+                let transport = server.transport_mut();
+                let replies = transport.sends;
+                let lengths = transport.send_lens;
+                let count = transport.send_n;
+                for i in 0..count {
+                    client.transport_mut().inbox = Some((peer, replies[i], lengths[i]));
+                    client.poll(now).unwrap();
+                    let transport = client.transport_mut();
+                    for i in 0..transport.send_n {
+                        queued.push_back((transport.sends[i], transport.send_lens[i]));
+                    }
+                    transport.send_n = 0;
+                    if let Some(response) = client.take_response_into(call, &mut output).unwrap() {
+                        let response = response.unwrap();
+                        assert_eq!(response.code(), Code::CHANGED);
+                        assert_eq!(response.payload(), body);
+                        assert_eq!(response.format(), Some(ContentFormat::CBOR));
+                        assert_eq!(response.etag_bytes(), Some(&b"stable"[..]));
+                        finished = true;
+                    }
+                }
+            }
+            assert!(finished, "protected={protected}");
+            assert_eq!(domain_calls, round + 1);
+            assert!(server.deferred.rows.iter().all(Option::is_none));
+            for i in 0..capacities.tx_body_slots.unwrap() {
+                assert!(
+                    server
+                        .engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            assert!(server.engine_mut().tx_occupied() <= capacities.tx_datagram_slots);
+        }
+    }
+}
+
+#[test]
+fn failed_deferred_ack_retains_work_and_completion_send_failure_keeps_handle() {
+    #[derive(Default)]
+    struct Failable {
+        io: RecordIo,
+        fail: bool,
+    }
+    impl DatagramIo for Failable {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.io.recv(bytes)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                self.fail = false;
+                return Err("injected send failure");
+            }
+            self.io.send(peer, bytes)
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .bind(Failable::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
+    let mut handle = None;
+    let mut calls = 0;
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    app.transport_mut().fail = true;
+    assert!(
+        app.poll_with(0, |_, candidate| {
+            calls += 1;
+            handle = candidate;
+            Response::deferred()
+        })
+        .is_err()
+    );
+    let handle = handle.unwrap();
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, _| {
+        calls += 1;
+        Response::changed()
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    app.transport_mut().fail = true;
+    assert!(app.complete(handle, Response::changed(), 2).is_err());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    app.complete(handle, Response::changed(), 3).unwrap();
+    assert!(matches!(
+        app.complete(handle, Response::changed(), 4),
+        Err(Error::DeferredUnknown)
+    ));
+}
+
+#[test]
+fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<true>()
+        .deferred_lifetime(10)
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide(Code::POST, &["durable"], &[], 100);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    let body = [7; 2000];
+    app.complete(
+        handle.unwrap(),
+        Response::new(Code::CHANGED)
+            .payload_borrowed(&body)
+            .etag(b"v1"),
+        1,
+    )
+    .unwrap();
+    assert!(
+        app.deferred
+            .rows
+            .iter()
+            .flatten()
+            .any(|row| row.completed.is_some())
+    );
+    app.transport_mut().send_n = 0;
+    let block = BlockValue::from_size(1, false, 1024).unwrap().encode();
+    let (wire, n) = encode_wide(Code::POST, &["another"], &[Opt::block2(&block)], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(2, |_, _| panic!("wrong route must not dispatch work"))
+        .unwrap();
+    let io = app.transport_mut();
+    assert_eq!(
+        decode(&io.sends[0][..io.send_lens[0]]).unwrap().code(),
+        Code::BAD_REQUEST
+    );
+    assert!(
+        app.deferred
+            .rows
+            .iter()
+            .flatten()
+            .any(|row| row.completed.is_some())
+    );
+    app.poll(10).unwrap();
+    assert!(app.deferred.rows.iter().all(Option::is_none));
+    for i in 0..app.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    #[derive(Default)]
+    struct Failable {
+        io: RecordIo,
+        fail: bool,
+    }
+    impl DatagramIo for Failable {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.io.recv(bytes)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                self.fail = false;
+                return Err("injected uncertain send");
+            }
+            self.io.send(peer, bytes)
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let secret = [3; 16];
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &secret,
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = make(&[1], &[2]);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .bind(Failable::default())
+        .unwrap();
+    app.set_oscore(make(&[2], &[1]));
+    let request = Message::new(Type::Confirmable, Code::POST, MessageId::new(100))
+        .with_token(Token::new(b"request").unwrap());
+    let mut wire = [0; 256];
+    let n = client.protect_request(&request, &mut wire).unwrap();
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_eq!(app.oscore().unwrap().sender_seq(), 0);
+    app.transport_mut().fail = true;
+    assert!(
+        app.complete(
+            handle.unwrap(),
+            Response::changed().payload_borrowed(b"first"),
+            1
+        )
+        .is_err()
+    );
+    assert_eq!(app.oscore().unwrap().sender_seq(), 1);
+    app.complete(
+        handle.unwrap(),
+        Response::changed().payload_borrowed(b"second"),
+        2,
+    )
+    .unwrap();
+    assert_eq!(app.oscore().unwrap().sender_seq(), 2);
 }
