@@ -4436,6 +4436,11 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
         assert!(client.take_response(call).is_none());
         client.transport_mut().inbox = Some((other, reply.clone()));
         client.poll(3).unwrap();
+        assert!(
+            decode(&client.transport_mut().sent.pop().unwrap())
+                .unwrap()
+                .is_empty_rst()
+        );
         assert_eq!(client.transport().sent.len(), 2);
         client.transport_mut().inbox = Some((peer, reply.clone()));
         client.transport_mut().fail_send = true;
@@ -4454,6 +4459,14 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
         client
             .poll(u64::from(crate::message::Transmission::EXCHANGE_LIFETIME_MS) + 1)
             .unwrap();
+        if mode != 1 {
+            assert!(
+                decode(&client.transport_mut().sent.pop().unwrap())
+                    .unwrap()
+                    .is_empty_rst(),
+                "mode {mode}"
+            );
+        }
         assert_eq!(client.transport().sent.len(), 3);
         assert_eq!(client.oscore().unwrap().replay_checkpoint(), before);
         assert_eq!(client.engine_mut().tx_occupied(), 0);
@@ -5211,10 +5224,14 @@ fn protected_observe_format_refusal_precedes_replay_commit_and_body_admission() 
                     );
                     client.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
                     client.poll(3).unwrap();
+                    assert_eq!(client.transport().sent.len(), 1);
                     assert!(
-                        client.transport().sent.is_empty(),
-                        "a refused CON must not acquire an ACK replay entry"
+                        decode(&client.transport_mut().sent.remove(0))
+                            .unwrap()
+                            .is_empty_rst(),
+                        "a refused CON must receive Reset, never an ACK replay entry"
                     );
+                    assert_eq!(client.oscore().unwrap().replay_checkpoint(), checkpoint);
                 }
             }
             assert!(client.cancel(other));
