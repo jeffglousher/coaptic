@@ -36,6 +36,12 @@ const RETAINED_CONDITIONS_BUDGET: usize = 4 * 24;
 // Four three-state Observe format values, including potential alignment.
 const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 
+// Complete-response retention adds one optional RX slot identity per Call.
+// App also retains the deferred generation/deadline, retention flag and padding;
+// zero deferred slots reserve no request/response header arrays.
+const FULL_RESPONSE_STATE_BUDGET: usize =
+    4 * size_of::<Option<coaptic::storage::SlotId>>() + 4 * size_of::<u64>();
+
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
     block_wise_app: usize,
@@ -58,7 +64,8 @@ fn assert_datagram_omits_assembled(
                 + RETAINED_RESPONSE_BUDGET
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET
-                + OBSERVE_FORMAT_BUDGET,
+                + OBSERVE_FORMAT_BUDGET
+                + FULL_RESPONSE_STATE_BUDGET,
         "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
@@ -189,4 +196,13 @@ fn observe_and_download_security_bindings_remain_bounded() {
         bytes <= 512,
         "pairwise context exceeded its explicit binding budget: {bytes}"
     );
+}
+
+#[test]
+fn deferred_headers_are_reserved_only_by_explicit_slot_selection() {
+    type Ordinary = App<profiles::Default, ()>;
+    type Deferred = App<profiles::Default, (), DEFAULT_ROUTES, false, Memory<profiles::Default>, 1>;
+    let added = size_of::<Deferred>() - size_of::<Ordinary>();
+    assert!(added >= 2 * coaptic::app::RESPONSE_OPTION_BYTES);
+    assert!(added < 2048, "one bounded deferred row adds {added} bytes");
 }

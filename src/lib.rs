@@ -69,6 +69,20 @@
 //! (RFC 9177, Content-Format 272). Caller-owned Echo issuance and verification use
 //! [`app::AppBuilder::echo_policy`].
 //!
+//! # One interface, adjustable resources
+//!
+//! [`App::builder`] supplies fixed default datagram storage. Profile, body pools,
+//! routes, custom storage and allocator-backed storage remain choices on that
+//! same builder. `alloc` does not require `std`; default remains no allocator.
+//! [`app::AppBuilder::full_responses`] + [`App::take_response_into`] retain and
+//! collect exact complete representations into caller-owned buffers. Short
+//! buffers are refused without consuming or partially copying the reply.
+//!
+//! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],
+//! [`DeferredReply`] and [`App::complete`]. The empty ACK is only reception.
+//! Domain work and durable state stay outside the App; bounded request metadata,
+//! separate-response retransmission and Block2 snapshots stay inside it.
+//!
 //! # What you own
 //!
 //! The socket ([`storage::DatagramIo`]), the clock (`now_ms` into
@@ -209,8 +223,9 @@ pub mod storage;
 pub use storage::profiles;
 
 pub use app::{
-    App, Call, CallFailure, EchoCheck, EchoDecision, EchoPolicy, Error, Method, Outgoing, Request,
-    Response, ResponseError, delete, fetch, get, ipatch, patch, post, put,
+    App, Call, CallFailure, DeferredReply, EchoCheck, EchoDecision, EchoPolicy, Error, Method,
+    Outgoing, Request, Response, ResponseBufferError, ResponseError, delete, fetch, get, ipatch,
+    patch, post, put,
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};
