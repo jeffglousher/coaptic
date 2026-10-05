@@ -169,6 +169,72 @@ jobs:
           path: ${{ runner.temp }}/seeded.json
           if-no-files-found: error
 
+  branch-coverage:
+    name: branch coverage evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly-2026-10-01
+          components: llvm-tools
+      - run: python3 tools/qualification/coverage.py --branches --work-root "${{ runner.temp }}/branch-build" --output "${{ runner.temp }}/branches/branch-coverage.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: branch-coverage
+          path: ${{ runner.temp }}/branches/
+          if-no-files-found: error
+
+  fuzz:
+    name: coverage-guided fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly-2026-10-01
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - run: python3 tools/qualification/fuzz.py --seconds 60 --output target/fuzz.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: coverage-guided-fuzzing
+          path: |
+            target/fuzz.json
+            fuzz/corpus/
+            fuzz/artifacts/
+          if-no-files-found: error
+
+  esp32-build:
+    name: ESP32 probe build (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - run: cargo run --locked -p qualification-no-std --example runtime
+      - run: cargo run --locked -p qualification-no-std --example runtime --features oscore
+      - run: python3 tools/qualification/esp32.py --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esp32/build.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.chip }}-probe
+          path: ${{ runner.temp }}/esp32/
+          if-no-files-found: error
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -179,6 +245,9 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path tools/qualification/esp32/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path tools/esphome/rust/Cargo.toml -- --check
 
   clippy:
     name: clippy
@@ -246,6 +315,58 @@ jobs:
             exit 1
           fi
       - run: cargo package -p coaptic --locked
+
+  esphome-build:
+    name: ESPHome Coaptic probe (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
+          - chip: esp32s3
+            target: xtensa-esp32s3-none-elf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.chip != 'esp32s3' && matrix.target || '' }}
+      - run: |
+          python3 -m venv "${{ runner.temp }}/esphome-env"
+          "${{ runner.temp }}/esphome-env/bin/python" -m pip install esphome==2026.9.1
+      - if: matrix.chip == 'esp32s3'
+        run: |
+          gh release download v0.17.1 --repo esp-rs/espup --pattern espup-x86_64-unknown-linux-gnu --dir "${{ runner.temp }}/espup"
+          chmod +x "${{ runner.temp }}/espup/espup-x86_64-unknown-linux-gnu"
+          "${{ runner.temp }}/espup/espup-x86_64-unknown-linux-gnu" install --targets esp32s3 --toolchain-version 1.97.0.0 --name coaptic-esp-1.97 --std
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: |
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml --features oscore
+          cargo clippy --locked --manifest-path tools/esphome/rust/Cargo.toml --all-targets --features oscore -- -D warnings
+          cargo test --locked --manifest-path tools/esphome/rust/Cargo.toml --features network,oscore
+          cargo clippy --locked --manifest-path tools/esphome/rust/Cargo.toml --all-targets --features network,oscore -- -D warnings
+          "${{ runner.temp }}/esphome-env/bin/python" -m unittest discover -s tools/esphome -p 'test_*.py'
+      - run: '"${{ runner.temp }}/esphome-env/bin/python" tools/qualification/esphome_probe.py --compile --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esphome-probe/build.json"'
+      - run: '"${{ runner.temp }}/esphome-env/bin/python" tools/qualification/esphome_network.py --compile --chip "${{ matrix.chip }}" --output "${{ runner.temp }}/esphome-network/build.json"'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: esphome-${{ matrix.chip }}-probe
+          path: |
+            ${{ runner.temp }}/esphome-probe/build.json
+            ${{ runner.temp }}/esphome-probe/*.elf
+            ${{ runner.temp }}/esphome-probe/*.factory.bin
+            ${{ runner.temp }}/esphome-probe/esphome-*/probe.yaml
+            ${{ runner.temp }}/esphome-network/build.json
+            ${{ runner.temp }}/esphome-network/compile.log
+          if-no-files-found: error
 
   process-interop:
     name: independent process interop

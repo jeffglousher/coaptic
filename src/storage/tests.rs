@@ -46,6 +46,109 @@ const fn q_nrt() -> u64 {
     QBlockTransmission::NON_RECEIVE_TIMEOUT_MS as u64
 }
 
+#[test]
+fn untagged_block1_continues_with_new_tokens_without_mixing_operations() {
+    fn exercise<S: Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+        use crate::message::OptionsBuilder;
+        let peer = Endpoint::v4([198, 51, 100, 9], 5683);
+        let body = b"abcdefghijklmnopqrstuvwx";
+        for mismatch in 0..5 {
+            let mut engine = build();
+            let mut body_id = None;
+            for phase in 0..3 {
+                let bad = phase == 1;
+                let block = BlockValue::from_size(u32::from(phase != 0), phase == 0, 16)
+                    .unwrap()
+                    .encode();
+                let mut options = OptionsBuilder::<5>::new();
+                options
+                    .push(Opt::uri_path(if bad && mismatch == 0 {
+                        "other"
+                    } else {
+                        "upload"
+                    }))
+                    .unwrap();
+                options
+                    .push(Opt::uri_query(if bad && mismatch == 2 {
+                        "q=y"
+                    } else {
+                        "q=x"
+                    }))
+                    .unwrap();
+                options.push(Opt::block1(&block)).unwrap();
+                let size = encode_uint(24);
+                if phase == 0 {
+                    options.push(Opt::size1(&size)).unwrap();
+                }
+                if bad && mismatch == 4 {
+                    options.push(Opt::request_tag(b"new")).unwrap();
+                }
+                let message = Message::new(
+                    Type::Confirmable,
+                    if bad && mismatch == 1 {
+                        Code::PUT
+                    } else {
+                        Code::POST
+                    },
+                    MessageId::new(phase),
+                )
+                .with_token(sample_token(&[phase as u8]))
+                .with_options(options.as_slice())
+                .with_payload(if phase == 0 { &body[..16] } else { &body[16..] });
+                let mut bytes = [0; 128];
+                let length = encode(&message, &mut bytes).unwrap();
+                let rx = engine.acquire_rx().unwrap();
+                engine
+                    .write_rx(
+                        rx,
+                        &bytes[..length],
+                        if bad && mismatch == 3 {
+                            Endpoint::v4([198, 51, 100, 10], 5683)
+                        } else {
+                            peer
+                        },
+                    )
+                    .unwrap();
+                let result = engine.apply_block1_rx(rx);
+                engine.release_rx(rx).unwrap();
+                match phase {
+                    0 => {
+                        body_id = Some(result.unwrap().id());
+                    }
+                    1 => {
+                        assert!(result.is_err());
+                        assert_eq!(engine.rx_body_payload(body_id.unwrap()), Some(&body[..16]));
+                        assert!(
+                            !engine
+                                .rx_body_transfer(body_id.unwrap())
+                                .unwrap()
+                                .is_complete()
+                        );
+                    }
+                    _ => {
+                        let progress = result.unwrap();
+                        assert_eq!(Some(progress.id()), body_id);
+                        assert!(progress.complete());
+                        assert_eq!(engine.rx_body_payload(progress.id()), Some(body.as_slice()));
+                    }
+                }
+            }
+        }
+    }
+    exercise(build_default_bodies);
+    #[cfg(feature = "alloc")]
+    exercise(|| {
+        EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(
+                Capacities::from_profile::<profiles::Default>()
+                    .with_block_wise::<profiles::Default>(),
+            )
+            .unwrap()
+    });
+}
+
 fn build_default() -> Engine<Memory<profiles::Default>> {
     EngineBuilder::new()
         .profile::<profiles::Default>()

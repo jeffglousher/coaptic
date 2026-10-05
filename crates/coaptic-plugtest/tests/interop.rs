@@ -115,6 +115,21 @@ fn td_coap_obs() {
 }
 
 #[test]
+fn non_observe_notifications_reach_each_client_backend() {
+    for client in ["coaptic", "coap-rs"] {
+        let result = runner::run_td(
+            "TD_COAP_OBS_02",
+            Pair {
+                client,
+                server: "coaptic",
+            },
+        );
+        assert!(result.error.is_none(), "{client}: {:?}", result.error);
+        assert!(!result.capture.snapshot().is_empty());
+    }
+}
+
+#[test]
 #[cfg(feature = "dtls")]
 fn td_coap_dtls() {
     assert_suite("DTLS", catalog::DTLS, &runner::default_pairs());

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use coap::Server;
-use coap::client::UdpCoAPClient;
+use coap::client::{ObserveMessage, UdpCoAPClient};
 use coap::request::RequestBuilder;
 use coap::server::{Listener, Responder, TransportRequestSender};
 use coap_lite::{
@@ -29,6 +29,20 @@ pub struct CoapRsPeer {
     stop: Option<oneshot::Sender<()>>,
     addr: Option<SocketAddr>,
     notify: crate::peer::NotifyMailbox,
+    observe: Option<ObserveHold>,
+}
+
+struct ObserveHold {
+    notifications: std::sync::mpsc::Receiver<Result<ClientResponse, PeerError>>,
+    cancel: Option<oneshot::Sender<ObserveMessage>>,
+}
+
+impl Drop for ObserveHold {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(ObserveMessage::Terminate);
+        }
+    }
 }
 
 impl Default for CoapRsPeer {
@@ -53,6 +67,7 @@ impl CoapRsPeer {
             stop: None,
             addr: None,
             notify: Arc::new(Mutex::new(None)),
+            observe: None,
         }
     }
 }
@@ -137,6 +152,46 @@ impl Peer for CoapRsPeer {
         Ok(())
     }
 
+    fn begin_observe(
+        &mut self,
+        dest: SocketAddr,
+        req: &ClientRequest,
+    ) -> Result<ClientResponse, PeerError> {
+        self.observe = None;
+        let destination = dest.to_string();
+        let registration = build_lite_request(req, &destination)?;
+        let (tx, notifications) = std::sync::mpsc::channel();
+        let cancel = self
+            .rt
+            .block_on(async move {
+                let client = UdpCoAPClient::new(&destination).await?;
+                client
+                    .observe_with(registration, move |response| {
+                        let _ = tx.send(
+                            response
+                                .map(|packet| from_lite(&packet))
+                                .map_err(|error| PeerError(error.to_string())),
+                        );
+                    })
+                    .await
+            })
+            .map_err(|error| PeerError(error.to_string()))?;
+        self.observe = Some(ObserveHold {
+            notifications,
+            cancel: Some(cancel),
+        });
+        self.take_notification(req.timeout)
+    }
+
+    fn take_notification(&mut self, timeout: Duration) -> Result<ClientResponse, PeerError> {
+        self.observe
+            .as_ref()
+            .ok_or("no observe client")?
+            .notifications
+            .recv_timeout(timeout)
+            .map_err(|error| PeerError(error.to_string()))?
+    }
+
     fn local_addr(&self) -> Option<SocketAddr> {
         self.addr
     }
@@ -160,6 +215,7 @@ impl Peer for CoapRsPeer {
 
 impl Drop for CoapRsPeer {
     fn drop(&mut self) {
+        self.observe = None;
         self.stop_server();
     }
 }

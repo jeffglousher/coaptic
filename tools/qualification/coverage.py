@@ -1,4 +1,4 @@
-"""Pinned LLVM line/region/function evidence; no branch or RFC coverage claim."""
+"""Pinned LLVM counters and named contract execution evidence."""
 import argparse
 import hashlib
 import json
@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from host import SUMMARY, TOOLCHAIN, text
+from contracts import load_and_evaluate
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,7 +29,7 @@ def artifacts(stdout):
     return sorted(found)
 
 
-def source_totals(export, root):
+def source_totals(export, root, require_branches=False):
     files = []
     for unit in export.get("data", []):
         for row in unit.get("files", []):
@@ -38,7 +39,7 @@ def source_totals(export, root):
     if not files or len({row["path"] for row in files}) != len(files):
         raise ValueError("missing or duplicate source-file coverage")
     totals = {}
-    for metric in ("lines", "regions", "functions"):
+    for metric in ("lines", "regions", "functions", *(("branches",) if require_branches else ())):
         count = covered = 0
         for row in files:
             value = row["summary"][metric]
@@ -57,6 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument("--branches", action="store_true")
     args = parser.parse_args()
     os.chdir(ROOT)
     args.output = args.output.resolve()
@@ -66,15 +68,21 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coaptic-coverage-", dir=args.work_root.resolve()))
     env = os.environ.copy()
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+    toolchain = "nightly-2026-10-01" if args.branches else TOOLCHAIN
     env.update(CARGO_TARGET_DIR=str(work / "build"), CARGO_INCREMENTAL="0",
                CARGO_PROFILE_TEST_DEBUG="2", CARGO_PROFILE_DEV_DEBUG="2",
                RUSTFLAGS="-C instrument-coverage", LLVM_PROFILE_FILE=str(work / "%p-%m.profraw"))
+    if args.branches:
+        env["RUSTFLAGS"] += " -Z coverage-options=branch"
     report = {"schema": "coaptic-source-coverage/1", "passed": False,
               "source": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
               "platform": platform.platform(), "work_directory": str(work), "commands": [],
               "scope": "All-feature library unit/integration test execution; compiled src tree includes inline/unit-test modules",
               "unqualified": ["branch/condition coverage", "RFC requirement completeness", "other feature configurations", "rustdoc execution", "device execution", "exhaustive input space"]}
+    if args.branches:
+        report["schema"] = "coaptic-branch-coverage/1"
+        report["unqualified"][0] = "condition/MC/DC coverage"
 
     def run(command, output=None):
         result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True,
@@ -91,18 +99,21 @@ def main():
         return result.stdout
 
     try:
-        compiler = run(["rustc", "+" + TOOLCHAIN, "--version", "--verbose"])
+        compiler = run(["rustc", "+" + toolchain, "--version", "--verbose"])
         report["compiler"] = compiler
         host = next(line.split(": ", 1)[1] for line in compiler.splitlines() if line.startswith("host: "))
-        sysroot = Path(run(["rustc", "+" + TOOLCHAIN, "--print", "sysroot"]).strip())
+        sysroot = Path(run(["rustc", "+" + toolchain, "--print", "sysroot"]).strip())
         suffix = ".exe" if os.name == "nt" else ""
         llvm = sysroot / "lib" / "rustlib" / host / "bin"
-        stdout = run(["cargo", "+" + TOOLCHAIN, "test", "--locked", "-p", "coaptic", "--all-features",
+        stdout = run(["cargo", "+" + toolchain, "test", "--locked", "-p", "coaptic", "--all-features",
                       "--lib", "--tests", "--message-format=json"])
         report["executed"] = sum(int(passed) for passed, _ in SUMMARY.findall(stdout))
         report["ignored"] = sum(int(ignored) for _, ignored in SUMMARY.findall(stdout))
         if not report["executed"]:
             raise ValueError("no executed tests")
+        report["contracts"] = load_and_evaluate(stdout)
+        if not report["contracts"]["passed"]:
+            raise ValueError("missing named contract execution")
         objects = artifacts(stdout)
         report["test_binaries"] = [{"path": name, "sha256": hashlib.sha256(Path(name).read_bytes()).hexdigest()} for name in objects]
         profiles = sorted(str(p) for p in work.glob("*.profraw"))
@@ -113,7 +124,7 @@ def main():
         exported = args.output.with_name(args.output.stem + "-llvm.json")
         raw = run([str(llvm / ("llvm-cov" + suffix)), "export", objects[0],
                    *["-object=" + name for name in objects[1:]], "-instr-profile=" + merged], exported)
-        report["files"], report["totals"] = source_totals(json.loads(raw), ROOT)
+        report["files"], report["totals"] = source_totals(json.loads(raw), ROOT, args.branches)
         report["llvm_export"] = str(exported)
         report["passed"] = True
     except (OSError, ValueError, RuntimeError, StopIteration, KeyError, subprocess.TimeoutExpired) as error:
