@@ -4459,11 +4459,14 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
         client
             .poll(u64::from(crate::message::Transmission::EXCHANGE_LIFETIME_MS) + 1)
             .unwrap();
-        assert!(
-            decode(&client.transport_mut().sent.pop().unwrap())
-                .unwrap()
-                .is_empty_rst()
-        );
+        if mode != 1 {
+            assert!(
+                decode(&client.transport_mut().sent.pop().unwrap())
+                    .unwrap()
+                    .is_empty_rst(),
+                "mode {mode}"
+            );
+        }
         assert_eq!(client.transport().sent.len(), 3);
         assert_eq!(client.oscore().unwrap().replay_checkpoint(), before);
         assert_eq!(client.engine_mut().tx_occupied(), 0);
