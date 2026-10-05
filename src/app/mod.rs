@@ -781,7 +781,9 @@ impl<
     /// Protected responses must match the Call endpoint and any piggybacked
     /// ACK Message ID before request-binding or notification replay state is
     /// consumed. Established notifications match the client Observe relation;
-    /// unrelated protected responses are silently discarded. Authentication
+    /// unrelated protected CON responses receive an empty matching Reset;
+    /// unmatched ACK/NON responses are silently discarded. No payload is opened
+    /// and no request binding or replay state is consumed by this rejection. Authentication
     /// alone does not retire an ordinary request binding: rejected responses
     /// and failed ACK sends leave pending Calls usable. Collection, cancellation
     /// and terminal local failure release the binding; continuation replaces it.
@@ -1729,8 +1731,16 @@ where
         && !parsed.code().is_request()
         && !client::has_response_target(engine, &parsed, peer)
     {
+        // RFC 7252 sections 4.2 and 5.3.2: a canceled/unmatched separate CON
+        // response must be rejected at the message layer. Silently dropping it
+        // strands the sender's NSTART budget until retransmission expiry.
+        let outcome = if parsed.ty() == Type::Confirmable {
+            send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
         let _ = engine.release_rx(rx);
-        return Ok(());
+        return outcome;
     }
 
     // RFC 9177 §4.1: Block and Q-Block on the Outer side are 4.02 before

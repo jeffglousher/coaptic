@@ -11781,6 +11781,130 @@ fn borrowed_response_tracks_exact_large_payload_length() {
 
 #[cfg(feature = "oscore")]
 #[test]
+fn canceled_oscore_deferred_response_resets_without_spending_other_call_state() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[3; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .deferred::<4>()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(make(&[1], &[2]));
+    server.set_oscore(make(&[2], &[1]));
+    let old = client
+        .post("durable")
+        .to(peer)
+        .payload(b"old")
+        .send(0)
+        .unwrap();
+    server.transport_mut().inbox = Some((
+        peer,
+        client.transport().sends[0],
+        client.transport().send_lens[0],
+    ));
+    let mut old_handle = None;
+    server
+        .poll_with(1, |_, handle| {
+            old_handle = handle;
+            Response::deferred()
+        })
+        .unwrap();
+    client.transport_mut().inbox = Some((
+        peer,
+        server.transport().sends[0],
+        server.transport().send_lens[0],
+    ));
+    client.poll(2).unwrap();
+    assert!(client.cancel(old));
+    assert_eq!(
+        client.take_response(old).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    server
+        .complete(old_handle.unwrap(), Response::content(b"late"), 3)
+        .unwrap();
+    let late = server.transport().sends[1];
+    let late_len = server.transport().send_lens[1];
+    let mid = decode(&late[..late_len]).unwrap().message_id();
+    assert!(server.engine().lookup_pending_con(mid, peer).is_some());
+    let next = client
+        .post("durable")
+        .to(peer)
+        .payload(b"next")
+        .send(4)
+        .unwrap();
+    let binding = client.oscore().unwrap().lookup(next.token());
+    let replay = client.oscore().unwrap().replay_checkpoint();
+    server.transport_mut().inbox = Some((
+        peer,
+        client.transport().sends[1],
+        client.transport().send_lens[1],
+    ));
+    let mut next_handle = None;
+    server
+        .poll_with(5, |_, handle| {
+            next_handle = handle;
+            Response::deferred()
+        })
+        .unwrap();
+    // Unexpected NON and ACK must not trigger a response or spend live state.
+    for ty in [0x10, 0x20] {
+        let mut other = late;
+        other[0] = (other[0] & 0xcf) | ty;
+        client.transport_mut().inbox = Some((peer, other, late_len));
+        client.poll(6).unwrap();
+        assert_eq!(client.transport().send_n, 2);
+    }
+    client.transport_mut().inbox = Some((peer, late, late_len));
+    client.poll(7).unwrap();
+    assert_eq!(client.transport().send_n, 3);
+    let reset = client.transport().sends[2];
+    let reset_len = client.transport().send_lens[2];
+    let parsed = decode(&reset[..reset_len]).unwrap();
+    assert_eq!(reset_len, 4);
+    assert_eq!(parsed.ty(), Type::Reset);
+    assert_eq!(parsed.message_id(), mid);
+    assert!(parsed.token().is_empty());
+    assert!(parsed.oscore().is_none());
+    assert_eq!(client.oscore().unwrap().lookup(next.token()), binding);
+    assert_eq!(client.oscore().unwrap().replay_checkpoint(), replay);
+    assert!(client.take_response(next).is_none());
+    server.transport_mut().inbox = Some((peer, reset, reset_len));
+    server.poll(8).unwrap();
+    assert!(server.engine().lookup_pending_con(mid, peer).is_none());
+    server
+        .complete(next_handle.unwrap(), Response::content(b"next reply"), 9)
+        .unwrap();
+    client.transport_mut().inbox = Some((
+        peer,
+        server.transport().sends[3],
+        server.transport().send_lens[3],
+    ));
+    client.poll(10).unwrap();
+    assert_eq!(
+        client.take_response(next).unwrap().unwrap().payload(),
+        b"next reply"
+    );
+}
+
+#[cfg(feature = "oscore")]
+#[test]
 fn deferred_oscore_completion_preserves_authenticated_request_binding() {
     use crate::oscore::{DeriveParams, SecurityContext};
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
