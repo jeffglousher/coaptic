@@ -583,7 +583,9 @@ struct ServerSnap {
     occupancy: String,
     metrics: Metrics,
     now_ms: u64,
+    #[cfg(feature = "oscore")]
     oscore_sender_seq: Option<u64>,
+    #[cfg(feature = "oscore")]
     oscore_replay_zero_fresh: Option<bool>,
 }
 
@@ -642,7 +644,9 @@ fn spawn_coaptic_server_cfg(attach_oscore: bool) -> Result<CoapticServer, PeerEr
         occupancy: String::from("occupancy rx=? tx=?"),
         metrics: Metrics::ZERO,
         now_ms: 0,
+        #[cfg(feature = "oscore")]
         oscore_sender_seq: None,
+        #[cfg(feature = "oscore")]
         oscore_replay_zero_fresh: None,
     }));
     let stop_t = Arc::clone(&stop);
@@ -696,13 +700,13 @@ fn spawn_coaptic_server_cfg(attach_oscore: bool) -> Result<CoapticServer, PeerEr
                     Some(ctx) => (Some(ctx.sender_seq()), Some(ctx.replay_fresh(0))),
                     None => (None, None),
                 };
-                #[cfg(not(feature = "oscore"))]
-                let (oscore_sender_seq, oscore_replay_zero_fresh) = (None, None);
                 *snap_t.lock().expect("snap") = ServerSnap {
                     occupancy,
                     metrics,
                     now_ms: now,
+                    #[cfg(feature = "oscore")]
                     oscore_sender_seq,
+                    #[cfg(feature = "oscore")]
                     oscore_replay_zero_fresh,
                 };
                 thread::yield_now();
@@ -1090,6 +1094,7 @@ struct OscoreReport {
 }
 
 impl OscoreReport {
+    #[cfg(feature = "oscore")]
     fn write(&self, indent: &str, out: &mut impl Write) -> io::Result<()> {
         self.get.write(indent, out)?;
         self.put.write(indent, out)?;
