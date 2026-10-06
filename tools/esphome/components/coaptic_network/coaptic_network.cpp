@@ -121,11 +121,10 @@ uint64_t CoapticNetwork::clock() {
   FD_ZERO(&read_set);
   FD_SET(socket_, &read_set);
   timeval timeout{0, 10000};
-  const uint64_t waiting_us = static_cast<uint64_t>(esp_timer_get_time());
   const int ready = select(socket_ + 1, &read_set, nullptr, nullptr, &timeout);
   const uint64_t now_us = static_cast<uint64_t>(esp_timer_get_time());
   if (ready > 0) {
-    ready_burst_ = now_us - waiting_us >= 1000 ? 1 : ready_burst_ + 1;
+    ready_burst_++;
   } else {
     ready_burst_ = 0;
     if (ready == 0) {
