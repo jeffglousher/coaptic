@@ -59,10 +59,13 @@ void CoapticNetwork::loop() {
     logged_ = millis();
     ESP_LOGI(TAG,
              "COAPTIC_NETWORK {\"run_id\":\"%s\",\"rx\":%lu,\"tx\":%lu,\"dropped\":%lu,"
-             "\"stack_high_water_bytes\":%lu,\"stack_capacity_bytes\":%lu}",
+             "\"stack_high_water_bytes\":%lu,\"stack_capacity_bytes\":%lu,"
+             "\"polls\":%lu,\"idle_waits\":%lu,\"scheduler_yields\":%lu,\"wait_errors\":%lu}",
              run_id_.c_str(), static_cast<unsigned long>(rx_.load()), static_cast<unsigned long>(tx_.load()),
              static_cast<unsigned long>(dropped_.load()), static_cast<unsigned long>(high_water_.load()),
-             static_cast<unsigned long>(STACK_BYTES));
+             static_cast<unsigned long>(STACK_BYTES), static_cast<unsigned long>(polls_.load()),
+             static_cast<unsigned long>(idle_waits_.load()), static_cast<unsigned long>(scheduler_yields_.load()),
+             static_cast<unsigned long>(wait_errors_.load()));
   }
 }
 
@@ -107,9 +110,37 @@ int32_t CoapticNetwork::send(const uint8_t *bytes, uint32_t length, uint64_t pee
 }
 
 uint64_t CoapticNetwork::clock() {
-  uint32_t free_bytes = uxTaskGetStackHighWaterMark(nullptr);
-  high_water_.store(free_bytes < STACK_BYTES ? STACK_BYTES - free_bytes : 0, std::memory_order_relaxed);
-  vTaskDelay(pdMS_TO_TICKS(10) > 0 ? pdMS_TO_TICKS(10) : 1);
+  if (stop_.load(std::memory_order_acquire))
+    return UINT64_MAX;
+  if (ready_burst_ >= 32) {
+    vTaskDelay(1);
+    scheduler_yields_.fetch_add(1, std::memory_order_relaxed);
+    ready_burst_ = 0;
+  }
+  fd_set read_set;
+  FD_ZERO(&read_set);
+  FD_SET(socket_, &read_set);
+  timeval timeout{0, 10000};
+  const uint64_t waiting_us = static_cast<uint64_t>(esp_timer_get_time());
+  const int ready = select(socket_ + 1, &read_set, nullptr, nullptr, &timeout);
+  const uint64_t now_us = static_cast<uint64_t>(esp_timer_get_time());
+  if (ready > 0) {
+    ready_burst_ = now_us - waiting_us >= 1000 ? 1 : ready_burst_ + 1;
+  } else {
+    ready_burst_ = 0;
+    if (ready == 0) {
+      idle_waits_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      wait_errors_.fetch_add(1, std::memory_order_relaxed);
+      vTaskDelay(1);
+    }
+  }
+  if (stack_checked_us_ == 0 || now_us - stack_checked_us_ >= 1000000) {
+    const uint32_t free_bytes = uxTaskGetStackHighWaterMark(nullptr);
+    high_water_.store(free_bytes < STACK_BYTES ? STACK_BYTES - free_bytes : 0, std::memory_order_relaxed);
+    stack_checked_us_ = now_us;
+  }
+  polls_.fetch_add(1, std::memory_order_relaxed);
   return stop_.load(std::memory_order_acquire) ? UINT64_MAX : static_cast<uint64_t>(esp_timer_get_time() / 1000);
 }
 
