@@ -99,6 +99,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         &mut self,
         io: &mut T,
     ) -> Result<Option<SlotId>, DatagramIoError<T::Error>> {
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics_mut().recv_attempts, 1);
         let id = self.acquire_rx().ok_or(DatagramIoError::Saturated)?;
         let outcome = match self.storage_mut().rx_payload_mut(id) {
             Some(buf) => io.recv(buf),
@@ -121,9 +123,13 @@ impl<S: Storage + DatagramSlots> Engine<S> {
                     return Err(DatagramIoError::Slot(e));
                 }
                 Metrics::inc(&mut self.metrics_mut().rx_accepted);
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().rx_wire_bytes, n);
                 Ok(Some(id))
             }
             Ok(None) => {
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().recv_idle, 1);
                 let _ = self.release_rx(id);
                 Ok(None)
             }
@@ -172,6 +178,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         match outcome {
             Ok(n) => {
                 Metrics::inc(&mut self.metrics_mut().tx_ok);
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().tx_wire_bytes, n);
                 Ok(n)
             }
             Err(e) => {

@@ -864,6 +864,19 @@ impl<
         self.engine.reset_metrics();
     }
 
+    /// Copy optional request-path work counters from the Engine.
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub const fn work_metrics(&self) -> crate::storage::WorkMetrics {
+        self.engine.work_metrics()
+    }
+
+    /// Reset work counters independently of the always-on reactor counters.
+    #[cfg(feature = "diagnostics")]
+    pub fn reset_work_metrics(&mut self) {
+        self.engine.reset_work_metrics();
+    }
+
     /// Transport.
     #[must_use]
     pub const fn transport(&self) -> &T {
@@ -1197,6 +1210,8 @@ where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().polls, 1);
     // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
     // Saturated after those timers still run (RFC 7252 §4.2).
     // Local deadlines must progress even if receiving the next packet fails.
@@ -2758,6 +2773,7 @@ where
                 key,
                 oscore_ctx,
                 dedup_closed,
+                false,
             )
         }
         Err(e) => {
@@ -2847,6 +2863,7 @@ where
             key,
             oscore_ctx,
             dedup_closed,
+            true,
         );
     }
 
@@ -2895,6 +2912,7 @@ where
                 key,
                 oscore_ctx,
                 dedup_closed,
+                true,
             )
         }
         Err(e) => {
@@ -2959,11 +2977,29 @@ fn start_outgoing<S, T>(
     key: BlockKey,
     oscore_ctx: &mut oscore::Field,
     dedup_closed: &mut Option<DedupClosed>,
+    allow_borrowed: bool,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    if allow_borrowed
+        && meta.q_block2.is_none()
+        && !response.fresh_piv()
+        && response.observe_seq().is_none()
+    {
+        return issue_borrowed_classic(
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            key,
+            now_ms,
+            oscore_ctx,
+            dedup_closed,
+        );
+    }
     let szx = szx_for(meta.block2, meta.q_block2);
     let started = if meta.q_block2.is_some() {
         let etag = response
@@ -3043,6 +3079,126 @@ where
     outcome
 }
 
+/// Encodes an ordinary independently selected block from the handler's borrow.
+///
+/// Body capacity and pool admission retain the existing bounded policy. The
+/// borrow ends during this call; only encoded TX bytes survive for replay.
+/// Observe, deferred replies and Q-Block continue to own complete snapshots.
+#[allow(clippy::too_many_arguments)]
+fn issue_borrowed_classic<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response<'_>,
+    ty: Type,
+    key: BlockKey,
+    now_ms: u64,
+    oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    let key = response_block_key(key.token(), key.endpoint(), response)?;
+    let capacity =
+        engine
+            .capacities()
+            .tx_body_bytes
+            .ok_or(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )))?;
+    crate::storage::BlockTransfer::outgoing(
+        key,
+        BlockRole::OutgoingBlock2,
+        response.payload().len(),
+        szx_for(meta.block2, None),
+        capacity,
+    )
+    .map_err(Error::Block)?;
+    let body = engine
+        .acquire_tx_body()
+        .ok_or(Error::Block(BlockTransferError::Saturated))?;
+    let _ = engine.release_tx_body(body);
+    let requested = meta.block2.unwrap_or(
+        BlockValue::new(0, false, BlockValue::SZX_MAX)
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?,
+    );
+    let (selected, payload, block) =
+        match crate::storage::classic_block2_range(response.payload().len(), requested) {
+            Ok((value, range)) => (
+                *response,
+                &response.payload()[range],
+                Some(BlockOpt {
+                    value,
+                    q_block: false,
+                    size2: None,
+                }),
+            ),
+            Err(BlockTransferError::Gap) => (Response::bad_request(), &[][..], None),
+            Err(error) => return Err(Error::Block(error)),
+        };
+    let tx = if block.is_some() {
+        acquire_tx_or_evict(engine)
+    } else {
+        engine.acquire_tx()
+    }
+    .ok_or(Error::Saturated)?;
+    if let Err(error) = encode_response(
+        engine,
+        tx,
+        ty,
+        meta.mid,
+        meta.token,
+        &selected,
+        payload,
+        block,
+        meta.block1,
+        oscore_ctx,
+        meta.oscore,
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+    let keep = if block.is_some() && ty == Type::Acknowledgement {
+        remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            meta.mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        )
+    } else {
+        KeepTx::No
+    };
+    match keep {
+        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
+        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
+    }
+}
+
+fn retained_body_matches<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    id: SlotId,
+    payload: &[u8],
+) -> bool {
+    #[cfg(feature = "diagnostics")]
+    {
+        let candidates = engine
+            .tx_body_payload(id)
+            .filter(|body| body.len() == payload.len())
+            .map_or(0, <[u8]>::len);
+        let work = engine.work_metrics_mut();
+        crate::storage::WorkMetrics::add(&mut work.body_compare_calls, 1);
+        crate::storage::WorkMetrics::add(&mut work.body_compare_candidate_bytes, candidates);
+    }
+    engine.tx_body_payload(id) == Some(payload)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn continue_outgoing<S, T>(
     engine: &mut Engine<S>,
@@ -3070,7 +3226,7 @@ where
                 .tx_body_transfer(id)
                 .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
             if transfer.identity().as_slice() != response.etag_bytes()
-                || engine.tx_body_payload(id) != Some(response.payload())
+                || !retained_body_matches(engine, id, response.payload())
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
@@ -3137,7 +3293,7 @@ where
                 .tx_body_transfer(id)
                 .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
             if transfer.identity().as_slice() != response.etag_bytes()
-                || engine.tx_body_payload(id) != Some(response.payload())
+                || !retained_body_matches(engine, id, response.payload())
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
@@ -3451,7 +3607,7 @@ where
 }
 
 fn copy_issued<S: Storage + BodySlots>(
-    engine: &Engine<S>,
+    engine: &mut Engine<S>,
     issued: OutgoingBlock,
     dest: &mut [u8],
 ) -> Result<usize, BlockTransferError> {
@@ -3466,6 +3622,11 @@ fn copy_issued<S: Storage + BodySlots>(
         return Err(BlockTransferError::Overflow);
     }
     dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(
+        &mut engine.work_metrics_mut().block_tx_staged_bytes,
+        issued.len(),
+    );
     Ok(issued.len())
 }
 
@@ -4185,7 +4346,11 @@ fn copy_rx<S: Storage + DatagramSlots, E>(
         )));
     }
     dest[..src.len()].copy_from_slice(src);
-    Ok(src.len())
+    let n = src.len();
+    drop(access);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().app_rx_staged_bytes, n);
+    Ok(n)
 }
 
 pub(crate) fn send_empty_ack<S, T>(

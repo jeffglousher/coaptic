@@ -33,6 +33,14 @@ name = "bench-load"
 version = "0.1.0"
 
 [[package]]
+name = "bench-profile"
+version = "0.1.0"
+dependencies = [
+ "coaptic",
+ "getrandom",
+]
+
+[[package]]
 name = "bench-rust-server"
 version = "0.1.0"
 dependencies = [
