@@ -39,7 +39,7 @@ const _: () =
     assert!(link_format_capacity::<DEFAULT_ROUTES>() == DEFAULT_ROUTES * LINK_FORMAT_PER_ROUTE);
 const _: () = assert!(link_format_capacity::<1>() == INLINE_PAYLOAD);
 
-/// Stack scratch for `/.well-known/core`, sized to [`link_format_capacity`].
+/// Stack scratch for `/.well-known/core`, exposing [`link_format_capacity`] bytes.
 ///
 /// `[u8; link_format_capacity::<N>()]` needs generic const exprs.
 /// `[[u8; LINK_FORMAT_PER_ROUTE]; N]` is a legal const-generic array; when
@@ -47,6 +47,10 @@ const _: () = assert!(link_format_capacity::<1>() == INLINE_PAYLOAD);
 /// a few longer paths still fit. Overflow stays 5.00.
 ///
 /// For default `N = 8` this is ~192 bytes, not [`RESPONSE_BODY`] (4096).
+/// The backing enum reserves the larger of `N * LINK_FORMAT_PER_ROUTE` and
+/// [`INLINE_PAYLOAD`], plus its discriminant. The [`RESPONSE_BODY`] ceiling
+/// limits the exposed slice, not this backing storage: `N = 256` reserves over
+/// 6144 bytes while exposing 4096. Include the full layout in stack budgets.
 pub struct LinkFormatScratch<const N: usize> {
     inner: LinkFormatInner<N>,
 }
