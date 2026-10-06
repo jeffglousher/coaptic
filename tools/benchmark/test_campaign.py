@@ -54,6 +54,46 @@ def evidence(root, count=6, failed_reference=False, resumed=False, overlap=False
 
 
 class CampaignTests(unittest.TestCase):
+    def test_request_tail_is_not_average_session_tail(self):
+        with tempfile.TemporaryDirectory() as root:
+            evidence(root)
+            row = next(r for r in bench.analyze(root, "coaptic")["summary"] if r["peer"] == "coaptic")
+            self.assertEqual(row["successful_request_latency_ns"],
+                             {"count": 12, "mean": 150, "p99": 200, "min": 100, "max": 200})
+            self.assertEqual(row["session_mean_latency_ns"],
+                             {"count": 6, "mean": 150, "p99": 150, "min": 150, "max": 150})
+            self.assertEqual(row["session_statistics"][0]["latency_ns"]["p99"], 199)
+
+    def test_empty_latency_summary_does_not_invent_zero(self):
+        self.assertEqual(bench.descriptive([]),
+                         {"count": 0, "mean": None, "p99": None, "min": None, "max": None})
+
+    def test_unequal_completion_counts_have_distinct_request_and_session_weights(self):
+        with tempfile.TemporaryDirectory() as root:
+            evidence(root, failed_reference=True)
+            row = next(r for r in bench.analyze(root, "coaptic")["summary"] if r["peer"] == "coaptic")
+            self.assertAlmostEqual(row["successful_request_latency_ns"]["mean"], 1600 / 11)
+            self.assertAlmostEqual(row["session_mean_latency_ns"]["mean"], 850 / 6)
+            self.assertEqual(row["failed_requests"], 1)
+            self.assertFalse(row["comparison_eligible"])
+
+    def test_aggregate_input_budget_refuses_before_reading_excess_cell(self):
+        with tempfile.TemporaryDirectory() as root:
+            evidence(root)
+            budget = (Path(root) / "plan.json").stat().st_size + (Path(root) / "window-0.json").stat().st_size
+            with patch.object(bench, "MAX_ANALYSIS_BYTES", budget), patch.object(bench, "read", wraps=bench.read) as read:
+                with self.assertRaisesRegex(ValueError, "aggregate analysis input budget"):
+                    bench.analyze(root, "coaptic")
+                self.assertEqual(read.call_count, 2)
+
+    def test_aggregate_latency_budget_refuses_before_pooling(self):
+        with tempfile.TemporaryDirectory() as root:
+            evidence(root)
+            with patch.object(bench, "MAX_ANALYSIS_SAMPLES", 1), patch.object(bench, "descriptive") as summary:
+                with self.assertRaisesRegex(ValueError, "aggregate analysis latency budget"):
+                    bench.analyze(root, "coaptic")
+                summary.assert_not_called()
+
     def test_accounting_and_representation_are_not_just_success_exit(self):
         for field, value in (("completed", 1), ("failed", 1), ("verified_bytes", 127),
                              ("elapsed_ns", 0), ("latencies_ns", [100]), ("protocol", "http3"),
