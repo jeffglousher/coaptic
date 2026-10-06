@@ -1568,6 +1568,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Request-Tag comes from the body sidecar when present. Does not invent
     /// 2.31 / 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    /// `max_payload` is also bounded by the storage's TX scratch and TX slot,
+    /// including encoded headers/options. Larger body capacity does not enlarge
+    /// that scratch; a refused range can be retried with a smaller payload.
     /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_bert1_tx(
         &mut self,
@@ -1702,6 +1705,9 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next Block2 BERT range and encode it into occupied TX `tx_id`.
+    /// `max_payload` is also bounded by the storage's TX scratch and TX slot,
+    /// including encoded headers/options. Larger body capacity does not enlarge
+    /// that scratch; a refused range can be retried with a smaller payload.
     ///
     /// ETag comes from the body sidecar when present. Does not invent 2.31 /
     /// 4.08. See `knowledge/rfcs/rfc8323.txt`.
