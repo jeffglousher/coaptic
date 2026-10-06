@@ -2806,6 +2806,172 @@ fn bert_apply_from_rx_and_encode_with_request_tag() {
 }
 
 #[test]
+fn refused_bert_encode_preserves_progress_and_retries_first_range() {
+    for block1 in [true, false] {
+        let mut engine = build_default_bodies();
+        let key = block_key();
+        let payload = [0xa5; 3072];
+        let body = if block1 {
+            engine.start_block1(key, &payload, BlockValue::SZX_BERT)
+        } else {
+            engine.start_block2(key, &payload, BlockValue::SZX_BERT)
+        }
+        .unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.write_tx(tx, b"unchanged", key.endpoint()).unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>,
+             limit| {
+                if block1 {
+                    engine.encode_bert1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                } else {
+                    engine.encode_bert2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                }
+            };
+        assert_eq!(encode(&mut engine, 2048), Err(BlockTransferError::Overflow));
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        assert_eq!(
+            engine.storage().tx_payload(tx),
+            Some(b"unchanged".as_slice())
+        );
+        let issued = encode(&mut engine, 1024).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert!(issued.block().more());
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..1024]);
+    }
+}
+
+#[test]
+fn refused_combined_block_encode_does_not_consume_a_range() {
+    // Classic Block1/Block2, first Observe Block2, Q-Block1 and Q-Block2 all
+    // use the same transaction; a missing TX slot must leave NUM/mask intact.
+    for mode in 0..5 {
+        let mut engine = build_default_bodies();
+        let key = block_key().with_identity(BodyTag::new(b"body").unwrap());
+        let payload = [0xa5; 32];
+        let body = match mode {
+            0 => engine.start_block1(key, &payload, 0),
+            1 | 2 => engine.start_block2(key, &payload, 0),
+            3 => engine.start_q_block1(key, &payload, 0),
+            _ => engine.start_q_block2(key, &payload, 0),
+        }
+        .unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.release_tx(tx).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>, tx| {
+                match mode {
+                    0 => engine.encode_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    1 => engine.encode_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                    2 => engine.encode_block2_observe_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        42,
+                    ),
+                    3 => engine.encode_q_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    _ => engine.encode_q_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                }
+            };
+        assert_eq!(
+            encode(&mut engine, tx),
+            Err(BlockTransferError::Slot(SlotError::NotOccupied))
+        );
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        let tx = engine.acquire_tx().unwrap();
+        let issued = encode(&mut engine, tx).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..16]);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn short_tx_encode_preserves_body_progress_after_partial_wire_write() {
+    let capacities = Capacities {
+        rx_datagram_slots: 1,
+        rx_datagram_bytes: 64,
+        tx_datagram_slots: 1,
+        tx_datagram_bytes: 16,
+        dedup_entries: 1,
+        observe_entries: 1,
+        rx_body_slots: Some(1),
+        rx_body_bytes: Some(1024),
+        tx_body_slots: Some(1),
+        tx_body_bytes: Some(1024),
+    };
+    let mut engine = EngineBuilder::new()
+        .rx_datagram(1, 64)
+        .tx_datagram(1, 16)
+        .dedup(1)
+        .observe(1)
+        .rx_body(1, 1024)
+        .tx_body(1, 1024)
+        .block_wise(true)
+        .build_alloc(capacities)
+        .unwrap();
+    let payload = [0xa5; 32];
+    let body = engine.start_block1(block_key(), &payload, 0).unwrap();
+    let before = engine.tx_body_transfer(body).unwrap();
+    let tx = engine.acquire_tx().unwrap();
+    assert_eq!(
+        engine.encode_block1_tx(body, tx, Type::Confirmable, Code::PUT, MessageId::new(1)),
+        Err(BlockTransferError::Encode(
+            crate::error::EncodeError::BufferTooSmall
+        ))
+    );
+    assert_eq!(engine.tx_body_transfer(body), Some(before));
+    assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+    assert_eq!(engine.next_block1(body).unwrap().block().num(), 0);
+}
+
+#[test]
 fn block2_outgoing_slices_and_encodes() {
     let mut engine = build_default_bodies();
     let key = block_key();

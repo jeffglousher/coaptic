@@ -579,7 +579,39 @@ pub struct BlockTransfer {
     notification: Option<NotificationSnapshot>,
 }
 
+/// Only the fields an outgoing issue may change; retained request bytes stay
+/// in the body slot when a combined issue/encode operation needs rollback.
+#[derive(Clone, Copy)]
+pub(crate) struct IssueCheckpoint {
+    num: u32,
+    next_num: u32,
+    more: bool,
+    complete: bool,
+    q_mask: Option<u16>,
+}
+
+const _: () = assert!(core::mem::size_of::<IssueCheckpoint>() <= 16);
+
 impl BlockTransfer {
+    pub(crate) fn issue_checkpoint(&self) -> IssueCheckpoint {
+        IssueCheckpoint {
+            num: self.num,
+            next_num: self.next_num,
+            more: self.more,
+            complete: self.complete,
+            q_mask: self.q.map(|q| q.mask),
+        }
+    }
+
+    pub(crate) fn restore_issue(&mut self, checkpoint: IssueCheckpoint) {
+        self.num = checkpoint.num;
+        self.next_num = checkpoint.next_num;
+        self.more = checkpoint.more;
+        self.complete = checkpoint.complete;
+        if let (Some(q), Some(mask)) = (self.q.as_mut(), checkpoint.q_mask) {
+            q.mask = mask;
+        }
+    }
     /// RFC 9177 §7.2 default `MAX_PAYLOADS`; this crate's Q-Block window size.
     pub const MAX_PAYLOADS: u8 = 10;
 

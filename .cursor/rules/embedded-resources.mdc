@@ -1,0 +1,28 @@
+---
+description: Review Rust for bounded embedded resource use and generated code
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Embedded Rust resource discipline
+
+- Use idiomatic ownership, borrowing, explicit states, and bounded data first.
+  Prefer compile-time work when it removes runtime cost; verify monomorphized
+  code size before accepting a generic abstraction as cheap.
+- Account separately for retained RAM, maximum live stack, heap allocations,
+  copies, and code size. Fixed capacity and `no_std` do not prove low cost.
+- Keep normal core/protocol paths allocation-free. Alloc-enabled paths still
+  need explicit size bounds and a justified allocation lifetime.
+- Borrow large buffers in place. Avoid profile-sized local scratch, whole-state
+  rollback copies, and hidden collection conversions when a small view or
+  deferred commit is sufficient.
+- Refused operations must leave retryable protocol state intact. Validate and
+  encode before committing progress; test failure followed by a successful retry.
+- Treat short buffers, overflow, exhausted slots, cancellation, and stale
+  completions as ordinary boundary cases, not panic paths.
+- Minimize secret copies and use optimizer-resistant erasure on every exit.
+- For resource-sensitive changes, inspect release output for the actual target,
+  feature set, and pinned toolchain. Record comparable frame/symbol/image sizes.
+  Static frames are not runtime stack high-water or device qualification.
+- Optimize measured costs. Do not trade readable safe Rust for speculative
+  unsafe code, forced inlining, or hand-written abstractions without evidence.
