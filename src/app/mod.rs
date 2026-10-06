@@ -3812,32 +3812,21 @@ fn remember_tx_reply<S: Storage + DatagramSlots + DedupSlots>(
     }
     let due = dedup_due_ms(now_ms);
     let mut entry = DedupEntry::new(mid, dest).with_due_ms(due);
-    let copied = {
+    let inline = {
         let Ok(access) = engine.access_tx(tx) else {
             remember_empty_ack(engine, dest, mid, now_ms, request, dedup_closed);
             return KeepTx::No;
         };
         let slice = access.as_bytes();
-        if slice.len() > S::TX_DATAGRAM_BYTES {
-            None
+        if slice.len() <= DedupEntry::REPLAY_MAX {
+            entry = entry.with_replay(slice);
+            true
         } else {
-            let mut buf = S::TxScratch::default();
-            buf.as_mut()[..slice.len()].copy_from_slice(slice);
-            Some((buf, slice.len()))
+            entry = entry.with_tx_pin(tx);
+            false
         }
     };
-    let Some((buf, n)) = copied else {
-        return if note_dedup_store(engine, entry.with_tx_pin(tx), request, dedup_closed) {
-            KeepTx::Yes
-        } else {
-            KeepTx::No
-        };
-    };
-    if n <= DedupEntry::REPLAY_MAX {
-        entry = entry.with_replay(&buf.as_ref()[..n]);
-        let _ = note_dedup_store(engine, entry, request, dedup_closed);
-        KeepTx::No
-    } else if note_dedup_store(engine, entry.with_tx_pin(tx), request, dedup_closed) {
+    if note_dedup_store(engine, entry, request, dedup_closed) && !inline {
         KeepTx::Yes
     } else {
         KeepTx::No

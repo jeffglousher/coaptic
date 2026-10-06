@@ -1529,6 +1529,10 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Token and remote endpoint come from the body-slot sidecar. The caller
     /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    ///
+    /// A refused issue or encode preserves outgoing transfer progress and body
+    /// bytes, so another TX slot or a smaller range can retry the same NUM.
+    /// Encoding may modify TX bytes before failing; do not send a refused TX.
     pub fn encode_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1540,13 +1544,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block1(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block1,
+            None,
+            |storage| storage.next_block1(body_id),
         )
     }
 
@@ -1564,6 +1568,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Request-Tag comes from the body sidecar when present. Does not invent
     /// 2.31 / 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_bert1_tx(
         &mut self,
         body_id: SlotId,
@@ -1576,13 +1581,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_bert1(body_id, max_payload)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block1,
+            None,
+            |storage| storage.next_bert1(body_id, max_payload),
         )
     }
 
@@ -1636,6 +1641,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Token and remote endpoint come from the body-slot sidecar. The caller
     /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_block2_tx(
         &mut self,
         body_id: SlotId,
@@ -1647,13 +1653,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block2(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
+            None,
+            |storage| storage.next_block2(body_id),
         )
     }
 
@@ -1662,6 +1668,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Use on the first block of a block-wise notification. Subsequent
     /// blocks stay on [`Self::encode_block2_tx`]. Does not invent 2.31.
     /// See `knowledge/rfcs/rfc7641.txt` and `knowledge/rfcs/rfc7959.txt`.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_block2_observe_tx(
         &mut self,
         body_id: SlotId,
@@ -1674,14 +1681,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block2(body_id)?;
-        self.finish_outgoing_tx_observe(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
             Some(observe_seq),
+            |storage| storage.next_block2(body_id),
         )
     }
 
@@ -1699,6 +1705,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// ETag comes from the body sidecar when present. Does not invent 2.31 /
     /// 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_bert2_tx(
         &mut self,
         body_id: SlotId,
@@ -1711,13 +1718,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_bert2(body_id, max_payload)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
+            None,
+            |storage| storage.next_bert2(body_id, max_payload),
         )
     }
 
@@ -1758,6 +1765,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// encoded (RFC 9177 §4.6). The sidecar must have a Request-Tag (empty
     /// is valid). Missing identity is refused before advancing the window.
     /// The caller owns uniqueness across bodies and supplies type, code, and Message ID.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_q_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1770,13 +1778,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         self.require_q_identity(body_id, BlockRole::OutgoingQBlock1)?;
-        let issued = self.storage.next_q_block1(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::QBlock1,
+            None,
+            |storage| storage.next_q_block1(body_id),
         )
     }
 
@@ -1833,6 +1841,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// encoded (RFC 9177 §4.6). The sidecar must have a nonempty ETag. Missing
     /// identity is refused before advancing the window; callers own ETag uniqueness.
     /// The caller supplies type, code, and Message ID.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_q_block2_tx(
         &mut self,
         body_id: SlotId,
@@ -1845,13 +1854,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         self.require_q_identity(body_id, BlockRole::OutgoingQBlock2)?;
-        let issued = self.storage.next_q_block2(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::QBlock2,
+            None,
+            |storage| storage.next_q_block2(body_id),
         )
     }
 
@@ -2162,6 +2171,42 @@ impl<S: Storage + BodySlots> Engine<S> {
             }
         }
         Ok(progress)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn issue_and_encode_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        header: (Type, Code, MessageId),
+        which: OutgoingBlockOpt,
+        observe_seq: Option<u32>,
+        issue: impl FnOnce(&mut S) -> Result<OutgoingBlock, BlockTransferError>,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let checkpoint = self
+            .storage
+            .tx_body_transfer(body_id)
+            .map(|transfer| transfer.issue_checkpoint());
+        let result = match issue(&mut self.storage) {
+            Ok(issued) => {
+                self.finish_outgoing_tx_observe(issued, body_id, tx_id, header, which, observe_seq)
+            }
+            Err(error) => Err(error),
+        };
+        if result.is_err() {
+            if let Some(checkpoint) = checkpoint {
+                let mut transfer = self
+                    .storage
+                    .tx_body_transfer(body_id)
+                    .ok_or(BlockTransferError::NoTransfer)?;
+                transfer.restore_issue(checkpoint);
+                self.storage.set_tx_body_transfer(body_id, transfer)?;
+            }
+        }
+        result
     }
 
     fn finish_outgoing_tx(
