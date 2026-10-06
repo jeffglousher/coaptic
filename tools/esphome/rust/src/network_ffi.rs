@@ -70,7 +70,9 @@ impl DatagramIo for Socket {
 /// `id` must reference 32 readable bytes, valid for the initial copy. Call only
 /// once per firmware boot, from the socket's sole task. C callbacks must not
 /// retain buffers, unwind, alias mutable buffers, or report unwritten bytes.
-/// The clock callback must yield, remain monotonic, and return u64::MAX to stop.
+/// The clock callback must periodically yield within a bounded poll budget,
+/// bound idle waits for timer progress, remain monotonic, and return u64::MAX
+/// to stop. It may return immediately during a bounded ready burst.
 /// Entropy must be supplied while the Wi-Fi hardware RNG source is enabled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn coaptic_network_run(context: *mut c_void, id: *const u8) -> i32 {

@@ -75,13 +75,15 @@ fn ticks(_: Request<'_>) -> Response<'static> {
     Response::content_copy(&TICKS.load(Ordering::Relaxed).to_be_bytes()).observe(0)
 }
 
-/// Runs until the owning platform returns `None` from its yielding clock.
+/// Runs until the owning platform returns `None` from its scheduling clock.
 ///
 /// The caller owns the live transport and supplies a secure entropy function.
 /// Only one service may run. A stopped service must not be rebound to the same
 /// endpoint during EXCHANGE_LIFETIME; this adapter does not persist MID state.
-/// Each iteration yields through `clock`; no unbounded packet-draining loop is
-/// added here. Consecutive transport/poll failures refuse after 32 iterations.
+/// The clock must bound consecutive ready polls with periodic scheduler yields
+/// and bound idle waits so protocol timers progress. The ESPHome adapter yields
+/// after 32 ready polls and waits at most 10 ms for socket readability when idle.
+/// Consecutive transport/poll failures refuse after 32 iterations.
 pub fn run<T: DatagramIo>(
     io: T,
     random: fn(&mut [u8]) -> bool,
