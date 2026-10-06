@@ -13,11 +13,12 @@ use super::Storage;
 
 /// Caller-owned datagram transport (UDP, test loopback, or a `no_std` radio).
 ///
-/// Implement this on the socket or driver, then
-/// [`crate::app::AppBuilder::bind`]. [`Engine::recv_from`] and
-/// [`Engine::send_tx`] are the Engine-side bind. The core does not own a
-/// socket. `recv` writes into the caller buffer; `Ok(None)` is idle
-/// (timeout or would-block).
+/// Available without `std` or `alloc`. Implement it on the platform socket or
+/// driver and pass that value to [`crate::app::AppBuilder::bind`], which uses
+/// fixed profile storage. App owns the transport value without requiring a
+/// `Box`; platform network-stack and task allocations remain outside Coaptic's
+/// storage budget. [`Engine::recv_from`] and [`Engine::send_tx`] borrow the
+/// transport directly. `Ok(None)` means timeout or would-block.
 pub trait DatagramIo {
     /// Transport-specific failure. Not a CoAP code.
     type Error;
