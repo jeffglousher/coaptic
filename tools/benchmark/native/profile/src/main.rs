@@ -7,6 +7,12 @@
 //! This excludes kernel I/O and driver encoding from the core measurement and
 //! is not a throughput benchmark. Use the independent external socket driver
 //! with diagnostics disabled for performance comparisons.
+//!
+//! `bench-profile socket HOST PORT BYTES SECONDS` runs an instrumented real UDP
+//! fixture and prints aggregate poll/transport timing after the bounded run.
+//! Drive it with `bench-load` separately. Nested clocks and allocator accounting
+//! perturb this diagnostic run; its residual poll time includes wrapper and
+//! clock overhead and is not a production latency or capacity measurement.
 //! The process is single-threaded; allocator counting is enabled only around
 //! the named phase. Payload generation, validation, and reporting are excluded.
 
@@ -283,12 +289,147 @@ fn udp_idle_probe(capacity: usize, polls: usize) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+#[derive(Clone, Copy, Default)]
+struct TransportTimes {
+    active_receive_ns: u128,
+    idle_receive_ns: u128,
+    failed_receive_ns: u128,
+    receive_invalid_data_errors: u64,
+    receive_other_errors: u64,
+    send_ns: u128,
+    received: bool,
+}
+
+struct TimedSocket {
+    socket: UdpSocket,
+    times: Rc<RefCell<TransportTimes>>,
+}
+
+impl DatagramIo for TimedSocket {
+    type Error = std::io::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        let started = Instant::now();
+        let outcome = DatagramIo::recv(&mut self.socket, buf);
+        let elapsed = started.elapsed().as_nanos();
+        let mut times = self.times.borrow_mut();
+        times.received = matches!(outcome, Ok(Some(_)));
+        match &outcome {
+            Ok(Some(_)) => times.active_receive_ns += elapsed,
+            Ok(None) => times.idle_receive_ns += elapsed,
+            Err(error) => {
+                times.failed_receive_ns += elapsed;
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    times.receive_invalid_data_errors += 1;
+                } else {
+                    times.receive_other_errors += 1;
+                }
+            }
+        }
+        outcome
+    }
+
+    fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        let started = Instant::now();
+        let outcome = DatagramIo::send(&mut self.socket, peer, bytes);
+        let elapsed = started.elapsed().as_nanos();
+        self.times.borrow_mut().send_ns += elapsed;
+        outcome
+    }
+}
+
+fn socket_probe(
+    address: &str,
+    bytes: usize,
+    seconds: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind(address)?;
+    socket.set_nonblocking(true)?;
+    let times = Rc::new(RefCell::new(TransportTimes::default()));
+    let transport = TimedSocket {
+        socket,
+        times: Rc::clone(&times),
+    };
+    begin();
+    let bind_result = App::builder()
+        .routes::<1>()
+        .block_wise::<true>()
+        .randomness(|buffer| getrandom::fill(buffer).is_ok())
+        .route("bench", get(representation))
+        .bind_alloc(transport, capacities(bytes));
+    let setup = end();
+    let mut app = bind_result?;
+    let started = Instant::now();
+    let mut active_ns = 0u128;
+    let mut idle_ns = 0u128;
+    let mut failed_ns = 0u128;
+    let mut hot = Counts::default();
+    let mut errors = 0u64;
+    while started.elapsed().as_secs() < seconds {
+        let now = started.elapsed().as_millis() as u64;
+        times.borrow_mut().received = false;
+        begin();
+        let polling = Instant::now();
+        let outcome = app.poll(now);
+        let elapsed = polling.elapsed().as_nanos();
+        let count = end();
+        if outcome.is_err() {
+            failed_ns += elapsed;
+        } else if times.borrow().received {
+            active_ns += elapsed;
+        } else {
+            idle_ns += elapsed;
+        }
+        hot.allocations += count.allocations;
+        hot.reallocations += count.reallocations;
+        hot.bytes += count.bytes;
+        errors += u64::from(outcome.is_err());
+    }
+    let times = *times.borrow();
+    println!(
+        "{{\"kind\":\"socket\",\"body_bytes\":{bytes},\"seconds\":{seconds},\"active_poll_ns\":{active_ns},\"idle_poll_ns\":{idle_ns},\"failed_poll_ns\":{failed_ns},\"transport_active_receive_ns\":{},\"transport_idle_receive_ns\":{},\"transport_failed_receive_ns\":{},\"receive_invalid_data_errors\":{},\"receive_other_errors\":{},\"transport_send_ns\":{},\"poll_errors\":{errors},\"setup_allocations\":{},\"poll_allocations\":{},\"poll_reallocations\":{},\"poll_allocated_bytes\":{}}}",
+        times.active_receive_ns,
+        times.idle_receive_ns,
+        times.failed_receive_ns,
+        times.receive_invalid_data_errors,
+        times.receive_other_errors,
+        times.send_ns,
+        setup.allocations,
+        hot.allocations,
+        hot.reallocations,
+        hot.bytes
+    );
+    print_work(app.work_metrics());
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() != 3 {
-        return Err("usage: bench-profile BYTES OPERATIONS".into());
+    let socket_mode = args.len() == 6 && args[1] == "socket";
+    if !socket_mode && args.len() != 3 {
+        return Err(
+            "usage: bench-profile BYTES OPERATIONS | socket HOST PORT BYTES SECONDS".into(),
+        );
     }
-    let bytes: usize = args[1].parse()?;
+    let bytes: usize = args[if socket_mode { 4 } else { 1 }].parse()?;
+    if !(1..=1_048_576).contains(&bytes) {
+        return Err("body limit".into());
+    }
+    let body: &'static [u8] = Box::leak(
+        (0..bytes)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    BODY.set(body).map_err(|_| "body initialization")?;
+    if socket_mode {
+        let port: u16 = args[3].parse()?;
+        let seconds: u64 = args[5].parse()?;
+        if port == 0 || !(1..=60).contains(&seconds) {
+            return Err("port or duration limit".into());
+        }
+        return socket_probe(&format!("{}:{port}", args[2]), bytes, seconds);
+    }
     let operations: usize = args[2].parse()?;
     if !(1..=1_048_576).contains(&bytes)
         || operations == 0
@@ -298,13 +439,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("body or operation limit".into());
     }
-    let body: &'static [u8] = Box::leak(
-        (0..bytes)
-            .map(|i| (i % 251) as u8)
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
-    BODY.set(body).map_err(|_| "body initialization")?;
     core_probe(bytes, operations)?;
     udp_idle_probe(1472, 1000)?;
     udp_idle_probe(2048, 1000)
