@@ -64,7 +64,10 @@ fn unqualified_scenarios_cannot_report_pass() {
             }
         }
     }
-    assert!(catalog::skip_reason("TD_COAP_DTLS_01").is_none());
+    assert_eq!(
+        catalog::skip_reason("TD_COAP_DTLS_01").is_none(),
+        cfg!(feature = "dtls")
+    );
     assert!(catalog::skip_reason("TD_COAP_DTLS_04").is_some());
 }
 

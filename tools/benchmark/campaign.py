@@ -341,8 +341,15 @@ def run_cell(peer, case):
                 raise ValueError("server exited or exceeded output cap during measured workload")
             return {"sample": sample, "readiness": readiness, "noise_before": before,
                     "noise_after": noise(), "finished": utc()}
+        except (ValueError, OSError) as error:
+            failure = error
         finally:
             captured.close()
+        raise ValueError(
+            f"{failure}; server_exit={server.returncode}; "
+            f"stderr_tail={bytes(captured.errors[-4096:])!r}; "
+            f"stdout_tail={bytes(captured.output[-4096:])!r}"
+        ) from failure
 
 
 @contextlib.contextmanager

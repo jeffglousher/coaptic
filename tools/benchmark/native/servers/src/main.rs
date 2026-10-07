@@ -1,7 +1,13 @@
 //! Independent server fixtures; no request-path logging or shared driver code.
+//!
+//! `coaptic` and `coaptic-reusable` select the bare socket and caller-owned
+//! scratch adapters once at startup. Both accept an optional RX capacity of
+//! 1472 or 2048 bytes and share the same App configuration and polling loop.
+//! TX capacity stays 1472 bytes; reusable scratch reserves 2049 bytes once.
+//! Setup allocations precede the external driver's timed request phase.
 #![forbid(unsafe_code)]
 use coap_lite::{CoapOption, MessageClass, MessageType, Packet, ResponseType};
-use coaptic::storage::Capacities;
+use coaptic::storage::{Capacities, DatagramIo, UdpSocketIo};
 use coaptic::{App, ContentFormat, Request, Response, get};
 use std::{
     env,
@@ -18,12 +24,14 @@ fn representation(_: Request<'_>) -> Response<'static> {
         .etag(b"fixture")
 }
 
-fn coaptic_server(address: &str, bytes: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let socket = UdpSocket::bind(address)?;
-    socket.set_nonblocking(true)?;
+fn coaptic_server<T: DatagramIo<Error = std::io::Error>>(
+    io: T,
+    bytes: usize,
+    rx_bytes: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     let capacities = Capacities {
         rx_datagram_slots: 4,
-        rx_datagram_bytes: 1472,
+        rx_datagram_bytes: rx_bytes,
         tx_datagram_slots: 4,
         tx_datagram_bytes: 1472,
         dedup_entries: 8,
@@ -38,7 +46,7 @@ fn coaptic_server(address: &str, bytes: usize) -> Result<(), Box<dyn std::error:
         .block_wise::<true>()
         .randomness(|buffer| getrandom::fill(buffer).is_ok())
         .route("bench", get(representation))
-        .bind_alloc(socket, capacities)?;
+        .bind_alloc(io, capacities)?;
     let started = Instant::now();
     loop {
         app.poll(started.elapsed().as_millis() as u64)?;
@@ -102,10 +110,21 @@ fn codec_server(address: &str, body: &[u8]) -> Result<(), Box<dyn std::error::Er
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
-    if args.len() != 5 {
+    if !(5..=6).contains(&args.len()) {
         return Err(
-            "usage: bench-rust-server coaptic|coap-rs|coap-lite-codec HOST PORT BYTES".into(),
+            "usage: bench-rust-server coaptic|coaptic-reusable|coap-rs|coap-lite-codec HOST PORT BYTES [RX_BYTES]".into(),
         );
+    }
+    let rx_bytes: usize = args
+        .get(5)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(1472);
+    if ![1472, 2048].contains(&rx_bytes) {
+        return Err("receive capacity must be 1472 or 2048".into());
+    }
+    if args.len() == 6 && !matches!(args[1].as_str(), "coaptic" | "coaptic-reusable") {
+        return Err("receive capacity is supported only by the Coaptic fixtures".into());
     }
     let size: usize = args[4].parse()?;
     if !(1..=1_048_576).contains(&size) {
@@ -120,7 +139,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     BODY.set(body).map_err(|_| "fixture initialization")?;
     let address = format!("{}:{}", args[2], args[3]);
     match args[1].as_str() {
-        "coaptic" => coaptic_server(&address, size),
+        "coaptic" | "coaptic-reusable" => {
+            let socket = UdpSocket::bind(&address)?;
+            socket.set_nonblocking(true)?;
+            if args[1] == "coaptic-reusable" {
+                coaptic_server(UdpSocketIo::new(socket, [0u8; 2049])?, size, rx_bytes)
+            } else {
+                coaptic_server(socket, size, rx_bytes)
+            }
+        }
         "coap-lite-codec" => codec_server(&address, body),
         "coap-rs" => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
