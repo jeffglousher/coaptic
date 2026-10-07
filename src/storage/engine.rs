@@ -1344,7 +1344,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         result
     }
 
-    /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
+    /// Decode occupied RX `id` and apply the matching Block1 request body.
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
     /// separate). Request-Tag, when present, is stored on the body sidecar.
@@ -1353,6 +1353,10 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// [`BlockTransfer::REQUEST_IDENTITY_BYTES`]. A changed operation is refused
     /// before body mutation; integer leading-zero encodings compare equally.
     /// Direct range APIs require the caller to enforce operation matchability.
+    /// Untagged classic continuations match the endpoint, method and cache-key
+    /// options even when Tokens change. A new block zero with a different Token
+    /// replaces only that operation's retained partial body. Tagged and Q-Block
+    /// transfers retain their explicit identity requirements.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -2169,19 +2173,33 @@ impl<S: Storage + BodySlots> Engine<S> {
         #[cfg(feature = "diagnostics")]
         super::WorkMetrics::add(&mut self.work_metrics.block_rx_staged_bytes, n);
         let key = BlockKey::new(token, endpoint).with_identity(identity);
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        let mut classic_body = None;
         if let Some(binding) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
             } else {
                 BlockRole::IncomingQBlock1
             };
-            let existing = self.lookup_rx_body_role(key, role).or_else(|| {
+            let existing = if untagged_classic {
                 (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
                     let id = SlotId::from_index(i);
                     let transfer = self.storage.rx_body_transfer(id)?;
-                    same_body_identity(transfer, key, role).then_some(id)
+                    (transfer.role() == role
+                        && transfer.endpoint() == endpoint
+                        && transfer.identity().is_absent()
+                        && transfer.request_binding == Some(binding))
+                    .then_some(id)
                 })
-            });
+            } else {
+                self.lookup_rx_body_role(key, role).or_else(|| {
+                    (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
+                        let id = SlotId::from_index(i);
+                        let transfer = self.storage.rx_body_transfer(id)?;
+                        same_body_identity(transfer, key, role).then_some(id)
+                    })
+                })
+            };
             if let Some(id) = existing {
                 let transfer = self
                     .storage
@@ -2190,14 +2208,53 @@ impl<S: Storage + BodySlots> Engine<S> {
                 if transfer.request_binding != Some(binding) {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
+                if untagged_classic {
+                    if block.num() == 0 && key != transfer.key() {
+                        BlockTransfer::incoming_block1(
+                            key,
+                            block,
+                            n,
+                            self.capacities().rx_body_bytes.unwrap_or(0),
+                            expected,
+                        )?;
+                        self.release_rx_body(id)?;
+                    } else {
+                        classic_body = Some(id);
+                    }
+                }
             }
         }
-        let progress = match which {
-            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected),
-        }?;
+        let progress = if untagged_classic {
+            let result = if let Some(id) = classic_body {
+                self.write_block1(id, block, &tmp.as_ref()[..n])
+            } else {
+                self.admit_block1(key, block, &tmp.as_ref()[..n], expected)
+                    .and_then(|id| {
+                        let transfer = self
+                            .storage
+                            .rx_body_transfer(id)
+                            .ok_or(BlockTransferError::NoTransfer)?;
+                        Ok(BlockProgress::new(
+                            id,
+                            transfer.filled(),
+                            transfer.is_complete(),
+                        ))
+                    })
+            };
+            self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+            result?
+        } else {
+            match which {
+                RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::QBlock1 => {
+                    self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected)
+                }
+                RxBlockOpt::QBlock2 => {
+                    self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected)
+                }
+            }?
+        };
         if let Some(binding) = binding {
             let mut transfer = self
                 .storage
