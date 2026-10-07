@@ -5,15 +5,20 @@
 //! 1472 or 2048 bytes and share the same App configuration and polling loop.
 //! TX capacity stays 1472 bytes; reusable scratch reserves 2049 bytes once.
 //! Setup allocations precede the external driver's timed request phase.
+//!
+//! `coaptic-ready` uses Tokio's registered UDP socket, caller-owned scratch,
+//! and readiness-driven bounded drain bursts. Idle waits end at the next
+//! millisecond of the App clock so protocol timers still progress without
+//! incoming traffic. This is a host scheduling experiment, not a core change.
 #![forbid(unsafe_code)]
 use coap_lite::{CoapOption, MessageClass, MessageType, Packet, ResponseType};
-use coaptic::storage::{Capacities, DatagramIo, UdpSocketIo};
+use coaptic::storage::{AllocMemory, Capacities, DatagramIo, Endpoint, UdpSocketIo};
 use coaptic::{App, ContentFormat, Request, Response, get};
 use std::{
     env,
     net::UdpSocket,
     sync::{Arc, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 static BODY: OnceLock<&'static [u8]> = OnceLock::new();
@@ -24,11 +29,11 @@ fn representation(_: Request<'_>) -> Response<'static> {
         .etag(b"fixture")
 }
 
-fn coaptic_server<T: DatagramIo<Error = std::io::Error>>(
+fn bind_fixture<T: DatagramIo<Error = std::io::Error>>(
     io: T,
     bytes: usize,
     rx_bytes: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<App<coaptic::profiles::Default, T, 1, true, AllocMemory>, Box<dyn std::error::Error>> {
     let capacities = Capacities {
         rx_datagram_slots: 4,
         rx_datagram_bytes: rx_bytes,
@@ -41,15 +46,95 @@ fn coaptic_server<T: DatagramIo<Error = std::io::Error>>(
         tx_body_slots: Some(2),
         tx_body_bytes: Some(bytes.div_ceil(1024) * 1024),
     };
-    let mut app = App::builder()
+    Ok(App::builder()
         .routes::<1>()
         .block_wise::<true>()
         .randomness(|buffer| getrandom::fill(buffer).is_ok())
         .route("bench", get(representation))
-        .bind_alloc(io, capacities)?;
+        .bind_alloc(io, capacities)?)
+}
+
+fn coaptic_server<T: DatagramIo<Error = std::io::Error>>(
+    io: T,
+    bytes: usize,
+    rx_bytes: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = bind_fixture(io, bytes, rx_bytes)?;
     let started = Instant::now();
     loop {
         app.poll(started.elapsed().as_millis() as u64)?;
+    }
+}
+
+struct ReadyUdp {
+    socket: tokio::net::UdpSocket,
+    scratch: [u8; 2049],
+    received: bool,
+}
+
+impl DatagramIo for ReadyUdp {
+    type Error = std::io::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        self.received = false;
+        let required = buf
+            .len()
+            .checked_add(1)
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
+        let scratch = self
+            .scratch
+            .get_mut(..required)
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
+        match self.socket.try_recv_from(scratch) {
+            Ok((n, peer)) if n <= buf.len() => {
+                buf[..n].copy_from_slice(&scratch[..n]);
+                self.received = true;
+                Ok(Some((n, peer.into())))
+            }
+            Ok(_) => Err(std::io::ErrorKind::InvalidData.into()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.socket
+            .try_send_to(bytes, std::net::SocketAddr::from(dest))
+    }
+}
+
+async fn ready_server(
+    address: &str,
+    bytes: usize,
+    rx_bytes: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let io = ReadyUdp {
+        socket: tokio::net::UdpSocket::bind(address).await?,
+        scratch: [0; 2049],
+        received: false,
+    };
+    let mut app = bind_fixture(io, bytes, rx_bytes)?;
+    let started = Instant::now();
+    loop {
+        let mut idle = false;
+        for _ in 0..32 {
+            app.poll(started.elapsed().as_millis() as u64)?;
+            if !app.transport().received {
+                idle = true;
+                break;
+            }
+        }
+        if idle {
+            let next_tick =
+                started + Duration::from_millis(started.elapsed().as_millis() as u64 + 1);
+            if let Ok(ready) =
+                tokio::time::timeout_at(next_tick.into(), app.transport().socket.readable()).await
+            {
+                ready?;
+            }
+        } else {
+            tokio::task::yield_now().await;
+        }
     }
 }
 
@@ -112,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
     if !(5..=6).contains(&args.len()) {
         return Err(
-            "usage: bench-rust-server coaptic|coaptic-reusable|coap-rs|coap-lite-codec HOST PORT BYTES [RX_BYTES]".into(),
+            "usage: bench-rust-server coaptic|coaptic-reusable|coaptic-ready|coap-rs|coap-lite-codec HOST PORT BYTES [RX_BYTES]".into(),
         );
     }
     let rx_bytes: usize = args
@@ -123,7 +208,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if ![1472, 2048].contains(&rx_bytes) {
         return Err("receive capacity must be 1472 or 2048".into());
     }
-    if args.len() == 6 && !matches!(args[1].as_str(), "coaptic" | "coaptic-reusable") {
+    if args.len() == 6
+        && !matches!(
+            args[1].as_str(),
+            "coaptic" | "coaptic-reusable" | "coaptic-ready"
+        )
+    {
         return Err("receive capacity is supported only by the Coaptic fixtures".into());
     }
     let size: usize = args[4].parse()?;
@@ -149,6 +239,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         "coap-lite-codec" => codec_server(&address, body),
+        "coaptic-ready" => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(ready_server(&address, size, rx_bytes)),
         "coap-rs" => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -177,5 +271,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }),
         _ => Err("unknown implementation".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readiness_receive_preserves_exact_oversized_and_recovery_datagrams() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for host in ["127.0.0.1:0", "[::1]:0"] {
+                    for capacity in [64, 1472, 2048] {
+                        let socket = tokio::net::UdpSocket::bind(host).await.unwrap();
+                        let local = socket.local_addr().unwrap();
+                        let sender = UdpSocket::bind(host).unwrap();
+                        let peer = sender.local_addr().unwrap();
+                        let mut io = ReadyUdp {
+                            socket,
+                            scratch: [0; 2049],
+                            received: false,
+                        };
+                        let mut buf = vec![0; capacity];
+                        for size in [capacity, capacity + 1, capacity + 8, 3] {
+                            let payload = vec![0x39; size];
+                            sender.send_to(&payload, local).unwrap();
+                            buf.fill(0xa5);
+                            let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+                            let result = loop {
+                                tokio::time::timeout_at(deadline, io.socket.readable())
+                                    .await
+                                    .unwrap()
+                                    .unwrap();
+                                match io.recv(&mut buf) {
+                                    Ok(None) => continue,
+                                    result => break result,
+                                }
+                            };
+                            if size <= capacity {
+                                assert_eq!(result.unwrap(), Some((size, peer.into())));
+                                assert_eq!(&buf[..size], payload);
+                                assert!(io.received);
+                            } else {
+                                assert!(result.is_err());
+                                assert!(buf.iter().all(|byte| *byte == 0xa5));
+                                assert!(!io.received);
+                            }
+                        }
+                        sender
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        assert_eq!(io.send(peer.into(), b"reply").unwrap(), 5);
+                        let mut reply = [0; 6];
+                        assert_eq!(sender.recv_from(&mut reply).unwrap(), (5, local));
+                        assert_eq!(&reply[..5], b"reply");
+                    }
+                }
+            });
     }
 }
