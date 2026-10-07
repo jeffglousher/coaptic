@@ -1,6 +1,6 @@
 # coaptic-plugtest
 
-Workspace test crate. Not published. The `coaptic` library stays `no_std`; its default feature set has zero runtime Cargo dependencies.
+Workspace test crate. Not published. The `coaptic` library stays `no_std`; OSCORE is enabled by default. This harness disables default features and explicitly selects plaintext unless its OSCORE mode is requested.
 
 ```bash
 cargo test -p coaptic-plugtest
@@ -28,7 +28,7 @@ This crate is the **App SUT**. The in-crate `cargo test --test plugtest` harness
 
 - [`Peer`](src/peer.rs) — start/stop server, client request, local UDP addr. Backends: `coaptic`, `coap-rs`. Add a library by implementing the trait.
 - Pcap writer + golden JSON grader (`expectations/catalog.json`). CORE goldens assert type, token echo, and CON↔ACK MID, and omit `allow_extra`. OBS / BLOCK / LINK / DTLS keep `allow_extra` (notifications, block trains, mixed-peer extras). Ports / time are wildcards.
-- DTLS: feature `dtls` uses webrtc-dtls 0.12 via explicit transport adapters as a **harness** `DatagramIo` adapter. The default `coaptic` library stays zero-dep. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
+- DTLS: feature `dtls` uses webrtc-dtls 0.12 via explicit transport adapters as a **harness** `DatagramIo` adapter. The library has no DTLS dependency. Mixed pairs (`coap-rs→coaptic`, `coaptic→coap-rs`, `coaptic→coaptic`) run handshake + GET `/secure` with coaptic as SUT.
 - `TD_6LoWPAN_*` stay skipped (`future/backlog` — contributor opportunity).
 
 ### Qualification boundary
