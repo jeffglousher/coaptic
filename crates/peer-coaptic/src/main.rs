@@ -426,9 +426,9 @@ fn fixture(io: Io, echo: bool) -> Result<App<profiles::Default, Io, 9, true>, Er
         )
         .well_known_core();
     if echo {
-        app.echo_policy(server_echo).bind(io)
+        app.echo_policy(server_echo).allow_plaintext().bind(io)
     } else {
-        app.bind(io)
+        app.allow_plaintext().bind(io)
     }
     .map_err(|e| format!("bind: {e:?}").into())
 }

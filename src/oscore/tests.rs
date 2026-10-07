@@ -341,6 +341,26 @@ fn trait_object_not_needed_but_impl_works() {
 }
 
 #[test]
+fn app_builder_retains_oscore_through_typestate_and_plaintext_opt_out() {
+    use crate::{App, profiles};
+    let mut client = App::profile::<profiles::Default>()
+        .oscore(client_c1())
+        .allow_plaintext()
+        .routes::<1>()
+        .deferred::<1>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .bind(Loopback::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    client.get("tv1").to(peer).send(0).unwrap();
+    let (_, bytes, n) = client.transport().last_send.unwrap();
+    let packet = decode(&bytes[..n]).unwrap();
+    assert_eq!(packet.code(), Code::POST);
+    assert!(packet.oscore().is_some());
+}
+
+#[test]
 fn app_protected_get_round_trip() {
     use crate::{App, Request, Response, get, profiles};
 
@@ -355,16 +375,16 @@ fn app_protected_get_round_trip() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .oscore(server_c1())
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .oscore(client_c1())
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
 
     let call = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected request");
@@ -404,6 +424,7 @@ fn app_five_sequential_oscore_gets() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -411,6 +432,7 @@ fn app_five_sequential_oscore_gets() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -453,9 +475,9 @@ fn app_plain_response_does_not_complete_oscore_call() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .oscore(client_c1())
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
 
     let call = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected request");
@@ -490,6 +512,7 @@ fn app_bad_ciphertext_is_silent_drop() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -497,6 +520,7 @@ fn app_bad_ciphertext_is_silent_drop() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -535,6 +559,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -542,6 +567,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -690,6 +716,7 @@ fn app_oscore_observe_register_notify() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -697,6 +724,7 @@ fn app_oscore_observe_register_notify() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -817,6 +845,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -824,6 +853,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -907,6 +937,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -914,6 +945,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1029,6 +1061,7 @@ fn oscore_block_and_qblock_mix_is_per_side() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("upload", put(take))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -1418,6 +1451,7 @@ fn app_oscore_block2_get_assembles() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(hello))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -1425,6 +1459,7 @@ fn app_oscore_block2_get_assembles() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1470,6 +1505,7 @@ fn app_oscore_block1_put_assembles() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("upload", put(accept))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -1477,6 +1513,7 @@ fn app_oscore_block1_put_assembles() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1524,6 +1561,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(hello))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -1531,6 +1569,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1592,6 +1631,7 @@ fn app_oscore_max_age_etag_stay_inner() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -1599,6 +1639,7 @@ fn app_oscore_max_age_etag_stay_inner() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1637,6 +1678,7 @@ fn app_plain_etag_max_age_does_not_complete_oscore_call() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1675,9 +1717,9 @@ fn app_unprotected_request_is_401_max_age_zero() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("tv1", get(hello))
+        .oscore(server_c1())
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
 
     let mut path = OptionsBuilder::<1>::new();
     path.push(Opt::uri_path("tv1")).unwrap();
@@ -1777,6 +1819,7 @@ fn exhausted_sender_seq_is_oscore_error_not_block1() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     let mut ctx = client_c1();
@@ -1815,6 +1858,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("obs", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -1822,6 +1866,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -1876,6 +1921,7 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(Loopback::default())
             .unwrap();
         app.set_oscore(server_c1());
@@ -1944,6 +1990,7 @@ fn cancelled_calls_reclaim_oscore_bindings_without_reusing_sender_sequence() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     app.set_oscore(client_c1());
@@ -1988,12 +2035,14 @@ fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
         .echo_policy(policy)
         .block_wise::<false>()
         .route("value", get(hello))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -2042,12 +2091,14 @@ fn app_client_no_response_stays_inner_and_unsuppressed_error_is_delivered() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("value", put(handler))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -2104,6 +2155,7 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<false>()
+                .allow_plaintext()
                 .bind(FailSend {
                     fail: !short,
                     short,
@@ -2197,6 +2249,7 @@ fn protected_partial_upload_failure_releases_all_request_state() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(FailNth {
                     sends: 0,
                     nth,
@@ -2314,12 +2367,14 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -2424,6 +2479,7 @@ fn dual_role_protected_observe_uses_independent_same_token_relations() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     a.set_oscore(client_c1());
@@ -2431,6 +2487,7 @@ fn dual_role_protected_observe_uses_independent_same_token_relations() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     b.set_oscore(server_c1());
@@ -2505,12 +2562,14 @@ fn protected_delete_delivers_terminal_notification_before_releasing_client_bindi
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value).delete(remove))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     server.set_oscore(server_c1());
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -2592,6 +2651,7 @@ fn exercise_notification_reset_isolation(now: u64, ty: Type) {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     a.set_oscore(client_c1());
@@ -2599,6 +2659,7 @@ fn exercise_notification_reset_isolation(now: u64, ty: Type) {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(value))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     b.set_oscore(server_c1());
@@ -2718,6 +2779,7 @@ fn protected_continuation_failures_release_bindings_without_sequence_reuse() {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
+                    .allow_plaintext()
                     .bind(FaultIo {
                         inbox: None,
                         last: [0; WIRE],
@@ -3081,6 +3143,7 @@ fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         client.set_oscore(client_c1());
@@ -3088,6 +3151,7 @@ fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -3180,6 +3244,7 @@ fn app_oscore_qblock2_sequence_exhaustion_releases_body_without_plaintext_fallba
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(body))
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     let mut context = server_c1();
@@ -3224,6 +3289,7 @@ fn app_oscore_qblock2_accepts_one_no_piv_response_then_fresh_piv() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -3313,6 +3379,7 @@ fn app_oscore_repeated_qblock2_selection_preserves_inner_ranges_and_distinct_piv
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(body))
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -3377,6 +3444,7 @@ fn app_oscore_qblock1_missing_metadata_returns_protected_bad_request() {
                 "upload",
                 put(|_| panic!("missing metadata reached handler")),
             )
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -3423,6 +3491,7 @@ fn app_oscore_qblock1_ack_continue_and_complete_follow_payload_set() {
                     crate::Response::changed()
                 }),
             )
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -3526,6 +3595,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
             let mut client = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(QWire::default())
                 .unwrap();
             client.set_oscore(client_c1());
@@ -3682,6 +3752,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -3696,6 +3767,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
                 Response::changed()
             }),
         )
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -3771,6 +3843,7 @@ fn app_oscore_confirmable_qupload_failed_continuation_retires_binding() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -3828,6 +3901,7 @@ fn app_oscore_qblock2_failed_empty_ack_replays_without_reentering_handler() {
                 Response::content(&LARGE).etag(b"v1")
             }),
         )
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -3861,6 +3935,7 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -3988,6 +4063,7 @@ fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
                 "search",
                 fetch(|_| panic!("invalid format reached handler")),
             )
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -4021,6 +4097,7 @@ fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -4042,6 +4119,7 @@ fn protected_response_matching_preserves_live_state_until_expected_peer_and_mid(
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         client.set_oscore(client_c1());
@@ -4149,6 +4227,7 @@ fn protected_response_rejection_and_failed_ack_preserve_pending_call() {
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         client.set_oscore(client_c1());
@@ -4222,6 +4301,7 @@ fn protected_four_call_capacity_includes_uncollected_replies_and_recovers_repeat
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -4287,6 +4367,7 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
                 let mut client = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
+                    .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
                 client.set_oscore(client_c1());
@@ -4385,6 +4466,7 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         client.set_oscore(client_c1());
@@ -4482,6 +4564,7 @@ fn protected_response_inline_and_assembled_boundaries_reclaim_state() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -4595,6 +4678,7 @@ fn protected_qblock2_aligned_reselection_preserves_windows_and_uses_fresh_pivs()
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(body))
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     server.set_oscore(server_c1());
@@ -4725,6 +4809,7 @@ fn protected_qblock1_timed_reports_bind_latest_request_and_reclaim_state() {
                     .deterministic_for_tests()
                     .block_wise::<true>()
                     .route("upload", put(upload))
+                    .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
                 server.set_oscore(server_c1());
@@ -4855,6 +4940,7 @@ fn protected_qblock1_report_sequence_exhaustion_never_sends_plaintext() {
             "upload",
             put(|_| panic!("incomplete upload reached handler")),
         )
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     let mut context = server_c1();
@@ -4938,6 +5024,7 @@ fn protected_observe_reregistration_continues_sequence_and_replaces_request_bind
             .deterministic_for_tests()
             .block_wise::<false>()
             .route("obs", get(value))
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
@@ -5033,12 +5120,14 @@ fn protected_client_reregistration_rebinds_and_reports_send_failure() {
             .deterministic_for_tests()
             .block_wise::<false>()
             .route("obs", get(value))
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         server.set_oscore(server_c1());
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
         client.set_oscore(client_c1());
@@ -5135,6 +5224,7 @@ fn protected_observe_format_refusal_precedes_replay_commit_and_body_admission() 
             let mut client = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(QWire::default())
                 .unwrap();
             client.set_oscore(client_c1());
@@ -5248,6 +5338,7 @@ fn protected_observe_download_retains_registration_binding_across_followups() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());
@@ -5466,12 +5557,14 @@ fn protected_large_server_notifications_assemble_and_recover_from_send_failure()
                             value::<4096>
                         }),
                     )
+                    .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
                 server.set_oscore(server_c1());
                 let mut client = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
+                    .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
                 client.set_oscore(client_c1());
@@ -5625,6 +5718,7 @@ fn protected_observe_aggregation_preserves_binding_sequence_and_queued_reply() {
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
     client.set_oscore(client_c1());

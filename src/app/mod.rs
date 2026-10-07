@@ -21,7 +21,14 @@
 //! own a global mutable shared bag. Domain data that outlives a request
 //! stays outside `App`.
 //!
+//! Bind requires a provisioned pairwise OSCORE context. The example's hidden
+//! credentials are test fixtures; supply authenticated credentials and persist
+//! sender-sequence reservations in production. Unprotected compatibility and
+//! tests explicitly select [`AppBuilder::allow_plaintext`].
+//!
 //! ```
+//! # #[cfg(feature = "oscore")]
+//! # {
 //! use coaptic::storage::DatagramIo;
 //! use coaptic::{
 //!     App, ContentFormat, Endpoint, Request, Response, get, profiles,
@@ -48,12 +55,18 @@
 //! #     }
 //! #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 //! # }
+//! # let provisioned_credentials = coaptic::oscore::DeriveParams {
+//! #     master_secret: &[0x42; 16], master_salt: &[], sender_id: &[1],
+//! #     recipient_id: &[2], id_context: &[],
+//! # };
+//! let context = coaptic::oscore::SecurityContext::derive(provisioned_credentials).unwrap();
 //! let mut app = App::profile::<profiles::Default>()
 //!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .route("leds/0", get(get_led).put(put_led))
 //!     .well_known_core()
+//!     .oscore(context)
 //!     .bind(NullIo)
 //!     .unwrap();
 //! app.poll(0).unwrap();
@@ -62,6 +75,7 @@
 //! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
 //! app.poll(0).unwrap();
 //! let _ = app.take_response(call);
+//! # }
 //! ```
 //!
 //! [`App::builder`] starts with fixed default datagram storage. Adjust the
@@ -92,7 +106,7 @@
 //! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
 //! (RFC 9175 4.01) is caller-owned through [`AppBuilder::echo_policy`]. Pairwise OSCORE
-//! (feature `oscore`) is `App::set_oscore`.
+//! (default feature `oscore`) is `AppBuilder::oscore` before bind.
 //!
 //! The happy path does not use [`Access`](crate::storage::Access) or
 //! [`SlotId`]. Engine remains the advanced escape hatch
@@ -397,6 +411,8 @@ pub struct AppBuilder<
     full_responses: bool,
     deferred_lifetime_ms: u64,
     identity: Option<IdentitySource>,
+    oscore: oscore::Field,
+    allow_plaintext: bool,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -421,6 +437,8 @@ impl App {
             full_responses: false,
             deferred_lifetime_ms: Transmission::EXCHANGE_LIFETIME_MS as u64,
             identity: None,
+            oscore: oscore::empty_field(),
+            allow_plaintext: false,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -453,6 +471,8 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -479,6 +499,8 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -563,6 +585,47 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
         self
     }
 
+    /// Configure pairwise OSCORE before binding any storage or transport.
+    ///
+    /// Ordinary App construction requires this provisioned context. Context
+    /// derivation, peer authentication and durable sender-sequence reservation
+    /// remain caller-owned. Never reuse a key and sender ID with a reset sequence
+    /// after restart. See [`App::set_oscore`] for supported protocol combinations
+    /// and the in-memory replay window's durability limits.
+    ///
+    /// The `oscore` feature is enabled by default and works without an allocator.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub fn oscore(mut self, context: crate::oscore::SecurityContext) -> Self {
+        self.oscore = Some(context);
+        self
+    }
+
+    /// Explicitly permit plaintext CoAP for compatibility or unprotected tests.
+    ///
+    /// This supplies no confidentiality, integrity or peer authentication.
+    /// Deterministic test mode alone does not enable plaintext. A configured
+    /// OSCORE context still protects traffic and rejects unprotected messages.
+    /// Disabling the Cargo `oscore` feature also requires this explicit opt-out;
+    /// removing cryptography never silently changes an ordinary App to plaintext.
+    #[must_use]
+    pub const fn allow_plaintext(mut self) -> Self {
+        self.allow_plaintext = true;
+        self
+    }
+
+    fn validate_security(&self) -> Result<(), BuildError> {
+        #[cfg(feature = "oscore")]
+        if self.oscore.is_some() {
+            return Ok(());
+        }
+        if self.allow_plaintext {
+            Ok(())
+        } else {
+            Err(BuildError::SecurityRequired)
+        }
+    }
+
     /// Install an explicit server Echo issuer/verifier. See [`EchoPolicy`].
     ///
     /// Off by default. Challenge/reject decisions produce 4.01 before body
@@ -599,6 +662,8 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: 
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -614,10 +679,12 @@ where
     ///
     /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
     /// without changing request builders, response types or the reactor.
+    /// Missing security configuration is rejected before storage construction.
     pub fn bind<T>(
         self,
         io: T,
     ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let engine = EngineBuilder::new()
             .profile::<P>()
             .block_wise(BLOCK_WISE)
@@ -636,6 +703,7 @@ where
         io: T,
         storage: S,
     ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let c = storage.capacities();
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
@@ -658,6 +726,7 @@ where
         io: T,
         c: crate::storage::Capacities,
     ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -686,7 +755,7 @@ where
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             dedup_closed: None,
-            oscore: oscore::empty_field(),
+            oscore: self.oscore,
             assembled: Default::default(),
             deferred: DeferredTable::new(),
         })
@@ -755,6 +824,10 @@ impl<
     }
 
     /// Attach a caller-owned pairwise OSCORE context.
+    ///
+    /// Prefer `AppBuilder::oscore` for initial construction; ordinary bind
+    /// requires a context. This setter retains explicit replacement support
+    /// and never removes protection or enables plaintext fallback.
     ///
     /// There is exactly one context per App, with four live request bindings
     /// shared by in-flight requests and Observe registrations. Replacing it
@@ -846,6 +919,7 @@ impl<
     /// let mut app = App::profile::<profiles::Default>()
     ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
     ///     .block_wise::<false>()
+    ///     .allow_plaintext()
     ///     .bind(NullIo)
     ///     .unwrap();
     /// app.poll(0).unwrap();

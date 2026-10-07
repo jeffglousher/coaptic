@@ -33,12 +33,11 @@ include = [
 ]
 
 [features]
-default = []
+default = ["oscore"]
 alloc = []
 diagnostics = []
 std = ["alloc"]
 # Pairwise OSCORE (RFC 8613). AES-CCM-16-64-128 + HKDF-SHA-256 via RustCrypto.
-# Default stays zero-dep. Engine does not own keys — see `oscore`.
 oscore = ["dep:aes", "dep:ccm", "dep:hkdf", "dep:sha2"]
 
 [dependencies]

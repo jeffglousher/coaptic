@@ -12,6 +12,13 @@
 //!
 //! # Happy path
 //!
+//! Apps require a provisioned pairwise OSCORE context before binding. Supply
+//! authenticated credentials from your provisioning system as
+//! `provisioned_credentials` below; the hidden doctest credentials are fixtures.
+//! Persist sender-sequence reservations before reuse of a key after restart.
+//! Explicit `AppBuilder::allow_plaintext` is available for unprotected tests
+//! and compatibility; disabling Cargo defaults never silently permits plaintext.
+//!
 //! ```text
 //! RX slot (+ body) --view--> Request
 //! handler(Request) -> Response
@@ -23,6 +30,8 @@
 //! ```
 //!
 //! ```
+//! # #[cfg(feature = "oscore")]
+//! # {
 //! use coaptic::{App, Request, Response, get, profiles};
 //! # use coaptic::storage::DatagramIo;
 //! # use coaptic::Endpoint;
@@ -39,10 +48,16 @@
 //!     Response::content(b"21.5")
 //! }
 //!
+//! # let provisioned_credentials = coaptic::oscore::DeriveParams {
+//! #     master_secret: &[0x42; 16], master_salt: &[], sender_id: &[1],
+//! #     recipient_id: &[2], id_context: &[],
+//! # };
+//! let context = coaptic::oscore::SecurityContext::derive(provisioned_credentials).unwrap();
 //! let mut app = App::profile::<profiles::Default>()
 //!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
+//!     .oscore(context)
 //!     .bind(NullIo)
 //!     .unwrap();
 //! app.poll(0).unwrap();
@@ -51,6 +66,7 @@
 //! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
 //! app.poll(0).unwrap();
 //! let _response = app.take_response(call);
+//! # }
 //! ```
 //!
 //! Path arguments accept both `"sensors/temp"` and `&["sensors", "temp"]`
@@ -108,7 +124,7 @@
 //!   [`App::metrics`](App::metrics)). Advanced:
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - `oscore` — pairwise OSCORE (feature `oscore`): caller-owned
-//!   `SecurityContext`, `App::set_oscore`.
+//!   `SecurityContext`, `AppBuilder::oscore` before bind.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
@@ -128,7 +144,7 @@
 //! conformance. Engine BERT (SZX 7) codecs exist; App does not expose them.
 //! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
 //! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
-//! window). `App::set_oscore` attaches it; Engine does not store keys.
+//! window). `AppBuilder::oscore` attaches it before bind; Engine does not store keys.
 //! Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy
 //! hop-by-hop), and first-party DTLS remain backlog — the
 //! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
@@ -142,7 +158,9 @@
 //! - `alloc` — enable the allocator. Off by default.
 //! - `std` — enable the standard library. Implies `alloc`.
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
-//!   `ccm` / `hkdf` / `sha2`. Off by default so the crate stays zero-dep.
+//!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
+//!   `--no-default-features` retains the zero-dependency Engine and requires
+//!   explicit plaintext opt-out for App construction without cryptography.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
