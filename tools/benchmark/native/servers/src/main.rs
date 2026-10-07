@@ -10,6 +10,8 @@
 //! and readiness-driven bounded drain bursts. Idle waits end at the next
 //! millisecond of the App clock so protocol timers still progress without
 //! incoming traffic. This is a host scheduling experiment, not a core change.
+//! `coaptic-mio` applies the same policy directly through Mio without an async
+//! runtime. These variants retain the same protocol processing and pools.
 #![forbid(unsafe_code)]
 use coap_lite::{CoapOption, MessageClass, MessageType, Packet, ResponseType};
 use coaptic::storage::{AllocMemory, Capacities, DatagramIo, Endpoint, UdpSocketIo};
@@ -72,34 +74,109 @@ struct ReadyUdp {
     received: bool,
 }
 
+fn receive_guarded(
+    buf: &mut [u8],
+    scratch: &mut [u8],
+    recv: impl FnOnce(&mut [u8]) -> std::io::Result<(usize, std::net::SocketAddr)>,
+) -> std::io::Result<Option<(usize, Endpoint)>> {
+    let required = buf
+        .len()
+        .checked_add(1)
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    let scratch = scratch
+        .get_mut(..required)
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    match recv(scratch) {
+        Ok((n, peer)) if n <= buf.len() => {
+            buf[..n].copy_from_slice(&scratch[..n]);
+            Ok(Some((n, peer.into())))
+        }
+        Ok(_) => Err(std::io::ErrorKind::InvalidData.into()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 impl DatagramIo for ReadyUdp {
     type Error = std::io::Error;
 
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         self.received = false;
-        let required = buf
-            .len()
-            .checked_add(1)
-            .ok_or(std::io::ErrorKind::InvalidInput)?;
-        let scratch = self
-            .scratch
-            .get_mut(..required)
-            .ok_or(std::io::ErrorKind::InvalidInput)?;
-        match self.socket.try_recv_from(scratch) {
-            Ok((n, peer)) if n <= buf.len() => {
-                buf[..n].copy_from_slice(&scratch[..n]);
-                self.received = true;
-                Ok(Some((n, peer.into())))
-            }
-            Ok(_) => Err(std::io::ErrorKind::InvalidData.into()),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(error) => Err(error),
-        }
+        let result = receive_guarded(buf, &mut self.scratch, |scratch| {
+            self.socket.try_recv_from(scratch)
+        });
+        self.received = result.as_ref().is_ok_and(Option::is_some);
+        result
     }
 
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
         self.socket
             .try_send_to(bytes, std::net::SocketAddr::from(dest))
+    }
+}
+
+struct MioUdp {
+    socket: mio::net::UdpSocket,
+    scratch: [u8; 2049],
+    received: bool,
+}
+
+impl DatagramIo for MioUdp {
+    type Error = std::io::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        self.received = false;
+        let result = receive_guarded(buf, &mut self.scratch, |scratch| {
+            self.socket.recv_from(scratch)
+        });
+        self.received = result.as_ref().is_ok_and(Option::is_some);
+        result
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.socket.send_to(bytes, std::net::SocketAddr::from(dest))
+    }
+}
+
+fn mio_server(
+    address: &str,
+    bytes: usize,
+    rx_bytes: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind(address)?;
+    socket.set_nonblocking(true)?;
+    let mut io = MioUdp {
+        socket: mio::net::UdpSocket::from_std(socket),
+        scratch: [0; 2049],
+        received: false,
+    };
+    let mut poll = mio::Poll::new()?;
+    poll.registry()
+        .register(&mut io.socket, mio::Token(0), mio::Interest::READABLE)?;
+    let mut events = mio::Events::with_capacity(8);
+    let mut app = bind_fixture(io, bytes, rx_bytes)?;
+    let started = Instant::now();
+    loop {
+        let mut idle = false;
+        for _ in 0..32 {
+            app.poll(started.elapsed().as_millis() as u64)?;
+            if !app.transport().received {
+                idle = true;
+                break;
+            }
+        }
+        let timeout = if idle {
+            let now = Instant::now();
+            let next_tick =
+                started + Duration::from_millis(now.duration_since(started).as_millis() as u64 + 1);
+            next_tick.saturating_duration_since(now)
+        } else {
+            Duration::ZERO
+        };
+        match poll.poll(&mut events, Some(timeout)) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        }
     }
 }
 
@@ -197,7 +274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
     if !(5..=6).contains(&args.len()) {
         return Err(
-            "usage: bench-rust-server coaptic|coaptic-reusable|coaptic-ready|coap-rs|coap-lite-codec HOST PORT BYTES [RX_BYTES]".into(),
+            "usage: bench-rust-server coaptic|coaptic-reusable|coaptic-ready|coaptic-mio|coap-rs|coap-lite-codec HOST PORT BYTES [RX_BYTES]".into(),
         );
     }
     let rx_bytes: usize = args
@@ -211,7 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 6
         && !matches!(
             args[1].as_str(),
-            "coaptic" | "coaptic-reusable" | "coaptic-ready"
+            "coaptic" | "coaptic-reusable" | "coaptic-ready" | "coaptic-mio"
         )
     {
         return Err("receive capacity is supported only by the Coaptic fixtures".into());
@@ -239,6 +316,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         "coap-lite-codec" => codec_server(&address, body),
+        "coaptic-mio" => mio_server(&address, size, rx_bytes),
         "coaptic-ready" => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
@@ -277,6 +355,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mio_readiness_receive_preserves_exact_oversized_and_recovery_datagrams() {
+        for host in ["127.0.0.1:0", "[::1]:0"] {
+            for capacity in [64, 1472, 2048] {
+                let socket = UdpSocket::bind(host).unwrap();
+                socket.set_nonblocking(true).unwrap();
+                let local = socket.local_addr().unwrap();
+                let sender = UdpSocket::bind(host).unwrap();
+                let peer = sender.local_addr().unwrap();
+                let mut io = MioUdp {
+                    socket: mio::net::UdpSocket::from_std(socket),
+                    scratch: [0; 2049],
+                    received: false,
+                };
+                let mut poll = mio::Poll::new().unwrap();
+                poll.registry()
+                    .register(&mut io.socket, mio::Token(0), mio::Interest::READABLE)
+                    .unwrap();
+                let mut events = mio::Events::with_capacity(8);
+                let mut buf = vec![0; capacity];
+                for size in [capacity, capacity + 1, capacity + 8, 3] {
+                    let payload = vec![0x39; size];
+                    sender.send_to(&payload, local).unwrap();
+                    buf.fill(0xa5);
+                    let deadline = Instant::now() + Duration::from_secs(1);
+                    let result = loop {
+                        let timeout = deadline.saturating_duration_since(Instant::now());
+                        assert!(!timeout.is_zero(), "receive deadline");
+                        poll.poll(&mut events, Some(timeout)).unwrap();
+                        match io.recv(&mut buf) {
+                            Ok(None) => continue,
+                            result => break result,
+                        }
+                    };
+                    if size <= capacity {
+                        assert_eq!(result.unwrap(), Some((size, peer.into())));
+                        assert_eq!(&buf[..size], payload);
+                        assert!(io.received);
+                    } else {
+                        assert!(result.is_err());
+                        assert!(buf.iter().all(|byte| *byte == 0xa5));
+                        assert!(!io.received);
+                    }
+                    assert!(io.recv(&mut buf).unwrap().is_none());
+                    assert!(!io.received);
+                }
+                sender
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                assert_eq!(io.send(peer.into(), b"reply").unwrap(), 5);
+                let mut reply = [0; 6];
+                assert_eq!(sender.recv_from(&mut reply).unwrap(), (5, local));
+                assert_eq!(&reply[..5], b"reply");
+            }
+        }
+    }
 
     #[test]
     fn readiness_receive_preserves_exact_oversized_and_recovery_datagrams() {
