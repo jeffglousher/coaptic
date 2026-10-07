@@ -27,6 +27,7 @@ let mut app = App::profile::<profiles::Default>()
     .randomness(|bytes| getrandom::fill(bytes).is_ok())
     .block_wise::<true>()
     .route("sensors/temp", get(get_temp))
+    .oscore(provisioned_context)
     .bind(io)?;
 app.poll(now_ms)?;
 
@@ -37,8 +38,10 @@ let response = app.take_response(call);
 
 `.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Supply secure entropy for eight-byte Tokens, a randomized initial Message ID and CON retry jitter. The library does not call an OS RNG; deterministic mode is explicitly for tests.
 
-Optional `oscore` provides pairwise AES-CCM protection with caller-owned security
-contexts. See rustdoc for Observe, block-wise transfers and security APIs.
+Default `oscore` provides pairwise AES-CCM protection with caller-owned security
+contexts. Ordinary App bind requires a provisioned context; explicit
+`.allow_plaintext()` permits unprotected interoperability and testing.
+See rustdoc for provisioning, sequence durability, Observe and block-wise transfers.
 DTLS adapters live in test harnesses and independent peer executables; the library
 does not own a DTLS stack.
 
@@ -49,8 +52,9 @@ does not own a DTLS stack.
   Exhaustion returns `Error::Saturated` rather than evicting a request.
 - One pairwise OSCORE context per App, with four live Token bindings. Use
   separate Apps for independent peers or key epochs; replacing a context
-  does not migrate live exchanges or subscriptions. Timed Q-Block gap
-  recovery with OSCORE returns `Error::Unsupported` without sending plaintext.
+  does not migrate live exchanges or subscriptions. OSCORE Q-Block recovery
+  requires a retained authenticated request or live client Call; unbound
+  advanced receive bodies return `Error::Unsupported` without sending plaintext.
 - `.block_wise::<true>()` uses 4 KiB per body slot even for Constrained:
   8 KiB of RX/TX bodies for Constrained, 16 KiB for Default, plus a 4 KiB
   assembled client-body hold and bookkeeping. Datagram-only mode omits these.
@@ -60,7 +64,7 @@ does not own a DTLS stack.
 
 ## Features
 
-Default is `no_std` with no allocator. Optional `alloc` and `std` (`std` implies `alloc`). Optional `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without `oscore` the library crate has zero dependencies.
+Default is `no_std` with no allocator and OSCORE enabled. Optional `alloc` and `std` (`std` implies `alloc`). Default `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without default features the Engine has zero dependencies; Apps still require explicit plaintext opt-out when cryptography is disabled.
 
 ## Examples and testing
 

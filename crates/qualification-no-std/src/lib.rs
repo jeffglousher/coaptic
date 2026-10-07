@@ -34,18 +34,12 @@ pub fn protocol_codegen_probe(input: &[u8], _master_secret: &[u8]) -> bool {
     fn value(_: Request<'_>) -> Response<'static> {
         Response::content(b"probe")
     }
-    let Ok(mut app) = App::profile::<profiles::Constrained>()
+    let builder = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .route("probe", get(value))
-        .bind(ProbeIo {
-            incoming: Some(input),
-        })
-    else {
-        return false;
-    };
+        .route("probe", get(value));
     #[cfg(feature = "oscore")]
-    {
+    let builder = {
         let Ok(context) = coaptic::oscore::SecurityContext::derive(coaptic::oscore::DeriveParams {
             master_secret: _master_secret,
             master_salt: &[],
@@ -55,8 +49,15 @@ pub fn protocol_codegen_probe(input: &[u8], _master_secret: &[u8]) -> bool {
         }) else {
             return false;
         };
-        app.set_oscore(context);
-    }
+        builder.oscore(context)
+    };
+    #[cfg(not(feature = "oscore"))]
+    let builder = builder.allow_plaintext();
+    let Ok(mut app) = builder.bind(ProbeIo {
+        incoming: Some(input),
+    }) else {
+        return false;
+    };
     let Ok(call) = app
         .get("probe")
         .to(Endpoint::v4([192, 0, 2, 1], 5683))
