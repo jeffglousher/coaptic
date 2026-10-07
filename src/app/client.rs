@@ -96,6 +96,7 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -753,6 +754,7 @@ enum OutgoingObserve {
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);

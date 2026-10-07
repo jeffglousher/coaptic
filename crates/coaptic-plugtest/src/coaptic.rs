@@ -207,7 +207,7 @@ where
     for (path, router) in site::extra_routers() {
         b = b.route(path, router);
     }
-    b.bind(io).expect("bind plugtest App")
+    b.allow_plaintext().bind(io).expect("bind plugtest App")
 }
 
 /// Drive one client request through [`App::get`] / [`App::put`] / observe,
@@ -239,6 +239,7 @@ fn start_client<T: DatagramIo<Error = std::io::Error>>(
     let mut app = App::profile::<profiles::Default>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(io)
         .map_err(|e| format!("bind: {e}"))?;
     let path = intern_path(&req.path)?;
