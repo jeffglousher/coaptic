@@ -42,6 +42,7 @@ fn coaptic_server<T: DatagramIo<Error = std::io::Error>>(
         tx_body_bytes: Some(bytes.div_ceil(1024) * 1024),
     };
     let mut app = App::builder()
+        .allow_plaintext()
         .routes::<1>()
         .block_wise::<true>()
         .randomness(|buffer| getrandom::fill(buffer).is_ok())
