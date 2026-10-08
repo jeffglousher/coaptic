@@ -86,6 +86,19 @@ def noise():
     return value
 
 
+def process_cpu(pid):
+    """Process CPU accounting; sampled outside the independent driver timing."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        value = psutil.Process(pid).cpu_times()
+        return {"user_seconds": value.user, "system_seconds": value.system}
+    except (psutil.Error, OSError):
+        return None
+
+
 def integer(value, name, minimum, maximum):
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f"invalid {name}")
@@ -327,22 +340,37 @@ def run_cell(peer, case):
                 raise ValueError(f"server not externally ready; last probe={last_probe!r}")
             values.update(case)
             timeout = min(86_400, 15 + (case["operations"] + case["warmup"] * case["concurrency"]) * case["timeout_ms"] / 1000)
+            cpu_before = process_cpu(server.pid)
+            measured_started = time.monotonic()
             exit_code, sample = execute(render(peer["driver"], values), timeout,
                                         lambda: server.poll() is None and not captured.overflow.is_set())
+            measured_wall = time.monotonic() - measured_started
+            cpu_after = process_cpu(server.pid)
+            cpu_accounting = {"before": cpu_before, "after": cpu_after,
+                              "driver_process_wall_seconds": measured_wall,
+                              "scope": "server CPU over driver startup, warmup, measured requests and driver exit; platform accounting granularity applies"}
             try:
                 validate_sample(sample, case)
             except ValueError as error:
                 return {"error": str(error), "raw_sample": sample, "exit_code": exit_code,
-                        "readiness": readiness, "noise_before": before, "noise_after": noise(), "finished": utc()}
+                        "readiness": readiness, "server_cpu": cpu_accounting,
+                        "noise_before": before, "noise_after": noise(), "finished": utc()}
             warmup_failed = integer(sample.get("warmup_failed"), "warmup_failed", 0, case["warmup"] * case["concurrency"])
             if exit_code not in (0, 1) or (exit_code == 0) != (sample["failed"] == 0 and warmup_failed == 0):
                 raise ValueError("driver exit contradicts failure accounting")
             if captured.overflow.is_set() or server.poll() is not None:
                 raise ValueError("server exited or exceeded output cap during measured workload")
             return {"sample": sample, "readiness": readiness, "noise_before": before,
-                    "noise_after": noise(), "finished": utc()}
+                    "server_cpu": cpu_accounting, "noise_after": noise(), "finished": utc()}
+        except (ValueError, OSError) as error:
+            failure = error
         finally:
             captured.close()
+        raise ValueError(
+            f"{failure}; server_exit={server.returncode}; "
+            f"stderr_tail={bytes(captured.errors[-4096:])!r}; "
+            f"stdout_tail={bytes(captured.output[-4096:])!r}"
+        ) from failure
 
 
 @contextlib.contextmanager

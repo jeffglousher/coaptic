@@ -15,15 +15,21 @@
 //!
 //! # Caller contract
 //!
-//! 1. Provision the Master Secret (and optional salt / ID Context) out of
-//!    band. This crate does not mint secrets or call an OS RNG.
+//! 1. Provision the Master Secret (and optional salt / ID Context) through an
+//!    authenticated channel. The optional `edhoc` feature supplies authenticated
+//!    bootstrap through `crate::provisioning` with installed peer pins and
+//!    caller-supplied entropy. The library does not call an OS RNG.
 //! 2. Give each endpoint distinct Sender / Recipient IDs (they are mirrors).
 //! 3. Durably reserve sender sequences before use and restore recipient replay
 //!    protection before accepting traffic with reused keys. See
-//!    [`SecurityContext::set_sender_seq`], [`ReplayCheckpoint`] and
+//!    [`SecurityContext::restore_sender_reservation`] and
+//!    [`SecurityContext::reserve_sender_sequences`] for enforced sender ranges,
+//!    or [`SecurityContext::set_sender_seq`] for caller-managed sequencing.
+//!    Recipient recovery uses [`ReplayCheckpoint`] and
 //!    [`SecurityContext::restore_replay`]. Checkpoint storage, context identity,
-//!    freshness and commit-before-effects are caller responsibilities. App has
-//!    no durable pre-handler checkpoint barrier. If state recovery is uncertain,
+//!    freshness and durable storage are caller responsibilities. Use
+//!    [`crate::App::poll_with_oscore_checkpoint`] for an enforced pre-handler
+//!    inbound-request checkpoint barrier. If state recovery is uncertain,
 //!    establish a fresh cryptographic context (RFC 8613 section 7.5 / Appendix B).
 //! 4. Keep the context for the lifetime of the pairwise association. App
 //!    holds it only if you call [`crate::App::set_oscore`].
@@ -56,7 +62,7 @@
 //!
 //! # What this slice does not do
 //!
-//! Group OSCORE, other AEAD/HKDF algorithms, EDHOC / ACE key establishment,
+//! Group OSCORE, other AEAD/HKDF algorithms, ACE key establishment,
 //! Outer Block-wise over OSCORE (proxy hop-by-hop), and first-party DTLS
 //! (still harness `DatagramIo` only).
 //!
@@ -109,7 +115,7 @@
 //! # }
 //! ```
 
-mod aead;
+pub(crate) mod aead;
 mod cbor;
 mod context;
 mod error;
@@ -120,7 +126,7 @@ mod protect;
 mod tests;
 
 pub use context::{DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext};
-pub use error::Error;
+pub use error::{Error, SenderReservationError};
 pub use header::{OscoreHeader, PartialIv};
 pub use protect::{
     OscoreContext, protect_request, protect_response, unprotect_request, unprotect_response,

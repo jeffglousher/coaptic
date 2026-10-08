@@ -54,6 +54,14 @@ def evidence(root, count=6, failed_reference=False, resumed=False, overlap=False
 
 
 class CampaignTests(unittest.TestCase):
+    def test_server_startup_failure_retains_exit_and_stderr(self):
+        peer = {
+            "server": [sys.executable, "-c", "import sys; print('fixture bind failed', file=sys.stderr); sys.exit(17)"],
+            "driver": [sys.executable, "-c", "print('{{}}')"],
+        }
+        with self.assertRaisesRegex(ValueError, "server_exit=17.*fixture bind failed"):
+            bench.run_cell(peer, case())
+
     def test_request_tail_is_not_average_session_tail(self):
         with tempfile.TemporaryDirectory() as root:
             evidence(root)

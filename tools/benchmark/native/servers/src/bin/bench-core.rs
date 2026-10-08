@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("operation limit".into());
     }
     let mut app = App::builder()
+        .allow_plaintext()
         .routes::<1>()
         .block_wise::<true>()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())

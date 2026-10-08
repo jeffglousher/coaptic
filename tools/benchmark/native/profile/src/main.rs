@@ -17,7 +17,7 @@
 //! the named phase. Payload generation, validation, and reporting are excluded.
 
 use coaptic::message::{BlockValue, Message, MessageId, Opt, Token, Type, decode};
-use coaptic::storage::{Capacities, DatagramIo, WorkMetrics};
+use coaptic::storage::{Capacities, DatagramIo, UdpSocketIo, WorkMetrics};
 use coaptic::{App, Code, Endpoint, Request, Response, get};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::RefCell;
@@ -182,6 +182,7 @@ fn core_probe(bytes: usize, operations: usize) -> Result<(), Box<dyn std::error:
     }));
     begin();
     let bind_result = App::builder()
+        .allow_plaintext()
         .routes::<1>()
         .block_wise::<true>()
         .randomness(|buffer| getrandom::fill(buffer).is_ok())
@@ -289,6 +290,75 @@ fn udp_idle_probe(capacity: usize, polls: usize) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+fn udp_receive_probe<T: DatagramIo<Error = std::io::Error>>(
+    mut io: T,
+    destination: std::net::SocketAddr,
+    capacity: usize,
+    reusable: bool,
+    active: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sender = UdpSocket::bind("127.0.0.1:0")?;
+    let expected_peer = Endpoint::from(sender.local_addr()?);
+    let payload = vec![0x5a; capacity];
+    let mut buffer = vec![0; capacity];
+    let mut hot = Counts::default();
+    let mut elapsed_ns = 0u128;
+    for operation in 0..1020 {
+        if active {
+            sender.send_to(&payload, destination)?;
+        }
+        begin();
+        let started = Instant::now();
+        let outcome = io.recv(&mut buffer);
+        let elapsed = started.elapsed().as_nanos();
+        let count = end();
+        let received = outcome?;
+        if active {
+            if received != Some((capacity, expected_peer)) || buffer != payload {
+                return Err("UDP payload mismatch".into());
+            }
+        } else if received.is_some() {
+            return Err("unexpected UDP datagram".into());
+        }
+        if operation >= 20 {
+            hot.allocations += count.allocations;
+            hot.reallocations += count.reallocations;
+            hot.bytes += count.bytes;
+            elapsed_ns += elapsed;
+        }
+    }
+    println!(
+        "{{\"kind\":\"udp_receive\",\"capacity\":{capacity},\"polls\":1000,\"reusable\":{reusable},\"active\":{active},\"elapsed_ns\":{elapsed_ns},\"allocations\":{},\"reallocations\":{},\"allocated_bytes\":{}}}",
+        hot.allocations, hot.reallocations, hot.bytes
+    );
+    Ok(())
+}
+
+fn udp_scratch_probes() -> Result<(), Box<dyn std::error::Error>> {
+    for capacity in [1472, 2048] {
+        for active in [false, true] {
+            for reusable in [false, true] {
+                let socket = UdpSocket::bind("127.0.0.1:0")?;
+                socket.set_nonblocking(!active)?;
+                socket.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+                let destination = socket.local_addr()?;
+                if reusable {
+                    udp_receive_probe(
+                        UdpSocketIo::new(socket, [0; 2049])?,
+                        destination,
+                        capacity,
+                        reusable,
+                        active,
+                    )?;
+                } else {
+                    udp_receive_probe(socket, destination, capacity, reusable, active)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Default)]
 struct TransportTimes {
     active_receive_ns: u128,
@@ -352,6 +422,7 @@ fn socket_probe(
     };
     begin();
     let bind_result = App::builder()
+        .allow_plaintext()
         .routes::<1>()
         .block_wise::<true>()
         .randomness(|buffer| getrandom::fill(buffer).is_ok())
@@ -441,5 +512,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     core_probe(bytes, operations)?;
     udp_idle_probe(1472, 1000)?;
-    udp_idle_probe(2048, 1000)
+    udp_idle_probe(2048, 1000)?;
+    udp_scratch_probes()
 }

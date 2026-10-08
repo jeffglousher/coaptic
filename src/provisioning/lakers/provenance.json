@@ -1,0 +1,78 @@
+{
+  "upstream_repository": "https://github.com/lake-rs/lakers",
+  "hardened_repository": "https://github.com/jeffglousher/lakers",
+  "upstream_release": "v0.8.0",
+  "upstream_release_commit": "32d09af75d44c771582c21a82831ee3a5dc8aecc",
+  "hardened_commit": "462b30f5b3e9cfab96c05fe65f36d19eaa7002ad",
+  "license": "BSD-3-Clause",
+  "license_source": "LICENSE.md",
+  "license_sha256": "147bc0bcd8c5897070cfb4aa0e3ab4e822feab05319be54a9f8466197c6eb234",
+  "formatter": "rustup run 1.99.0 rustfmt --edition 2024 --config skip_children=true",
+  "transformations": [
+    "Remove trailing upstream test modules; original tests are validated separately against exact source",
+    "Adapt lakers_shared and edhoc imports to private sibling modules",
+    "Remove crate-only no_std attributes; the enclosing Coaptic crate supplies no_std",
+    "Remove Python binding attributes/imports and test-only EAD re-export",
+    "Freeze four upstream buffer constants to default values: 192, 256, 320, 8",
+    "Render upstream external-crate documentation examples as text for private vendoring",
+    "Format source with the specified rustfmt; preserve production algorithms and original comments",
+    "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps"
+  ],
+  "source_files": [
+    {
+      "source": "lib/src/lib.rs",
+      "source_sha256": "66b48bcda4b25fd8485dc4fe368bddc444dd530bba6589e1cb29cb05874dc841",
+      "source_git_blob": "2162fe944b9c511badcf42249ba61e9421e40790",
+      "production_prefix_sha256": "ff47187f676d2b50f75c1eac73e8002353fdda59f7fc9ca8ed386692c3877131",
+      "output": "core.rs",
+      "pre_format_output_sha256": "bcac0bfd79f6b21e3cf3f82da716632f3f458f5888146dca52df66c45182f422",
+      "output_sha256": "aa3aa6ca6031682a83990d1c302db5537adcb993a2437ccf97fee9d000e06aaf"
+    },
+    {
+      "source": "lib/src/edhoc.rs",
+      "source_sha256": "be14ebe8fe32c2df9ecc42bb99579f9428709ee07a39261a8b095384b9a1557c",
+      "source_git_blob": "f76fd013c68096deeea65f2bbae860c1a4e2a35b",
+      "production_prefix_sha256": "00a12362f328c3a9b7c362536148a2a31f3d574c70b510b13f46fbc64773b5cc",
+      "output": "edhoc.rs",
+      "pre_format_output_sha256": "afc710da5516942fadcf7255f1366c46561a338d66c3f0609bfbfd3ff920017f",
+      "output_sha256": "dbe4f1dae12c15d60805cf76ffe501579802a33b314e590fccb03ee586cba641"
+    },
+    {
+      "source": "shared/src/lib.rs",
+      "source_sha256": "f34fa3fbb07a019bcef5bdbea0d97ce4b97cc0baf4a848d52b8a0b0c22404dc1",
+      "source_git_blob": "73773846df75a72ea57d95f1a6f5a53fc7d10b8c",
+      "production_prefix_sha256": "b44659ae55ad8b03464454f130b77c78eb958c0d352df57b4bb12184d7f608be",
+      "output": "shared/mod.rs",
+      "pre_format_output_sha256": "a4b5d228a257421fcdb7a31c0520da14529ef8aa48a00bc8e0b19c9226243ac9",
+      "output_sha256": "94df6209a96ae55adb302ba8cdb12a6d6502c666decdd63ca7d8e56f6dff8467"
+    },
+    {
+      "source": "shared/src/cred.rs",
+      "source_sha256": "b728f7f1977256e3964e4c8f448534958fcd13c630fd6ebe15b97d8a6807346b",
+      "source_git_blob": "fc87362948af05f3d57445989d2b0cef8a675245",
+      "production_prefix_sha256": "a14726e6f63f19643f0452960712a655f97eb76fe5e4e5507a913b7a4da4643f",
+      "output": "shared/cred.rs",
+      "pre_format_output_sha256": "48e4ceb1e9366750e24c9331e0f325b0683911371653d13c74465856af94fbc5",
+      "output_sha256": "9bbec7ea6a0b731ac7d4e790aa567b456c416eb3e75d8f07fa52ffdc8d5fb7e2"
+    },
+    {
+      "source": "shared/src/buffer.rs",
+      "source_sha256": "6779d8fafcfb0c75618d832e8ae7f55606d72573b6b72f117b674a12ab082eff",
+      "source_git_blob": "b60078b85c8172b6916b3b467fbe800278202195",
+      "production_prefix_sha256": "976a494865ba5a39e615f63b3092c55d1296f963ca586763c07e27190721af06",
+      "output": "shared/buffer.rs",
+      "pre_format_output_sha256": "976a494865ba5a39e615f63b3092c55d1296f963ca586763c07e27190721af06",
+      "output_sha256": "6b6bc0872b1f62843268c93c7790e493b5a1136951450e450c6114fc7f22dd61"
+    },
+    {
+      "source": "shared/src/crypto.rs",
+      "source_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7",
+      "source_git_blob": "2de582326e8c157ac6edc791cd1e33dd942d89a2",
+      "production_prefix_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7",
+      "output": "shared/crypto.rs",
+      "pre_format_output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7",
+      "output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7"
+    }
+  ],
+  "facade_sha256": "4ee5eab4782a7ae27ef9228da767cc691bd679e675bed961ac7f47720fed1595"
+}
