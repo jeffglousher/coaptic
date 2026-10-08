@@ -15,8 +15,10 @@
 //!
 //! # Caller contract
 //!
-//! 1. Provision the Master Secret (and optional salt / ID Context) out of
-//!    band. This crate does not mint secrets or call an OS RNG.
+//! 1. Provision the Master Secret (and optional salt / ID Context) through an
+//!    authenticated channel. The optional `edhoc` feature supplies authenticated
+//!    bootstrap through `crate::provisioning` with installed peer pins and
+//!    caller-supplied entropy. The library does not call an OS RNG.
 //! 2. Give each endpoint distinct Sender / Recipient IDs (they are mirrors).
 //! 3. Durably reserve sender sequences before use and restore recipient replay
 //!    protection before accepting traffic with reused keys. See
@@ -60,7 +62,7 @@
 //!
 //! # What this slice does not do
 //!
-//! Group OSCORE, other AEAD/HKDF algorithms, EDHOC / ACE key establishment,
+//! Group OSCORE, other AEAD/HKDF algorithms, ACE key establishment,
 //! Outer Block-wise over OSCORE (proxy hop-by-hop), and first-party DTLS
 //! (still harness `DatagramIo` only).
 //!
@@ -113,7 +115,7 @@
 //! # }
 //! ```
 
-mod aead;
+pub(crate) mod aead;
 mod cbor;
 mod context;
 mod error;
