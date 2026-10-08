@@ -19,6 +19,86 @@ pub(crate) type Field = Option<SecurityContext>;
 #[derive(Clone, Copy)]
 pub(crate) struct Field;
 
+#[cfg(feature = "oscore")]
+pub(crate) type CheckpointCommit<'a> = dyn FnMut(crate::oscore::ReplayCheckpoint) -> bool + 'a;
+#[cfg(not(feature = "oscore"))]
+pub(crate) type CheckpointCommit<'a> = dyn FnMut() -> bool + 'a;
+
+#[cfg(feature = "oscore")]
+#[derive(Clone, Copy)]
+pub(crate) enum CheckpointState {
+    Volatile,
+    Dirty,
+    Clean,
+}
+
+#[cfg(not(feature = "oscore"))]
+#[derive(Clone, Copy)]
+pub(crate) struct CheckpointState;
+
+impl CheckpointState {
+    pub(crate) const fn new() -> Self {
+        #[cfg(feature = "oscore")]
+        {
+            Self::Volatile
+        }
+        #[cfg(not(feature = "oscore"))]
+        {
+            Self
+        }
+    }
+
+    pub(crate) const fn required(self) -> bool {
+        #[cfg(feature = "oscore")]
+        {
+            !matches!(self, Self::Volatile)
+        }
+        #[cfg(not(feature = "oscore"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn require(&mut self) {
+        if !self.required() {
+            *self = Self::Dirty;
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn invalidate(&mut self) {
+        if self.required() {
+            *self = Self::Dirty;
+        }
+    }
+
+    pub(crate) fn flush<E>(
+        &mut self,
+        ctx: &Field,
+        commit: &mut Option<&mut CheckpointCommit<'_>>,
+    ) -> Result<(), super::Error<E>> {
+        #[cfg(feature = "oscore")]
+        if self.required() {
+            let commit = commit
+                .as_mut()
+                .ok_or(super::Error::OscoreCheckpointRequired)?;
+            let ctx = ctx
+                .as_ref()
+                .ok_or(super::Error::Oscore(OscoreError::Context))?;
+            if matches!(self, Self::Dirty) {
+                if !commit(ctx.replay_checkpoint()) {
+                    return Err(super::Error::OscoreCheckpointFailed);
+                }
+                *self = Self::Clean;
+            }
+        }
+        #[cfg(not(feature = "oscore"))]
+        let _ = (ctx, commit);
+        Ok(())
+    }
+}
+
 /// Request binding carried on an inbound OSCORE exchange.
 #[cfg(feature = "oscore")]
 pub(crate) type Request = Option<RequestRef>;

@@ -25,8 +25,9 @@
 //!    or [`SecurityContext::set_sender_seq`] for caller-managed sequencing.
 //!    Recipient recovery uses [`ReplayCheckpoint`] and
 //!    [`SecurityContext::restore_replay`]. Checkpoint storage, context identity,
-//!    freshness and commit-before-effects are caller responsibilities. App has
-//!    no durable pre-handler checkpoint barrier. If state recovery is uncertain,
+//!    freshness and durable storage are caller responsibilities. Use
+//!    [`crate::App::poll_with_oscore_checkpoint`] for an enforced pre-handler
+//!    inbound-request checkpoint barrier. If state recovery is uncertain,
 //!    establish a fresh cryptographic context (RFC 8613 section 7.5 / Appendix B).
 //! 4. Keep the context for the lifetime of the pairwise association. App
 //!    holds it only if you call [`crate::App::set_oscore`].

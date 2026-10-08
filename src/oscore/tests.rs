@@ -6185,3 +6185,9 @@ fn older_concurrent_request_binding_is_not_authenticated() {
         observe
     );
 }
+
+#[path = "replay_tests.rs"]
+mod replay_barrier;
+
+#[path = "checkpoint_q_tests.rs"]
+mod checkpoint_q;
