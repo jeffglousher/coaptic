@@ -4128,6 +4128,210 @@ mod alloc_backend {
 }
 
 #[test]
+fn classic_block1_changed_tokens_preserve_exact_operation_identity() {
+    classic_block1_token_suite(build_default_bodies());
+    #[cfg(feature = "alloc")]
+    {
+        let capacities =
+            Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>();
+        let engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(capacities)
+            .unwrap();
+        classic_block1_token_suite(engine);
+    }
+}
+
+fn classic_block1_token_suite<S: Storage + DatagramSlots + BodySlots>(mut engine: Engine<S>) {
+    #[derive(Clone, Copy)]
+    struct Packet<'a> {
+        peer: Endpoint,
+        token: u8,
+        method: Code,
+        path: &'a str,
+        query: &'a str,
+        tag: Option<&'a [u8]>,
+        num: u32,
+        payload: &'a [u8],
+    }
+    fn apply<S: Storage + DatagramSlots + BodySlots>(
+        engine: &mut Engine<S>,
+        packet: Packet<'_>,
+    ) -> Result<super::BlockProgress, BlockTransferError> {
+        let block = BlockValue::from_size(packet.num, packet.num == 0, 1024)
+            .unwrap()
+            .encode();
+        let size = encode_uint(2000);
+        let mut options = crate::message::OptionsBuilder::<5>::new();
+        options.push(Opt::uri_path(packet.path)).unwrap();
+        options.push(Opt::uri_query(packet.query)).unwrap();
+        options.push(Opt::block1(&block)).unwrap();
+        if packet.num == 0 {
+            options.push(Opt::size1(&size)).unwrap();
+        }
+        if let Some(tag) = packet.tag {
+            options.push(Opt::request_tag(tag)).unwrap();
+        }
+        let message = Message::new(
+            Type::Confirmable,
+            packet.method,
+            MessageId::new(u16::from(packet.token)),
+        )
+        .with_token(sample_token(&[packet.token]))
+        .with_options(options.as_slice())
+        .with_payload(packet.payload);
+        let mut bytes = [0; 1472];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        engine.write_rx(rx, &bytes[..n], packet.peer).unwrap();
+        let result = engine.apply_block1_rx(rx);
+        engine.release_rx(rx).unwrap();
+        result
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let body: [u8; 2000] = core::array::from_fn(|i| (i % 251) as u8);
+    let initial = Packet {
+        peer,
+        token: 1,
+        method: Code::PUT,
+        path: "upload",
+        query: "a=1",
+        tag: None,
+        num: 0,
+        payload: &body[..1024],
+    };
+    for change in 0..6 {
+        let first = apply(&mut engine, initial).unwrap();
+        assert!(!first.complete());
+        let rejected = apply(
+            &mut engine,
+            Packet {
+                peer: if change == 5 {
+                    Endpoint::v4([192, 0, 2, 2], 5683)
+                } else {
+                    peer
+                },
+                token: 2,
+                method: if change == 2 { Code::POST } else { Code::PUT },
+                path: if change == 0 { "other" } else { "upload" },
+                query: if change == 1 { "a=2" } else { "a=1" },
+                tag: match change {
+                    3 => Some(&[]),
+                    4 => Some(b"tag"),
+                    _ => None,
+                },
+                num: 1,
+                payload: &body[1024..],
+            },
+        );
+        assert!(rejected.is_err(), "change={change}");
+        assert_eq!(engine.rx_body_payload(first.id()), Some(&body[..1024]));
+        let final_block = apply(
+            &mut engine,
+            Packet {
+                token: 3,
+                num: 1,
+                payload: &body[1024..],
+                ..initial
+            },
+        )
+        .unwrap();
+        assert!(final_block.complete());
+        assert_eq!(final_block.id(), first.id());
+        assert_eq!(engine.rx_body_payload(final_block.id()), Some(&body[..]));
+        engine.release_rx_body(final_block.id()).unwrap();
+    }
+    let first = apply(
+        &mut engine,
+        Packet {
+            token: 4,
+            payload: &[0x11; 1024],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(
+        apply(
+            &mut engine,
+            Packet {
+                token: 5,
+                payload: b"short",
+                ..initial
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(engine.rx_body_payload(first.id()), Some(&[0x11; 1024][..]));
+    let restarted = apply(
+        &mut engine,
+        Packet {
+            token: 5,
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(!restarted.complete());
+    assert_eq!(engine.rx_body_payload(restarted.id()), Some(&body[..1024]));
+    let final_block = apply(
+        &mut engine,
+        Packet {
+            token: 6,
+            num: 1,
+            payload: &body[1024..],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(final_block.complete());
+    assert_eq!(engine.rx_body_payload(final_block.id()), Some(&body[..]));
+    if first.id() != final_block.id() {
+        assert!(engine.rx_body_payload(first.id()).is_none());
+    }
+    engine.release_rx_body(final_block.id()).unwrap();
+    let first = apply(&mut engine, initial).unwrap();
+    let other = apply(
+        &mut engine,
+        Packet {
+            token: 1,
+            path: "other",
+            payload: &[0x11; 1024],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert_ne!(first.id(), other.id());
+    let complete = apply(
+        &mut engine,
+        Packet {
+            token: 1,
+            num: 1,
+            payload: &body[1024..],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(complete.complete());
+    assert_eq!(engine.rx_body_payload(complete.id()), Some(&body[..]));
+    assert_eq!(engine.rx_body_payload(other.id()), Some(&[0x11; 1024][..]));
+    let complete_other = apply(
+        &mut engine,
+        Packet {
+            token: 9,
+            path: "other",
+            num: 1,
+            payload: &[0x22; 976],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(complete_other.complete());
+    let other_body = engine.rx_body_payload(complete_other.id()).unwrap();
+    assert_eq!(&other_body[..1024], &[0x11; 1024]);
+    assert_eq!(&other_body[1024..], &[0x22; 976]);
+}
+
+#[test]
 fn wire_block_requests_bind_exact_operation_and_preserve_body_on_mismatch() {
     use crate::message::{OptionNumber, OptionsBuilder};
     for q in [false, true] {
