@@ -26,6 +26,7 @@ pub(crate) type CheckpointCommit<'a> = dyn FnMut() -> bool + 'a;
 
 #[cfg(feature = "oscore")]
 #[derive(Clone, Copy)]
+#[repr(u8)]
 pub(crate) enum CheckpointState {
     Volatile,
     Dirty,

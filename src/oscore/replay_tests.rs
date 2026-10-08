@@ -1,9 +1,7 @@
 use super::{client_c1, server_c1};
 use crate::app::{AppStorage, DEFAULT_ROUTES, Method};
-use crate::message::{
-    Code, ContentFormat, Message, MessageId, Opt, OptionNumber, Token, Type, decode, encode,
-};
-use crate::oscore::{ReplayCheckpoint, SecurityContext};
+use crate::message::{Code, ContentFormat, Message, MessageId, Opt, Token, Type, decode, encode};
+use crate::oscore::{ReplayCheckpoint, RequestRef, SecurityContext};
 use crate::storage::{DatagramIo, Endpoint};
 use crate::{App, Request, Response, profiles};
 use core::cell::Cell;
@@ -109,6 +107,53 @@ fn request(sender: &mut SecurityContext, ty: Type, mid: u16) -> Packet {
     let mut packet = [0; 256];
     let len = sender.protect_request(&message, &mut packet).unwrap();
     (peer(), packet, len)
+}
+
+fn reseal_inner(
+    sender: &SecurityContext,
+    template: &Packet,
+    request: RequestRef,
+    plaintext: &[u8],
+) -> Packet {
+    let outer = decode(&template.1[..template.2]).unwrap();
+    let header = crate::oscore::OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
+    let aad = crate::oscore::aead::Aad::new(request.kid(), request.piv().as_bytes()).unwrap();
+    let nonce = match header.piv {
+        Some(piv) => sender.request_nonce(piv),
+        None => crate::oscore::aead::nonce(sender.common_iv(), request.kid(), request.piv()),
+    };
+    let mut ciphertext = [0; 256];
+    ciphertext[..plaintext.len()].copy_from_slice(plaintext);
+    let n = crate::oscore::aead::seal_in_place(
+        sender.sender_key(),
+        &nonce,
+        aad.as_bytes(),
+        plaintext.len(),
+        &mut ciphertext,
+    )
+    .unwrap();
+    let mut options = crate::message::OptionsBuilder::<16>::new();
+    for option in outer.options() {
+        options.push(option).unwrap();
+    }
+    let message = Message::new(outer.ty(), outer.code(), outer.message_id())
+        .with_token(outer.token())
+        .with_options(options.as_slice())
+        .with_payload(&ciphertext[..n]);
+    let mut packet = [0; 256];
+    let len = encode(&message, &mut packet).unwrap();
+    (template.0, packet, len)
+}
+
+fn encoded_inner(message: &Message<'_>) -> ([u8; 256], usize) {
+    let mut encoded = [0; 256];
+    let len = encode(message, &mut encoded).unwrap();
+    let start = 4 + message.token().len();
+    let inner_len = 1 + len - start;
+    let mut inner = [0; 256];
+    inner[0] = message.code().as_raw();
+    inner[1..inner_len].copy_from_slice(&encoded[start..len]);
+    (inner, inner_len)
 }
 
 fn assert_request(events: &Events, request: &Request<'_>, sequence: u64, mid: u16) {
@@ -610,26 +655,8 @@ fn authenticated_malformed_inner_replay_mutation_is_durable_before_next_io() {
     let mut sender = client_c1();
     let original = request(&mut sender, Type::Confirmable, 111);
     let outer = decode(&original.1[..original.2]).unwrap();
-    let header = crate::oscore::OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
-    let piv = header.piv.unwrap();
-    let aad = crate::oscore::aead::Aad::new(sender.sender_id(), piv.as_bytes()).unwrap();
-    let mut ciphertext = [0; 10];
-    ciphertext[..2].copy_from_slice(&[Code::PUT.as_raw(), 0xf0]);
-    let n = crate::oscore::aead::seal_in_place(
-        sender.sender_key(),
-        &sender.request_nonce(piv),
-        aad.as_bytes(),
-        2,
-        &mut ciphertext,
-    )
-    .unwrap();
-    let options = [Opt::new(OptionNumber::OSCORE, outer.oscore().unwrap())];
-    let malformed = Message::new(outer.ty(), outer.code(), outer.message_id())
-        .with_token(outer.token())
-        .with_options(&options)
-        .with_payload(&ciphertext[..n]);
-    let mut bytes = [0; 256];
-    let len = encode(&malformed, &mut bytes).unwrap();
+    let reference = sender.lookup(outer.token()).unwrap();
+    let malformed = reseal_inner(&sender, &original, reference, &[Code::PUT.as_raw(), 0xf0]);
     let mut server = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
@@ -640,7 +667,7 @@ fn authenticated_malformed_inner_replay_mutation_is_durable_before_next_io() {
     server
         .poll_with_oscore_checkpoint(0, |checkpoint| events.persist(checkpoint))
         .unwrap();
-    server.transport_mut().inbox = Some((peer(), bytes, len));
+    server.transport_mut().inbox = Some(malformed);
     assert!(matches!(
         server.poll_with_oscore_checkpoint_and_dispatch(
             1,
@@ -831,4 +858,239 @@ fn failed_checkpoint_precedes_block1_admission_and_preserves_partial_body_on_ref
         .unwrap();
     assert_eq!(opened.code(), Code::CHANGED);
     assert_eq!(opened.payload(), BODY);
+}
+
+#[test]
+fn authenticated_request_direction_mismatch_returns_typed_error_and_crosses_checkpoint() {
+    for inner_code in [Code::CONTENT, Code::EMPTY] {
+        let mut sender = client_c1();
+        let original = request(&mut sender, Type::Confirmable, 116);
+        let outer = decode(&original.1[..original.2]).unwrap();
+        let reference = sender.lookup(outer.token()).unwrap();
+        let mismatch = reseal_inner(&sender, &original, reference, &[inner_code.as_raw()]);
+        let mut recipient = server_c1();
+        let mut scratch = [0; 256];
+        assert!(matches!(
+            recipient.unprotect_request(&decode(&mismatch.1[..mismatch.2]).unwrap(), &mut scratch),
+            Err(crate::oscore::Error::MessageCode)
+        ));
+        assert!(!recipient.replay_fresh(0));
+        assert!(rejects(recipient.replay_checkpoint(), 0));
+
+        let events = Events::default();
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .require_oscore_checkpoint()
+            .oscore(server_c1())
+            .bind(DurableIo::new(&events))
+            .unwrap();
+        server
+            .poll_with_oscore_checkpoint(0, |checkpoint| events.persist(checkpoint))
+            .unwrap();
+        server.transport_mut().inbox = Some(mismatch);
+        assert!(matches!(
+            server.poll_with_oscore_checkpoint_and_dispatch(
+                1,
+                |checkpoint| {
+                    assert!(rejects(checkpoint, 0));
+                    false
+                },
+                |_, _| panic!("response or empty Inner must not dispatch as a request"),
+            ),
+            Err(crate::Error::OscoreCheckpointFailed)
+        ));
+        assert_eq!(server.transport().sent_len, 0);
+        assert_eq!(server.engine_mut().rx_occupied(), 0);
+        assert!(!server.oscore().unwrap().replay_fresh(0));
+
+        let receives = events.receives.get();
+        server.transport_mut().inbox = Some(mismatch);
+        server
+            .poll_with_oscore_checkpoint_and_dispatch(
+                2,
+                |checkpoint| {
+                    assert_eq!(events.receives.get(), receives);
+                    assert!(rejects(checkpoint, 0));
+                    events.persist(checkpoint)
+                },
+                |_, _| panic!("repeated direction mismatch must not dispatch"),
+            )
+            .unwrap();
+        assert_eq!(server.transport().sent_len, 0);
+        assert_eq!(events.effects.get(), 0);
+        server.transport_mut().inbox = Some(mismatch);
+        server
+            .poll_with_oscore_checkpoint_and_dispatch(
+                3,
+                |_| panic!("consumed mismatch does not need another checkpoint"),
+                |_, _| panic!("consumed mismatch must not dispatch"),
+            )
+            .unwrap();
+        assert_eq!(server.transport().sent_len, 0);
+
+        events.required_sequence.set(Some(1));
+        server.transport_mut().inbox = Some(request(&mut sender, Type::Confirmable, 117));
+        server
+            .poll_with_oscore_checkpoint_and_dispatch(
+                4,
+                |checkpoint| {
+                    assert!(rejects(checkpoint, 0));
+                    assert!(rejects(checkpoint, 1));
+                    events.persist(checkpoint)
+                },
+                |opened, _| {
+                    assert_request(&events, &opened, 1, 117);
+                    Response::changed()
+                },
+            )
+            .unwrap();
+        assert_eq!(events.effects.get(), 1);
+        assert_eq!(server.transport().sent_len, 1);
+    }
+}
+
+#[test]
+fn authenticated_response_direction_mismatch_never_dispatches_or_consumes_live_call() {
+    for response_type in [
+        Type::Acknowledgement,
+        Type::Confirmable,
+        Type::NonConfirmable,
+    ] {
+        for inner_code in [Code::PUT, Code::EMPTY] {
+            for response_piv in [false, true] {
+                let events = Events::default();
+                let mut client = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<false>()
+                    .require_oscore_checkpoint()
+                    .oscore(client_c1())
+                    .bind(DurableIo::new(&events))
+                    .unwrap();
+                client
+                    .poll_with_oscore_checkpoint(0, |checkpoint| events.persist(checkpoint))
+                    .unwrap();
+                let outgoing = client.get("value").to(peer());
+                let outgoing = if response_type == Type::NonConfirmable {
+                    outgoing.non()
+                } else {
+                    outgoing
+                };
+                let call = outgoing.send(0).unwrap();
+                let sent = client.transport().sent[0].unwrap();
+                let request = decode(&sent.1[..sent.2]).unwrap();
+                let mut server = server_c1();
+                let mut scratch = [0; 256];
+                let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+                let binding = client.oscore().unwrap().lookup(call.token()).unwrap();
+                assert_eq!(binding, reference);
+                let checkpoint = client.oscore().unwrap().replay_checkpoint();
+                let sender_sequence = client.oscore().unwrap().sender_seq();
+
+                let format = ContentFormat::new(60).encode();
+                let max_age = crate::message::encode_uint(17);
+                let options = [
+                    Opt::etag(b"dir-v1"),
+                    Opt::content_format(&format),
+                    Opt::max_age(&max_age),
+                ];
+                let message = Message::new(response_type, Code::CONTENT, request.message_id())
+                    .with_token(call.token())
+                    .with_options(&options)
+                    .with_payload(b"legitimate completion");
+                let mut bytes = [0; 256];
+                let len = if response_piv {
+                    server.protect_response_with_piv(&message, reference, &mut bytes)
+                } else {
+                    server.protect_response(&message, reference, &mut bytes)
+                }
+                .unwrap();
+                let legitimate = (peer(), bytes, len);
+                let mut inner = [0; 256];
+                let inner_len = if inner_code == Code::EMPTY {
+                    inner[0] = Code::EMPTY.as_raw();
+                    1
+                } else {
+                    let format = ContentFormat::new(60).encode();
+                    let options = [
+                        Opt::uri_path("durable"),
+                        Opt::uri_path("update"),
+                        Opt::content_format(&format),
+                        Opt::uri_query("revision=7"),
+                    ];
+                    let message = Message::new(response_type, inner_code, request.message_id())
+                        .with_token(call.token())
+                        .with_options(&options)
+                        .with_payload(b"attempted repeated effect");
+                    let (encoded, len) = encoded_inner(&message);
+                    inner = encoded;
+                    len
+                };
+                let mismatch = reseal_inner(&server, &legitimate, reference, &inner[..inner_len]);
+                let outer = decode(&mismatch.1[..mismatch.2]).unwrap();
+                assert!(outer.code().is_response());
+                assert!(matches!(
+                    client
+                        .oscore()
+                        .unwrap()
+                        .unprotect_response(&outer, reference, &mut scratch),
+                    Err(crate::oscore::Error::MessageCode)
+                ));
+                assert!(matches!(
+                    client
+                        .oscore()
+                        .unwrap()
+                        .unprotect_bound_response(&outer, &mut scratch),
+                    Err(crate::oscore::Error::MessageCode)
+                ));
+
+                for now in 1..=2 {
+                    client.transport_mut().inbox = Some(mismatch);
+                    client
+                        .poll_with_oscore_checkpoint_and_dispatch(
+                            now,
+                            |_| panic!("rejected response cannot consume request replay state"),
+                            |_, _| {
+                                panic!("Inner request in authenticated response must not dispatch")
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(client.transport().sent_len, 1);
+                    assert!(client.take_response(call).is_none());
+                    assert_eq!(client.oscore().unwrap().replay_checkpoint(), checkpoint);
+                    assert_eq!(client.oscore().unwrap().lookup(call.token()), Some(binding));
+                    assert_eq!(client.oscore().unwrap().sender_seq(), sender_sequence);
+                    assert_eq!(client.engine_mut().rx_occupied(), 0);
+                    assert_eq!(events.effects.get(), 0);
+                }
+
+                client.transport_mut().inbox = Some(legitimate);
+                client
+                    .poll_with_oscore_checkpoint_and_dispatch(
+                        3,
+                        |_| panic!("ordinary response does not cross request checkpoint barrier"),
+                        |_, _| panic!("legitimate response must complete its Call"),
+                    )
+                    .unwrap();
+                let response = client.take_response(call).unwrap().unwrap();
+                assert_eq!(response.code(), Code::CONTENT);
+                assert_eq!(response.payload(), b"legitimate completion");
+                assert_eq!(response.format(), Some(ContentFormat::new(60)));
+                assert_eq!(response.etag_bytes(), Some(b"dir-v1".as_slice()));
+                assert_eq!(response.max_age_secs(), Some(17));
+                assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+                assert_eq!(events.checkpoint_calls.get(), 1);
+                assert_eq!(events.effects.get(), 0);
+                let accepted_con = usize::from(response_type == Type::Confirmable);
+                assert_eq!(client.transport().sent_len, 1 + accepted_con);
+                if accepted_con != 0 {
+                    let ack = client.transport().sent[1].unwrap();
+                    let parsed = decode(&ack.1[..ack.2]).unwrap();
+                    assert!(parsed.is_empty_ack());
+                    assert_eq!(parsed.message_id(), request.message_id());
+                    assert_eq!(ack.0, peer());
+                }
+            }
+        }
+    }
 }

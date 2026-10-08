@@ -25,6 +25,8 @@ pub enum Error {
     BufferTooSmall,
     /// Plaintext or ciphertext is empty or exceeds the scratch used here.
     MessageLength,
+    /// Authenticated Inner Code has the wrong request/response direction.
+    MessageCode,
     /// OSCORE option flags or field lengths are reserved / truncated.
     Header,
     /// `kid` does not match this context's Recipient ID (or ID Context).
@@ -75,6 +77,7 @@ impl core::fmt::Display for Error {
             Self::Derive => f.write_str("HKDF expand failed"),
             Self::BufferTooSmall => f.write_str("OSCORE buffer is too small"),
             Self::MessageLength => f.write_str("OSCORE plaintext or ciphertext length is invalid"),
+            Self::MessageCode => f.write_str("OSCORE inner code has the wrong message direction"),
             Self::Header => f.write_str("OSCORE option is malformed"),
             Self::Context => f.write_str("security context not found"),
             Self::Unprotected => f.write_str("message is not OSCORE-protected"),
