@@ -27,10 +27,14 @@ mod connection_id;
 mod crypto;
 mod identity;
 mod lakers;
+mod trust;
 
 pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
 pub use connection_id::ConnectionId;
 pub use identity::{Identity, PinnedPeer, Principal};
+pub use trust::{
+    PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
+};
 
 use core::fmt;
 
@@ -136,6 +140,7 @@ fn check_reference(id: &lakers::IdCred, peer: &PinnedPeer) -> Result<(), Error> 
 pub struct Initiator {
     state: lakers::EdhocInitiatorWaitM2<Crypto>,
     peer: PinnedPeer,
+    local_principal: Principal,
     local_id: ConnectionId,
 }
 
@@ -169,6 +174,7 @@ impl Initiator {
             Self {
                 state,
                 peer,
+                local_principal: identity.peer().principal(),
                 local_id,
             },
             Message::from_buffer(&message)?,
@@ -201,6 +207,7 @@ impl Initiator {
             InitiatorConfirm {
                 state,
                 peer: self.peer,
+                local_principal: self.local_principal,
                 local_id: self.local_id,
                 peer_id,
             },
@@ -213,6 +220,7 @@ impl Initiator {
 pub struct InitiatorConfirm {
     state: lakers::EdhocInitiatorWaitM4<Crypto>,
     peer: PinnedPeer,
+    local_principal: Principal,
     local_id: ConnectionId,
     peer_id: ConnectionId,
 }
@@ -244,6 +252,7 @@ impl InitiatorConfirm {
             &salt[..8],
             self.local_id,
             self.peer_id,
+            self.local_principal,
             self.peer,
         )
     }
@@ -253,6 +262,7 @@ impl InitiatorConfirm {
 pub struct Responder {
     state: lakers::EdhocResponderWaitM3<Crypto>,
     peer: PinnedPeer,
+    local_principal: Principal,
     local_id: ConnectionId,
     peer_id: ConnectionId,
 }
@@ -307,6 +317,7 @@ impl Responder {
             Self {
                 state,
                 peer,
+                local_principal: identity.peer().principal(),
                 local_id,
                 peer_id,
             },
@@ -339,6 +350,7 @@ impl Responder {
                 &salt[..8],
                 self.local_id,
                 self.peer_id,
+                self.local_principal,
                 self.peer,
             )?,
             Message::from_buffer(&message)?,
@@ -346,10 +358,11 @@ impl Responder {
     }
 }
 
-/// Authenticated identity and fresh volatile OSCORE context for one new App.
+/// Local and authenticated peer identities with a fresh OSCORE context for one App.
 pub struct Session {
     context: SecurityContext,
     principal: Principal,
+    local_principal: Principal,
 }
 
 impl Session {
@@ -358,6 +371,7 @@ impl Session {
         salt: &[u8],
         local_id: ConnectionId,
         peer_id: ConnectionId,
+        local_principal: Principal,
         peer: PinnedPeer,
     ) -> Result<Self, Error> {
         let sender_id = [peer_id.as_u8()];
@@ -373,6 +387,7 @@ impl Session {
         Ok(Self {
             context,
             principal: peer.principal(),
+            local_principal,
         })
     }
 
@@ -381,8 +396,18 @@ impl Session {
         &self.principal
     }
 
+    /// Full principal of the local credential used to authenticate this exchange.
+    /// Check it against the caller's current local identity binding before handoff;
+    /// [`PeerTrust::accept_session`] verifies both local and peer trust bindings.
+    #[must_use]
+    pub const fn local_principal(&self) -> &Principal {
+        &self.local_principal
+    }
+
     /// Moves the fresh context and peer identity to the caller.
     /// Bind a new secure App and carry this identity into its authorization policy.
+    /// Use [`PeerTrust::accept_session`] before this move when enforcing durable
+    /// trust; the local identity metadata is no longer available afterward.
     pub fn into_parts(self) -> (SecurityContext, Principal) {
         (self.context, self.principal)
     }

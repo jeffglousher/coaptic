@@ -115,6 +115,26 @@ impl PinnedPeer {
         self.principal
     }
 
+    /// Canonical uncompressed SEC1 public point in fixed storage.
+    ///
+    /// These are public credential bytes, suitable for caller-owned durable
+    /// trust storage. Import them with [`Self::from_public_key`] and [`Self::kid`].
+    #[must_use]
+    pub fn public_key(&self) -> [u8; 65] {
+        let mut point = [0; 65];
+        point[0] = 4;
+        point[1..33].copy_from_slice(&self.credential.bytes.as_slice()[15..47]);
+        point[33..].copy_from_slice(&self.credential.bytes.as_slice()[50..]);
+        point
+    }
+
+    /// The one-byte credential identifier bound into the full principal.
+    /// This is independent of connection identifiers and OSCORE Sender IDs.
+    #[must_use]
+    pub fn kid(&self) -> u8 {
+        self.credential.bytes.as_slice()[9]
+    }
+
     pub(crate) const fn credential(&self) -> lakers::Credential {
         self.credential
     }
