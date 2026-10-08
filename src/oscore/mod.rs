@@ -20,7 +20,10 @@
 //! 2. Give each endpoint distinct Sender / Recipient IDs (they are mirrors).
 //! 3. Durably reserve sender sequences before use and restore recipient replay
 //!    protection before accepting traffic with reused keys. See
-//!    [`SecurityContext::set_sender_seq`], [`ReplayCheckpoint`] and
+//!    [`SecurityContext::restore_sender_reservation`] and
+//!    [`SecurityContext::reserve_sender_sequences`] for enforced sender ranges,
+//!    or [`SecurityContext::set_sender_seq`] for caller-managed sequencing.
+//!    Recipient recovery uses [`ReplayCheckpoint`] and
 //!    [`SecurityContext::restore_replay`]. Checkpoint storage, context identity,
 //!    freshness and commit-before-effects are caller responsibilities. App has
 //!    no durable pre-handler checkpoint barrier. If state recovery is uncertain,
@@ -120,7 +123,7 @@ mod protect;
 mod tests;
 
 pub use context::{DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext};
-pub use error::Error;
+pub use error::{Error, SenderReservationError};
 pub use header::{OscoreHeader, PartialIv};
 pub use protect::{
     OscoreContext, protect_request, protect_response, unprotect_request, unprotect_response,

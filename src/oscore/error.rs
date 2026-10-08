@@ -40,6 +40,8 @@ pub enum Error {
     SequenceExhausted,
     /// Attempt to move the sender sequence below its current value.
     SequenceRollback,
+    /// The guarded sender has no durably granted sequence remaining.
+    SequenceUnreserved,
     /// Partial IV is a replay (or left of the window).
     Replay,
     /// Persisted replay checkpoint exceeds the five-byte sequence space.
@@ -80,6 +82,9 @@ impl core::fmt::Display for Error {
             Self::PartialIv => f.write_str("Partial IV is missing or invalid"),
             Self::SequenceExhausted => f.write_str("sender sequence number is exhausted"),
             Self::SequenceRollback => f.write_str("sender sequence number cannot move backwards"),
+            Self::SequenceUnreserved => {
+                f.write_str("sender sequence number is not durably reserved")
+            }
             Self::Replay => f.write_str("OSCORE replay"),
             Self::ReplayState => f.write_str("invalid replay checkpoint"),
             Self::ReplayRollback => f.write_str("replay checkpoint would weaken protection"),
@@ -113,5 +118,39 @@ impl From<EncodeError> for Error {
 impl From<ParseError> for Error {
     fn from(e: ParseError) -> Self {
         Self::Parse(e)
+    }
+}
+
+/// Failure to extend a guarded sender reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SenderReservationError<E> {
+    /// Enable guarding with [`super::SecurityContext::restore_sender_reservation`] first.
+    NotEnabled,
+    /// A reservation must grant at least one additional sequence.
+    InvalidSize,
+    /// The requested range overflows or exceeds the five-byte sequence space.
+    SequenceExhausted,
+    /// The persistence callback did not confirm a durable commit.
+    Persistence(E),
+}
+
+impl<E: core::fmt::Display> core::fmt::Display for SenderReservationError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotEnabled => f.write_str("sender reservation guarding is not enabled"),
+            Self::InvalidSize => f.write_str("sender reservation size must be positive"),
+            Self::SequenceExhausted => f.write_str("sender reservation exceeds sequence space"),
+            Self::Persistence(error) => write!(f, "sender reservation persistence failed: {error}"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<E: std::error::Error + 'static> std::error::Error for SenderReservationError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Persistence(error) => Some(error),
+            _ => None,
+        }
     }
 }

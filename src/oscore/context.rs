@@ -4,7 +4,10 @@ use crate::message::Token;
 
 use super::aead;
 use super::header::PartialIv;
-use super::{Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WINDOW};
+use super::{
+    Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WINDOW,
+    SenderReservationError,
+};
 
 /// Recipient replay-window checkpoint for caller-owned durable storage.
 ///
@@ -148,6 +151,7 @@ pub struct SecurityContext {
     recipient_key: [u8; KEY_LEN],
     common_iv: [u8; NONCE_LEN],
     sender_seq: u64,
+    sender_reserved_end: u64,
     replay_left: u64,
     replay_bits: u32,
     live: [Option<LiveRequest>; super::LIVE_REQUESTS],
@@ -238,6 +242,7 @@ impl SecurityContext {
             recipient_key,
             common_iv,
             sender_seq: 0,
+            sender_reserved_end: u64::MAX,
             replay_left: 0,
             replay_bits: 0,
             live: [None; super::LIVE_REQUESTS],
@@ -294,6 +299,8 @@ impl SecurityContext {
     /// the caller must durably reserve numbers before using them and restore
     /// recipient replay protection separately. Deriving the same context again
     /// starts at zero and is not a safe restart procedure by itself.
+    /// On a guarded context this never extends the reserved upper bound; see
+    /// [`Self::restore_sender_reservation`] and [`Self::reserve_sender_sequences`].
     pub const fn set_sender_seq(&mut self, seq: u64) -> Result<(), Error> {
         if seq < self.sender_seq {
             return Err(Error::SequenceRollback);
@@ -303,6 +310,90 @@ impl SecurityContext {
         }
         self.sender_seq = seq;
         Ok(())
+    }
+
+    /// Enable guarded sender reservations and resume after the last durable range.
+    ///
+    /// `exclusive_end` must be the latest authenticated, rollback-protected upper
+    /// bound stored for this exact key/context epoch. Every number below it is
+    /// skipped, including unused numbers from before restart. Use zero only for
+    /// a context whose sender key has never been used. Refuses bounds below the
+    /// current counter or an already granted range, and bounds above `2^40`;
+    /// refusal leaves the context unchanged.
+    ///
+    /// No new sender Partial IV can be used until
+    /// [`Self::reserve_sender_sequences`] commits another range. Guarding cannot
+    /// be disabled on this context. [`Self::set_sender_seq`] may skip numbers but
+    /// does not grant them. Ordinary responses without a new Partial IV use the
+    /// authenticated request nonce and do not consume this range.
+    ///
+    /// This does not recover recipient replay protection or live request/Observe
+    /// bindings. Restore replay state separately before receiving with reused
+    /// keys. If durable state freshness is uncertain, provision a fresh context.
+    pub const fn restore_sender_reservation(&mut self, exclusive_end: u64) -> Result<(), Error> {
+        if exclusive_end < self.sender_seq
+            || (self.sender_reserved_end != u64::MAX && exclusive_end < self.sender_reserved_end)
+        {
+            return Err(Error::SequenceRollback);
+        }
+        if exclusive_end > (1u64 << 40) {
+            return Err(Error::SequenceExhausted);
+        }
+        self.sender_seq = exclusive_end;
+        self.sender_reserved_end = exclusive_end;
+        Ok(())
+    }
+
+    /// Exclusive end of the granted sender range, or `None` for an unguarded context.
+    ///
+    /// Unguarded contexts retain the caller-managed sequence contract of
+    /// [`Self::set_sender_seq`]. New contexts are unguarded until
+    /// [`Self::restore_sender_reservation`] is called.
+    #[must_use]
+    pub const fn sender_reservation_end(&self) -> Option<u64> {
+        if self.sender_reserved_end == u64::MAX {
+            None
+        } else {
+            Some(self.sender_reserved_end)
+        }
+    }
+
+    /// Grant `additional` sender sequences only after durable storage succeeds.
+    ///
+    /// First enable guarding with [`Self::restore_sender_reservation`]. The
+    /// callback receives the new exclusive upper bound; atomically persist it
+    /// with this context's authenticated epoch identity and anti-rollback state.
+    /// Return `Ok(())` only after the write is durable across power loss, not
+    /// merely queued or cached. The callback is synchronous and called once;
+    /// no allocation or storage backend is imposed by this crate.
+    ///
+    /// A successful call extends the granted range from the greater of the old
+    /// upper bound and current counter. It does not change the counter or live
+    /// bindings. Zero, overflow, and sequence-space exhaustion fail before the
+    /// callback runs. A callback error leaves the counter and granted range
+    /// unchanged. If a write succeeds but its acknowledgment is lost, recovery
+    /// must use the actual durable upper bound and skip the entire old range.
+    /// Failed protection still spends any sequence it consumed; retransmit
+    /// retained protected bytes instead of encrypting with an old sequence.
+    pub fn reserve_sender_sequences<E>(
+        &mut self,
+        additional: u64,
+        persist: impl FnOnce(u64) -> Result<(), E>,
+    ) -> Result<u64, SenderReservationError<E>> {
+        let Some(end) = self.sender_reservation_end() else {
+            return Err(SenderReservationError::NotEnabled);
+        };
+        if additional == 0 {
+            return Err(SenderReservationError::InvalidSize);
+        }
+        let end = end
+            .max(self.sender_seq)
+            .checked_add(additional)
+            .filter(|end| *end <= (1u64 << 40))
+            .ok_or(SenderReservationError::SequenceExhausted)?;
+        persist(end).map_err(SenderReservationError::Persistence)?;
+        self.sender_reserved_end = end;
+        Ok(end)
     }
 
     /// Whether `kid` (and optional `kid context`) selects this Recipient Context.
@@ -486,6 +577,9 @@ impl SecurityContext {
     pub(crate) fn take_sender_piv(&mut self) -> Result<PartialIv, Error> {
         if self.sender_seq >= (1 << 40) {
             return Err(Error::SequenceExhausted);
+        }
+        if self.sender_seq >= self.sender_reserved_end {
+            return Err(Error::SequenceUnreserved);
         }
         let piv = PartialIv::from_seq(self.sender_seq)?;
         self.sender_seq += 1;
