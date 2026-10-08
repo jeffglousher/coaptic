@@ -21,7 +21,14 @@
 //! own a global mutable shared bag. Domain data that outlives a request
 //! stays outside `App`.
 //!
+//! Bind requires a provisioned pairwise OSCORE context. The example's hidden
+//! credentials are test fixtures; supply authenticated credentials and persist
+//! sender-sequence reservations in production. Unprotected compatibility and
+//! tests explicitly select [`AppBuilder::allow_plaintext`].
+//!
 //! ```
+//! # #[cfg(feature = "oscore")]
+//! # {
 //! use coaptic::storage::DatagramIo;
 //! use coaptic::{
 //!     App, ContentFormat, Endpoint, Request, Response, get, profiles,
@@ -48,12 +55,18 @@
 //! #     }
 //! #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 //! # }
+//! # let provisioned_credentials = coaptic::oscore::DeriveParams {
+//! #     master_secret: &[0x42; 16], master_salt: &[], sender_id: &[1],
+//! #     recipient_id: &[2], id_context: &[],
+//! # };
+//! let context = coaptic::oscore::SecurityContext::derive(provisioned_credentials).unwrap();
 //! let mut app = App::profile::<profiles::Default>()
 //!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
 //!     .route("leds/0", get(get_led).put(put_led))
 //!     .well_known_core()
+//!     .oscore(context)
 //!     .bind(NullIo)
 //!     .unwrap();
 //! app.poll(0).unwrap();
@@ -62,6 +75,7 @@
 //! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
 //! app.poll(0).unwrap();
 //! let _ = app.take_response(call);
+//! # }
 //! ```
 //!
 //! [`App::builder`] starts with fixed default datagram storage. Adjust the
@@ -92,7 +106,7 @@
 //! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
 //! (RFC 9175 4.01) is caller-owned through [`AppBuilder::echo_policy`]. Pairwise OSCORE
-//! (feature `oscore`) is `App::set_oscore`.
+//! (default feature `oscore`) is `AppBuilder::oscore` before bind.
 //!
 //! The happy path does not use [`Access`](crate::storage::Access) or
 //! [`SlotId`]. Engine remains the advanced escape hatch
@@ -371,6 +385,7 @@ pub struct App<
     dedup_closed: Option<DedupClosed>,
     /// Caller-owned OSCORE context (`()` without the `oscore` feature).
     oscore: oscore::Field,
+    oscore_checkpoint: oscore::CheckpointState,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
     assembled: AssembledField<P, BLOCK_WISE>,
@@ -397,6 +412,9 @@ pub struct AppBuilder<
     full_responses: bool,
     deferred_lifetime_ms: u64,
     identity: Option<IdentitySource>,
+    oscore: oscore::Field,
+    oscore_checkpoint: oscore::CheckpointState,
+    allow_plaintext: bool,
     _p: PhantomData<P>,
     _b: PhantomData<Block>,
 }
@@ -421,6 +439,9 @@ impl App {
             full_responses: false,
             deferred_lifetime_ms: Transmission::EXCHANGE_LIFETIME_MS as u64,
             identity: None,
+            oscore: oscore::empty_field(),
+            oscore_checkpoint: oscore::CheckpointState::new(),
+            allow_plaintext: false,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -453,6 +474,9 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            oscore_checkpoint: self.oscore_checkpoint,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -479,6 +503,9 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            oscore_checkpoint: self.oscore_checkpoint,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -563,6 +590,70 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
         self
     }
 
+    /// Configure pairwise OSCORE before binding any storage or transport.
+    ///
+    /// Ordinary App construction requires this provisioned context. Context
+    /// derivation, peer authentication and durable sender-sequence reservation
+    /// remain caller-owned. Never reuse a key and sender ID with a reset sequence
+    /// after restart. See [`App::set_oscore`] for supported protocol combinations
+    /// and the in-memory replay window's durability limits.
+    ///
+    /// The `oscore` feature is enabled by default and works without an allocator.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub fn oscore(mut self, context: crate::oscore::SecurityContext) -> Self {
+        self.oscore = Some(context);
+        self.oscore_checkpoint.invalidate();
+        self
+    }
+
+    /// Require durable recipient request checkpoints before any traffic is polled.
+    ///
+    /// Binding requires a provisioned OSCORE context even if plaintext was
+    /// explicitly allowed. Use [`App::poll_with_oscore_checkpoint`] or
+    /// [`App::poll_with_oscore_checkpoint_and_dispatch`] for every poll. Ordinary
+    /// polling fails closed before I/O. The first durable poll commits the current
+    /// replay window before receiving; subsequent authenticated requests commit
+    /// their updated window before acknowledgment, body admission or handlers.
+    ///
+    /// This guards inbound request effects. Recipient checkpoint freshness,
+    /// sender reservations and durable application completion remain caller-owned;
+    /// client response/Observe state is not made persistent by this option.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub const fn require_oscore_checkpoint(mut self) -> Self {
+        self.oscore_checkpoint.require();
+        self
+    }
+
+    /// Explicitly permit plaintext CoAP for compatibility or unprotected tests.
+    ///
+    /// This supplies no confidentiality, integrity or peer authentication.
+    /// Deterministic test mode alone does not enable plaintext. A configured
+    /// OSCORE context still protects traffic and rejects unprotected messages.
+    /// Disabling the Cargo `oscore` feature also requires this explicit opt-out;
+    /// removing cryptography never silently changes an ordinary App to plaintext.
+    #[must_use]
+    pub const fn allow_plaintext(mut self) -> Self {
+        self.allow_plaintext = true;
+        self
+    }
+
+    fn validate_security(&self) -> Result<(), BuildError> {
+        if self.oscore_checkpoint.required() && !oscore::is_active(&self.oscore) {
+            return Err(BuildError::SecurityRequired);
+        }
+        #[cfg(feature = "oscore")]
+        if self.oscore.is_some() {
+            return Ok(());
+        }
+        if self.allow_plaintext {
+            Ok(())
+        } else {
+            Err(BuildError::SecurityRequired)
+        }
+    }
+
     /// Install an explicit server Echo issuer/verifier. See [`EchoPolicy`].
     ///
     /// Off by default. Challenge/reject decisions produce 4.01 before body
@@ -599,6 +690,9 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: 
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            oscore: self.oscore,
+            oscore_checkpoint: self.oscore_checkpoint,
+            allow_plaintext: self.allow_plaintext,
             _p: PhantomData,
             _b: PhantomData,
         }
@@ -614,10 +708,12 @@ where
     ///
     /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
     /// without changing request builders, response types or the reactor.
+    /// Missing security configuration is rejected before storage construction.
     pub fn bind<T>(
         self,
         io: T,
     ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let engine = EngineBuilder::new()
             .profile::<P>()
             .block_wise(BLOCK_WISE)
@@ -636,14 +732,13 @@ where
         io: T,
         storage: S,
     ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let c = storage.capacities();
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
             .dedup(c.dedup_entries)
             .observe(c.observe_entries)
-            .rx_body(c.rx_body_slots.unwrap_or(0), c.rx_body_bytes.unwrap_or(0))
-            .tx_body(c.tx_body_slots.unwrap_or(0), c.tx_body_bytes.unwrap_or(0))
             .block_wise(BLOCK_WISE)
             .build(storage)?;
         self.bind_built(io, engine)
@@ -658,13 +753,12 @@ where
         io: T,
         c: crate::storage::Capacities,
     ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED>, BuildError> {
+        self.validate_security()?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
             .dedup(c.dedup_entries)
             .observe(c.observe_entries)
-            .rx_body(c.rx_body_slots.unwrap_or(0), c.rx_body_bytes.unwrap_or(0))
-            .tx_body(c.tx_body_slots.unwrap_or(0), c.tx_body_bytes.unwrap_or(0))
             .block_wise(BLOCK_WISE)
             .build_alloc(c)?;
         self.bind_built(io, engine)
@@ -686,7 +780,8 @@ where
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             dedup_closed: None,
-            oscore: oscore::empty_field(),
+            oscore: self.oscore,
+            oscore_checkpoint: self.oscore_checkpoint,
             assembled: Default::default(),
             deferred: DeferredTable::new(),
         })
@@ -756,6 +851,10 @@ impl<
 
     /// Attach a caller-owned pairwise OSCORE context.
     ///
+    /// Prefer `AppBuilder::oscore` for initial construction; ordinary bind
+    /// requires a context. This setter retains explicit replacement support
+    /// and never removes protection or enables plaintext fallback.
+    ///
     /// There is exactly one context per App, with four live request bindings
     /// shared by in-flight requests and Observe registrations. Replacing it
     /// does not migrate live exchanges, tokens, replay state, or subscriptions;
@@ -811,6 +910,7 @@ impl<
     #[cfg(feature = "oscore")]
     pub fn set_oscore(&mut self, ctx: crate::oscore::SecurityContext) -> &mut Self {
         self.oscore = Some(ctx);
+        self.oscore_checkpoint.invalidate();
         self
     }
 
@@ -824,6 +924,7 @@ impl<
     /// Mutably borrow the attached OSCORE context.
     #[cfg(feature = "oscore")]
     pub const fn oscore_mut(&mut self) -> Option<&mut crate::oscore::SecurityContext> {
+        self.oscore_checkpoint.invalidate();
         self.oscore.as_mut()
     }
 
@@ -846,6 +947,7 @@ impl<
     /// let mut app = App::profile::<profiles::Default>()
     ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
     ///     .block_wise::<false>()
+    ///     .allow_plaintext()
     ///     .bind(NullIo)
     ///     .unwrap();
     /// app.poll(0).unwrap();
@@ -862,6 +964,19 @@ impl<
     /// Zero Engine reactor counters.
     pub fn reset_metrics(&mut self) {
         self.engine.reset_metrics();
+    }
+
+    /// Copy optional request-path work counters from the Engine.
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub const fn work_metrics(&self) -> crate::storage::WorkMetrics {
+        self.engine.work_metrics()
+    }
+
+    /// Reset work counters independently of the always-on reactor counters.
+    #[cfg(feature = "diagnostics")]
+    pub fn reset_work_metrics(&mut self) {
+        self.engine.reset_work_metrics();
     }
 
     /// Transport.
@@ -992,6 +1107,8 @@ where
             &mut self.inbox,
             &mut self.lives,
             &mut self.oscore,
+            &mut self.oscore_checkpoint,
+            None,
             self.echo_policy,
             &mut self.dedup_closed,
             self.full_responses,
@@ -1027,6 +1144,104 @@ where
             &mut self.inbox,
             &mut self.lives,
             &mut self.oscore,
+            &mut self.oscore_checkpoint,
+            None,
+            self.echo_policy,
+            &mut self.dedup_closed,
+            self.full_responses,
+            &mut self.deferred,
+            self.deferred_lifetime_ms,
+            Some(&mut dispatch),
+            now_ms,
+        )
+    }
+
+    /// Poll with a caller-owned durable checkpoint barrier for inbound OSCORE requests.
+    ///
+    /// This permanently requires checkpoint-aware polling on this App, including
+    /// after [`Self::set_oscore`]. [`Self::poll`] and [`Self::poll_with`] then return
+    /// [`Error::OscoreCheckpointRequired`] before I/O. To require this from bind,
+    /// select [`AppBuilder::require_oscore_checkpoint`].
+    ///
+    /// The synchronous callback receives the current recipient replay window.
+    /// Atomically persist it with the exact authenticated context/key epoch and
+    /// rollback-protected freshness. Return `true` only when the commit is durable
+    /// across power loss; retain any storage error in caller-owned state and
+    /// return `false` to receive [`Error::OscoreCheckpointFailed`]. The callback
+    /// may run twice: first for initial/dirty state before I/O, then for a newly
+    /// authenticated request before body admission, Echo policy, handlers,
+    /// deferral, response caching or acknowledgment. Clean idle polls and accepted
+    /// cached retransmissions do not write. An authenticated malformed inner
+    /// message that consumes replay state also crosses the barrier before drop.
+    ///
+    /// Failure retains consumed replay state in RAM, releases the received
+    /// datagram and performs no effects or acceptance acknowledgment for that
+    /// request. The next durable poll retries the dirty checkpoint before I/O.
+    /// The original ciphertext remains a replay even after that retry; the peer
+    /// must issue a fresh protected request. A crash after commit but before
+    /// effects can similarly lose an operation. This is replay safety, not
+    /// exactly-once application completion or a durable work queue.
+    ///
+    /// Before receiving with reused keys after restart, restore the latest
+    /// authenticated recipient checkpoint and sender reservation. Discard prior
+    /// Calls, Observe registrations, body assemblies and deferred handles; issue
+    /// fresh protected requests/registrations. Client response admission and
+    /// notification state are not made durable here. Shared replay-window changes
+    /// from Q responses are checkpointed before subsequent polling traffic.
+    /// Borrowing [`Self::oscore_mut`] or replacing the context invalidates the
+    /// last commit and forces another checkpoint before I/O. No allocation or
+    /// persistent backend is selected by this method.
+    #[cfg(feature = "oscore")]
+    pub fn poll_with_oscore_checkpoint(
+        &mut self,
+        now_ms: u64,
+        mut checkpoint: impl FnMut(crate::oscore::ReplayCheckpoint) -> bool,
+    ) -> Result<(), Error<T::Error>> {
+        self.oscore_checkpoint.require();
+        poll_engine(
+            &mut self.engine,
+            &mut self.io,
+            &self.site,
+            &mut self.ids,
+            &mut self.inbox,
+            &mut self.lives,
+            &mut self.oscore,
+            &mut self.oscore_checkpoint,
+            Some(&mut checkpoint),
+            self.echo_policy,
+            &mut self.dedup_closed,
+            self.full_responses,
+            &mut self.deferred,
+            self.deferred_lifetime_ms,
+            None,
+            now_ms,
+        )
+    }
+
+    /// Durable request polling with caller-owned stateful application dispatch.
+    ///
+    /// Checkpoint ordering and failure semantics are those of
+    /// [`Self::poll_with_oscore_checkpoint`]. Application dispatch and deferred
+    /// handles follow [`Self::poll_with`]; the checkpoint succeeds before either
+    /// can admit work or send its empty acknowledgment.
+    #[cfg(feature = "oscore")]
+    pub fn poll_with_oscore_checkpoint_and_dispatch(
+        &mut self,
+        now_ms: u64,
+        mut checkpoint: impl FnMut(crate::oscore::ReplayCheckpoint) -> bool,
+        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+    ) -> Result<(), Error<T::Error>> {
+        self.oscore_checkpoint.require();
+        poll_engine(
+            &mut self.engine,
+            &mut self.io,
+            &self.site,
+            &mut self.ids,
+            &mut self.inbox,
+            &mut self.lives,
+            &mut self.oscore,
+            &mut self.oscore_checkpoint,
+            Some(&mut checkpoint),
             self.echo_policy,
             &mut self.dedup_closed,
             self.full_responses,
@@ -1185,6 +1400,8 @@ fn poll_engine<Mem, T, const N: usize, const DEFERRED: usize>(
     inbox: &mut client::ClientInbox,
     lives: &mut client::ClientLives,
     oscore: &mut oscore::Field,
+    oscore_checkpoint: &mut oscore::CheckpointState,
+    mut checkpoint_commit: Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
@@ -1197,6 +1414,9 @@ where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
+    oscore_checkpoint.flush(oscore, &mut checkpoint_commit)?;
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().polls, 1);
     // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
     // Saturated after those timers still run (RFC 7252 §4.2).
     // Local deadlines must progress even if receiving the next packet fails.
@@ -1246,6 +1466,8 @@ where
             lives,
             ids,
             oscore,
+            oscore_checkpoint,
+            &mut checkpoint_commit,
             echo_policy,
             dedup_closed,
             full_responses,
@@ -1606,6 +1828,8 @@ fn dispatch_rx<Mem, T, const N: usize, const DEFERRED: usize>(
     lives: &mut client::ClientLives,
     ids: &mut AppIds,
     oscore: &mut oscore::Field,
+    oscore_checkpoint: &mut oscore::CheckpointState,
+    checkpoint_commit: &mut Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
@@ -1760,7 +1984,18 @@ where
     }
 
     let mut inner_scratch = Mem::RxScratch::default();
-    let opened = match oscore::inbound(oscore, &parsed, inner_scratch.as_mut()) {
+    #[cfg(feature = "oscore")]
+    let before = oscore.as_ref().map(|ctx| ctx.replay_checkpoint());
+    let opened = oscore::inbound(oscore, &parsed, inner_scratch.as_mut());
+    #[cfg(feature = "oscore")]
+    if before != oscore.as_ref().map(|ctx| ctx.replay_checkpoint()) {
+        oscore_checkpoint.invalidate();
+    }
+    if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
+        let _ = engine.release_rx(rx);
+        return Err(error);
+    }
+    let opened = match opened {
         Ok(opened) => opened,
         Err(e) => {
             let outcome =
@@ -1797,6 +2032,8 @@ where
                 oscore::is_active(oscore),
             )
             && client::has_response_target(engine, &parsed, peer);
+        #[cfg(feature = "oscore")]
+        let before = oscore.as_ref().map(|ctx| ctx.replay_checkpoint());
         let outcome = client::complete_client(
             engine,
             io,
@@ -1811,6 +2048,10 @@ where
             &parsed,
             rx,
         );
+        #[cfg(feature = "oscore")]
+        if before != oscore.as_ref().map(|ctx| ctx.replay_checkpoint()) {
+            oscore_checkpoint.invalidate();
+        }
         // Only a successfully admitted response has earned an ACK replay.
         // A failed initial ACK must retry admission, not skip delivery.
         if outcome.is_ok() && cache_ack {
@@ -2758,6 +2999,7 @@ where
                 key,
                 oscore_ctx,
                 dedup_closed,
+                false,
             )
         }
         Err(e) => {
@@ -2847,6 +3089,7 @@ where
             key,
             oscore_ctx,
             dedup_closed,
+            true,
         );
     }
 
@@ -2895,6 +3138,7 @@ where
                 key,
                 oscore_ctx,
                 dedup_closed,
+                true,
             )
         }
         Err(e) => {
@@ -2959,11 +3203,29 @@ fn start_outgoing<S, T>(
     key: BlockKey,
     oscore_ctx: &mut oscore::Field,
     dedup_closed: &mut Option<DedupClosed>,
+    allow_borrowed: bool,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    if allow_borrowed
+        && meta.q_block2.is_none()
+        && !response.fresh_piv()
+        && response.observe_seq().is_none()
+    {
+        return issue_borrowed_classic(
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            key,
+            now_ms,
+            oscore_ctx,
+            dedup_closed,
+        );
+    }
     let szx = szx_for(meta.block2, meta.q_block2);
     let started = if meta.q_block2.is_some() {
         let etag = response
@@ -3043,6 +3305,126 @@ where
     outcome
 }
 
+/// Encodes an ordinary independently selected block from the handler's borrow.
+///
+/// Body capacity and pool admission retain the existing bounded policy. The
+/// borrow ends during this call; only encoded TX bytes survive for replay.
+/// Observe, deferred replies and Q-Block continue to own complete snapshots.
+#[allow(clippy::too_many_arguments)]
+fn issue_borrowed_classic<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response<'_>,
+    ty: Type,
+    key: BlockKey,
+    now_ms: u64,
+    oscore_ctx: &mut oscore::Field,
+    dedup_closed: &mut Option<DedupClosed>,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    let key = response_block_key(key.token(), key.endpoint(), response)?;
+    let capacity =
+        engine
+            .capacities()
+            .tx_body_bytes
+            .ok_or(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )))?;
+    crate::storage::BlockTransfer::outgoing(
+        key,
+        BlockRole::OutgoingBlock2,
+        response.payload().len(),
+        szx_for(meta.block2, None),
+        capacity,
+    )
+    .map_err(Error::Block)?;
+    let body = engine
+        .acquire_tx_body()
+        .ok_or(Error::Block(BlockTransferError::Saturated))?;
+    let _ = engine.release_tx_body(body);
+    let requested = meta.block2.unwrap_or(
+        BlockValue::new(0, false, BlockValue::SZX_MAX)
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?,
+    );
+    let (selected, payload, block) =
+        match crate::storage::classic_block2_range(response.payload().len(), requested) {
+            Ok((value, range)) => (
+                *response,
+                &response.payload()[range],
+                Some(BlockOpt {
+                    value,
+                    q_block: false,
+                    size2: None,
+                }),
+            ),
+            Err(BlockTransferError::Gap) => (Response::bad_request(), &[][..], None),
+            Err(error) => return Err(Error::Block(error)),
+        };
+    let tx = if block.is_some() {
+        acquire_tx_or_evict(engine)
+    } else {
+        engine.acquire_tx()
+    }
+    .ok_or(Error::Saturated)?;
+    if let Err(error) = encode_response(
+        engine,
+        tx,
+        ty,
+        meta.mid,
+        meta.token,
+        &selected,
+        payload,
+        block,
+        meta.block1,
+        oscore_ctx,
+        meta.oscore,
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+    let keep = if block.is_some() && ty == Type::Acknowledgement {
+        remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            meta.mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        )
+    } else {
+        KeepTx::No
+    };
+    match keep {
+        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
+        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
+    }
+}
+
+fn retained_body_matches<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    id: SlotId,
+    payload: &[u8],
+) -> bool {
+    #[cfg(feature = "diagnostics")]
+    {
+        let candidates = engine
+            .tx_body_payload(id)
+            .filter(|body| body.len() == payload.len())
+            .map_or(0, <[u8]>::len);
+        let work = engine.work_metrics_mut();
+        crate::storage::WorkMetrics::add(&mut work.body_compare_calls, 1);
+        crate::storage::WorkMetrics::add(&mut work.body_compare_candidate_bytes, candidates);
+    }
+    engine.tx_body_payload(id) == Some(payload)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn continue_outgoing<S, T>(
     engine: &mut Engine<S>,
@@ -3070,7 +3452,7 @@ where
                 .tx_body_transfer(id)
                 .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
             if transfer.identity().as_slice() != response.etag_bytes()
-                || engine.tx_body_payload(id) != Some(response.payload())
+                || !retained_body_matches(engine, id, response.payload())
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
@@ -3137,7 +3519,7 @@ where
                 .tx_body_transfer(id)
                 .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
             if transfer.identity().as_slice() != response.etag_bytes()
-                || engine.tx_body_payload(id) != Some(response.payload())
+                || !retained_body_matches(engine, id, response.payload())
             {
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
@@ -3451,7 +3833,7 @@ where
 }
 
 fn copy_issued<S: Storage + BodySlots>(
-    engine: &Engine<S>,
+    engine: &mut Engine<S>,
     issued: OutgoingBlock,
     dest: &mut [u8],
 ) -> Result<usize, BlockTransferError> {
@@ -3466,6 +3848,11 @@ fn copy_issued<S: Storage + BodySlots>(
         return Err(BlockTransferError::Overflow);
     }
     dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(
+        &mut engine.work_metrics_mut().block_tx_staged_bytes,
+        issued.len(),
+    );
     Ok(issued.len())
 }
 
@@ -4185,7 +4572,11 @@ fn copy_rx<S: Storage + DatagramSlots, E>(
         )));
     }
     dest[..src.len()].copy_from_slice(src);
-    Ok(src.len())
+    let n = src.len();
+    drop(access);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().app_rx_staged_bytes, n);
+    Ok(n)
 }
 
 pub(crate) fn send_empty_ack<S, T>(
@@ -4296,6 +4687,12 @@ pub enum Error<E> {
     /// OSCORE protect / unprotect failed (feature `oscore`).
     #[cfg(feature = "oscore")]
     Oscore(crate::oscore::Error),
+    /// Durable request policy requires a checkpoint callback; no I/O was attempted.
+    #[cfg(feature = "oscore")]
+    OscoreCheckpointRequired,
+    /// Recipient request checkpoint did not confirm a durable commit.
+    #[cfg(feature = "oscore")]
+    OscoreCheckpointFailed,
 }
 
 impl<E> From<DatagramIoError<E>> for Error<E> {
@@ -4366,6 +4763,10 @@ where
             }
             #[cfg(feature = "oscore")]
             Self::Oscore(e) => write!(f, "{e}"),
+            #[cfg(feature = "oscore")]
+            Self::OscoreCheckpointRequired => f.write_str("OSCORE checkpoint callback is required"),
+            #[cfg(feature = "oscore")]
+            Self::OscoreCheckpointFailed => f.write_str("OSCORE checkpoint commit failed"),
         }
     }
 }
@@ -4399,6 +4800,8 @@ where
             | Self::RequestTagInUse => None,
             #[cfg(feature = "oscore")]
             Self::Oscore(e) => Some(e),
+            #[cfg(feature = "oscore")]
+            Self::OscoreCheckpointRequired | Self::OscoreCheckpointFailed => None,
         }
     }
 }

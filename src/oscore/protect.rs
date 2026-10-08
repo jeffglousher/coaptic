@@ -144,14 +144,13 @@ pub fn protect_request(
     let request = ctx.request_ref(piv);
     let nonce = ctx.request_nonce(piv);
     let aad = Aad::new(request.kid(), piv.as_bytes())?;
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     let kid_ctx = if ctx.id_context().is_empty() {
@@ -216,6 +215,10 @@ pub fn unprotect_request<'a>(
         &mut plaintext,
     )?;
     ctx.replay_accept(piv.seq());
+    let code = Code::from_raw(*plaintext[..pt_len].first().ok_or(Error::MessageLength)?);
+    if !code.is_request() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
@@ -245,14 +248,13 @@ pub fn protect_response(
     }
     let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
     let nonce = aead::nonce(ctx.common_iv(), request.kid(), request.piv());
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     encode_outer(
@@ -282,14 +284,13 @@ pub fn protect_response_piv(
     let piv = ctx.take_sender_piv()?;
     let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
     let nonce = ctx.request_nonce(piv);
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     encode_outer(
@@ -367,6 +368,10 @@ fn unprotect_response_candidates<'a>(
         }
     }
     let (len, request) = accepted.ok_or(Error::Decrypt)?;
+    let code = Code::from_raw(*plaintext[..len].first().ok_or(Error::MessageLength)?);
+    if !code.is_response() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
