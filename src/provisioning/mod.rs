@@ -25,12 +25,18 @@
 mod coap;
 mod connection_id;
 mod crypto;
+mod enrollment;
 mod identity;
 mod lakers;
 mod trust;
 
 pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
 pub use connection_id::ConnectionId;
+pub use enrollment::{
+    AuthenticatedPolicyRequest, AuthorityConnection, AuthorityResponder, BootstrapAuthority,
+    EnrollmentError, EnrollmentPolicy, OnlinePolicyAuthority, PendingPolicy, PolicyQuery,
+    PolicyServeError, PolicySnapshot, ProtectedPolicyResponse, VerifiedPolicy,
+};
 pub use identity::{Identity, PinnedPeer, Principal};
 pub use trust::{
     PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
