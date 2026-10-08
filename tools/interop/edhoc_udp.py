@@ -62,8 +62,8 @@ def plain_request(mid, token, payload=REQUEST):
     return message
 
 
-def bootstrap_request(message, number, mid, token):
-    result = aiocoap.Message(code=aiocoap.POST, payload=(b"\xf5" if number == 1 else b"\x01") + message)
+def bootstrap_request(message, number, mid, token, responder_id=1):
+    result = aiocoap.Message(code=aiocoap.POST, payload=(b"\xf5" if number == 1 else bytes([responder_id])) + message)
     result.mtype, result.mid, result.token = aiocoap.CON, mid, token
     result.opt.uri_path = BOOTSTRAP_PATH
     result.opt.content_format = 65
@@ -92,14 +92,14 @@ def oversized_packet(size, protected=False):
     return packet
 
 
-def validate_bootstrap_request(message, number):
+def validate_bootstrap_request(message, number, initiator_id=0, responder_id=1):
     require(message.mtype == aiocoap.CON and message.code == aiocoap.POST, "wrong bootstrap request type/code")
     require(options(message) == [(11, b".well-known"), (11, b"edhoc"), (12, b"A")], "wrong bootstrap request options")
-    prefix = b"\xf5" if number == 1 else b"\x01"
+    prefix = b"\xf5" if number == 1 else bytes([responder_id])
     require(message.payload.startswith(prefix), "wrong EDHOC connection prefix")
     require(0 < len(message.payload) - 1 <= 192, "wrong EDHOC message length")
     if number == 1:
-        require(message.payload[1:5] == bytes.fromhex("03025820") and message.payload[-1:] == b"\x00", "wrong method, suite, point encoding or C_I")
+        require(message.payload[1:5] == bytes.fromhex("03025820") and message.payload[-1:] == bytes([initiator_id]), "wrong method, suite, point encoding or C_I")
     return message.payload[1:]
 
 
@@ -343,7 +343,7 @@ async def handshake(arguments, wire, fixture, independent, role, fault, record):
     return remote, context
 
 
-async def outgoing_application(arguments, wire, fixture, context, remote, record):
+async def outgoing_application(arguments, wire, fixture, context, remote, record, generation=None):
     _, message = await wire.receive(remote, "Coaptic-protected-PUT", arguments.timeout)
     require(message.mtype == aiocoap.CON and message.code == aiocoap.POST and options(message) == [(9, message.opt.oscore)], "unexpected outer Coaptic request metadata")
     unprotected, request_id = context.unprotect(message)
@@ -354,7 +354,8 @@ async def outgoing_application(arguments, wire, fixture, context, remote, record
     response.opt.content_format = 42
     encrypted, _ = protect(context, response, request_id)
     await wire.send(encrypted, remote, "independent-protected-CHANGED")
-    event = await fixture.event(lambda value: value.get("response") is True)
+    event = await fixture.event(lambda value: value.get("response") is True
+                                and (generation is None or value.get("generation") == generation))
     require(event.get("code") == 68 and binary_field(event, "payload") == RESPONSE and event.get("content_format") == 42, "Coaptic authenticated a different response")
     require(event.get("mid") == message.mid and binary_field(event, "token") == message.token, "Coaptic response metadata changed")
     require(event.get("mtype") == 2, "Coaptic response type changed")

@@ -23,16 +23,18 @@
 //! hardening patch. Its BSD notice and source provenance ship with the crate.
 
 mod coap;
+mod connection_id;
 mod crypto;
 mod identity;
 mod lakers;
 
-pub use coap::{CoapProvisioner, PollError, Status};
+pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
+pub use connection_id::ConnectionId;
 pub use identity::{Identity, PinnedPeer, Principal};
 
 use core::fmt;
 
-use self::lakers::{ConnId, CredentialTransfer, EDHOCMethod, EDHOCSuite};
+use self::lakers::{CredentialTransfer, EDHOCMethod, EDHOCSuite};
 
 use crate::oscore::{DeriveParams, SecurityContext};
 
@@ -47,7 +49,7 @@ pub enum Error {
     Entropy,
     /// The message is malformed or exceeds the fixed capacity.
     Parsing,
-    /// The peer used a different method, suite, CID or credential profile.
+    /// The selected method, suite, CID or credential profile is unsupported.
     Profile,
     /// The peer did not authenticate with the installed credential.
     Authentication,
@@ -113,13 +115,6 @@ impl fmt::Debug for Message {
     }
 }
 
-const INITIATOR_ID: [u8; 1] = [0];
-const RESPONDER_ID: [u8; 1] = [1];
-
-fn connection_id(bytes: &[u8]) -> ConnId {
-    ConnId::from_slice(bytes).expect("fixed one-byte connection identifier")
-}
-
 fn check_identity(identity: &Identity, peer: &PinnedPeer) -> Result<(), Error> {
     if identity.public_x() == peer.credential().public_key().ok_or(Error::InvalidKey)? {
         return Err(Error::SelfPeer);
@@ -141,13 +136,27 @@ fn check_reference(id: &lakers::IdCred, peer: &PinnedPeer) -> Result<(), Error> 
 pub struct Initiator {
     state: lakers::EdhocInitiatorWaitM2<Crypto>,
     peer: PinnedPeer,
+    local_id: ConnectionId,
 }
 
 impl Initiator {
     /// Starts a new handshake with fresh ephemeral entropy and an installed pin.
+    /// The local connection ID is zero and must be reserved outside live sessions.
     pub fn start(
         identity: &Identity,
         peer: PinnedPeer,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
+        Self::start_with_id(identity, peer, ConnectionId::INITIATOR, entropy)
+    }
+
+    /// Starts a fresh handshake with a caller-reserved local connection identifier.
+    /// Reserve this ID outside all live EDHOC sessions and OSCORE recipient IDs
+    /// without an ID Context. The peer chooses and authenticates its own distinct ID.
+    pub fn start_with_id(
+        identity: &Identity,
+        peer: PinnedPeer,
+        local_id: ConnectionId,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
@@ -155,9 +164,15 @@ impl Initiator {
         let mut initiator =
             lakers::EdhocInitiator::new(crypto, EDHOCMethod::StatStat, EDHOCSuite::CipherSuite2);
         initiator.set_identity(identity.scalar(), identity.credential());
-        let (state, message) =
-            initiator.prepare_message_1(Some(connection_id(&INITIATOR_ID)), &None)?;
-        Ok((Self { state, peer }, Message::from_buffer(&message)?))
+        let (state, message) = initiator.prepare_message_1(Some(local_id.lakers()), &None)?;
+        Ok((
+            Self {
+                state,
+                peer,
+                local_id,
+            },
+            Message::from_buffer(&message)?,
+        ))
     }
 
     /// Authenticates message 2 and prepares message 3 after current authorization.
@@ -171,7 +186,8 @@ impl Initiator {
         let (public_x, _) = lakers::parse_message_2(&message)?;
         crypto::validate_public_x(&public_x)?;
         let (state, cid, id, ead) = self.state.parse_message_2(&message)?;
-        if cid.as_slice() != RESPONDER_ID || ead.is_some() {
+        let peer_id = ConnectionId::from_lakers(cid)?;
+        if peer_id == self.local_id || ead.is_some() {
             return Err(Error::Profile);
         }
         check_reference(&id, &self.peer)?;
@@ -185,6 +201,8 @@ impl Initiator {
             InitiatorConfirm {
                 state,
                 peer: self.peer,
+                local_id: self.local_id,
+                peer_id,
             },
             Message::from_buffer(&message)?,
         ))
@@ -195,9 +213,17 @@ impl Initiator {
 pub struct InitiatorConfirm {
     state: lakers::EdhocInitiatorWaitM4<Crypto>,
     peer: PinnedPeer,
+    local_id: ConnectionId,
+    peer_id: ConnectionId,
 }
 
 impl InitiatorConfirm {
+    /// Returns the responder's authenticated connection identifier for routing message 3.
+    #[must_use]
+    pub const fn peer_connection_id(&self) -> ConnectionId {
+        self.peer_id
+    }
+
     /// Verifies message 4 and checks authorization again before exposing keys.
     pub fn receive_message_4(
         self,
@@ -213,7 +239,13 @@ impl InitiatorConfirm {
         }
         let secret = state.edhoc_exporter(0, &[], 16);
         let salt = state.edhoc_exporter(1, &[], 8);
-        Session::derive(&secret[..16], &salt[..8], true, self.peer)
+        Session::derive(
+            &secret[..16],
+            &salt[..8],
+            self.local_id,
+            self.peer_id,
+            self.peer,
+        )
     }
 }
 
@@ -221,28 +253,41 @@ impl InitiatorConfirm {
 pub struct Responder {
     state: lakers::EdhocResponderWaitM3<Crypto>,
     peer: PinnedPeer,
+    local_id: ConnectionId,
+    peer_id: ConnectionId,
 }
 
 impl Responder {
     /// Checks the supported profile and peer point, then prepares message 2.
+    /// The local connection ID is one and must be reserved outside live sessions.
     pub fn receive_message_1(
         identity: &Identity,
         peer: PinnedPeer,
         message: &Message,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
+        Self::receive_message_1_with_id(identity, peer, ConnectionId::RESPONDER, message, entropy)
+    }
+
+    /// Prepares message 2 with a caller-reserved local connection identifier.
+    /// Reserve this ID outside live EDHOC sessions and OSCORE recipient IDs
+    /// without an ID Context. It must differ from the initiator's message 1 ID.
+    pub fn receive_message_1_with_id(
+        identity: &Identity,
+        peer: PinnedPeer,
+        local_id: ConnectionId,
+        message: &Message,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
         let bytes = message.as_bytes();
-        if bytes.len() != 37 || bytes[..4] != [3, 2, 0x58, 0x20] || bytes[36] != 0 {
+        if bytes.len() != 37 || bytes[..4] != [3, 2, 0x58, 0x20] || bytes[36] > ConnectionId::MAX {
             return Err(Error::Profile);
         }
         let message = message.buffer()?;
         let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
-        if method != 3
-            || suites.as_slice() != [2]
-            || cid.as_slice() != INITIATOR_ID
-            || ead.is_some()
-        {
+        let peer_id = ConnectionId::from_lakers(cid)?;
+        if method != 3 || suites.as_slice() != [2] || peer_id == local_id || ead.is_some() {
             return Err(Error::Profile);
         }
         crypto::validate_public_x(&public_x)?;
@@ -255,10 +300,18 @@ impl Responder {
         let (state, _, _) = responder.process_message_1(&message)?;
         let (state, message) = state.prepare_message_2(
             CredentialTransfer::ByReference,
-            Some(connection_id(&RESPONDER_ID)),
+            Some(local_id.lakers()),
             &None,
         )?;
-        Ok((Self { state, peer }, Message::from_buffer(&message)?))
+        Ok((
+            Self {
+                state,
+                peer,
+                local_id,
+                peer_id,
+            },
+            Message::from_buffer(&message)?,
+        ))
     }
 
     /// Authenticates message 3, checks current authorization and prepares message 4.
@@ -281,7 +334,13 @@ impl Responder {
         let secret = state.edhoc_exporter(0, &[], 16);
         let salt = state.edhoc_exporter(1, &[], 8);
         Ok((
-            Session::derive(&secret[..16], &salt[..8], false, self.peer)?,
+            Session::derive(
+                &secret[..16],
+                &salt[..8],
+                self.local_id,
+                self.peer_id,
+                self.peer,
+            )?,
             Message::from_buffer(&message)?,
         ))
     }
@@ -297,19 +356,17 @@ impl Session {
     fn derive(
         secret: &[u8],
         salt: &[u8],
-        initiator: bool,
+        local_id: ConnectionId,
+        peer_id: ConnectionId,
         peer: PinnedPeer,
     ) -> Result<Self, Error> {
-        let (sender_id, recipient_id) = if initiator {
-            (&RESPONDER_ID[..], &INITIATOR_ID[..])
-        } else {
-            (&INITIATOR_ID[..], &RESPONDER_ID[..])
-        };
+        let sender_id = [peer_id.as_u8()];
+        let recipient_id = [local_id.as_u8()];
         let context = SecurityContext::derive(DeriveParams {
             master_secret: secret,
             master_salt: salt,
-            sender_id,
-            recipient_id,
+            sender_id: &sender_id,
+            recipient_id: &recipient_id,
             id_context: &[],
         })
         .map_err(|_| Error::Derivation)?;

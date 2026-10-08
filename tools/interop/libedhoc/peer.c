@@ -155,16 +155,31 @@ static void export_result(struct edhoc_context *context, const struct peer_polic
 
 int main(int argc, char **argv)
 {
-    if ((argc != 2 && argc != 3) ||
-        (strcmp(argv[1], "initiator") != 0 && strcmp(argv[1], "responder") != 0) ||
-        (argc == 3 && strcmp(argv[2], "wrong-identity") != 0)) {
-        fprintf(stderr, "usage: libedhoc-peer initiator|responder [wrong-identity]\n");
+    if (argc < 2 ||
+        (strcmp(argv[1], "initiator") != 0 && strcmp(argv[1], "responder") != 0)) {
+        fprintf(stderr, "usage: libedhoc-peer initiator|responder [wrong-identity] [--cid 0..23]\n");
         return 2;
     }
     const int initiator = strcmp(argv[1], "initiator") == 0;
+    int wrong_identity = 0, cid_supplied = 0;
+    uint8_t cid = initiator ? 0 : 1;
+    for (int index = 2; index < argc; index++) {
+        if (strcmp(argv[index], "wrong-identity") == 0 && !wrong_identity) {
+            wrong_identity = 1;
+        } else if (strcmp(argv[index], "--cid") == 0 && !cid_supplied && index + 1 < argc) {
+            char *end = NULL;
+            const char *value = argv[++index];
+            unsigned long parsed = strtoul(value, &end, 10);
+            if (*value == 0 || *end != 0 || parsed > 23 || value[0] < '0' || value[0] > '9') return 2;
+            cid = (uint8_t)parsed;
+            cid_supplied = 1;
+        } else {
+            return 2;
+        }
+    }
     struct peer_policy policy = {0};
     check("psa-init", psa_crypto_init());
-    identity_init(&policy.local, initiator ? 0 : 1, argc == 3 ? 3 : (initiator ? 1 : 2));
+    identity_init(&policy.local, initiator ? 0 : 1, wrong_identity ? 3 : (initiator ? 1 : 2));
     identity_init(&policy.expected, initiator ? 1 : 0, initiator ? 2 : 1);
     check("expected-private-destroy", psa_destroy_key(policy.expected.private_key));
     policy.expected.private_key = PSA_KEY_ID_NULL;
@@ -175,7 +190,6 @@ int main(int argc, char **argv)
     const struct edhoc_cipher_suite *suite = edhoc_cipher_suite_get_params(EDHOC_CIPHER_SUITE_2);
     const struct edhoc_crypto *crypto = edhoc_cipher_suite_get_crypto(EDHOC_CIPHER_SUITE_2);
     if (suite == NULL || crypto == NULL) fail("suite-config", -1);
-    const uint8_t cid = initiator ? 0 : 1;
     const struct edhoc_buffer connection_id = {.value = &cid, .length = 1};
     const struct edhoc_platform platform = {.zeroize = wipe};
     const struct edhoc_credentials credentials = {.select_local = select_local, .authenticate_peer = authenticate_peer};

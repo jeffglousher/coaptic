@@ -14,6 +14,11 @@
 //! cache resident until [`CoapProvisioner::next_deadline`] expires; message 4
 //! can be lost even after the responder has handed its session to the App.
 
+#[path = "recovery.rs"]
+mod recovery;
+
+pub use recovery::{CoapRecovery, RecoveryError};
+
 use core::{convert::Infallible, fmt};
 
 use crate::message::{
@@ -23,8 +28,8 @@ use crate::message::{
 use crate::storage::{DatagramIo, Endpoint};
 
 use super::{
-    Error, Identity, Initiator, InitiatorConfirm, Message, PinnedPeer, Principal, Responder,
-    Session,
+    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PinnedPeer, Principal,
+    Responder, Session,
 };
 
 const DATAGRAM_CAPACITY: usize = 384;
@@ -251,10 +256,22 @@ enum Role {
     Server(Server),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CompletedCacheMatch {
+    ExactDuplicate,
+    MidCollision,
+    NoMatch,
+}
+
+fn same_mid_namespace(left: u8, right: u8) -> bool {
+    (left ^ right) & 0x20 == 0
+}
+
 struct Input<'a> {
     now: u64,
     identity: &'a Identity,
     peer: &'a PinnedPeer,
+    local_id: ConnectionId,
     expires: &'a mut Option<u64>,
     session: &'a mut Option<Session>,
     entropy: &'a mut dyn FnMut(&mut [u8]) -> bool,
@@ -278,6 +295,7 @@ pub struct CoapProvisioner<'a> {
     identity: &'a Identity,
     peer: PinnedPeer,
     endpoint: Endpoint,
+    local_id: ConnectionId,
     role: Role,
     last_now: u64,
     expires: Option<u64>,
@@ -295,10 +313,31 @@ impl<'a> CoapProvisioner<'a> {
 
     /// Starts an initiator with fresh operation identifiers, jitter and keys.
     /// The first [`Self::poll`] or [`Self::flush`] sends the cached message 1.
+    /// The default local connection ID zero must be reserved outside live sessions.
     pub fn start(
         identity: &'a Identity,
         peer: PinnedPeer,
         endpoint: Endpoint,
+        now_ms: u64,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<Self, PollError> {
+        Self::start_with_id(
+            identity,
+            peer,
+            endpoint,
+            ConnectionId::INITIATOR,
+            now_ms,
+            entropy,
+        )
+    }
+
+    /// Starts with a local ID reserved outside live handshakes and OSCORE contexts.
+    /// The authenticated responder selects a distinct ID for routing message 3.
+    pub fn start_with_id(
+        identity: &'a Identity,
+        peer: PinnedPeer,
+        endpoint: Endpoint,
+        local_id: ConnectionId,
         now_ms: u64,
         mut entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<Self, PollError> {
@@ -306,8 +345,9 @@ impl<'a> CoapProvisioner<'a> {
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(PollError::Clock)?;
         let ids = Ids::fresh(&mut entropy).map_err(PollError::Provisioning)?;
-        let (state, message) = Initiator::start(identity, peer.clone(), &mut entropy)
-            .map_err(PollError::Provisioning)?;
+        let (state, message) =
+            Initiator::start_with_id(identity, peer.clone(), local_id, &mut entropy)
+                .map_err(PollError::Provisioning)?;
         let request = request(ids.first, 0xf5, &message).map_err(PollError::Provisioning)?;
         let operation = ids.first;
         let retry = Retry::new(ids.first_timeout);
@@ -315,6 +355,7 @@ impl<'a> CoapProvisioner<'a> {
             identity,
             peer,
             endpoint,
+            local_id,
             role: Role::Client(Client {
                 state: ClientState::Message2(state),
                 ids,
@@ -335,6 +376,7 @@ impl<'a> CoapProvisioner<'a> {
     /// Listens for one pinned initiator at the supplied endpoint.
     /// Waiting for message 1 has no deadline; its first valid CoAP envelope
     /// begins the bounded handshake and requests fresh ephemeral entropy.
+    /// The default local connection ID one must be reserved outside live sessions.
     #[must_use]
     pub fn listen(
         identity: &'a Identity,
@@ -342,10 +384,24 @@ impl<'a> CoapProvisioner<'a> {
         endpoint: Endpoint,
         now_ms: u64,
     ) -> Self {
+        Self::listen_with_id(identity, peer, endpoint, ConnectionId::RESPONDER, now_ms)
+    }
+
+    /// Listens with a local ID reserved outside live handshakes and OSCORE contexts.
+    /// A colliding or unsupported initiator ID is refused before requesting entropy.
+    #[must_use]
+    pub fn listen_with_id(
+        identity: &'a Identity,
+        peer: PinnedPeer,
+        endpoint: Endpoint,
+        local_id: ConnectionId,
+        now_ms: u64,
+    ) -> Self {
         Self {
             identity,
             peer,
             endpoint,
+            local_id,
             role: Role::Server(Server {
                 state: ServerState::Message1,
                 exchanges: [None, None],
@@ -356,6 +412,49 @@ impl<'a> CoapProvisioner<'a> {
             session: None,
             failure: None,
             expired: false,
+        }
+    }
+
+    /// Returns the caller-reserved local EDHOC connection and OSCORE recipient ID.
+    #[must_use]
+    pub const fn local_connection_id(&self) -> ConnectionId {
+        self.local_id
+    }
+
+    pub(super) fn classify_completed_cache(
+        &self,
+        bytes: &[u8],
+        endpoint: Endpoint,
+        now_ms: u64,
+    ) -> CompletedCacheMatch {
+        if endpoint != self.endpoint
+            || self.failure.is_some()
+            || self.expired
+            || !self.complete()
+            || self.expires.is_none_or(|expires| now_ms >= expires)
+            || bytes.len() < 4
+        {
+            return CompletedCacheMatch::NoMatch;
+        }
+        let mid = MessageId::new(u16::from_be_bytes([bytes[2], bytes[3]]));
+        let cached = match &self.role {
+            Role::Client(client) => client.acks.iter().flatten().find_map(|response| {
+                (now_ms < response.expires
+                    && mid == response.mid
+                    && same_mid_namespace(bytes[0], response.response.bytes[0]))
+                .then_some(response.response.as_slice())
+            }),
+            Role::Server(server) => server.exchanges.iter().flatten().find_map(|exchange| {
+                (now_ms < exchange.expires
+                    && mid == exchange.operation.mid
+                    && same_mid_namespace(bytes[0], exchange.request.bytes[0]))
+                .then_some(exchange.request.as_slice())
+            }),
+        };
+        match cached {
+            Some(cached) if cached == bytes => CompletedCacheMatch::ExactDuplicate,
+            Some(_) => CompletedCacheMatch::MidCollision,
+            None => CompletedCacheMatch::NoMatch,
         }
     }
 
@@ -467,6 +566,7 @@ impl<'a> CoapProvisioner<'a> {
             now: now_ms,
             identity: self.identity,
             peer: &self.peer,
+            local_id: self.local_id,
             expires: &mut self.expires,
             session: &mut self.session,
             entropy: &mut entropy,
@@ -477,7 +577,8 @@ impl<'a> CoapProvisioner<'a> {
             Role::Server(server) => server.ingest(bytes, parsed, &mut input),
         };
         match result {
-            Ok(progress) => Ok(self.status(progress, !progress)),
+            Ok(true) => Ok(self.status(true, false)),
+            Ok(false) => Ok(Status::Ignored),
             Err(failure) => {
                 self.failure = Some(failure);
                 self.session = None;
@@ -653,12 +754,19 @@ impl Client {
     ) -> Result<bool, Failure> {
         let now = input.now;
         for (index, ack) in self.acks.iter().enumerate() {
-            if ack
-                .as_ref()
-                .is_some_and(|ack| now < ack.expires && ack.response.as_slice() == bytes)
-            {
-                self.pending_acks |= 1 << index;
-                return Ok(true);
+            if let Some(ack) = ack {
+                if now < ack.expires
+                    && parsed.message_id() == ack.mid
+                    && same_mid_namespace(bytes[0], ack.response.bytes[0])
+                {
+                    if ack.response.as_slice() == bytes {
+                        if parsed.ty() == Type::Confirmable {
+                            self.pending_acks |= 1 << index;
+                        }
+                        return Ok(true);
+                    }
+                    return Ok(false);
+                }
             }
         }
         if !matches!(
@@ -695,8 +803,12 @@ impl Client {
                 let (state, message) = state
                     .receive_message_2(&message, &mut input.authorize)
                     .map_err(Failure::Provisioning)?;
-                self.request =
-                    request(self.ids.second, 0x01, &message).map_err(Failure::Provisioning)?;
+                self.request = request(
+                    self.ids.second,
+                    state.peer_connection_id().as_u8(),
+                    &message,
+                )
+                .map_err(Failure::Provisioning)?;
                 self.operation = self.ids.second;
                 self.retry = Retry::new(self.ids.second_timeout);
                 self.state = ClientState::Message4(state);
@@ -712,12 +824,12 @@ impl Client {
             }
             _ => return Ok(false),
         }
+        self.acks[index] = Some(ResponseAck {
+            response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+            mid: parsed.message_id(),
+            expires: until,
+        });
         if parsed.ty() == Type::Confirmable {
-            self.acks[index] = Some(ResponseAck {
-                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
-                mid: parsed.message_id(),
-                expires: until,
-            });
             self.pending_acks |= 1 << index;
         }
         Ok(true)
@@ -734,7 +846,10 @@ impl Server {
         let now = input.now;
         for (index, exchange) in self.exchanges.iter().enumerate() {
             if let Some(exchange) = exchange {
-                if now < exchange.expires && parsed.message_id() == exchange.operation.mid {
+                if now < exchange.expires
+                    && parsed.message_id() == exchange.operation.mid
+                    && same_mid_namespace(bytes[0], exchange.request.bytes[0])
+                {
                     if exchange.request.as_slice() == bytes {
                         self.pending |= 1 << index;
                         return Ok(true);
@@ -747,10 +862,12 @@ impl Server {
             return Ok(false);
         }
         let prefix = parsed.payload()[0];
-        if !matches!(
-            (&self.state, prefix),
-            (ServerState::Message1, 0xf5) | (ServerState::Message3(_), 0x01)
-        ) {
+        let matches_state = match &self.state {
+            ServerState::Message1 => prefix == 0xf5,
+            ServerState::Message3(_) => prefix == input.local_id.as_u8(),
+            _ => false,
+        };
+        if !matches_state {
             return Ok(false);
         }
         let until = now
@@ -764,9 +881,10 @@ impl Server {
         let state = core::mem::replace(&mut self.state, ServerState::Failed);
         let (index, message) = match state {
             ServerState::Message1 => {
-                let (state, message) = Responder::receive_message_1(
+                let (state, message) = Responder::receive_message_1_with_id(
                     input.identity,
                     input.peer.clone(),
+                    input.local_id,
                     &message,
                     &mut input.entropy,
                 )

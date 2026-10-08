@@ -130,7 +130,7 @@ class Peer:
             self.record["cleanup_error"] = repr(error)
 
 
-def validate_completion(coaptic, independent, coaptic_role):
+def validate_completion(coaptic, independent, coaptic_role, connection_ids=(0, 1)):
     require(coaptic is not None and coaptic.get("complete") is True, "missing Coaptic completion")
     require(independent is not None, "missing libedhoc exporter result")
     for result in (coaptic, independent):
@@ -143,8 +143,11 @@ def validate_completion(coaptic, independent, coaptic_role):
     local_credential = binary_field(independent, "local_credential", 82)
     require(peer_credential == credential(coaptic_role), "libedhoc trusted a different Coaptic pin")
     require(local_credential == credential(independent_role), "libedhoc generated a different identity")
-    sender_id = b"\x01" if coaptic_role == "initiator" else b"\x00"
-    recipient_id = b"\x00" if coaptic_role == "initiator" else b"\x01"
+    require(len(connection_ids) == 2 and all(isinstance(value, int) and 0 <= value <= 23 for value in connection_ids)
+            and connection_ids[0] != connection_ids[1], "invalid expected connection IDs")
+    initiator_id, responder_id = map(lambda value: bytes([value]), connection_ids)
+    sender_id = responder_id if coaptic_role == "initiator" else initiator_id
+    recipient_id = initiator_id if coaptic_role == "initiator" else responder_id
     require(binary_field(coaptic, "sender_id", 1) == sender_id, "wrong Coaptic sender ID")
     require(binary_field(coaptic, "recipient_id", 1) == recipient_id, "wrong Coaptic recipient ID")
     require(binary_field(independent, "sender_id", 1) == recipient_id, "wrong libedhoc sender ID")
@@ -163,6 +166,7 @@ def validate_completion(coaptic, independent, coaptic_role):
         "coaptic_role": coaptic_role,
         "master_secret": secret.hex(),
         "master_salt": salt.hex(),
+        "connection_ids": list(connection_ids),
         "principal": principal.hex(),
         "local_credential": peer_credential.hex(),
         "authenticated_peer_credential": local_credential.hex(),

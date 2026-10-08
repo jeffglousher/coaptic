@@ -17,14 +17,27 @@ fn entropy(value: u8) -> impl FnMut(&mut [u8]) -> bool {
 }
 
 fn handshake(a: u8, b: u8) -> (Session, Session) {
+    handshake_with_ids(a, b, ConnectionId::INITIATOR, ConnectionId::RESPONDER)
+}
+
+fn handshake_with_ids(
+    a: u8,
+    b: u8,
+    initiator_id: ConnectionId,
+    responder_id: ConnectionId,
+) -> (Session, Session) {
     let client = identity(1, 0);
     let server = identity(2, 1);
-    let (initiator, m1) = Initiator::start(&client, server.peer(), entropy(a)).unwrap();
+    let (initiator, m1) =
+        Initiator::start_with_id(&client, server.peer(), initiator_id, entropy(a)).unwrap();
+    assert_eq!(m1.as_bytes()[36], initiator_id.as_u8());
     let (responder, m2) =
-        Responder::receive_message_1(&server, client.peer(), &m1, entropy(b)).unwrap();
+        Responder::receive_message_1_with_id(&server, client.peer(), responder_id, &m1, entropy(b))
+            .unwrap();
     let (initiator, m3) = initiator
         .receive_message_2(&m2, |p| *p == server.peer().principal())
         .unwrap();
+    assert_eq!(initiator.peer_connection_id(), responder_id);
     let (server_session, m4) = responder
         .receive_message_3(&m3, |p| *p == client.peer().principal())
         .unwrap();
@@ -32,6 +45,124 @@ fn handshake(a: u8, b: u8) -> (Session, Session) {
         .receive_message_4(&m4, |p| *p == server.peer().principal())
         .unwrap();
     (client_session, server_session)
+}
+
+#[test]
+fn compact_connection_ids_validate_all_values() {
+    for value in 0..=u8::MAX {
+        match ConnectionId::new(value) {
+            Ok(id) => {
+                assert!(value <= 23);
+                assert_eq!(id.as_u8(), value);
+                assert_eq!(id.lakers().as_cbor(), &[value]);
+                assert_eq!(ConnectionId::from_lakers(id.lakers()), Ok(id));
+            }
+            Err(error) => {
+                assert!(value > 23);
+                assert_eq!(error, Error::Profile);
+            }
+        }
+    }
+}
+
+#[test]
+fn peer_selected_connection_ids_derive_correct_oscore_directions() {
+    use crate::message::{Code, Message as CoapMessage, MessageId, Token, Type, decode};
+
+    for (initiator_id, responder_id) in [(2, 3), (22, 23), (1, 0)] {
+        let (client, server) = handshake_with_ids(
+            3,
+            4,
+            ConnectionId::new(initiator_id).unwrap(),
+            ConnectionId::new(responder_id).unwrap(),
+        );
+        let (mut client, _) = client.into_parts();
+        let (mut server, _) = server.into_parts();
+        assert_eq!(client.sender_id(), &[responder_id]);
+        assert_eq!(client.recipient_id(), &[initiator_id]);
+        assert_eq!(server.sender_id(), &[initiator_id]);
+        assert_eq!(server.recipient_id(), &[responder_id]);
+        assert_eq!(client.sender_key(), server.recipient_key());
+        assert_eq!(client.recipient_key(), server.sender_key());
+        assert_eq!(client.common_iv(), server.common_iv());
+        let request = CoapMessage::new(Type::Confirmable, Code::POST, MessageId::new(55))
+            .with_token(Token::from_checked(&[9, 8]))
+            .with_payload(b"authenticated dynamic connection IDs");
+        let mut wire = [0; 256];
+        let length = client.protect_request(&request, &mut wire).unwrap();
+        let mut inner = [0; 256];
+        let (plain, _) = server
+            .unprotect_request(&decode(&wire[..length]).unwrap(), &mut inner)
+            .unwrap();
+        assert_eq!(plain.code(), request.code());
+        assert_eq!(plain.ty(), request.ty());
+        assert_eq!(plain.message_id(), request.message_id());
+        assert_eq!(plain.token(), request.token());
+        assert_eq!(plain.payload(), request.payload());
+    }
+}
+
+#[test]
+fn responder_refuses_colliding_and_unsupported_connection_ids_before_entropy() {
+    let client = identity(1, 0);
+    let server = identity(2, 1);
+    let local_id = ConnectionId::new(7).unwrap();
+    let (_, m1) = Initiator::start_with_id(&client, server.peer(), local_id, entropy(3)).unwrap();
+    for peer_id in [7, 24, 0x20, 0x40, 0xff] {
+        let mut bytes = m1.as_bytes().to_vec();
+        bytes[36] = peer_id;
+        assert!(matches!(
+            Responder::receive_message_1_with_id(
+                &server,
+                client.peer(),
+                local_id,
+                &Message::from_slice(&bytes).unwrap(),
+                |_| panic!("unsupported or colliding IDs must not request entropy")
+            ),
+            Err(Error::Profile)
+        ));
+    }
+}
+
+#[test]
+fn initiator_refuses_authenticated_peer_collisions_and_unsupported_ids() {
+    let client = identity(1, 0);
+    let server = identity(2, 1);
+    let local_id = ConnectionId::new(7).unwrap();
+    for peer_bytes in [
+        &[7][..],
+        &[0x41, 24],
+        &[0x20],
+        &[0x42, 1, 2],
+        &[0x40],
+        &[0x41, 1],
+    ] {
+        let (initiator, m1) =
+            Initiator::start_with_id(&client, server.peer(), local_id, entropy(3)).unwrap();
+        let responder = lakers::EdhocResponder::new(
+            Crypto::fresh(entropy(4)).unwrap(),
+            EDHOCMethod::StatStat,
+            server.scalar(),
+            server.credential(),
+        );
+        let (responder, _, _) = responder.process_message_1(&m1.buffer().unwrap()).unwrap();
+        let (_, message) = responder
+            .prepare_message_2(
+                CredentialTransfer::ByReference,
+                Some(
+                    lakers::ConnId::from_decoder(&mut lakers::CBORDecoder::new(peer_bytes))
+                        .unwrap(),
+                ),
+                &None,
+            )
+            .unwrap();
+        assert!(matches!(
+            initiator.receive_message_2(&Message::from_buffer(&message).unwrap(), |_| panic!(
+                "invalid peer ID must not reach authorization"
+            )),
+            Err(Error::Profile)
+        ));
+    }
 }
 
 #[test]
