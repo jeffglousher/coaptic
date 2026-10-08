@@ -620,8 +620,9 @@ impl SecurityContext {
     /// sequence numbers, and account for lost live bindings/Observe state.
     /// This comparison cannot detect an old checkpoint in a freshly derived
     /// context. Use a fresh cryptographic context if recovery is uncertain
-    /// (RFC 8613 section 7.5). App does not provide a durable pre-handler barrier;
-    /// use the lower-level unprotect API to commit before application effects.
+    /// (RFC 8613 section 7.5). [`crate::App::poll_with_oscore_checkpoint`] provides
+    /// a durable inbound-request barrier. With the lower-level unprotect API,
+    /// commit the updated checkpoint yourself before application effects.
     pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
         if checkpoint.left < self.replay_left {
             return Err(Error::ReplayRollback);

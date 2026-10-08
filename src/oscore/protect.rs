@@ -215,6 +215,10 @@ pub fn unprotect_request<'a>(
         &mut plaintext,
     )?;
     ctx.replay_accept(piv.seq());
+    let code = Code::from_raw(*plaintext[..pt_len].first().ok_or(Error::MessageLength)?);
+    if !code.is_request() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
@@ -364,6 +368,10 @@ fn unprotect_response_candidates<'a>(
         }
     }
     let (len, request) = accepted.ok_or(Error::Decrypt)?;
+    let code = Code::from_raw(*plaintext[..len].first().ok_or(Error::MessageLength)?);
+    if !code.is_response() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
