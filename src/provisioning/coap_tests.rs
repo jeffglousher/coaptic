@@ -192,6 +192,37 @@ fn nondefault_local_ids_accept_authenticated_peer_choice_and_route_message3() {
 }
 
 #[test]
+fn extended_local_ids_route_complete_coap_handshakes_without_truncation() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let client_id = ConnectionId::from_slice(&[1, 2, 3, 4, 5, 6, 7]).unwrap();
+    let server_id = ConnectionId::from_slice(&[9, 8, 7, 6, 5, 4, 3]).unwrap();
+    let mut client =
+        CoapProvisioner::start_with_id(&a, b.peer(), SERVER, client_id, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen_with_id(&b, a.peer(), CLIENT, server_id, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    let (m1, _, m3, _) = finish(&mut client, &mut server, &mut client_io, &mut server_io, 0);
+    assert_eq!(
+        &decode(&m1).unwrap().payload()[37..],
+        client_id.lakers().as_cbor()
+    );
+    assert_eq!(
+        &decode(&m3).unwrap().payload()[..8],
+        server_id.lakers().as_cbor()
+    );
+    let (client, _) = client.take_session().unwrap().into_parts();
+    let (server, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(client.sender_id(), server_id.as_bytes());
+    assert_eq!(client.recipient_id(), client_id.as_bytes());
+    assert_eq!(server.sender_id(), client_id.as_bytes());
+    assert_eq!(server.recipient_id(), server_id.as_bytes());
+    assert_eq!(client.sender_key(), server.recipient_key());
+    assert_eq!(client.recipient_key(), server.sender_key());
+    assert_eq!(client.common_iv(), server.common_iv());
+}
+
+#[test]
 fn message3_prefix_must_match_locally_selected_responder_id() {
     let a = identity(1, 0);
     let b = identity(2, 1);
