@@ -1,10 +1,16 @@
 """Coverage accounting must reject omissions rather than inflate tested surface."""
 import ast
 import copy
+import io
+import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from capabilities import load_manifest, evaluate, validate_manifest
+import run
 from run import expect_refusal
 
 
@@ -37,6 +43,58 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(result["enabled_cases"], 154)
         self.assertFalse(evaluate(self.manifest, self.outcomes, libcoap_dtls=True,
                                   libcoap_oscore=False, system="linux")["complete"])
+
+    def runner_inventory(self, flags):
+        source = Path(run.__file__)
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        executor = next(node for node in main.body if isinstance(node, ast.FunctionDef) and node.name == "case")
+        executor.body = ast.parse('report["cases"].append({"name": name, "passed": True, '
+                                  '"evidence": {"oracle": "case admission"}})').body
+        namespace = vars(run).copy()
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[main], type_ignores=[])),
+                     str(source), "exec"), namespace)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            peers = []
+            for name in ("coaptic", "coap-rs", "libcoap"):
+                executable = root / name
+                executable.write_bytes(b"inventory fixture")
+                peers.extend([f"--{name}", str(executable)])
+            output = root / "report.json"
+            with patch("sys.argv", [str(source), *peers, "--iterations", "1", "--output", str(output), *flags]), \
+                 patch("run.subprocess.check_output", side_effect=["fixture-source\n", ""]), \
+                 patch("run.platform.platform", return_value="inventory-test"), \
+                 patch("run.platform.system", return_value="linux"), redirect_stdout(io.StringIO()):
+                status = namespace["main"]()
+            return status, json.loads(output.read_text(encoding="utf-8"))
+
+    def check_runner_inventory(self, flags, excluded, count):
+        status, report = self.runner_inventory(flags)
+        names = [row["name"] for row in report["cases"]]
+        expected = {row["id"] for row in self.manifest["cases"] if not excluded.intersection(row["requires"])}
+        self.assertIn("observe-oscore:coaptic->coaptic", names)
+        self.assertIn("observe-dtls:coaptic->coaptic", names)
+        self.assertEqual(report["coverage"]["enabled_cases"], count)
+        self.assertCountEqual(names, expected)
+        self.assertTrue(report["passed"], report["coverage"]["problems"])
+        self.assertEqual(status, 0)
+        return names
+
+    def test_runner_full_security_inventory_is_unchanged(self):
+        self.check_runner_inventory([], set(), 166)
+
+    def test_runner_oscore_exclusion_preserves_c_dtls_observe(self):
+        names = self.check_runner_inventory(["--libcoap-oscore-unavailable"], {"libcoap-oscore"}, 154)
+        self.assertIn("observe-dtls:coaptic->libcoap", names)
+        self.assertIn("observe-dtls:libcoap->coaptic", names)
+
+    def test_runner_udp_only_excludes_c_secure_observe(self):
+        self.check_runner_inventory(["--libcoap-udp-only"], {"libcoap-dtls", "libcoap-oscore"}, 137)
+
+    def test_runner_combined_exclusions_preserve_enabled_inventory(self):
+        self.check_runner_inventory(["--libcoap-udp-only", "--libcoap-oscore-unavailable"],
+                                    {"libcoap-dtls", "libcoap-oscore"}, 137)
 
     def test_missing_empty_duplicate_and_undeclared_runs_fail(self):
         variants = [[], self.outcomes[1:], self.outcomes + [self.outcomes[0]],
