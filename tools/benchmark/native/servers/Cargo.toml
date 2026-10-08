@@ -11,3 +11,4 @@ coap = { version = "=0.28.1", default-features = false }
 coap-lite = "=0.13.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
 getrandom = "=0.3.4"
+mio = { version = "=1.2.4", features = ["net", "os-poll"] }
