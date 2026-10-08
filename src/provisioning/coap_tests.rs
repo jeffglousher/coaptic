@@ -165,6 +165,350 @@ fn sequential_wire_profile_validates_payload_metadata_and_session_identity() {
 }
 
 #[test]
+fn nondefault_local_ids_accept_authenticated_peer_choice_and_route_message3() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let client_id = ConnectionId::new(22).unwrap();
+    let server_id = ConnectionId::new(23).unwrap();
+    let mut client =
+        CoapProvisioner::start_with_id(&a, b.peer(), SERVER, client_id, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen_with_id(&b, a.peer(), CLIENT, server_id, 0);
+    assert_eq!(client.local_connection_id(), client_id);
+    assert_eq!(server.local_connection_id(), server_id);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    let (m1, _, m3, _) = finish(&mut client, &mut server, &mut client_io, &mut server_io, 0);
+    assert_eq!(decode(&m1).unwrap().payload()[37], 22);
+    assert_eq!(decode(&m3).unwrap().payload()[0], 23);
+    let (client_context, _) = client.take_session().unwrap().into_parts();
+    let (server_context, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(client_context.sender_id(), &[23]);
+    assert_eq!(client_context.recipient_id(), &[22]);
+    assert_eq!(server_context.sender_id(), &[22]);
+    assert_eq!(server_context.recipient_id(), &[23]);
+    assert_eq!(client_context.sender_key(), server_context.recipient_key());
+    assert_eq!(client_context.recipient_key(), server_context.sender_key());
+    assert_eq!(client_context.common_iv(), server_context.common_iv());
+}
+
+#[test]
+fn message3_prefix_must_match_locally_selected_responder_id() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server =
+        CoapProvisioner::listen_with_id(&b, a.peer(), CLIENT, ConnectionId::new(8).unwrap(), 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    client.flush(&mut client_io, 0).unwrap();
+    server
+        .ingest(&client_io.last(), CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut server_io, 0).unwrap();
+    client
+        .ingest(&server_io.last(), SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut client_io, 0).unwrap();
+    let m3 = client_io.last();
+    let parsed = decode(&m3).unwrap();
+    let options: Vec<_> = parsed.options().collect();
+    let mut payload = parsed.payload().to_vec();
+    assert_eq!(payload[0], 8);
+    payload[0] = 1;
+    let wrong = recode(
+        &m3,
+        parsed.ty(),
+        parsed.message_id(),
+        parsed.token(),
+        &options,
+        &payload,
+    );
+    assert_eq!(
+        server
+            .ingest(&wrong, CLIENT, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(server.take_session().is_none());
+    server.ingest(&m3, CLIENT, 0, no_entropy, |_| true).unwrap();
+    server.flush(&mut server_io, 0).unwrap();
+    client
+        .ingest(&server_io.last(), SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+}
+
+#[test]
+fn completed_cache_classification_is_immutable_and_owns_full_live_mid() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    client.flush(&mut client_io, 0).unwrap();
+    let m1 = client_io.last();
+    assert_eq!(
+        server.classify_completed_cache(&m1, CLIENT, 0),
+        CompletedCacheMatch::NoMatch
+    );
+    let (_, m2, m3, m4) = finish(&mut client, &mut server, &mut client_io, &mut server_io, 0);
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+    for (controller, endpoint, wires) in [
+        (&mut client, SERVER, [&m2, &m4]),
+        (&mut server, CLIENT, [&m1, &m3]),
+    ] {
+        let deadline = controller.next_deadline();
+        for wire in wires {
+            assert_eq!(
+                controller.classify_completed_cache(wire, endpoint, 1),
+                CompletedCacheMatch::ExactDuplicate
+            );
+            assert_eq!(
+                controller.classify_completed_cache(wire, OTHER, 1),
+                CompletedCacheMatch::NoMatch
+            );
+            let mut collision = wire.clone();
+            *collision.last_mut().unwrap() ^= 1;
+            assert_eq!(
+                controller.classify_completed_cache(&collision, endpoint, 1),
+                CompletedCacheMatch::MidCollision
+            );
+            collision[0] &= 0x3f;
+            assert_eq!(
+                controller.classify_completed_cache(&collision, endpoint, 1),
+                CompletedCacheMatch::MidCollision
+            );
+            collision.resize(DATAGRAM_CAPACITY + 1, 0);
+            assert_eq!(
+                controller.classify_completed_cache(&collision, endpoint, 1),
+                CompletedCacheMatch::MidCollision
+            );
+            collision[2..4].copy_from_slice(&900_u16.to_be_bytes());
+            assert_eq!(
+                controller.classify_completed_cache(&collision, endpoint, 1),
+                CompletedCacheMatch::NoMatch
+            );
+            assert_eq!(
+                controller.classify_completed_cache(wire, endpoint, EXCHANGE_LIFETIME_MS),
+                CompletedCacheMatch::NoMatch
+            );
+        }
+        assert_eq!(controller.next_deadline(), deadline);
+        assert_eq!(controller.last_now, 0);
+        assert!(!controller.pending());
+    }
+    let mut collision = m3;
+    *collision.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        server
+            .ingest(&collision, CLIENT, 1, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(!server.pending());
+}
+
+#[test]
+fn completed_cache_respects_each_exchange_expiry() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    client.flush(&mut client_io, 0).unwrap();
+    let m1 = client_io.last();
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut server_io, 0).unwrap();
+    client
+        .ingest(&server_io.last(), SERVER, 1000, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut client_io, 1000).unwrap();
+    let m3 = client_io.last();
+    server
+        .ingest(&m3, CLIENT, 2000, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut server_io, 2000).unwrap();
+    client
+        .ingest(&server_io.last(), SERVER, 3000, no_entropy, |_| true)
+        .unwrap();
+    assert_eq!(
+        server.classify_completed_cache(&m1, CLIENT, EXCHANGE_LIFETIME_MS),
+        CompletedCacheMatch::NoMatch
+    );
+    assert_eq!(
+        server.classify_completed_cache(&m3, CLIENT, EXCHANGE_LIFETIME_MS),
+        CompletedCacheMatch::ExactDuplicate
+    );
+    assert_eq!(
+        server.classify_completed_cache(&m3, CLIENT, EXCHANGE_LIFETIME_MS + 2000),
+        CompletedCacheMatch::NoMatch
+    );
+}
+
+#[test]
+fn nonconfirmable_responses_keep_mid_ownership_without_generating_acks() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    client.flush(&mut client_io, 0).unwrap();
+    server
+        .ingest(&client_io.last(), CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut server_io, 0).unwrap();
+    let response2 = server_io.last();
+    let parsed = decode(&response2).unwrap();
+    let options: Vec<_> = parsed.options().collect();
+    let non2 = recode(
+        &response2,
+        Type::NonConfirmable,
+        MessageId::new(900),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    );
+    client
+        .ingest(&non2, SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut client_io, 0).unwrap();
+    server
+        .ingest(&client_io.last(), CLIENT, 0, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut server_io, 0).unwrap();
+    let response4 = server_io.last();
+    let parsed = decode(&response4).unwrap();
+    let options: Vec<_> = parsed.options().collect();
+    let collision4 = recode(
+        &response4,
+        Type::NonConfirmable,
+        MessageId::new(900),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    );
+    assert_eq!(
+        client
+            .ingest(&collision4, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(client.take_session().is_none());
+    let non4 = recode(
+        &response4,
+        Type::NonConfirmable,
+        MessageId::new(901),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    );
+    client
+        .ingest(&non4, SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    let sends = client_io.attempts.len();
+    for response in [&non2, &non4] {
+        assert_eq!(
+            client.classify_completed_cache(response, SERVER, 1),
+            CompletedCacheMatch::ExactDuplicate
+        );
+        client
+            .ingest(response, SERVER, 1, no_entropy, no_authorization)
+            .unwrap();
+        client.flush(&mut client_io, 1).unwrap();
+    }
+    assert_eq!(client_io.attempts.len(), sends);
+    assert_eq!(sends, 2);
+}
+
+#[test]
+fn separate_final_response_can_reuse_numeric_piggyback_mid_in_peer_namespace() {
+    for ty in [Type::Confirmable, Type::NonConfirmable] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+        let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+        let mut client_io = Io::default();
+        let mut server_io = Io::default();
+        client.flush(&mut client_io, 0).unwrap();
+        server
+            .ingest(&client_io.last(), CLIENT, 0, entropy(4), no_authorization)
+            .unwrap();
+        server.flush(&mut server_io, 0).unwrap();
+        let m2 = server_io.last();
+        let first_mid = decode(&m2).unwrap().message_id();
+        client.ingest(&m2, SERVER, 0, no_entropy, |_| true).unwrap();
+        client.flush(&mut client_io, 0).unwrap();
+        let m3 = client_io.last();
+        server.ingest(&m3, CLIENT, 0, no_entropy, |_| true).unwrap();
+        server.flush(&mut server_io, 0).unwrap();
+        let response4 = server_io.last();
+        let parsed = decode(&response4).unwrap();
+        let options: Vec<_> = parsed.options().collect();
+        let separate4 = recode(
+            &response4,
+            ty,
+            first_mid,
+            parsed.token(),
+            &options,
+            parsed.payload(),
+        );
+        client
+            .ingest(&separate4, SERVER, 0, no_entropy, |_| true)
+            .unwrap();
+        client.flush(&mut client_io, 0).unwrap();
+        assert!(client.take_session().is_some());
+        for wire in [&m2, &separate4] {
+            assert_eq!(
+                client.classify_completed_cache(wire, SERVER, 1),
+                CompletedCacheMatch::ExactDuplicate
+            );
+            let mut collision = wire.clone();
+            *collision.last_mut().unwrap() ^= 1;
+            assert_eq!(
+                client.classify_completed_cache(&collision, SERVER, 1),
+                CompletedCacheMatch::MidCollision
+            );
+        }
+        let mut reset = [0; 4];
+        CoapMessage::empty_rst(first_mid)
+            .encode(&mut reset)
+            .unwrap();
+        assert_eq!(
+            client.classify_completed_cache(&reset, SERVER, 1),
+            CompletedCacheMatch::MidCollision
+        );
+        let mut ack = [0; 4];
+        CoapMessage::empty_ack(decode(&m3).unwrap().message_id())
+            .encode(&mut ack)
+            .unwrap();
+        assert_eq!(
+            server.classify_completed_cache(&ack, CLIENT, 1),
+            CompletedCacheMatch::NoMatch
+        );
+        let sends = client_io.attempts.len();
+        client
+            .ingest(&separate4, SERVER, 1, no_entropy, no_authorization)
+            .unwrap();
+        client.flush(&mut client_io, 1).unwrap();
+        if ty == Type::Confirmable {
+            assert_eq!(client_io.attempts.len(), sends + 1);
+            assert_eq!(decode(&client_io.last()).unwrap().message_id(), first_mid);
+            assert!(decode(&client_io.last()).unwrap().is_empty_ack());
+        } else {
+            assert_eq!(client_io.attempts.len(), sends);
+        }
+    }
+}
+
+#[test]
 fn loss_uses_exact_cached_requests_four_retries_and_precise_deadlines() {
     let a = identity(1, 0);
     let mut client =

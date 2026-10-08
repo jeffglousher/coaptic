@@ -2343,16 +2343,18 @@ def main():
          lambda: observe_values(peers["coaptic"], peers["coap-rs"], peers["coaptic"]))
     case("observe-oscore:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "oscore"))
-    case("observe-oscore:coaptic->libcoap",
-         lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "oscore", ready=2))
-    case("observe-oscore:libcoap->coaptic",
-         lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "oscore"))
+    if not (args.libcoap_udp_only or args.libcoap_oscore_unavailable):
+        case("observe-oscore:coaptic->libcoap",
+             lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "oscore", ready=2))
+        case("observe-oscore:libcoap->coaptic",
+             lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "oscore"))
     case("observe-dtls:coaptic->coaptic",
          lambda: observe_protected(peers["coaptic"], peers["coaptic"], peers["coaptic"], "dtls"))
-    case("observe-dtls:coaptic->libcoap",
-         lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "dtls"))
-    case("observe-dtls:libcoap->coaptic",
-         lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "dtls"))
+    if not args.libcoap_udp_only:
+        case("observe-dtls:coaptic->libcoap",
+             lambda: observe_protected(peers["coaptic"], peers["libcoap"], peers["coaptic"], "dtls"))
+        case("observe-dtls:libcoap->coaptic",
+             lambda: observe_protected(peers["libcoap"], peers["coaptic"], peers["coaptic"], "dtls"))
     case("oscore-echo:coaptic->coaptic",
          lambda: oscore_server_echo(peers["coaptic"], peers["coaptic"]))
     case("oscore-replay-restore:coaptic",
