@@ -1,4 +1,7 @@
 //! External socket driver. Complete verified representations define completion.
+//!
+//! Fixtures declare application/octet-stream; replies must carry exactly one
+//! matching Content-Format in addition to complete, byte-exact body validation.
 #![forbid(unsafe_code)]
 
 use std::{
@@ -107,6 +110,7 @@ fn response<'a>(wire: &'a [u8], token: &[u8; 8]) -> Result<Reply<'a>, &'static s
     let mut number = 0u16;
     let mut block = None;
     let mut etag = None;
+    let mut content_format = false;
     while cursor < wire.len() && wire[cursor] != 255 {
         let header = wire[cursor];
         cursor += 1;
@@ -139,7 +143,19 @@ fn response<'a>(wire: &'a [u8], token: &[u8; 8]) -> Result<Reply<'a>, &'static s
                     size: 1 << ((raw & 7) + 4),
                 });
             }
-            12 | 14 | 28 => {}
+            12 => {
+                if content_format || value.len() > 2 {
+                    return Err("invalid fixture Content-Format");
+                }
+                let format = value
+                    .iter()
+                    .fold(0u16, |n, byte| (n << 8) | u16::from(*byte));
+                if format != 42 {
+                    return Err("wrong fixture Content-Format");
+                }
+                content_format = true;
+            }
+            14 | 28 => {}
             critical if critical & 1 != 0 => return Err("unsupported critical response option"),
             _ => {}
         }
@@ -149,6 +165,9 @@ fn response<'a>(wire: &'a [u8], token: &[u8; 8]) -> Result<Reply<'a>, &'static s
     } else {
         &[]
     };
+    if !content_format {
+        return Err("missing fixture Content-Format");
+    }
     if body.is_empty() {
         return Err("empty fixture representation");
     }
@@ -406,13 +425,13 @@ mod tests {
         );
         let mut wire = vec![0x68, 69, 0x12, 0x34];
         wire.extend_from_slice(&token);
-        wire.extend_from_slice(&[255, 0, 1, 2]);
+        wire.extend_from_slice(&[0xc1, 42, 255, 0, 1, 2]);
         assert_eq!(response(&wire, &token).unwrap().body, &[0, 1, 2]);
         wire[0] = 0x78;
         assert!(response(&wire, &token).is_err());
         wire[0] = 0x68;
         let mut block_wire = wire[..12].to_vec();
-        block_wire.extend_from_slice(&[0xd1, 10, 6, 255, 0, 1, 2]);
+        block_wire.extend_from_slice(&[0xc1, 42, 0xb1, 6, 255, 0, 1, 2]);
         let reply = response(&block_wire, &token).unwrap();
         let block = reply.block.unwrap();
         assert_eq!(block.number, 0);
@@ -421,6 +440,24 @@ mod tests {
         assert_eq!(reply.body, &[0, 1, 2]);
         wire[1] = 128;
         assert!(response(&wire, &token).is_err());
+    }
+
+    #[test]
+    fn fixture_format_missing_wrong_duplicate_or_overwide_is_rejected() {
+        let token = [1; 8];
+        let mut header = vec![0x68, 69, 0x12, 0x34];
+        header.extend_from_slice(&token);
+        for options in [
+            vec![],
+            vec![0xc1, 0],
+            vec![0xc1, 42, 0x01, 42],
+            vec![0xc3, 0, 0, 42],
+        ] {
+            let mut wire = header.clone();
+            wire.extend_from_slice(&options);
+            wire.extend_from_slice(&[255, 0, 1, 2]);
+            assert!(response(&wire, &token).is_err(), "{options:?}");
+        }
     }
 
     #[test]

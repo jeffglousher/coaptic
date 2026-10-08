@@ -33,6 +33,14 @@ name = "bench-load"
 version = "0.1.0"
 
 [[package]]
+name = "bench-profile"
+version = "0.1.0"
+dependencies = [
+ "coaptic",
+ "getrandom",
+]
+
+[[package]]
 name = "bench-rust-server"
 version = "0.1.0"
 dependencies = [
@@ -40,6 +48,7 @@ dependencies = [
  "coap-lite",
  "coaptic",
  "getrandom",
+ "mio",
  "tokio",
 ]
 
@@ -363,6 +372,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys",
 ]

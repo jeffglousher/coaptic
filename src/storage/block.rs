@@ -21,6 +21,26 @@ use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, ValueError};
 use crate::message::{BlockValue, QBlockTransmission, Token};
 
+pub(crate) fn classic_block2_range(
+    total: usize,
+    requested: BlockValue,
+) -> Result<(BlockValue, core::ops::Range<usize>), BlockTransferError> {
+    if requested.is_bert() {
+        return Err(BlockTransferError::IdentityMismatch);
+    }
+    let size = usize::from(requested.size());
+    let offset = usize::try_from(requested.num())
+        .ok()
+        .and_then(|n| n.checked_mul(size))
+        .ok_or(BlockTransferError::Overflow)?;
+    if offset > total || (offset == total && total > 0) {
+        return Err(BlockTransferError::Gap);
+    }
+    let end = offset + (total - offset).min(size);
+    let block = BlockValue::new(requested.num(), end < total, requested.szx())?;
+    Ok((block, offset..end))
+}
+
 /// Request-Tag or ETag body identity (opaque, 0..=8 bytes).
 ///
 /// [`Self::ABSENT`] is distinct from a present empty Request-Tag

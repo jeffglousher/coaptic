@@ -40,6 +40,8 @@ pub mod profiles;
 mod progress;
 mod slot;
 mod table;
+#[cfg(feature = "diagnostics")]
+mod work_metrics;
 
 #[cfg(feature = "alloc")]
 mod alloc_memory;
@@ -50,6 +52,7 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
+pub(crate) use block::classic_block2_range;
 pub use block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,
     QBlockRecover,
@@ -59,6 +62,8 @@ pub use capacities::Capacities;
 pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
+#[cfg(feature = "std")]
+pub use io::UdpSocketIo;
 pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use metrics::Metrics;
@@ -70,6 +75,8 @@ pub use table::{
     DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
     ObserveNotifyHold, ObserveResource, ObserveTable,
 };
+#[cfg(feature = "diagnostics")]
+pub use work_metrics::WorkMetrics;
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///

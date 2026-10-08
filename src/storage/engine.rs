@@ -58,6 +58,8 @@ use crate::message::{
 pub struct Engine<S: Storage> {
     storage: S,
     metrics: Metrics,
+    #[cfg(feature = "diagnostics")]
+    work_metrics: super::WorkMetrics,
 }
 
 impl<S: Storage> Engine<S> {
@@ -65,6 +67,8 @@ impl<S: Storage> Engine<S> {
         Self {
             storage,
             metrics: Metrics::ZERO,
+            #[cfg(feature = "diagnostics")]
+            work_metrics: super::WorkMetrics::ZERO,
         }
     }
 
@@ -87,6 +91,24 @@ impl<S: Storage> Engine<S> {
     #[inline]
     pub(crate) fn metrics_mut(&mut self) -> &mut Metrics {
         &mut self.metrics
+    }
+
+    /// Copy optional request-path work counters without clocks or allocation.
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub const fn work_metrics(&self) -> super::WorkMetrics {
+        self.work_metrics
+    }
+
+    /// Reset work counters independently of the always-on reactor counters.
+    #[cfg(feature = "diagnostics")]
+    pub fn reset_work_metrics(&mut self) {
+        self.work_metrics = super::WorkMetrics::ZERO;
+    }
+
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn work_metrics_mut(&mut self) -> &mut super::WorkMetrics {
+        &mut self.work_metrics
     }
 
     /// Borrow the backing store.
@@ -313,6 +335,11 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     pub fn encode_tx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.tx_payload_mut(id), msg)?;
         self.storage.set_tx_len(id, n)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(
+            &mut self.work_metrics.tx_payload_encoded_bytes,
+            msg.payload().len(),
+        );
         Ok(n)
     }
 
@@ -326,6 +353,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         copy_into_slot(self.storage.rx_payload_mut(id), bytes)?;
         self.storage.set_rx_len(id, bytes.len())?;
         self.storage.set_rx_endpoint(id, endpoint)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_rx_copied_bytes, bytes.len());
         Ok(bytes.len())
     }
 
@@ -339,6 +368,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         copy_into_slot(self.storage.tx_payload_mut(id), bytes)?;
         self.storage.set_tx_len(id, bytes.len())?;
         self.storage.set_tx_endpoint(id, endpoint)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
         Ok(bytes.len())
     }
 
@@ -1313,7 +1344,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         result
     }
 
-    /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
+    /// Decode occupied RX `id` and apply the matching Block1 request body.
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
     /// separate). Request-Tag, when present, is stored on the body sidecar.
@@ -1322,6 +1353,10 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// [`BlockTransfer::REQUEST_IDENTITY_BYTES`]. A changed operation is refused
     /// before body mutation; integer leading-zero encodings compare equally.
     /// Direct range APIs require the caller to enforce operation matchability.
+    /// Untagged classic continuations match the endpoint, method and cache-key
+    /// options even when Tokens change. A new block zero with a different Token
+    /// replaces only that operation's retained partial body. Tagged and Q-Block
+    /// transfers retain their explicit identity requirements.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1510,7 +1545,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_block1(key, body, szx)
+        let result = self.storage.start_block1(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next in-order outgoing Block1 range. Bytes stay in the body slot.
@@ -1594,7 +1634,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_block2(key, body, szx)
+        let result = self.storage.start_block2(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Select a classic Block2 response range without advancing a transfer cursor.
@@ -1611,19 +1656,14 @@ impl<S: Storage + BodySlots> Engine<S> {
         if transfer.role() != BlockRole::OutgoingBlock2 || requested.is_bert() {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        let size = usize::from(requested.size());
-        let offset = usize::try_from(requested.num())
-            .ok()
-            .and_then(|n| n.checked_mul(size))
-            .ok_or(BlockTransferError::Overflow)?;
-        let total = transfer.filled();
-        if offset > total || (offset == total && total > 0) {
-            return Err(BlockTransferError::Gap);
-        }
-        let len = (total - offset).min(size);
-        let more = offset + len < total;
-        let block = BlockValue::new(requested.num(), more, requested.szx())?;
-        Ok(OutgoingBlock::new(id, block, offset, len, !more))
+        let (block, range) = super::classic_block2_range(transfer.filled(), requested)?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            range.start,
+            range.len(),
+            !block.more(),
+        ))
     }
 
     /// Issue the next in-order outgoing Block2 range. Bytes stay in the body slot.
@@ -1729,7 +1769,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_q_block1(key, body, szx)
+        let result = self.storage.start_q_block1(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next unsent outgoing Q-Block1 range in the current window.
@@ -1804,7 +1849,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_q_block2(key, body, szx)
+        let result = self.storage.start_q_block2(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next unsent outgoing Q-Block2 range in the current window.
@@ -2120,20 +2170,36 @@ impl<S: Storage + BodySlots> Engine<S> {
                 payload.len(),
             )
         };
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.block_rx_staged_bytes, n);
         let key = BlockKey::new(token, endpoint).with_identity(identity);
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        let mut classic_body = None;
         if let Some(binding) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
             } else {
                 BlockRole::IncomingQBlock1
             };
-            let existing = self.lookup_rx_body_role(key, role).or_else(|| {
+            let existing = if untagged_classic {
                 (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
                     let id = SlotId::from_index(i);
                     let transfer = self.storage.rx_body_transfer(id)?;
-                    same_body_identity(transfer, key, role).then_some(id)
+                    (transfer.role() == role
+                        && transfer.endpoint() == endpoint
+                        && transfer.identity().is_absent()
+                        && transfer.request_binding == Some(binding))
+                    .then_some(id)
                 })
-            });
+            } else {
+                self.lookup_rx_body_role(key, role).or_else(|| {
+                    (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
+                        let id = SlotId::from_index(i);
+                        let transfer = self.storage.rx_body_transfer(id)?;
+                        same_body_identity(transfer, key, role).then_some(id)
+                    })
+                })
+            };
             if let Some(id) = existing {
                 let transfer = self
                     .storage
@@ -2142,14 +2208,53 @@ impl<S: Storage + BodySlots> Engine<S> {
                 if transfer.request_binding != Some(binding) {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
+                if untagged_classic {
+                    if block.num() == 0 && key != transfer.key() {
+                        BlockTransfer::incoming_block1(
+                            key,
+                            block,
+                            n,
+                            self.capacities().rx_body_bytes.unwrap_or(0),
+                            expected,
+                        )?;
+                        self.release_rx_body(id)?;
+                    } else {
+                        classic_body = Some(id);
+                    }
+                }
             }
         }
-        let progress = match which {
-            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected),
-        }?;
+        let progress = if untagged_classic {
+            let result = if let Some(id) = classic_body {
+                self.write_block1(id, block, &tmp.as_ref()[..n])
+            } else {
+                self.admit_block1(key, block, &tmp.as_ref()[..n], expected)
+                    .and_then(|id| {
+                        let transfer = self
+                            .storage
+                            .rx_body_transfer(id)
+                            .ok_or(BlockTransferError::NoTransfer)?;
+                        Ok(BlockProgress::new(
+                            id,
+                            transfer.filled(),
+                            transfer.is_complete(),
+                        ))
+                    })
+            };
+            self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+            result?
+        } else {
+            match which {
+                RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::QBlock1 => {
+                    self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected)
+                }
+                RxBlockOpt::QBlock2 => {
+                    self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected)
+                }
+            }?
+        };
         if let Some(binding) = binding {
             let mut transfer = self
                 .storage
@@ -2208,6 +2313,8 @@ impl<S: Storage + BodySlots> Engine<S> {
             return Err(BlockTransferError::Overflow);
         }
         tmp.as_mut()[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.block_tx_staged_bytes, issued.len());
         let encoded = issued.block().encode();
         let size_n = u32::try_from(transfer.filled()).map_err(|_| BlockTransferError::Overflow)?;
         let size = encode_uint(size_n);

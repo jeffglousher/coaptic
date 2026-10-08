@@ -1,4 +1,10 @@
-"""Independent network benchmark sessions; setup and inference are explicit."""
+"""Independent network benchmark sessions; setup and inference are explicit.
+
+Exact in-memory analysis accepts at most 64 MiB of encoded evidence and one
+million latency samples in aggregate. Python object overhead is additional;
+these input budgets are not a bound on process resident memory. Partition
+larger campaigns rather than silently dropping evidence or approximating p99.
+"""
 import argparse
 import contextlib
 import datetime
@@ -19,6 +25,8 @@ from pathlib import Path
 
 SCHEMA = "coaptic-benchmark/1"
 MAX_OUTPUT = 32 * 1024 * 1024
+MAX_ANALYSIS_BYTES = 64 * 1024 * 1024
+MAX_ANALYSIS_SAMPLES = 1_000_000
 
 
 def digest(path):
@@ -76,6 +84,19 @@ def noise():
     except ImportError:
         value["os_resource_sampler"] = "unavailable"
     return value
+
+
+def process_cpu(pid):
+    """Process CPU accounting; sampled outside the independent driver timing."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        value = psutil.Process(pid).cpu_times()
+        return {"user_seconds": value.user, "system_seconds": value.system}
+    except (psutil.Error, OSError):
+        return None
 
 
 def integer(value, name, minimum, maximum):
@@ -319,22 +340,37 @@ def run_cell(peer, case):
                 raise ValueError(f"server not externally ready; last probe={last_probe!r}")
             values.update(case)
             timeout = min(86_400, 15 + (case["operations"] + case["warmup"] * case["concurrency"]) * case["timeout_ms"] / 1000)
+            cpu_before = process_cpu(server.pid)
+            measured_started = time.monotonic()
             exit_code, sample = execute(render(peer["driver"], values), timeout,
                                         lambda: server.poll() is None and not captured.overflow.is_set())
+            measured_wall = time.monotonic() - measured_started
+            cpu_after = process_cpu(server.pid)
+            cpu_accounting = {"before": cpu_before, "after": cpu_after,
+                              "driver_process_wall_seconds": measured_wall,
+                              "scope": "server CPU over driver startup, warmup, measured requests and driver exit; platform accounting granularity applies"}
             try:
                 validate_sample(sample, case)
             except ValueError as error:
                 return {"error": str(error), "raw_sample": sample, "exit_code": exit_code,
-                        "readiness": readiness, "noise_before": before, "noise_after": noise(), "finished": utc()}
+                        "readiness": readiness, "server_cpu": cpu_accounting,
+                        "noise_before": before, "noise_after": noise(), "finished": utc()}
             warmup_failed = integer(sample.get("warmup_failed"), "warmup_failed", 0, case["warmup"] * case["concurrency"])
             if exit_code not in (0, 1) or (exit_code == 0) != (sample["failed"] == 0 and warmup_failed == 0):
                 raise ValueError("driver exit contradicts failure accounting")
             if captured.overflow.is_set() or server.poll() is not None:
                 raise ValueError("server exited or exceeded output cap during measured workload")
             return {"sample": sample, "readiness": readiness, "noise_before": before,
-                    "noise_after": noise(), "finished": utc()}
+                    "server_cpu": cpu_accounting, "noise_after": noise(), "finished": utc()}
+        except (ValueError, OSError) as error:
+            failure = error
         finally:
             captured.close()
+        raise ValueError(
+            f"{failure}; server_exit={server.returncode}; "
+            f"stderr_tail={bytes(captured.errors[-4096:])!r}; "
+            f"stdout_tail={bytes(captured.output[-4096:])!r}"
+        ) from failure
 
 
 @contextlib.contextmanager
@@ -427,6 +463,12 @@ def quantile(values, fraction):
     return values[low] + (values[high] - values[low]) * (position - low)
 
 
+def descriptive(values):
+    return {"count": len(values), "mean": statistics.mean(values) if values else None,
+            "p99": quantile(values, .99), "min": min(values) if values else None,
+            "max": max(values) if values else None}
+
+
 def paired_interval(ratios, seed=0, draws=2000):
     if len(ratios) < 5:
         return {"sessions": len(ratios), "ratio": math.exp(statistics.mean(map(math.log, ratios))) if ratios else None,
@@ -441,6 +483,16 @@ def paired_interval(ratios, seed=0, draws=2000):
 
 def analyze(root, reference):
     root = Path(root)
+    input_bytes = 0
+    latency_samples = 0
+
+    def charge(path):
+        nonlocal input_bytes
+        input_bytes += Path(path).stat().st_size
+        if input_bytes > MAX_ANALYSIS_BYTES:
+            raise ValueError("aggregate analysis input budget exceeded; partition the campaign")
+
+    charge(root / "plan.json")
     plan = read(root / "plan.json")
     if plan.get("runner_sha256") != digest(__file__):
         raise ValueError("runner changed; analyze with the original runner or create a separate campaign")
@@ -448,6 +500,7 @@ def analyze(root, reference):
     cells = {}
     periods = []
     for window_file in sorted(root.glob("window-*.json")):
+        charge(window_file)
         window = read(window_file)
         if window["plan_sha256"] != plan_hash:
             raise ValueError("session belongs to another plan")
@@ -457,9 +510,16 @@ def analyze(root, reference):
         observed = []
         for entry in window["cells"]:
             path = root / entry["path"]
+            charge(path)
             if digest(path) != entry["sha256"]:
                 raise ValueError("session evidence changed")
             record = read(path)
+            if isinstance(record.get("sample"), dict):
+                latencies = record["sample"].get("latencies_ns", [])
+                if isinstance(latencies, list):
+                    latency_samples += len(latencies)
+                if latency_samples > MAX_ANALYSIS_SAMPLES:
+                    raise ValueError("aggregate analysis latency budget exceeded; partition the campaign")
             if record["plan_sha256"] != plan_hash or record["window"] != window["window"]:
                 raise ValueError("cell belongs to another plan/session")
             key = (record["case"], record["peer"], record["window"])
@@ -494,6 +554,11 @@ def analyze(root, reference):
             for record in good:
                 validate_sample(record["sample"], case)
             rates = [r["sample"]["completed"] * 1e9 / r["sample"]["elapsed_ns"] for r in good]
+            session_stats = [{"window": r["window"], "completed": r["sample"]["completed"],
+                              "failed": r["sample"]["failed"],
+                              "latency_ns": descriptive(r["sample"]["latencies_ns"]),
+                              "completed_per_second": rate}
+                             for r, rate in zip(good, rates)]
             row = {"case": case["id"], "peer": peer["id"], "protocol": case["protocol"], "security": case["security"],
                    "sessions": len(records), "invalid_sessions": len(records) - len(good),
                    "failed_requests": sum(r["sample"]["failed"] for r in good),
@@ -503,6 +568,12 @@ def analyze(root, reference):
                    "median_goodput_bytes_per_second": statistics.median(rates) * case["bytes"] if rates else None,
                    "median_session_p50_ns": statistics.median(quantile(r["sample"]["latencies_ns"], .5) for r in good if r["sample"]["completed"]) if any(r["sample"]["completed"] for r in good) else None,
                    "median_session_p99_ns": statistics.median(quantile(r["sample"]["latencies_ns"], .99) for r in good if r["sample"]["completed"]) if any(r["sample"]["completed"] for r in good) else None}
+            row["successful_request_latency_ns"] = descriptive(
+                [latency for r in good for latency in r["sample"]["latencies_ns"]])
+            row["session_mean_latency_ns"] = descriptive(
+                [s["latency_ns"]["mean"] for s in session_stats if s["completed"]])
+            row["session_completed_per_second"] = descriptive(rates)
+            row["session_statistics"] = session_stats
             ratios = []
             for record in good:
                 if record["window"] not in eligible_periods:
@@ -524,6 +595,8 @@ def analyze(root, reference):
     return {"schema": SCHEMA, "plan_sha256": plan_hash, "reference": reference, "smoke": plan["smoke"],
             "sessions": periods, "summary": summary,
             "limits": ["closed-loop concurrency; not an offered-load or coordinated-omission-corrected latency claim",
+                       "request latency summaries pool successful requests only; failures are reported separately",
+                       "session summaries give each recorded session equal weight; request p99 is not an average of session p99s",
                        "session intervals are not guaranteed independent; inspect actual timestamps and host noise",
                        "confidence intervals do not eliminate systematic driver, scheduler or colocated-host bias",
                        "HTTP3 TLS and plaintext CoAP are separate security/protocol strata",

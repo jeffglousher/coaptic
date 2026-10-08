@@ -1,5 +1,6 @@
 [workspace]
-members = ["driver", "servers"]
+members = ["driver", "servers", "profile"]
+default-members = ["driver", "servers"]
 resolver = "2"
 
 [profile.release]

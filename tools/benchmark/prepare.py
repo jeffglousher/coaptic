@@ -27,9 +27,10 @@ def main():
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--peers", default="coaptic,coap-rs,coap-lite-codec,aiocoap,libcoap,go-coap,http3")
     parser.add_argument("--uvloop", action="store_true")
+    parser.add_argument("--coaptic-rx-bytes", type=int, choices=(1472, 2048), default=1472)
     args = parser.parse_args()
     selected = args.peers.split(",")
-    allowed = {"coaptic", "coap-rs", "coap-lite-codec", "aiocoap", "libcoap", "go-coap", "http3"}
+    allowed = {"coaptic", "coaptic-reusable", "coap-rs", "coap-lite-codec", "aiocoap", "libcoap", "go-coap", "http3"}
     if not set(selected) <= allowed or len(set(selected)) != len(selected):
         parser.error("unknown or repeated peer")
     target = args.build_root.resolve()
@@ -42,10 +43,15 @@ def main():
     peers = []
     rust_version = subprocess.check_output(["rustc", "--version"], text=True).strip()
     for name in selected:
-        if name in ("coaptic", "coap-rs", "coap-lite-codec"):
-            peers.append({"id": name, "protocol": "coap", "server": [str(rust), name, "{host}", "{port}", "{bytes}"], "driver": driver,
+        if name in ("coaptic", "coaptic-reusable", "coap-rs", "coap-lite-codec"):
+            is_coaptic = name in ("coaptic", "coaptic-reusable")
+            server = [str(rust), name, "{host}", "{port}", "{bytes}"]
+            if is_coaptic:
+                server.append(str(args.coaptic_rx_bytes))
+            peers.append({"id": name, "protocol": "coap", "server": server, "driver": driver,
                           "identity": {"implementation": name, "compiler": rust_version, "profile": "release thin-LTO; no per-request logs", "runtime": "two Tokio workers" if name == "coap-rs" else "one socket thread", "scope": "codec fixture" if name == "coap-lite-codec" else "App/server library",
-                                       "coaptic_capacities": {"rx_datagrams": 4, "tx_datagrams": 4, "datagram_bytes": 1472, "dedup": 8, "rx_bodies": 1, "tx_bodies": 2, "body_bytes": "representation rounded up to 1024"} if name == "coaptic" else None}})
+                                       "coaptic_transport": {"adapter": "UdpSocketIo" if name == "coaptic-reusable" else "UdpSocket", "reusable_scratch_bytes": 2049 if name == "coaptic-reusable" else 0} if is_coaptic else None,
+                                       "coaptic_capacities": {"rx_datagrams": 4, "tx_datagrams": 4, "rx_datagram_bytes": args.coaptic_rx_bytes, "tx_datagram_bytes": 1472, "dedup": 8, "rx_bodies": 1, "tx_bodies": 2, "body_bytes": "representation rounded up to 1024"} if is_coaptic else None}})
     if "aiocoap" in selected:
         identity_code = "import aiocoap,importlib.metadata,json,pathlib; print(json.dumps({'version':importlib.metadata.version('aiocoap'),'tree':str(pathlib.Path(aiocoap.__file__).parent),'python':__import__('platform').python_version()}))"
         details = json.loads(subprocess.check_output([args.python, "-I", "-c", identity_code], text=True))
