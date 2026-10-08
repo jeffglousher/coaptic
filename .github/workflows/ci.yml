@@ -210,6 +210,7 @@ jobs:
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
       - run: cargo test -p coaptic-plugtest --features dtls,oscore
+      - run: python3 -m unittest discover -s tools/provisioning -p 'test_*.py'
       - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
       - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 
