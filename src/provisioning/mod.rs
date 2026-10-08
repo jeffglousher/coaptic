@@ -26,9 +26,13 @@ mod coap;
 mod crypto;
 mod identity;
 mod lakers;
+mod trust;
 
 pub use coap::{CoapProvisioner, PollError, Status};
 pub use identity::{Identity, PinnedPeer, Principal};
+pub use trust::{
+    PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
+};
 
 use core::fmt;
 
