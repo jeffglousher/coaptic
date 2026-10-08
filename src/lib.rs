@@ -125,6 +125,8 @@
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - `oscore` — pairwise OSCORE (feature `oscore`): caller-owned
 //!   `SecurityContext`, `AppBuilder::oscore` before bind.
+//! - `provisioning` — authenticated EDHOC bootstrap (feature `edhoc`) with
+//!   installed peer pins, explicit confirmation and fresh volatile OSCORE keys.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
@@ -161,6 +163,9 @@
 //!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
 //!   `--no-default-features` retains the zero-dependency Engine and requires
 //!   explicit plaintext opt-out for App construction without cryptography.
+//! - `edhoc` — optional pinned P-256 EDHOC method 3 / suite 2 provisioning.
+//!   Implies `oscore`, stays `no_std` and uses fixed storage without an allocator.
+//!   Install trusted credentials and supply fresh entropy through the caller.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
 //! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
@@ -182,6 +187,8 @@ pub mod error;
 pub mod message;
 #[cfg(feature = "oscore")]
 pub mod oscore;
+#[cfg(feature = "edhoc")]
+pub mod provisioning;
 pub mod storage;
 
 pub use storage::profiles;
