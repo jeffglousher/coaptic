@@ -42,6 +42,11 @@ const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 const FULL_RESPONSE_STATE_BUDGET: usize =
     4 * size_of::<Option<coaptic::storage::SlotId>>() + 4 * size_of::<u64>();
 
+#[cfg(feature = "oscore")]
+const SECURITY_CONTEXT_BUDGET: usize = size_of::<Option<coaptic::oscore::SecurityContext>>();
+#[cfg(not(feature = "oscore"))]
+const SECURITY_CONTEXT_BUDGET: usize = 0;
+
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
     block_wise_app: usize,
@@ -65,7 +70,8 @@ fn assert_datagram_omits_assembled(
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET
                 + OBSERVE_FORMAT_BUDGET
-                + FULL_RESPONSE_STATE_BUDGET,
+                + FULL_RESPONSE_STATE_BUDGET
+                + SECURITY_CONTEXT_BUDGET,
         "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;

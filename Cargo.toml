@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Jeff Glousher"]
-license = "MIT OR Apache-2.0"
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 description = "Stand-alone no_std CoAP engine"
 repository = "https://github.com/jeffglousher/coaptic"
 homepage = "https://github.com/jeffglousher/coaptic"
@@ -33,13 +33,13 @@ include = [
 ]
 
 [features]
-default = []
+default = ["oscore"]
 alloc = []
 diagnostics = []
 std = ["alloc"]
 # Pairwise OSCORE (RFC 8613). AES-CCM-16-64-128 + HKDF-SHA-256 via RustCrypto.
-# Default stays zero-dep. Engine does not own keys — see `oscore`.
 oscore = ["dep:aes", "dep:ccm", "dep:hkdf", "dep:sha2"]
+edhoc = ["oscore", "dep:defmt-or-log", "dep:subtle", "dep:p256", "dep:blake3", "dep:uuid"]
 
 [dependencies]
 # aes 0.9.3 requires Rust 1.89; retain the library MSRV of 1.85.
@@ -47,14 +47,32 @@ aes = { version = "=0.9.2", default-features = false, optional = true }
 ccm = { version = "0.6.1", default-features = false, optional = true }
 hkdf = { version = "0.13.0", default-features = false, optional = true }
 sha2 = { version = "0.11.0", default-features = false, optional = true }
+defmt-or-log = { version = "0.2.3", default-features = false, optional = true }
+subtle = { version = "2.6.1", default-features = false, optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdh"], optional = true }
+blake3 = { version = "=1.8.7", default-features = false, optional = true }
+uuid = { version = "=1.26.1", default-features = false, features = ["v8"], optional = true }
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[package.metadata.coaptic.vendored.lakers]
+repository = "https://github.com/jeffglousher/lakers"
+revision = "462b30f5b3e9cfab96c05fe65f36d19eaa7002ad"
+license = "BSD-3-Clause"
+
 [[example]]
 name = "coap_server"
 required-features = ["std"]
+
+[[example]]
+name = "edhoc_peer"
+required-features = ["std", "edhoc"]
+
+[[example]]
+name = "edhoc_udp_peer"
+required-features = ["std", "edhoc"]
 
 [dev-dependencies]
 # Host examples/doctests and fixtures supply OS entropy; not a library runtime dependency.
