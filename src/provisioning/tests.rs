@@ -269,6 +269,53 @@ fn fresh_handshake_authenticates_both_pins() {
 }
 
 #[test]
+fn deferred_peer_lookup_requires_possession_before_authorization_and_confirmation() {
+    let client = identity(1, 0);
+    let server = identity(2, 1);
+    for expected in [
+        None,
+        Some(identity(5, 0).peer()),
+        Some(identity(1, 2).peer()),
+    ] {
+        let (initiator, m1) = Initiator::start(&client, server.peer(), entropy(3)).unwrap();
+        let (responder, m2) =
+            RegistryResponder::receive_message_1(&server, ConnectionId::RESPONDER, &m1, entropy(4))
+                .unwrap();
+        let (_, m3) = initiator.receive_message_2(&m2, |_| true).unwrap();
+        assert!(matches!(
+            responder.receive_message_3(
+                &m3,
+                |reference| {
+                    assert_eq!(reference.kid(), 0);
+                    expected
+                },
+                |_| panic!("unknown or unverified credentials must not authorize")
+            ),
+            Err(Error::Authentication)
+        ));
+    }
+    let (initiator, m1) = Initiator::start(&client, server.peer(), entropy(3)).unwrap();
+    let (responder, m2) =
+        RegistryResponder::receive_message_1(&server, ConnectionId::RESPONDER, &m1, entropy(4))
+            .unwrap();
+    let (initiator, m3) = initiator.receive_message_2(&m2, |_| true).unwrap();
+    let (server_session, m4) = responder
+        .receive_message_3(
+            &m3,
+            |_| Some(client.peer()),
+            |principal| *principal == client.peer().principal(),
+        )
+        .unwrap();
+    let client_session = initiator.receive_message_4(&m4, |_| true).unwrap();
+    assert_eq!(server_session.principal(), &client.peer().principal());
+    assert_eq!(client_session.principal(), &server.peer().principal());
+    let (client, _) = client_session.into_parts();
+    let (server, _) = server_session.into_parts();
+    assert_eq!(client.sender_key(), server.recipient_key());
+    assert_eq!(client.recipient_key(), server.sender_key());
+}
+
+#[test]
 fn wrong_pin_or_revoked_authorization_is_refused() {
     let client = identity(1, 0);
     let server = identity(2, 1);

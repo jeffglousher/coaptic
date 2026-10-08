@@ -148,6 +148,28 @@ fn message_1_peer_id(message: &Message) -> Result<ConnectionId, Error> {
     Ok(peer_id)
 }
 
+/// An unauthenticated credential lookup hint decoded from EDHOC message 3.
+///
+/// A trusted registry must resolve it to one unambiguous installed credential.
+/// Possession and current policy are checked afterward against the full principal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CredentialReference(u8);
+
+impl CredentialReference {
+    /// One-byte credential reference supported by this commissioning profile.
+    #[must_use]
+    pub const fn kid(self) -> u8 {
+        self.0
+    }
+
+    fn from_id(id: &lakers::IdCred) -> Result<Self, Error> {
+        match id.as_full_value() {
+            [0xa1, 4, 0x41, kid] => Ok(Self(*kid)),
+            _ => Err(Error::Profile),
+        }
+    }
+}
+
 /// Initiator awaiting the responder's authenticated message 2.
 pub struct Initiator {
     state: lakers::EdhocInitiatorWaitM2<Crypto>,
@@ -302,35 +324,17 @@ impl Responder {
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
-        message_1_peer_id(message)?;
-        let message = message.buffer()?;
-        let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
-        let peer_id = ConnectionId::from_lakers(cid)?;
-        if method != 3 || suites.as_slice() != [2] || peer_id == local_id || ead.is_some() {
-            return Err(Error::Profile);
-        }
-        crypto::validate_public_x(&public_x)?;
-        let responder = lakers::EdhocResponder::new(
-            Crypto::fresh(entropy)?,
-            EDHOCMethod::StatStat,
-            identity.scalar(),
-            identity.credential(),
-        );
-        let (state, _, _) = responder.process_message_1(&message)?;
-        let (state, message) = state.prepare_message_2(
-            CredentialTransfer::ByReference,
-            Some(local_id.lakers()),
-            &None,
-        )?;
+        let (responder, message) =
+            RegistryResponder::receive_message_1(identity, local_id, message, entropy)?;
         Ok((
             Self {
-                state,
+                state: responder.state,
                 peer,
-                local_principal: identity.peer().principal(),
+                local_principal: responder.local_principal,
                 local_id,
-                peer_id,
+                peer_id: responder.peer_id,
             },
-            Message::from_buffer(&message)?,
+            message,
         ))
     }
 
@@ -361,6 +365,103 @@ impl Responder {
                 self.peer_id,
                 self.local_principal,
                 self.peer,
+            )?,
+            Message::from_buffer(&message)?,
+        ))
+    }
+}
+
+/// Responder deferring peer selection until message 3 exposes its lookup hint.
+///
+/// Message 1 supplies routing state and an ephemeral point, never a credential
+/// identity. Bound admission and address validation before constructing this
+/// state. The registry callback returns installed credentials only; application
+/// permissions remain a check against the authenticated full principal.
+pub struct RegistryResponder {
+    state: lakers::EdhocResponderWaitM3<Crypto>,
+    local_principal: Principal,
+    local_public_x: [u8; 32],
+    local_id: ConnectionId,
+    peer_id: ConnectionId,
+}
+
+impl RegistryResponder {
+    /// Checks the bounded profile and prepares message 2 with a reserved local ID.
+    /// The ID must be unused by pending handshakes, retained replies and live
+    /// OSCORE recipients, and must differ from the initiator's connection ID.
+    pub fn receive_message_1(
+        identity: &Identity,
+        local_id: ConnectionId,
+        message: &Message,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
+        message_1_peer_id(message)?;
+        let message = message.buffer()?;
+        let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
+        let peer_id = ConnectionId::from_lakers(cid)?;
+        if method != 3 || suites.as_slice() != [2] || peer_id == local_id || ead.is_some() {
+            return Err(Error::Profile);
+        }
+        crypto::validate_public_x(&public_x)?;
+        let responder = lakers::EdhocResponder::new(
+            Crypto::fresh(entropy)?,
+            EDHOCMethod::StatStat,
+            identity.scalar(),
+            identity.credential(),
+        );
+        let (state, _, _) = responder.process_message_1(&message)?;
+        let (state, message) = state.prepare_message_2(
+            CredentialTransfer::ByReference,
+            Some(local_id.lakers()),
+            &None,
+        )?;
+        Ok((
+            Self {
+                state,
+                local_principal: identity.peer().principal(),
+                local_public_x: identity.public_x(),
+                local_id,
+                peer_id,
+            },
+            Message::from_buffer(&message)?,
+        ))
+    }
+
+    /// Resolves a lookup hint, verifies possession, checks policy and creates M4.
+    /// Unknown or ambiguous references fail closed. The authorization callback
+    /// runs only after MAC verification, receiving the full installed principal.
+    /// Retain the exact message 4 and finish its send before exposing the session.
+    pub fn receive_message_3(
+        self,
+        message: &Message,
+        resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), Error> {
+        let (state, id, ead) = self.state.parse_message_3(&message.buffer()?)?;
+        if ead.is_some() {
+            return Err(Error::Profile);
+        }
+        let reference = CredentialReference::from_id(&id)?;
+        let peer = resolve(reference).ok_or(Error::Authentication)?;
+        check_reference(&id, &peer)?;
+        if peer.public_x() == self.local_public_x {
+            return Err(Error::SelfPeer);
+        }
+        let (state, _) = state.verify_message_3(peer.credential())?;
+        if !authorize(&peer.principal()) {
+            return Err(Error::Unauthorized);
+        }
+        let (mut state, message) = state.prepare_message_4(&None)?;
+        let secret = state.edhoc_exporter(0, &[], 16);
+        let salt = state.edhoc_exporter(1, &[], 8);
+        Ok((
+            Session::derive(
+                &secret[..16],
+                &salt[..8],
+                self.local_id,
+                self.peer_id,
+                self.local_principal,
+                peer,
             )?,
             Message::from_buffer(&message)?,
         ))
@@ -430,7 +531,13 @@ macro_rules! redacted_debug {
     )+};
 }
 
-redacted_debug!(Initiator, InitiatorConfirm, Responder, Session);
+redacted_debug!(
+    Initiator,
+    InitiatorConfirm,
+    Responder,
+    RegistryResponder,
+    Session
+);
 
 #[cfg(test)]
 mod conn_id_tests;
