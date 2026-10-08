@@ -131,7 +131,7 @@ impl Id {
 
 /// Pairwise OSCORE context: keys, Sender Sequence Number, replay window.
 ///
-/// You own this value. Provision it through [`crate::AppBuilder::oscore`]
+/// You own this value. Provision it through [`crate::app::AppBuilder::oscore`]
 /// before binding; [`crate::App::set_oscore`] supports later replacement.
 /// A live context is intentionally not `Clone`:
 /// copying its sender state could reuse a nonce (RFC 8613 section 7.2.1).
