@@ -348,7 +348,7 @@ impl<'a> CoapProvisioner<'a> {
         let (state, message) =
             Initiator::start_with_id(identity, peer.clone(), local_id, &mut entropy)
                 .map_err(PollError::Provisioning)?;
-        let request = request(ids.first, 0xf5, &message).map_err(PollError::Provisioning)?;
+        let request = request(ids.first, &[0xf5], &message).map_err(PollError::Provisioning)?;
         let operation = ids.first;
         let retry = Retry::new(ids.first_timeout);
         Ok(Self {
@@ -805,7 +805,7 @@ impl Client {
                     .map_err(Failure::Provisioning)?;
                 self.request = request(
                     self.ids.second,
-                    state.peer_connection_id().as_u8(),
+                    state.peer_connection_id().lakers().as_cbor(),
                     &message,
                 )
                 .map_err(Failure::Provisioning)?;
@@ -861,19 +861,27 @@ impl Server {
         if !request_metadata(parsed) || parsed.payload().len() < 2 {
             return Ok(false);
         }
-        let prefix = parsed.payload()[0];
-        let matches_state = match &self.state {
-            ServerState::Message1 => prefix == 0xf5,
-            ServerState::Message3(_) => prefix == input.local_id.as_u8(),
-            _ => false,
+        let prefix_len = match &self.state {
+            ServerState::Message1 if parsed.payload()[0] == 0xf5 => 1,
+            ServerState::Message3(_) => {
+                let Ok((id, len)) = ConnectionId::decode_prefix(parsed.payload()) else {
+                    return Ok(false);
+                };
+                if id != input.local_id {
+                    return Ok(false);
+                }
+                len
+            }
+            _ => return Ok(false),
         };
-        if !matches_state {
+        if parsed.payload().len() <= prefix_len {
             return Ok(false);
         }
         let until = now
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(Failure::Clock)?;
-        let message = Message::from_slice(&parsed.payload()[1..]).map_err(Failure::Provisioning)?;
+        let message =
+            Message::from_slice(&parsed.payload()[prefix_len..]).map_err(Failure::Provisioning)?;
         let operation = Operation {
             mid: parsed.message_id(),
             token: parsed.token(),
@@ -915,14 +923,14 @@ impl Server {
     }
 }
 
-fn request(operation: Operation, prefix: u8, message: &Message) -> Result<Wire, Error> {
+fn request(operation: Operation, prefix: &[u8], message: &Message) -> Result<Wire, Error> {
     let mut payload = [0; DATAGRAM_CAPACITY];
-    let len = message.as_bytes().len() + 1;
+    let len = message.as_bytes().len() + prefix.len();
     if len > payload.len() {
         return Err(Error::Parsing);
     }
-    payload[0] = prefix;
-    payload[1..len].copy_from_slice(message.as_bytes());
+    payload[..prefix.len()].copy_from_slice(prefix);
+    payload[prefix.len()..len].copy_from_slice(message.as_bytes());
     let options = [
         Opt::new(OptionNumber::URI_PATH, b".well-known"),
         Opt::new(OptionNumber::URI_PATH, b"edhoc"),

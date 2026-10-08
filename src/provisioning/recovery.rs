@@ -343,13 +343,13 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             return Ok(Status::Ignored);
         };
         let payload = message.payload();
-        if !request_metadata(message)
-            || payload.len() != 38
-            || payload[..5] != [0xf5, 3, 2, 0x58, 0x20]
-        {
+        if !request_metadata(message) || payload.first() != Some(&0xf5) {
             return Ok(Status::Ignored);
         }
-        let Ok(peer_id) = ConnectionId::new(payload[37]) else {
+        let Ok(message_1) = super::super::Message::from_slice(&payload[1..]) else {
+            return Ok(Status::Ignored);
+        };
+        let Ok(peer_id) = super::super::message_1_peer_id(&message_1) else {
             return Ok(Status::Ignored);
         };
         let Some(local_id) = self.available_id(Some(peer_id)) else {

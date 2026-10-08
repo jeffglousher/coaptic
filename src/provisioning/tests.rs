@@ -30,7 +30,7 @@ fn handshake_with_ids(
     let server = identity(2, 1);
     let (initiator, m1) =
         Initiator::start_with_id(&client, server.peer(), initiator_id, entropy(a)).unwrap();
-    assert_eq!(m1.as_bytes()[36], initiator_id.as_u8());
+    assert_eq!(&m1.as_bytes()[36..], initiator_id.lakers().as_cbor());
     let (responder, m2) =
         Responder::receive_message_1_with_id(&server, client.peer(), responder_id, &m1, entropy(b))
             .unwrap();
@@ -53,7 +53,7 @@ fn compact_connection_ids_validate_all_values() {
         match ConnectionId::new(value) {
             Ok(id) => {
                 assert!(value <= 23);
-                assert_eq!(id.as_u8(), value);
+                assert_eq!(id.as_u8(), Some(value));
                 assert_eq!(id.lakers().as_cbor(), &[value]);
                 assert_eq!(ConnectionId::from_lakers(id.lakers()), Ok(id));
             }
@@ -92,6 +92,38 @@ fn connection_id_decoder_checks_storage_and_truncation() {
 }
 
 #[test]
+fn bounded_connection_ids_round_trip_and_refuse_nonpreferred_or_oversized_values() {
+    for bytes in [
+        &[][..],
+        &[0x20],
+        &[0x37],
+        &[0x18],
+        &[0xff],
+        &[0, 1],
+        &[0, 1, 2, 3, 4, 5, 6],
+    ] {
+        let id = ConnectionId::from_slice(bytes).unwrap();
+        assert_eq!(id.as_bytes(), bytes);
+        assert_eq!(ConnectionId::from_lakers(id.lakers()), Ok(id));
+        assert_eq!(
+            ConnectionId::decode_prefix(id.lakers().as_cbor()),
+            Ok((id, id.lakers().as_cbor().len()))
+        );
+        assert_eq!(id.as_u8(), None);
+    }
+    assert_eq!(ConnectionId::from_slice(&[0; 8]), Err(Error::Profile));
+    for bytes in [
+        &[0x41, 1][..],
+        &[0x41, 0x20],
+        &[0x48],
+        &[0x42, 1],
+        &[0x18, 1],
+    ] {
+        assert!(ConnectionId::decode_prefix(bytes).is_err());
+    }
+}
+
+#[test]
 fn malformed_response_connection_id_is_refused_before_authorization() {
     let client = identity(1, 0);
     let server = identity(2, 1);
@@ -102,13 +134,38 @@ fn malformed_response_connection_id_is_refused_before_authorization() {
     let ciphertext_start = bytes.len() - combined_len + lakers::P256_ELEM_LEN;
     // XOR encryption lets an unauthenticated response replace C_R's first byte
     // with an eight-byte bstr header, exceeding ConnId's seven-byte ID capacity.
-    bytes[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+    bytes[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8().unwrap() ^ 0x48;
     assert!(matches!(
         initiator.receive_message_2(&Message::from_slice(&bytes).unwrap(), |_| panic!(
             "malformed response must not authorize"
         )),
         Err(Error::Parsing)
     ));
+}
+
+#[test]
+fn extended_connection_ids_authenticate_and_derive_full_oscore_identifiers() {
+    for (client_bytes, server_bytes) in [
+        (&[0x20][..], &[0xff][..]),
+        (&[][..], &[0, 1][..]),
+        (&[1, 2, 3, 4, 5, 6, 7][..], &[7, 6, 5, 4, 3, 2, 1][..]),
+    ] {
+        let (client, server) = handshake_with_ids(
+            3,
+            4,
+            ConnectionId::from_slice(client_bytes).unwrap(),
+            ConnectionId::from_slice(server_bytes).unwrap(),
+        );
+        let (client, _) = client.into_parts();
+        let (server, _) = server.into_parts();
+        assert_eq!(client.sender_id(), server_bytes);
+        assert_eq!(client.recipient_id(), client_bytes);
+        assert_eq!(server.sender_id(), client_bytes);
+        assert_eq!(server.recipient_id(), server_bytes);
+        assert_eq!(client.sender_key(), server.recipient_key());
+        assert_eq!(client.recipient_key(), server.sender_key());
+        assert_eq!(client.common_iv(), server.common_iv());
+    }
 }
 
 #[test]
@@ -154,7 +211,7 @@ fn responder_refuses_colliding_and_unsupported_connection_ids_before_entropy() {
     let server = identity(2, 1);
     let local_id = ConnectionId::new(7).unwrap();
     let (_, m1) = Initiator::start_with_id(&client, server.peer(), local_id, entropy(3)).unwrap();
-    for peer_id in [7, 24, 0x20, 0x40, 0xff] {
+    for peer_id in [7, 24, 0x38, 0x48, 0xff] {
         let mut bytes = m1.as_bytes().to_vec();
         bytes[36] = peer_id;
         assert!(matches!(
@@ -175,14 +232,7 @@ fn initiator_refuses_authenticated_peer_collisions_and_unsupported_ids() {
     let client = identity(1, 0);
     let server = identity(2, 1);
     let local_id = ConnectionId::new(7).unwrap();
-    for peer_bytes in [
-        &[7][..],
-        &[0x41, 24],
-        &[0x20],
-        &[0x42, 1, 2],
-        &[0x40],
-        &[0x41, 1],
-    ] {
+    for peer_bytes in [&[7][..], &[0x41, 1]] {
         let (initiator, m1) =
             Initiator::start_with_id(&client, server.peer(), local_id, entropy(3)).unwrap();
         let responder = lakers::EdhocResponder::new(

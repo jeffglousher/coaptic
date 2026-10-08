@@ -136,6 +136,18 @@ fn check_reference(id: &lakers::IdCred, peer: &PinnedPeer) -> Result<(), Error> 
     Ok(())
 }
 
+fn message_1_peer_id(message: &Message) -> Result<ConnectionId, Error> {
+    let bytes = message.as_bytes();
+    if bytes.len() < 37 || bytes[..4] != [3, 2, 0x58, 0x20] {
+        return Err(Error::Profile);
+    }
+    let (peer_id, len) = ConnectionId::decode_prefix(&bytes[36..])?;
+    if bytes.len() != 36 + len {
+        return Err(Error::Profile);
+    }
+    Ok(peer_id)
+}
+
 /// Initiator awaiting the responder's authenticated message 2.
 pub struct Initiator {
     state: lakers::EdhocInitiatorWaitM2<Crypto>,
@@ -290,10 +302,7 @@ impl Responder {
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
-        let bytes = message.as_bytes();
-        if bytes.len() != 37 || bytes[..4] != [3, 2, 0x58, 0x20] || bytes[36] > ConnectionId::MAX {
-            return Err(Error::Profile);
-        }
+        message_1_peer_id(message)?;
         let message = message.buffer()?;
         let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
         let peer_id = ConnectionId::from_lakers(cid)?;
@@ -374,13 +383,11 @@ impl Session {
         local_principal: Principal,
         peer: PinnedPeer,
     ) -> Result<Self, Error> {
-        let sender_id = [peer_id.as_u8()];
-        let recipient_id = [local_id.as_u8()];
         let context = SecurityContext::derive(DeriveParams {
             master_secret: secret,
             master_salt: salt,
-            sender_id: &sender_id,
-            recipient_id: &recipient_id,
+            sender_id: peer_id.as_bytes(),
+            recipient_id: local_id.as_bytes(),
             id_context: &[],
         })
         .map_err(|_| Error::Derivation)?;
