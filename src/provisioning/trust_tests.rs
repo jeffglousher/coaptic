@@ -86,12 +86,59 @@ fn entropy(value: u8) -> impl FnMut(&mut [u8]) -> bool {
 }
 
 fn session(local: &Identity, peer: &Identity) -> Session {
+    sessions(local, peer).0
+}
+
+fn sessions(local: &Identity, peer: &Identity) -> (Session, Session) {
     let (initiator, m1) = Initiator::start(local, peer.peer(), entropy(4)).unwrap();
     let (responder, m2) =
         Responder::receive_message_1(peer, local.peer(), &m1, entropy(5)).unwrap();
     let (initiator, m3) = initiator.receive_message_2(&m2, |_| true).unwrap();
-    let (_, m4) = responder.receive_message_3(&m3, |_| true).unwrap();
-    initiator.receive_message_4(&m4, |_| true).unwrap()
+    let (responder, m4) = responder.receive_message_3(&m3, |_| true).unwrap();
+    let initiator = initiator.receive_message_4(&m4, |_| true).unwrap();
+    (initiator, responder)
+}
+
+#[test]
+fn session_handoff_rejects_a_different_local_key_or_credential_identifier() {
+    let local = identity(1, 0);
+    let peer = identity(2, 1);
+    let mut store = Store::new();
+    let trust = store.install(&local, peer.peer());
+    let grant = trust.grant(&local).unwrap();
+    for other_local in [identity(3, 0), identity(1, 9)] {
+        for ready in [
+            session(&other_local, &peer),
+            sessions(&peer, &other_local).1,
+        ] {
+            assert_eq!(*ready.local_principal(), other_local.peer().principal());
+            assert_eq!(*ready.principal(), peer.peer().principal());
+            assert!(matches!(
+                trust.accept_session(&grant, ready),
+                Err(TrustError::IdentityMismatch)
+            ));
+        }
+    }
+    assert!(trust.accept_session(&grant, session(&local, &peer)).is_ok());
+    assert!(
+        trust
+            .accept_session(&grant, sessions(&peer, &local).1)
+            .is_ok()
+    );
+}
+
+#[test]
+fn session_metadata_tracks_complete_local_and_peer_credentials_in_both_roles() {
+    let local = identity(1, 7);
+    let peer = identity(2, 9);
+    let (initiator, responder) = sessions(&local, &peer);
+    assert_eq!(*initiator.local_principal(), local.peer().principal());
+    assert_eq!(*initiator.principal(), peer.peer().principal());
+    assert_eq!(*responder.local_principal(), peer.peer().principal());
+    assert_eq!(*responder.principal(), local.peer().principal());
+    assert_ne!(initiator.local_principal(), initiator.principal());
+    assert_eq!(initiator.local_principal(), responder.principal());
+    assert_eq!(responder.local_principal(), initiator.principal());
 }
 
 #[test]
@@ -502,6 +549,16 @@ fn local_identity_rotation_binds_replacement_and_invalidates_old_grant() {
         Err(TrustError::IdentityMismatch)
     ));
     assert!(store.restore(&replacement).grant(&replacement).is_ok());
+    let fresh = trust.grant(&replacement).unwrap();
+    assert!(matches!(
+        trust.accept_session(&fresh, session(&local, &peer)),
+        Err(TrustError::IdentityMismatch)
+    ));
+    assert!(
+        trust
+            .accept_session(&fresh, session(&replacement, &peer))
+            .is_ok()
+    );
 }
 
 #[test]

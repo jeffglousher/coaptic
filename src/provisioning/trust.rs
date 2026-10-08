@@ -405,15 +405,19 @@ impl PeerTrust {
 
     /// Consume a completed session only while its captured grant remains current.
     ///
-    /// This checks the full authenticated peer principal again after message 4,
-    /// before App handoff. The caller must check the grant before every later
-    /// App/bootstrap action and discard owners when authorization changes.
+    /// This checks the full authenticated peer principal and the local credential
+    /// used by the exchange before App handoff. The caller must check the grant
+    /// before every later App/bootstrap action and discard owners when
+    /// authorization changes.
     pub fn accept_session(
         &self,
         grant: &TrustGrant,
         session: Session,
     ) -> Result<Session, TrustError> {
         self.validate_grant(grant, session.principal())?;
+        if session.local_principal().fingerprint() != &self.record.local_principal {
+            return Err(TrustError::IdentityMismatch);
+        }
         Ok(session)
     }
 

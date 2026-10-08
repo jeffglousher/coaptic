@@ -2,7 +2,8 @@
 //!
 //! The scalar-1/scalar-2 identities and exported session keys are public test
 //! data. Run with `initiator|responder LOCAL_ADDRESS PEER_ADDRESS`; stdin accepts
-//! `stats`, `probe`, `recover` and `stop`. An explicit recovery command requires
+//! `stats`, `probe`, `recover`, `revoke`, `regrant`, `lost-ack`, `restore` and
+//! `stop`. An explicit recovery command requires
 //! the current outgoing Confirmable operation to have finished. Unauthenticated
 //! candidate failures preserve the old App; a fully authorized new session
 //! replaces the complete App before the handoff is confirmed.
@@ -10,8 +11,12 @@
 //! The fixture reserves every locally sent request MID for its entire bounded
 //! lifetime. It receives once, routes unprotected bootstrap traffic to recovery
 //! and queues application traffic for App. Four completion/retired-attempt
-//! slots bound recovery memory. Production entropy, trust persistence and
-//! device runtime qualification are outside this public-key test fixture.
+//! slots bound recovery memory. A generation-bound trust grant gates every App
+//! and bootstrap action in the single management/I/O event loop. The in-memory
+//! test authority simulates committed-but-unacknowledged trust transitions;
+//! it provides no power-loss durability or production commissioning authority.
+//! Production entropy, trust persistence and device runtime qualification are
+//! outside this public-key test fixture.
 
 use std::cell::Cell;
 use std::io::{self, BufRead};
@@ -20,7 +25,9 @@ use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};
 
 use coaptic::message::{MessageId, OptionNumber, ParsedMessage, Type, decode, decode_uint16};
-use coaptic::provisioning::{CoapRecovery, Identity, PollError, RecoveryError};
+use coaptic::provisioning::{
+    CoapRecovery, Identity, PeerTrust, PollError, RecoveryError, TrustAnchor, TrustRecord,
+};
 use coaptic::storage::{DatagramIo, UdpSocketIo};
 use coaptic::{App, Code, ContentFormat, Endpoint, Response, profiles};
 
@@ -164,6 +171,32 @@ impl DatagramIo for QueuedIo {
 
 type SecureApp = App<profiles::Constrained, QueuedIo>;
 
+struct TestAuthority {
+    record: Option<TrustRecord>,
+    anchor: TrustAnchor,
+}
+
+impl TestAuthority {
+    fn commit(
+        &mut self,
+        expected: &TrustAnchor,
+        record: &TrustRecord,
+        anchor: &TrustAnchor,
+        lose_ack: bool,
+    ) -> Result<(), &'static str> {
+        if self.anchor != *expected {
+            return Err("compare-and-swap conflict");
+        }
+        self.record = Some(record.clone());
+        self.anchor = *anchor;
+        if lose_ack {
+            Err("committed acknowledgment lost")
+        } else {
+            Ok(())
+        }
+    }
+}
+
 fn now_ms(origin: Instant) -> u64 {
     u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -185,10 +218,28 @@ fn run() -> Result<(), String> {
     let peer = identity(if initiator { 2 } else { 1 }, if initiator { 1 } else { 0 }).peer();
     let expected = peer.principal();
     let origin = Instant::now();
-    let mut recovery =
-        CoapRecovery::<4>::new(&local_identity, peer, endpoint, 0).map_err(|e| format!("{e:?}"))?;
+    let mut authority = TestAuthority {
+        record: None,
+        anchor: TrustAnchor::genesis([42; 32]).map_err(|e| format!("{e:?}"))?,
+    };
+    let mut trust = PeerTrust::install(
+        &local_identity,
+        peer.clone(),
+        authority.anchor,
+        |old, record, new| authority.commit(old, record, new, false),
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    let mut grant = Some(trust.grant(&local_identity).map_err(|e| format!("{e:?}"))?);
+    let mut recovery = Some(
+        CoapRecovery::<4>::new(&local_identity, peer.clone(), endpoint, 0)
+            .map_err(|e| format!("{e:?}"))?,
+    );
     if initiator {
-        recovery.start(0, entropy).map_err(|e| format!("{e:?}"))?;
+        recovery
+            .as_mut()
+            .expect("initial owner")
+            .start(0, entropy)
+            .map_err(|e| format!("{e:?}"))?;
     }
     let mut io = Some(QueuedIo::new(socket).map_err(|e| e.to_string())?);
     let mut app: Option<SecureApp> = None;
@@ -220,20 +271,108 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             Ok(command) if command == "stats" => println!(
-                "{{\"stats\":true,\"sessions\":{sessions},\"handled\":{handled},\"responses\":{responses},\"candidate\":{}}}",
-                recovery.has_candidate()
+                "{{\"stats\":true,\"sessions\":{sessions},\"handled\":{handled},\"responses\":{responses},\"candidate\":{},\"trust_generation\":{},\"trust_enabled\":{},\"trust_blocked\":{},\"owners\":{}}}",
+                recovery.as_ref().is_some_and(CoapRecovery::has_candidate),
+                authority.anchor.parts().1,
+                trust.checkpoint().enabled(),
+                trust.is_blocked(),
+                grant.is_some()
             ),
             Ok(command) if command == "probe" => probe = true,
             Ok(command) if command == "recover" => {
                 if call.is_some() {
                     println!("{{\"recover_blocked\":true,\"reason\":\"outgoing-CON\"}}");
-                } else {
+                } else if let Some(recovery) = recovery.as_mut() {
                     recovery.start(now, entropy).map_err(|e| format!("{e:?}"))?;
                     println!("{{\"recover_started\":true}}");
+                } else {
+                    println!("{{\"recover_blocked\":true,\"reason\":\"trust\"}}");
                 }
+            }
+            Ok(command) if command == "revoke" => {
+                trust
+                    .revoke(|old, record, new| authority.commit(old, record, new, false))
+                    .map_err(|e| format!("{e:?}"))?;
+                println!(
+                    "{{\"trust_changed\":true,\"enabled\":false,\"trust_generation\":{}}}",
+                    authority.anchor.parts().1
+                );
+            }
+            Ok(command) if command == "regrant" => {
+                trust
+                    .replace(&local_identity, peer.clone(), true, |old, record, new| {
+                        authority.commit(old, record, new, false)
+                    })
+                    .map_err(|e| format!("{e:?}"))?;
+                println!(
+                    "{{\"trust_changed\":true,\"enabled\":true,\"trust_generation\":{}}}",
+                    authority.anchor.parts().1
+                );
+            }
+            Ok(command) if command == "lost-ack" => {
+                if trust
+                    .replace(&local_identity, peer.clone(), true, |old, record, new| {
+                        authority.commit(old, record, new, true)
+                    })
+                    .is_ok()
+                    || !trust.is_blocked()
+                {
+                    return Err("ambiguous commit did not block trust".into());
+                }
+                println!(
+                    "{{\"trust_blocked\":true,\"trust_generation\":{}}}",
+                    authority.anchor.parts().1
+                );
+            }
+            Ok(command) if command == "restore" => {
+                trust = PeerTrust::restore(
+                    &local_identity,
+                    authority.record.clone().ok_or("record absent")?,
+                    authority.anchor,
+                )
+                .map_err(|e| format!("{e:?}"))?;
+                println!(
+                    "{{\"trust_restored\":true,\"trust_generation\":{}}}",
+                    authority.anchor.parts().1
+                );
             }
             Ok(_) | Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
         }
+        if grant
+            .as_ref()
+            .is_some_and(|grant| !trust.permits(grant, &expected))
+        {
+            if let Some(old) = app.take() {
+                io = Some(old.into_io());
+            }
+            io.as_mut().expect("retired transport").queued = None;
+            recovery = None;
+            grant = None;
+            call = None;
+            probe = false;
+            println!(
+                "{{\"owners_dropped\":true,\"trust_generation\":{}}}",
+                authority.anchor.parts().1
+            );
+        }
+        if grant.is_none() {
+            if let Ok(fresh) = trust.grant(&local_identity) {
+                recovery = Some(
+                    CoapRecovery::<4>::new(&local_identity, peer.clone(), endpoint, now)
+                        .map_err(|e| format!("{e:?}"))?,
+                );
+                grant = Some(fresh);
+                println!(
+                    "{{\"owners_admitted\":true,\"trust_generation\":{}}}",
+                    authority.anchor.parts().1
+                );
+            }
+        }
+        let Some(recovery) = recovery.as_mut() else {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        };
+        let grant = grant.as_ref().ok_or("owner grant absent")?;
         let have_app = app.is_some();
         let transport = if let Some(app) = &mut app {
             app.transport_mut()
@@ -245,7 +384,9 @@ fn run() -> Result<(), String> {
                 if from == endpoint {
                     if decode(&bytes[..len]).is_ok_and(bootstrap) {
                         if let Err(error) =
-                            recovery.ingest(&bytes[..len], from, now, entropy, |p| *p == expected)
+                            recovery.ingest(&bytes[..len], from, now, entropy, |p| {
+                                trust.permits(grant, p)
+                            })
                         {
                             println!(
                                 "{{\"candidate_failed\":true,\"error\":\"{error:?}\",\"sessions\":{sessions}}}"
@@ -280,9 +421,9 @@ fn run() -> Result<(), String> {
             }
         }
         if let Some(session) = call.is_none().then(|| recovery.take_session()).flatten() {
-            if *session.principal() != expected {
-                return Err("unexpected authenticated principal".into());
-            }
+            let session = trust
+                .accept_session(grant, session)
+                .map_err(|e| format!("{e:?}"))?;
             let (context, principal) = session.into_parts();
             let completion = format!(
                 "{{\"complete\":true,\"generation\":{},\"sender_key\":\"{}\",\"recipient_key\":\"{}\",\"common_iv\":\"{}\",\"sender_id\":\"{}\",\"recipient_id\":\"{}\",\"principal\":\"{}\",\"method\":3,\"suite\":2,\"message4\":true}}",
