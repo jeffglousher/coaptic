@@ -72,6 +72,117 @@ fn no_authorization(_: &Principal) -> bool {
     panic!("unauthenticated messages must not invoke authorization")
 }
 
+fn echo_response(request: &[u8], echo: &[u8]) -> Vec<u8> {
+    let parsed = decode(request).unwrap();
+    let options = [Opt::echo(echo)];
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::new(
+        Type::Acknowledgement,
+        Code::UNAUTHORIZED,
+        parsed.message_id(),
+    )
+    .with_token(parsed.token())
+    .with_options(&options)
+    .encode(&mut out)
+    .unwrap();
+    out[..len].to_vec()
+}
+
+#[test]
+fn echo_retry_uses_reserved_mid_exact_message1_and_original_wait_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let deadline = match &client.role {
+        Role::Client(client) => client.retry.wait_until.unwrap(),
+        _ => unreachable!(),
+    };
+    let challenge = echo_response(&original, &[8; 24]);
+    client
+        .ingest(
+            &challenge,
+            SERVER,
+            deadline - 1,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    client.flush(&mut io, deadline - 1).unwrap();
+    let retry = io.last();
+    assert_eq!(
+        decode(&retry).unwrap().payload(),
+        decode(&original).unwrap().payload()
+    );
+    assert_eq!(
+        decode(&retry).unwrap().message_id(),
+        decode(&original).unwrap().message_id().wrapping_add(2)
+    );
+    assert_eq!(
+        decode(&retry).unwrap().token(),
+        decode(&original).unwrap().token()
+    );
+    assert_eq!(decode(&retry).unwrap().echo(), Some(&[8; 24][..]));
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.retry.wait_until,
+            _ => unreachable!(),
+        },
+        Some(deadline)
+    );
+    assert_eq!(client.flush(&mut io, deadline), Err(PollError::Timeout));
+    assert_eq!(io.attempts.len(), 2);
+}
+
+#[test]
+fn echoed_request_and_saved_challenge_cannot_be_replaced_by_further_challenges() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let challenge = echo_response(&original, &[8; 24]);
+    let mut malformed = challenge.clone();
+    malformed[1] = 68;
+    assert_eq!(
+        client.ingest(&malformed, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, OTHER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    client
+        .ingest(&challenge, SERVER, 0, no_entropy, no_authorization)
+        .unwrap();
+    io.fail = true;
+    assert_eq!(client.flush(&mut io, 0), Err(PollError::Io(9)));
+    let echoed = io.last();
+    io.fail = false;
+    client.flush(&mut io, 0).unwrap();
+    assert_eq!(io.last(), echoed);
+    let second = echo_response(&echoed, &[9; 24]);
+    assert_eq!(
+        client.ingest(&second, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    assert!(client.take_session().is_none());
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.request.as_slice(),
+            _ => unreachable!(),
+        },
+        echoed
+    );
+}
+
 fn finish(
     client: &mut CoapProvisioner<'_>,
     server: &mut CoapProvisioner<'_>,

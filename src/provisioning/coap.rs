@@ -5,6 +5,9 @@
 //! Confirmable or Non-confirmable replies. Block-wise transfer, discovery,
 //! proxies, EAD and combined EDHOC/OSCORE requests are outside this profile.
 //! No application plaintext policy is changed by bootstrap.
+//! The initiator accepts at most one initial piggybacked Echo challenge, saving
+//! its exact response and retrying the same message 1 under a separately reserved
+//! Message ID. This neither renews entropy nor extends the original wait limit.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -126,6 +129,7 @@ struct Operation {
 struct Ids {
     first: Operation,
     second: Operation,
+    echo: Operation,
     first_timeout: u64,
     second_timeout: u64,
 }
@@ -149,6 +153,10 @@ impl Ids {
             second: Operation {
                 mid: mid.wrapping_add(1),
                 token: Token::from_checked(&seed[10..18]),
+            },
+            echo: Operation {
+                mid: mid.wrapping_add(2),
+                token: Token::from_checked(&seed[2..10]),
             },
             first_timeout: 2000 + jitter(seed[18], seed[19]),
             second_timeout: 2000 + jitter(seed[20], seed[21]),
@@ -200,7 +208,8 @@ impl Retry {
         } else {
             self.first_sent = Some(now);
             self.next_retry = Some(now.checked_add(self.initial).ok_or(Failure::Clock)?);
-            self.wait_until = Some(now.checked_add(self.initial * 31).ok_or(Failure::Clock)?);
+            let deadline = now.checked_add(self.initial * 31).ok_or(Failure::Clock)?;
+            self.wait_until = Some(self.wait_until.map_or(deadline, |old| old.min(deadline)));
         }
         Ok(())
     }
@@ -226,8 +235,9 @@ struct Client {
     operation: Operation,
     request: Wire,
     retry: Retry,
-    acks: [Option<ResponseAck>; 2],
+    acks: [Option<ResponseAck>; 3],
     pending_acks: u8,
+    echo_retried: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -251,6 +261,7 @@ struct Server {
     pending: u8,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Role {
     Client(Client),
     Server(Server),
@@ -362,8 +373,9 @@ impl<'a> CoapProvisioner<'a> {
                 operation,
                 request,
                 retry,
-                acks: [None, None],
+                acks: [None, None, None],
                 pending_acks: 0,
+                echo_retried: false,
             }),
             last_now: now_ms,
             expires: Some(expires),
@@ -706,7 +718,7 @@ impl<'a> CoapProvisioner<'a> {
                 self.session = None;
                 match &mut self.role {
                     Role::Client(client) => {
-                        client.acks = [None, None];
+                        client.acks = [None, None, None];
                         client.pending_acks = 0;
                     }
                     Role::Server(server) => {
@@ -781,6 +793,51 @@ impl Client {
             }
             self.retry.next_retry = None;
             self.retry.wait_until = *input.expires;
+            return Ok(true);
+        }
+        if matches!(self.state, ClientState::Message2(_))
+            && !self.echo_retried
+            && parsed.ty() == Type::Acknowledgement
+            && parsed.code() == Code::UNAUTHORIZED
+            && parsed.message_id() == self.operation.mid
+            && parsed.token() == self.operation.token
+            && parsed.payload().is_empty()
+        {
+            let mut options = parsed.options();
+            let Some(echo) = options.next() else {
+                return Ok(false);
+            };
+            if echo.number() != OptionNumber::ECHO
+                || !(1..=40).contains(&echo.value().len())
+                || options.next().is_some()
+            {
+                return Ok(false);
+            }
+            let old = decode(self.request.as_slice())
+                .map_err(|_| Failure::Provisioning(Error::Parsing))?;
+            let options = [
+                Opt::new(OptionNumber::URI_PATH, b".well-known"),
+                Opt::new(OptionNumber::URI_PATH, b"edhoc"),
+                Opt::new(OptionNumber::CONTENT_FORMAT, &[REQUEST_FORMAT as u8]),
+                Opt::new(OptionNumber::ECHO, echo.value()),
+            ];
+            let mut request = Wire::empty();
+            request.len = CoapMessage::con(Code::POST, self.ids.echo.mid, self.ids.echo.token)
+                .with_options(&options)
+                .with_payload(old.payload())
+                .encode(&mut request.bytes)
+                .map_err(|_| Failure::Provisioning(Error::Parsing))?;
+            self.acks[2] = Some(ResponseAck {
+                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                mid: parsed.message_id(),
+                expires: input.expires.ok_or(Failure::Clock)?,
+            });
+            let deadline = self.retry.wait_until;
+            self.retry = Retry::new(self.ids.first_timeout);
+            self.retry.wait_until = deadline;
+            self.operation = self.ids.echo;
+            self.request = request;
+            self.echo_retried = true;
             return Ok(true);
         }
         if parsed.token() != self.operation.token
