@@ -28,6 +28,7 @@ mod connection_id;
 mod crypto;
 mod identity;
 mod lakers;
+mod managed;
 mod trust;
 
 pub use cloud::{
@@ -36,6 +37,10 @@ pub use cloud::{
 pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
 pub use connection_id::ConnectionId;
 pub use identity::{Identity, PinnedPeer, Principal};
+pub use managed::{
+    ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
+    ManagedRefreshError, PolicyValidity,
+};
 pub use trust::{
     PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
 };
