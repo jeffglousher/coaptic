@@ -1,14 +1,27 @@
 # coaptic
 
-CoAP for constrained devices, with a small API for serving resources and exchanging messages.
+CoAP for devices and services that need predictable resource use and protected communication.
 
-- Written in Rust; `no_std` and no heap allocation by default.
-- Bounded memory with configurable capacities.
+- Written in Rust, with no standard library or heap allocation required.
+- `no_std` by default; optional `alloc` and `std` support when you need them.
+- Bounded memory with configurable capacities and explicit backpressure.
 - Confirmable requests with retransmission, Observe subscriptions, and block-wise transfers.
-- OSCORE message protection enabled by default; optional EDHOC provisioning.
+- OSCORE protection required by default; optional EDHOC for authenticated provisioning.
 
-You supply the transport and clock, register your resources, and call `poll` to
-drive communication. No background runtime is required.
+One API lets you serve resources, send requests, and exchange messages, from an
+ESP32 to a host service. You supply the transport and clock, register resources,
+and call `poll`. No background runtime is required.
+
+Explore CoAP as an alternative to HTTP for telemetry and frequent resource
+exchanges. Coaptic's focus is high throughput, consistent behavior under load,
+and security boundaries you can inspect and test, with progress assessed through
+repeatable measurements.
+
+Development includes testing on ESP32-S3 hardware. Production readiness has
+not yet been established; longer-running device deployments and security
+qualification are still ahead. Early users and contributors are welcome,
+especially those bringing real workloads, interoperability checks, and
+reproducible performance and security results.
 
 ## Get started
 
