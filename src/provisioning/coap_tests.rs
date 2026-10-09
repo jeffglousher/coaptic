@@ -1452,7 +1452,7 @@ fn oversized_response_connection_id_consumes_state_without_ack_or_session() {
             payload.len() - combined_len + crate::provisioning::lakers::P256_ELEM_LEN;
         // Replace the known C_R byte in XOR-encrypted plaintext_2 with an
         // oversized bstr header without changing the CoAP or EDHOC envelope.
-        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8().unwrap() ^ 0x48;
         let bad = recode(
             &good,
             ty,

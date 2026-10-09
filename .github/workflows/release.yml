@@ -58,6 +58,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
+      - name: Check publication tag matches crate version
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --locked --format-version 1 | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "coaptic"))')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Publication tag $GITHUB_REF_NAME must match crate version v$version."
+            exit 1
+          fi
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Publish coaptic (not plugtest)
         env:
