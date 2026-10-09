@@ -1,27 +1,21 @@
 # coaptic
 
-CoAP for devices and services that need predictable resource use and protected communication.
+CoAP in Rust for constrained devices and network services.
 
-- Written in Rust, with no standard library or heap allocation required.
-- `no_std` by default; optional `alloc` and `std` support when you need them.
-- Bounded memory with configurable capacities and explicit backpressure.
-- Confirmable requests with retransmission, Observe subscriptions, and block-wise transfers.
+Expose resources and exchange messages through one client/server API. You supply
+the transport and clock; Coaptic handles protocol exchanges with bounded storage.
+
+- `no_std` and no heap allocation by default; optional `alloc` and `std`.
+- Configurable memory limits and explicit backpressure.
+- Confirmable requests, retransmission, Observe subscriptions, and configurable block-wise transfers.
 - OSCORE protection required by default; optional EDHOC for authenticated provisioning.
 
-One API lets you serve resources, send requests, and exchange messages, from an
-ESP32 to a host service. You supply the transport and clock, register resources,
-and call `poll`. No background runtime is required.
+Explore CoAP as an alternative to HTTP for telemetry and services where
+throughput and predictable resource use matter. Coaptic gives you explicit
+control over memory, scheduling, and message protection. Call `poll` to drive
+communication; no background runtime is required.
 
-Explore CoAP as an alternative to HTTP for telemetry and frequent resource
-exchanges. Coaptic's focus is high throughput, consistent behavior under load,
-and security boundaries you can inspect and test, with progress assessed through
-repeatable measurements.
-
-Development includes testing on ESP32-S3 hardware. Production readiness has
-not yet been established; longer-running device deployments and security
-qualification are still ahead. Early users and contributors are welcome,
-especially those bringing real workloads, interoperability checks, and
-reproducible performance and security results.
+Early users and contributors are welcome.
 
 ## Get started
 
@@ -116,6 +110,12 @@ response workflow:
 let call = client.post("echo").payload(b"hello").to(peer).send(now_ms)?;
 ```
 
+For larger representations, enable body pools with `.block_wise::<true>()`;
+read assembled replies through `Response::body()`. The shipped profiles provide
+4096 bytes per body slot. Custom storage lets you choose other capacities.
+With `alloc`, `.bind_alloc(...)` allocates bounded
+pools once, with no pool growth during `poll`.
+
 ## Protected communication
 
 Ordinary App construction requires a provisioned OSCORE context. Replace
@@ -127,6 +127,32 @@ is still in progress.
 The API reference is rustdoc: run `cargo doc --open` for transports, resource
 handlers, security contexts, and further examples. See [SECURITY.md](SECURITY.md)
 for the supported security boundary and vulnerability reporting.
+
+## Status and preliminary evidence
+
+Production readiness has not yet been established. Security qualification
+continues; longer-running device validation is still planned.
+
+Preliminary ESP32-S3 hardware testing includes a dedicated Waveshare
+ESP32-S3-ETH running a Wi-Fi IPv4 UDP service against an independent aiocoap
+0.4.16 peer. The 2026-10-04 report records nine passing functional cases,
+including GET, echo, Block1/Block2, Observe, and malformed-input recovery.
+See the [firmware identity, toolchains, results, and limitations](https://github.com/jeffglousher/coaptic/issues/333)
+and the [test driver at the tested revision](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py).
+Results apply to that recorded firmware revision.
+These network tests used explicit plaintext and sequential requests on one
+board; they do not measure saturation throughput. Protected hardware tests were
+separate local OSCORE loopback probes. Network OSCORE, durable flash replay
+state, power-loss recovery, and broader device qualification remain open.
+An earlier soak timeout remains unresolved.
+
+For reproducible performance evaluation, the
+[network campaign method](https://github.com/jeffglousher/coaptic/blob/main/tools/benchmark/README.md)
+documents commands, pinned peers, complete-response checks, payload sizes,
+concurrency, repetitions, and failure accounting. Its loss-free CoAP workload
+does not exercise retransmission; plaintext CoAP and TLS-protected HTTP/3 have
+different security costs. Smoke samples do not establish a performance advantage
+or reliability under network faults.
 
 ## License
 

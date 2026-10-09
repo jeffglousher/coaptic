@@ -1,5 +1,10 @@
-//! Stand-alone [`no_std`] CoAP library: an approachable [`App`] face over
-//! messages and bounded storage.
+//! CoAP in Rust for constrained devices and network services.
+//!
+//! Expose resources and exchange messages through one client/server [`App`] API.
+//! Supply the transport and clock; Coaptic handles protocol exchanges with
+//! bounded storage. [`no_std`] and no heap allocation are the default, with
+//! optional `alloc` and `std`. Pairwise OSCORE protection is required by default;
+//! EDHOC provisioning is optional. Production readiness is not yet established.
 //!
 //! Crate-root types are the happy path: [`App`], [`Request`], [`Response`],
 //! [`Call`], [`Outgoing`], [`get`] / [`put`] / [`post`] / [`delete`] /
@@ -130,16 +135,7 @@
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
-//! Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture planning:
-//! [GitHub project][plan]. This rustdoc does not restate wire format.
-//! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
-//! Timed mixed-stack dogfood + Observe notify collect:
-//! `cargo run -p coaptic-plugtest --bin dogfood`. CI compares `--iterations 2`
-//! against `crates/coaptic-plugtest/baselines/` (`--compare`; Metrics floors
-//! fail, including mixed-pair Block assemble sums; wall timings print as
-//! delta; `progress` is informational).
-//!
-//! # Future / backlog
+//! # Scope
 //!
 //! Protocol support and qualification are tracked separately in the
 //! repository issues. Passing individual scenarios does not establish full RFC
@@ -148,12 +144,11 @@
 //! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
 //! window). `AppBuilder::oscore` attaches it before bind; Engine does not store keys.
 //! Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy
-//! hop-by-hop), and first-party DTLS remain backlog — the
-//! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
-//! [`DatagramIo`](storage::DatagramIo). Inner Block-wise (Block1/Block2:
+//! hop-by-hop), and first-party DTLS are not supported.
+//! Inner Block-wise (Block1/Block2:
 //! fragment then protect) and Dual-class Max-Age / No-Response / ETag
-//! placement are on the App path. Alternative networks (6LoWPAN,
-//! LoRaWAN, …) are the same future / backlog.
+//! placement are on the App path. Network adapters such as 6LoWPAN and LoRaWAN
+//! are not supplied by this library.
 //!
 //! # Features
 //!
@@ -168,8 +163,6 @@
 //!   Install trusted credentials and supply fresh entropy through the caller.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
-//! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
-//! [plan]: https://github.com/users/jeffglousher/projects/2
 
 #![no_std]
 #![deny(unsafe_code)]
