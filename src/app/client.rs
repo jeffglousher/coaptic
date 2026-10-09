@@ -981,6 +981,9 @@ where
     /// later attempt; no bytes are copied and no partial success is returned.
     /// Metadata borrows App; `payload()` (and block `body()`) borrows `output`.
     /// The nested outcome distinguishes local Call failure from remote 4.xx/5.xx.
+    /// Block2 / Q-Block2 require block-wise storage. Without it, the Call
+    /// fails with [`CallFailure::BlockTransfer`] containing
+    /// [`BlockTransferError::NoBodyPools`], rather than returning one fragment.
     pub fn take_response_into<'a>(
         &'a mut self,
         call: Call,
@@ -2138,7 +2141,6 @@ where
                 let _ = engine.release_rx(rx);
                 return Ok(());
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,
@@ -2222,7 +2224,6 @@ where
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,

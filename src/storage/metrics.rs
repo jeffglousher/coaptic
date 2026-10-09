@@ -1,6 +1,6 @@
 //! Cheap wrapping counters at Engine / reactor hot sites.
 //!
-//! Always present (`no_std`, no allocator). One [`Metrics`] is 16 × `u32`
+//! Always present (`no_std`, no allocator). One [`Metrics`] is 16 Ã— `u32`
 //! (64 bytes) on [`crate::storage::Engine`]. Overflow wraps; there is no
 //! tracing or OTLP. Copy with [`Engine::metrics`](crate::storage::Engine::metrics)
 //! or [`crate::App::metrics`], optionally
@@ -24,7 +24,7 @@ use crate::error::BlockTransferError;
 /// Reactor counters copied from [`crate::storage::Engine`].
 ///
 /// Fields are public so a dogfood bin can print or diff a snapshot
-/// (`--compare` against `crates/coaptic-plugtest/baselines/`). Values
+/// (`--compare` against the [companion baselines](https://github.com/jeffglousher/coaptic-validation/tree/main/crates/coaptic-plugtest/baselines)). Values
 /// wrap on overflow (`wrapping_add`). Idle polls still increment
 /// [`Self::progress`] when [`crate::storage::Engine::progress`] runs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

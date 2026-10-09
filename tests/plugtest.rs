@@ -1,11 +1,13 @@
 //! In-scope ETSI CoAP#4 plugtest harness (in-memory Engine pair).
 //!
 //! Two [`coaptic::storage::Engine`]s exchange datagram bytes (no sockets, no
-//! DTLS). This is **not** an App SUT: App proof is `crates/coaptic-plugtest`
-//! (`cargo test -p coaptic-plugtest`, plus `--features dtls`).
-//! TD identifiers come from `tests/plugtest/td-coap4/*.yml` — this file
+//! DTLS). This is **not** an App SUT: App proof is the companion [coaptic-validation] harness
+//! (`cargo test -p coaptic-plugtest`, plus `--features dtls`, run there).
+//!
+//! [coaptic-validation]: https://github.com/jeffglousher/coaptic-validation
+//! TD identifiers come from `tests/plugtest/td-coap4/*.yml` â€” this file
 //! does not invent ids. In-memory `dtls` is skipped (no sockets; see
-//! `crates/coaptic-plugtest --features dtls`). The future/backlog
+//! the companion harness with `--features dtls`). The future/backlog
 //! `6lowpan` suite is skipped with a reason. Observe Max-Age / client-OFF TDs run on the colocated
 //! `ObserveInterest` lifetime (no seventh area).
 //!
@@ -133,7 +135,7 @@ fn inventory() {
     let lowpan = catalog::extract_td_ids(include_str!("plugtest/td-coap4/6lowpan.yml"));
     skipped += lowpan.len();
     lines.push(format!(
-        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN (contributor opportunity))",
+        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN)",
         lowpan.len()
     ));
     eprintln!(

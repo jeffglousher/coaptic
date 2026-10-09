@@ -1,89 +1,156 @@
 # coaptic
 
-[![CI](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml)
+Free, open-source CoAP for microcontrollers and cloud services.
 
-A bounded `no_std` CoAP engine with an approachable `App` face. Slots and tables sit under the hood; there is no global App State.
+- Rust. `no_std`. No allocation by default; optional `alloc` and `std`.
+- OSCORE message protection by default; optional authenticated EDHOC provisioning.
+- Retransmission, Observe subscriptions, and block-wise transfers.
+- One client/server API. No background runtime.
 
-Not on crates.io yet (publish parked — [#132](https://github.com/jeffglousher/coaptic/issues/132)). Until then:
+## Get started
+
+Until publication, install from Git:
 
 ```toml
 [dependencies]
-coaptic = { git = "https://github.com/jeffglousher/coaptic" }
-getrandom = "0.3" # host example; embedded callers provide their own secure source
+coaptic = { git = "https://github.com/jeffglousher/coaptic", features = ["std"] }
+getrandom = "0.3"
 ```
 
-## Quick start
+These host examples explicitly allow plaintext on localhost.
 
-The public API is documented in rustdoc (`cargo doc --open`). `App` owns bounded protocol state; you supply I/O, time and application data.
+### Server
 
 ```rust
-use coaptic::{App, Request, Response, get, profiles};
+let mut server = App::builder()
+    .randomness(|bytes| getrandom::fill(bytes).is_ok())
+    .route("sensors/temp", get(temperature))
+    .route("echo", post(echo))
+    .allow_plaintext()
+    .bind(socket)?;
+```
 
-fn get_temp(_req: Request<'_>) -> Response<'static> {
+<details>
+<summary>Complete server (examples/server.rs)</summary>
+
+```rust
+use std::{net::UdpSocket, thread, time::{Duration, Instant}};
+use coaptic::{App, Code, Request, Response, get, post};
+
+fn temperature(_: Request<'_>) -> Response<'static> {
     Response::content(b"21.5")
 }
 
-let mut app = App::profile::<profiles::Default>()
-    .randomness(|bytes| getrandom::fill(bytes).is_ok())
-    .block_wise::<true>()
-    .route("sensors/temp", get(get_temp))
-    .oscore(provisioned_context)
-    .bind(io)?;
-app.poll(now_ms)?;
+fn echo(request: Request<'_>) -> Response<'static> {
+    Response::try_content_copy(request.payload())
+        .unwrap_or_else(|_| Response::new(Code::REQUEST_ENTITY_TOO_LARGE))
+}
 
-let call = app.get("sensors/temp").to(peer).send(now_ms)?;
-app.poll(now_ms)?;
-let response = app.take_response(call);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("127.0.0.1:5683")?;
+    socket.set_nonblocking(true)?;
+    let mut server = App::builder()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
+        .route("sensors/temp", get(temperature))
+        .route("echo", post(echo))
+        .allow_plaintext()
+        .bind(socket)?;
+
+    let clock = Instant::now();
+    loop {
+        server.poll(clock.elapsed().as_millis() as u64)?;
+        thread::sleep(Duration::from_millis(1));
+    }
+}
 ```
 
-`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Supply secure entropy for eight-byte Tokens, a randomized initial Message ID and CON retry jitter. The library does not call an OS RNG; deterministic mode is explicitly for tests.
+</details>
 
-Default `oscore` provides pairwise AES-CCM protection with caller-owned security
-contexts. Ordinary App bind requires a provisioned context; explicit
-`.allow_plaintext()` permits unprotected interoperability and testing.
-See rustdoc for provisioning, sequence durability, Observe and block-wise transfers.
-DTLS adapters live in test harnesses and independent peer executables; the library
-does not own a DTLS stack.
+Run `cargo run --example server --features std`.
 
-## Operational limits
+### Client
 
-- App holds four live client requests, including Observe subscriptions and
-  unread completed replies; profile resources may impose lower limits.
-  Exhaustion returns `Error::Saturated` rather than evicting a request.
-- One pairwise OSCORE context per App, with four live Token bindings. Use
-  separate Apps for independent peers or key epochs; replacing a context
-  does not migrate live exchanges or subscriptions. OSCORE Q-Block recovery
-  requires a retained authenticated request or live client Call; unbound
-  advanced receive bodies return `Error::Unsupported` without sending plaintext.
-- `.block_wise::<true>()` uses 4 KiB per body slot even for Constrained:
-  8 KiB of RX/TX bodies for Constrained, 16 KiB for Default, plus a 4 KiB
-  assembled client-body hold and bookkeeping. Datagram-only mode omits these.
-- Unknown critical response options reject the response; unknown elective
-  options are retained in bounded response metadata without interpretation. A rejected CON response gets RST, while a matching
-  piggybacked ACK stops request retransmission without completing the Call.
-
-## Features
-
-Default is `no_std` with no allocator and OSCORE enabled. Optional `alloc` and `std` (`std` implies `alloc`). Default `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without default features the Engine has zero dependencies; Apps still require explicit plaintext opt-out when cryptography is disabled.
-
-## Examples and testing
-
-```bash
-cargo run --example coap_server --features std
+```rust
+let call = client.get("sensors/temp").to(peer).send(now_ms)?;
 ```
 
-- [Contributor checks](https://github.com/jeffglousher/coaptic/blob/main/CONTRIBUTING.md): toolchain, CI and packaging.
-- [App harness and dogfood](https://github.com/jeffglousher/coaptic/blob/main/crates/coaptic-plugtest/README.md): mixed-stack UDP workflows, Observe and OSCORE coverage, baseline comparisons.
-- [Independent process tests](https://github.com/jeffglousher/coaptic/blob/main/tools/interop/README.md): Coaptic, coap-rs and libcoap over UDP/DTLS, fault injection and timing methodology.
+Drive exchanges with `poll`; collect complete replies into your buffer.
 
-The in-crate `cargo test --test plugtest` exchanges Engine bytes without sockets.
-The linked harnesses exercise App and real loopback transports. Their guides
-separate tested behavior from untested capabilities and performance claims.
+<details>
+<summary>Complete client (examples/client.rs)</summary>
 
-## Project
+```rust
+use std::{net::UdpSocket, thread, time::{Duration, Instant}};
+use coaptic::{App, Endpoint};
 
-API reference: `cargo doc --open`. Protocol copies: `knowledge/rfcs/` in the
-repository. Planning and remaining capabilities live in
-[GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    socket.set_nonblocking(true)?;
+    let mut client = App::builder()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
+        .full_responses()
+        .allow_plaintext()
+        .bind(socket)?;
 
-Licensed MIT OR Apache-2.0.
+    let peer = Endpoint::v4([127, 0, 0, 1], 5683);
+    let clock = Instant::now();
+    let call = client.get("sensors/temp").to(peer).send(0)?;
+    let mut body = [0; 1472];
+    loop {
+        client.poll(clock.elapsed().as_millis() as u64)?;
+        if let Some(reply) = client.take_response_into(call, &mut body)? {
+            let reply = reply?;
+            if !reply.code().is_success() {
+                return Err(format!("peer replied {}", reply.code()).into());
+            }
+            println!("{}", String::from_utf8_lossy(reply.payload()));
+            return Ok(());
+        }
+        if clock.elapsed() >= Duration::from_secs(5) {
+            return Err("request timed out".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+```
+
+</details>
+
+Run `cargo run --example client --features std` in another terminal. It prints `21.5`.
+
+### Messages
+
+Replace the GET with a POST to echo a payload of up to 128 bytes:
+
+```rust
+let call = client.post("echo").payload(b"hello").to(peer).send(now_ms)?;
+```
+
+## Security
+
+Use `.oscore(context)` on each peer. EDHOC can provision authenticated peers.
+Applications own credentials, secure entropy, and durable replay state.
+[Security boundary](SECURITY.md).
+
+API reference and larger-payload examples: `cargo doc --open`.
+
+## Demonstrations
+
+Run the resource and echo examples above, or a protected UDP exchange:
+
+```sh
+cargo run --example oscore_pair --features std
+```
+
+ESP32-S3 tests cover plaintext Wi-Fi UDP and separate OSCORE loopback.
+Network OSCORE and flash power-loss recovery remain unqualified.
+[Setup, results, and limitations](https://github.com/jeffglousher/coaptic/issues/333) |
+[Test driver](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py) |
+[Benchmark method](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/README.md).
+
+Measurements remain preliminary. Production readiness has not been established.
+
+## License
+
+[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+Vendored EDHOC code: [BSD-3-Clause](src/provisioning/lakers/LICENSE-BSD).

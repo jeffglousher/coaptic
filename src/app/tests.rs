@@ -5774,6 +5774,72 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
 }
 
 #[test]
+fn truncated_handler_response_refuses_wire_and_observe_then_recovers() {
+    use crate::ResponseError;
+
+    fn handler(request: Request<'_>) -> Response<'static> {
+        let response = Response::content_copy(request.payload()).observe(0);
+        if request.payload().first() == Some(&b's') {
+            response.separate()
+        } else {
+            response
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("test", get(handler))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for mid in 0..12 {
+        let payload = [if mid % 2 == 0 { b's' } else { b'p' }; INLINE_PAYLOAD + 1];
+        let options = [Opt::observe_register(), Opt::uri_path("test")];
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1800 + mid))
+            .with_token(token)
+            .with_options(&options)
+            .with_payload(&payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(mid)),
+            Err(Error::Response(ResponseError::PayloadTruncated))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert!(!observe_live(&app, peer, token));
+    }
+    let payload = [b'z'; INLINE_PAYLOAD];
+    let options = [Opt::observe_register(), Opt::uri_path("test")];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1900))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&payload);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(observe_live(&app, peer, token));
+    assert_eq!(app.transport().send_n, 1);
+    let io = app.transport();
+    assert_eq!(
+        decode(&io.sends[0][..io.send_lens[0]]).unwrap().payload(),
+        payload
+    );
+    assert_eq!(
+        app.notify(
+            13,
+            &["test"],
+            Response::content_copy(&[0; INLINE_PAYLOAD + 1])
+        ),
+        Err(Error::Response(ResponseError::PayloadTruncated))
+    );
+    assert_eq!(app.transport().send_n, 1);
+}
+
+#[test]
 fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
     use crate::ResponseError;
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -11800,6 +11866,148 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
     assert_eq!(response.location_paths(), &["receipt"]);
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert!(app.take_response_into(call, &mut output).unwrap().is_none());
+}
+
+fn exercise_client_without_block_storage<S: super::AppStorage>(
+    mut app: App<profiles::Default, WideLoopback, DEFAULT_ROUTES, false, S>,
+    protected: bool,
+) {
+    use crate::{CallFailure, error::BlockTransferError};
+
+    #[cfg(feature = "oscore")]
+    let mut server = {
+        use crate::oscore::{DeriveParams, SecurityContext};
+        // Public test identity; no persisted security state is exercised.
+        let make = |sender, recipient| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[0x42; 16],
+                master_salt: &[],
+                sender_id: sender,
+                recipient_id: recipient,
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        if protected {
+            app.set_oscore(make(&[1], &[2]));
+            Some(make(&[2], &[1]))
+        } else {
+            None
+        }
+    };
+    #[cfg(not(feature = "oscore"))]
+    assert!(!protected);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for (round, (q_block, more)) in [(false, true), (false, false), (true, true), (true, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let now = round as u64 * 10;
+        // Unsupported assembly must retire its Call and request binding,
+        // including when the received block happens to be the last one.
+        for blocked in [true, false] {
+            app.transport_mut().send_n = 0;
+            let call = app.get("value").to(peer).send(now).unwrap();
+            let transport = app.transport();
+            let request = decode(&transport.sends[0][..transport.send_lens[0]]).unwrap();
+            let block = BlockValue::from_size(0, more, 16).unwrap().encode();
+            let size = encode_uint(if more { 32 } else { 16 });
+            let mut opts = OptionsBuilder::<3>::new();
+            if blocked {
+                opts.push(Opt::etag(b"v1")).unwrap();
+                opts.push(if q_block {
+                    Opt::q_block2(&block)
+                } else {
+                    Opt::block2(&block)
+                })
+                .unwrap();
+                opts.push(Opt::size2(&size)).unwrap();
+            }
+            let body: [u8; 16] = core::array::from_fn(|index| index as u8);
+            let reply = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+                .with_token(call.token())
+                .with_options(opts.as_slice())
+                .with_payload(&body);
+            let mut wire = [0; WIRE];
+            let n = {
+                #[cfg(feature = "oscore")]
+                if let Some(server) = server.as_mut() {
+                    let mut inner = [0; WIRE];
+                    let (_, binding) = server.unprotect_request(&request, &mut inner).unwrap();
+                    server.protect_response(&reply, binding, &mut wire).unwrap()
+                } else {
+                    encode(&reply, &mut wire).unwrap()
+                }
+                #[cfg(not(feature = "oscore"))]
+                encode(&reply, &mut wire).unwrap()
+            };
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(now + 1).unwrap();
+            let mut output = [0xA5; 16];
+            let result = app.take_response_into(call, &mut output).unwrap().unwrap();
+            if blocked {
+                assert_eq!(
+                    result.unwrap_err(),
+                    CallFailure::BlockTransfer(BlockTransferError::NoBodyPools)
+                );
+                assert_eq!(output, [0xA5; 16]);
+            } else {
+                let reply = result.unwrap();
+                assert_eq!(reply.code(), Code::CONTENT);
+                assert_eq!(reply.payload(), body);
+                assert!(!reply.payload_truncated());
+            }
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            assert!(app.take_response(call).is_none());
+        }
+    }
+}
+
+#[test]
+fn client_without_block_storage_refuses_fragments_and_recovers() {
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        for full in [false, true] {
+            let builder = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<false>()
+                .allow_plaintext();
+            let builder = if full {
+                builder.full_responses()
+            } else {
+                builder
+            };
+            let app = builder.bind(WideLoopback::default()).unwrap();
+            exercise_client_without_block_storage(app, protected);
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn client_alloc_without_block_storage_refuses_fragments_and_recovers() {
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        let app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .full_responses()
+            .allow_plaintext()
+            .bind_alloc(
+                WideLoopback::default(),
+                crate::storage::Capacities::from_profile::<profiles::Default>(),
+            )
+            .unwrap();
+        exercise_client_without_block_storage(app, protected);
+    }
 }
 
 #[cfg(feature = "alloc")]

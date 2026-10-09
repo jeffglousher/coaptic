@@ -43,7 +43,7 @@ use crate::message::{
 /// [`crate::App::poll`]. Reach here via [`crate::App::engine_mut`] only
 /// when you need explicit slots, [`Access`] / [`AccessMut`], or policy
 /// App does not apply. Engine BERT (SZX 7) codecs exist; App does not
-/// expose them (future / backlog).
+/// expose them.
 ///
 /// One [`Self::progress`] pass: CON retransmit, one unpinned RX step, one
 /// Observe notify (skips an endpoint at notification NSTART), at most one

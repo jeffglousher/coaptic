@@ -1,24 +1,24 @@
 [workspace]
-members = [".", "crates/coaptic-plugtest", "crates/peer-coaptic", "crates/peer-coap-rs", "crates/qualification-no-std"]
+members = ["."]
 default-members = ["."]
 resolver = "2"
 
 [package]
 name = "coaptic"
-version = "0.1.0"
+version = "0.0.10"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Jeff Glousher"]
 license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
-description = "Stand-alone no_std CoAP engine"
+description = "Free, open-source CoAP for devices and cloud services. Rust, no_std, no heap required. OSCORE by default."
 repository = "https://github.com/jeffglousher/coaptic"
 homepage = "https://github.com/jeffglousher/coaptic"
-# docs.rs after crates.io 0.1.0 (#132). Until then, rustdoc is `cargo doc --open`.
+# docs.rs after registry publication (#132). Until then, use `cargo doc --open`.
 documentation = "https://github.com/jeffglousher/coaptic"
 readme = "README.md"
 categories = ["no-std", "embedded", "network-programming"]
 keywords = ["coap", "no-std", "embedded", "no-alloc"]
-# Library crate only. Workspace harness, RFC copies, and agent/CI files stay out.
+# Library crate only. RFC copies and agent/CI files stay out.
 # Cargo.lock is auto-included (example binary); it is not listed here.
 include = [
     "src/**",
@@ -28,7 +28,7 @@ include = [
     "LICENSE-MIT",
     "/README.md",
     "SECURITY.md",
-    "CONTRIBUTING.md",
+    "DEVELOPMENT.md",
     "rust-toolchain.toml",
 ]
 
@@ -63,8 +63,20 @@ revision = "462b30f5b3e9cfab96c05fe65f36d19eaa7002ad"
 license = "BSD-3-Clause"
 
 [[example]]
+name = "server"
+required-features = ["std"]
+
+[[example]]
+name = "client"
+required-features = ["std"]
+
+[[example]]
 name = "coap_server"
 required-features = ["std"]
+
+[[example]]
+name = "oscore_pair"
+required-features = ["std", "oscore"]
 
 [[example]]
 name = "edhoc_peer"
