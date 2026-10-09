@@ -1,0 +1,121 @@
+# PR-only CI. Merging to main does not re-run these jobs.
+# Based on rust-lang/regex + GitHub's rust starter, trimmed for a Free plan.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  msrv:
+    name: library MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.85.0
+      - run: cargo check --locked -p coaptic --no-default-features
+      - run: cargo check --locked -p coaptic --all-features
+
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --no-default-features
+      - run: cargo test --all-features
+      - run: cargo test --no-default-features --features alloc
+      - run: cargo test --no-default-features --features oscore
+      - run: cargo test --no-default-features --features alloc,oscore
+      - run: cargo test --no-default-features --features std
+      - name: Run the README client and server
+        shell: bash
+        run: |
+          cargo build --locked --example server --example client --features std
+          target/debug/examples/server &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          target/debug/examples/client
+      - run: cargo run --locked --example oscore_pair --features std
+
+  doc:
+    name: doc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: --cfg docsrs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --no-deps --all-features
+
+  # Tarball check only â€” do not use `cargo publish --dry-run` here.
+  # After a version is published, dry-run of that same version fails CI.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Published crate stays lean
+        run: |
+          set -euo pipefail
+          cargo package -p coaptic --list --locked
+          if cargo package -p coaptic --list --locked | grep -E '^(knowledge/|crates/|tools/|\.github/|\.agents/)' ; then
+            echo "::error::published crate must not include knowledge/, crates/, tools/, .github/, or .agents/"
+            exit 1
+          fi
+      - run: cargo package -p coaptic --locked
+
+  validation:
+    name: Companion validation
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@e90aeb7c22849ac966fe7fbd130cade678a2ffcc
+    with:
+      suite_revision: e90aeb7c22849ac966fe7fbd130cade678a2ffcc
+      library_repository: ${{ github.repository }}
+      library_revision: ${{ github.sha }}
