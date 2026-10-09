@@ -29,6 +29,7 @@ mod crypto;
 mod enrollment;
 mod identity;
 mod lakers;
+mod managed;
 mod trust;
 
 pub use cloud::{
@@ -42,6 +43,10 @@ pub use enrollment::{
     PolicyServeError, PolicySnapshot, ProtectedPolicyResponse, VerifiedPolicy,
 };
 pub use identity::{Identity, PinnedPeer, Principal};
+pub use managed::{
+    ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
+    ManagedRefreshError, PolicyValidity,
+};
 pub use trust::{
     PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
 };

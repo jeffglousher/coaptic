@@ -1339,6 +1339,15 @@ where
         true
     }
 
+    #[cfg(feature = "edhoc")]
+    pub(crate) fn deferred_pending(&self, handle: DeferredReply, now_ms: u64) -> bool {
+        self.deferred
+            .rows
+            .iter()
+            .flatten()
+            .any(|row| row.handle == handle && row.completed.is_none() && now_ms < row.deadline_ms)
+    }
+
     /// Send the current representation to server-side observers of `path`.
     /// Exact registered path segments select the route. Client subscriptions
     /// are separate, even when the peer and Token match an incoming observer.
