@@ -488,9 +488,14 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
             |_| true,
         )
         .unwrap();
-    let payload: Vec<_> = core::iter::once(confirmation.peer_connection_id().as_u8())
-        .chain(third.as_bytes().iter().copied())
-        .collect();
+    let payload: Vec<_> = core::iter::once(
+        confirmation
+            .peer_connection_id()
+            .as_u8()
+            .expect("compact fixture CID"),
+    )
+    .chain(third.as_bytes().iter().copied())
+    .collect();
     let len = Message::new(Type::Confirmable, Code::POST, mid.wrapping_add(1))
         .with_token(Token::from_checked(b"attacke2"))
         .with_options(&options)
