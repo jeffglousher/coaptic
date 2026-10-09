@@ -1,89 +1,122 @@
 # coaptic
 
-[![CI](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffglousher/coaptic/actions/workflows/ci.yml)
+CoAP for constrained devices, with a small API for serving resources and exchanging messages.
 
-A bounded `no_std` CoAP engine with an approachable `App` face. Slots and tables sit under the hood; there is no global App State.
+- Written in Rust; `no_std` and no heap allocation by default.
+- Bounded memory with configurable capacities.
+- Confirmable requests with retransmission, Observe subscriptions, and block-wise transfers.
+- OSCORE message protection enabled by default; optional EDHOC provisioning.
 
-Not on crates.io yet (publish parked — [#132](https://github.com/jeffglousher/coaptic/issues/132)). Until then:
+You supply the transport and clock, register your resources, and call `poll` to
+drive communication. No background runtime is required.
+
+## Get started
+
+Until the first crates.io release, add Coaptic from Git:
 
 ```toml
 [dependencies]
-coaptic = { git = "https://github.com/jeffglousher/coaptic" }
-getrandom = "0.3" # host example; embedded callers provide their own secure source
+coaptic = { git = "https://github.com/jeffglousher/coaptic", features = ["std"] }
+getrandom = "0.3"
 ```
 
-## Quick start
+The examples below use `std` for UDP sockets and time, and explicitly allow
+plaintext on localhost. Embedded applications can use the default `no_std`
+build with their own transport, monotonic clock, and secure random source.
 
-The public API is documented in rustdoc (`cargo doc --open`). `App` owns bounded protocol state; you supply I/O, time and application data.
+### Serve a resource
+
+Save this as `examples/server.rs` in your project:
 
 ```rust
-use coaptic::{App, Request, Response, get, profiles};
+use std::{net::UdpSocket, thread, time::{Duration, Instant}};
+use coaptic::{App, Request, Response, get, post};
 
-fn get_temp(_req: Request<'_>) -> Response<'static> {
+fn temperature(_: Request<'_>) -> Response<'static> {
     Response::content(b"21.5")
 }
 
-let mut app = App::profile::<profiles::Default>()
-    .randomness(|bytes| getrandom::fill(bytes).is_ok())
-    .block_wise::<true>()
-    .route("sensors/temp", get(get_temp))
-    .oscore(provisioned_context)
-    .bind(io)?;
-app.poll(now_ms)?;
+fn echo(request: Request<'_>) -> Response<'static> {
+    Response::content_copy(request.payload())
+}
 
-let call = app.get("sensors/temp").to(peer).send(now_ms)?;
-app.poll(now_ms)?;
-let response = app.take_response(call);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("127.0.0.1:5683")?;
+    socket.set_nonblocking(true)?;
+    let mut server = App::builder()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
+        .route("sensors/temp", get(temperature))
+        .route("echo", post(echo))
+        .allow_plaintext()
+        .bind(socket)?;
+
+    let clock = Instant::now();
+    loop {
+        server.poll(clock.elapsed().as_millis() as u64)?;
+        thread::sleep(Duration::from_millis(1));
+    }
+}
 ```
 
-`.route` / `app.get` also accept `&["sensors", "temp"]`. Handlers are `fn(Request<'_>) -> Response`. You own the socket (`storage::DatagramIo`), the clock, the destination of a client request, and any domain data that outlives a request. Supply secure entropy for eight-byte Tokens, a randomized initial Message ID and CON retry jitter. The library does not call an OS RNG; deterministic mode is explicitly for tests.
+Run `cargo run --example server`. The server now exposes `GET /sensors/temp`
+and `POST /echo` for short payloads.
+Add more resources with `.route(...)`; handlers receive a `Request` and return
+a `Response`. Chain methods such as `get(handler).put(other_handler)` to expose
+GET and PUT on the same resource.
 
-Default `oscore` provides pairwise AES-CCM protection with caller-owned security
-contexts. Ordinary App bind requires a provisioned context; explicit
-`.allow_plaintext()` permits unprotected interoperability and testing.
-See rustdoc for provisioning, sequence durability, Observe and block-wise transfers.
-DTLS adapters live in test harnesses and independent peer executables; the library
-does not own a DTLS stack.
+### Send a request
 
-## Operational limits
+Save this as `examples/client.rs` and run `cargo run --example client` in a
+second terminal:
 
-- App holds four live client requests, including Observe subscriptions and
-  unread completed replies; profile resources may impose lower limits.
-  Exhaustion returns `Error::Saturated` rather than evicting a request.
-- One pairwise OSCORE context per App, with four live Token bindings. Use
-  separate Apps for independent peers or key epochs; replacing a context
-  does not migrate live exchanges or subscriptions. OSCORE Q-Block recovery
-  requires a retained authenticated request or live client Call; unbound
-  advanced receive bodies return `Error::Unsupported` without sending plaintext.
-- `.block_wise::<true>()` uses 4 KiB per body slot even for Constrained:
-  8 KiB of RX/TX bodies for Constrained, 16 KiB for Default, plus a 4 KiB
-  assembled client-body hold and bookkeeping. Datagram-only mode omits these.
-- Unknown critical response options reject the response; unknown elective
-  options are retained in bounded response metadata without interpretation. A rejected CON response gets RST, while a matching
-  piggybacked ACK stops request retransmission without completing the Call.
+```rust
+use std::{net::UdpSocket, thread, time::{Duration, Instant}};
+use coaptic::{App, Endpoint};
 
-## Features
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    socket.set_nonblocking(true)?;
+    let mut client = App::builder()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
+        .allow_plaintext()
+        .bind(socket)?;
 
-Default is `no_std` with no allocator and OSCORE enabled. Optional `alloc` and `std` (`std` implies `alloc`). Default `oscore` pulls RustCrypto `aes` / `ccm` / `hkdf` / `sha2` (AES-CCM-16-64-128 only; not a COSE crate). Without default features the Engine has zero dependencies; Apps still require explicit plaintext opt-out when cryptography is disabled.
-
-## Examples and testing
-
-```bash
-cargo run --example coap_server --features std
+    let peer = Endpoint::v4([127, 0, 0, 1], 5683);
+    let clock = Instant::now();
+    let call = client.get("sensors/temp").to(peer).send(0)?;
+    loop {
+        client.poll(clock.elapsed().as_millis() as u64)?;
+        if let Some(reply) = client.take_response(call) {
+            let reply = reply?;
+            println!("{}", String::from_utf8_lossy(reply.payload()));
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
 ```
 
-- [Contributor checks](https://github.com/jeffglousher/coaptic/blob/main/CONTRIBUTING.md): toolchain, CI and packaging.
-- [App harness and dogfood](https://github.com/jeffglousher/coaptic/blob/main/crates/coaptic-plugtest/README.md): mixed-stack UDP workflows, Observe and OSCORE coverage, baseline comparisons.
-- [Independent process tests](https://github.com/jeffglousher/coaptic/blob/main/tools/interop/README.md): Coaptic, coap-rs and libcoap over UDP/DTLS, fault injection and timing methodology.
+To exchange a short payload with the echo resource, use the same polling and
+response workflow:
 
-The in-crate `cargo test --test plugtest` exchanges Engine bytes without sockets.
-The linked harnesses exercise App and real loopback transports. Their guides
-separate tested behavior from untested capabilities and performance claims.
+```rust
+let call = client.post("echo").payload(b"hello").to(peer).send(now_ms)?;
+```
 
-## Project
+## Protected communication
 
-API reference: `cargo doc --open`. Protocol copies: `knowledge/rfcs/` in the
-repository. Planning and remaining capabilities live in
-[GitHub Issues / project](https://github.com/users/jeffglousher/projects/2).
+Ordinary App construction requires a provisioned OSCORE context. Replace
+`.allow_plaintext()` with `.oscore(provisioned_context)` on each peer for
+protected communication. Peer provisioning and safe key reuse across restarts
+are part of your application's security setup; hardware security qualification
+is still in progress.
 
-Licensed MIT OR Apache-2.0.
+The API reference is rustdoc: run `cargo doc --open` for transports, resource
+handlers, security contexts, and further examples. See [SECURITY.md](SECURITY.md)
+for the supported security boundary and vulnerability reporting.
+
+## License
+
+Coaptic is available under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE),
+at your option. Vendored EDHOC code retains its
+[BSD-3-Clause notice](src/provisioning/lakers/LICENSE-BSD).

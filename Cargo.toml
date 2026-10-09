@@ -10,7 +10,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Jeff Glousher"]
 license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
-description = "Stand-alone no_std CoAP engine"
+description = "CoAP for constrained devices, with no_std and no heap allocation by default"
 repository = "https://github.com/jeffglousher/coaptic"
 homepage = "https://github.com/jeffglousher/coaptic"
 # docs.rs after crates.io 0.1.0 (#132). Until then, rustdoc is `cargo doc --open`.
