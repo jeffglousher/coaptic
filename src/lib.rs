@@ -1,21 +1,10 @@
-//! CoAP in Rust for constrained devices and network services.
+//! CoAP from microcontrollers to cloud services.
 //!
-//! Expose resources and exchange messages through one client/server [`App`] API.
-//! Supply the transport and clock; Coaptic handles protocol exchanges with
-//! bounded storage. [`no_std`] and no heap allocation are the default, with
-//! optional `alloc` and `std`. Pairwise OSCORE protection is required by default;
-//! EDHOC provisioning is optional. Production readiness is not yet established.
+//! Rust, [`no_std`], and no heap allocation by default; optional `alloc` and `std`.
+//! [`App`] serves resources and exchanges messages through one client/server API.
+//! OSCORE protection is required by default; EDHOC provisioning is optional.
 //!
-//! Crate-root types are the happy path: [`App`], [`Request`], [`Response`],
-//! [`Call`], [`Outgoing`], [`get`] / [`put`] / [`post`] / [`delete`] /
-//! [`fetch`] / [`patch`] / [`ipatch`], [`Endpoint`], [`profiles`],
-//! [`Code`], [`ContentFormat`], [`Method`], [`ProblemDetails`], and the
-//! errors from [`bind`](app::AppBuilder::bind) / [`App::poll`] /
-//! [`Outgoing::send`]. Engine slots, tables, Block/Q-Block types,
-//! [`Ids`](message::Ids), and [`DatagramIo`](storage::DatagramIo) live in
-//! [`storage`] / [`message`].
-//!
-//! # Happy path
+//! # Client and server
 //!
 //! Apps require a provisioned pairwise OSCORE context before binding. Supply
 //! authenticated credentials from your provisioning system as
