@@ -422,6 +422,58 @@ fn forged_routing_identifier_selects_only_candidate_and_never_authenticates_payl
 }
 
 #[test]
+fn protected_requests_honor_retained_bootstrap_mids_until_original_expiry() {
+    let server = identity(254, 254);
+    let first = identity(1, 1);
+    let registry = Registry::new(&server, &[&first]);
+    let mut cloud =
+        CloudAdmission::<1, 1, 1, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    let result = finish(&mut cloud, &registry, &first, FIRST, 0);
+    let mids = [
+        decode(&result.m1).unwrap().message_id(),
+        decode(&result.m3).unwrap().message_id(),
+    ];
+    let (session, association) = result.server.into_parts();
+    let (mut client, _) = result.client.into_parts();
+    let (mut owner, _) = session.into_parts();
+    let options = [
+        Opt::new(OptionNumber::URI_PATH, b"telemetry"),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[42]),
+    ];
+    for (mid, now, route) in [
+        (mids[0], 0, None),
+        (mids[1], EXCHANGE_LIFETIME_MS - 1, None),
+        (mids[0], EXCHANGE_LIFETIME_MS, Some(association)),
+    ] {
+        let message = CoapMessage::con(Code::POST, mid, Token::from_checked(b"mid-test"))
+            .with_options(&options)
+            .with_payload(b"complete authenticated payload\x00\xff");
+        let mut protected = [0; 384];
+        let len = client.protect_request(&message, &mut protected).unwrap();
+        assert_eq!(
+            cloud.route_oscore(&protected[..len], FIRST, now, &registry),
+            Ok(route)
+        );
+        let mut clear = [0; 384];
+        let (decoded, _) = owner
+            .unprotect_request(&decode(&protected[..len]).unwrap(), &mut clear)
+            .unwrap();
+        assert_eq!(decoded.ty(), Type::Confirmable);
+        assert_eq!(decoded.code(), message.code());
+        assert_eq!(decoded.message_id(), mid);
+        assert_eq!(decoded.token(), message.token());
+        assert_eq!(
+            decoded.options().collect::<Vec<_>>().as_slice(),
+            message.options()
+        );
+        assert_eq!(decoded.payload(), message.payload());
+    }
+    assert!(!cloud.reserves_message_id(mids[0], FIRST, EXCHANGE_LIFETIME_MS));
+    assert!(cloud.reserves_connection_id(association.local_id));
+}
+
+#[test]
 fn two_devices_share_listener_with_distinct_authenticated_contexts_and_exact_metadata() {
     let server = identity(254, 254);
     let first = identity(1, 1);
