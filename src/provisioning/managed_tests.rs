@@ -644,10 +644,7 @@ fn transport_reservation_capacity_refuses_before_send_and_recovers_after_expiry(
     io.epoch += 1;
     assert!(!io.next_epoch_available());
     let sends = network.borrow().sent.len();
-    assert!(matches!(
-        send(&mut io, 200),
-        Err(ManagedIoError::Capacity)
-    ));
+    assert!(matches!(send(&mut io, 200), Err(ManagedIoError::Capacity)));
     assert_eq!(network.borrow().sent.len(), sends);
 
     io.prune(LIFETIME - 1);
