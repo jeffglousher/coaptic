@@ -30,6 +30,7 @@ mod enrollment;
 mod identity;
 mod lakers;
 mod managed;
+mod receipt;
 mod trust;
 
 pub use cloud::{
@@ -46,6 +47,9 @@ pub use identity::{Identity, PinnedPeer, Principal};
 pub use managed::{
     ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
     ManagedRefreshError, PolicyValidity,
+};
+pub use receipt::{
+    OperationId, Receipt, ReceiptError, ReceiptStore, TelemetryOperation, commit_telemetry,
 };
 pub use trust::{
     PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
