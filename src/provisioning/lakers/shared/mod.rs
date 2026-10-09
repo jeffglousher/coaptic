@@ -278,10 +278,6 @@ impl ConnId {
     }
 }
 
-#[cfg(test)]
-#[path = "conn_id_tests.rs"]
-mod conn_id_tests;
-
 #[derive(PartialEq, Debug)]
 pub enum EDHOCMethod {
     StatStat = 3,

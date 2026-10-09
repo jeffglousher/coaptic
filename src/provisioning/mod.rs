@@ -426,4 +426,7 @@ macro_rules! redacted_debug {
 redacted_debug!(Initiator, InitiatorConfirm, Responder, Session);
 
 #[cfg(test)]
+mod conn_id_tests;
+
+#[cfg(test)]
 mod tests;

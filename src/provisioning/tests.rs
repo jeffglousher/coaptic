@@ -66,6 +66,52 @@ fn compact_connection_ids_validate_all_values() {
 }
 
 #[test]
+fn connection_id_decoder_checks_storage_and_truncation() {
+    for length in 0..=23 {
+        let mut encoded = std::vec![0x40 + length];
+        encoded.extend(core::iter::repeat_n(0xff, usize::from(length)));
+        let mut decoder = lakers::CBORDecoder::new(&encoded);
+        let result = lakers::ConnId::from_decoder(&mut decoder);
+        if length <= 7 {
+            let id = result.unwrap();
+            assert_eq!(id.as_cbor(), encoded);
+            assert_eq!(id.as_slice(), &encoded[1..]);
+            assert!(decoder.finished());
+        } else {
+            assert!(result.is_err(), "connection ID length {length}");
+            assert_eq!(decoder.position(), 0);
+        }
+        for end in 0..encoded.len() {
+            assert!(
+                lakers::ConnId::from_decoder(&mut lakers::CBORDecoder::new(&encoded[..end]))
+                    .is_err(),
+                "connection ID length {length}, truncated at {end}"
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_response_connection_id_is_refused_before_authorization() {
+    let client = identity(1, 0);
+    let server = identity(2, 1);
+    let (initiator, m1) = Initiator::start(&client, server.peer(), entropy(3)).unwrap();
+    let (_, m2) = Responder::receive_message_1(&server, client.peer(), &m1, entropy(4)).unwrap();
+    let mut bytes = m2.as_bytes().to_vec();
+    let combined_len = lakers::CBORDecoder::new(&bytes).bytes().unwrap().len();
+    let ciphertext_start = bytes.len() - combined_len + lakers::P256_ELEM_LEN;
+    // XOR encryption lets an unauthenticated response replace C_R's first byte
+    // with an eight-byte bstr header, exceeding ConnId's seven-byte ID capacity.
+    bytes[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+    assert!(matches!(
+        initiator.receive_message_2(&Message::from_slice(&bytes).unwrap(), |_| panic!(
+            "malformed response must not authorize"
+        )),
+        Err(Error::Parsing)
+    ));
+}
+
+#[test]
 fn peer_selected_connection_ids_derive_correct_oscore_directions() {
     use crate::message::{Code, Message as CoapMessage, MessageId, Token, Type, decode};
 

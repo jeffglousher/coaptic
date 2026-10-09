@@ -22,8 +22,9 @@ FILES = {
 FACADE = '''//! Private production subset of [Lakers v0.8.0](https://github.com/lake-rs/lakers).
 //!
 //! Source is pinned to [462b30f](https://github.com/jeffglousher/lakers/commit/462b30f5b3e9cfab96c05fe65f36d19eaa7002ad).
-//! The BSD-3-Clause notice is retained in `LICENSE-BSD`; mechanical source
-//! transformations and hashes are recorded in `provenance.json`.
+//! The BSD-3-Clause notice is retained in `LICENSE-BSD`; source transformations,
+//! including local connection-ID bounds hardening, and hashes are recorded in
+//! `provenance.json`.
 #![allow(dead_code, deprecated, unexpected_cfgs, unused_imports, missing_docs)]
 #![allow(clippy::all, clippy::pedantic)]
 
@@ -101,6 +102,14 @@ def transform(blob, relative):
             "use super::shared::{Crypto as CryptoTrait, *};",
         )
     elif relative == "shared/src/lib.rs":
+        text = replace_once(
+            text,
+            "        s[..len].copy_from_slice(decoder.read_slice(len)?);",
+            "        if len > s.len() {\n"
+            "            return Err(CBORError::DecodingError);\n"
+            "        }\n"
+            "        s[..len].copy_from_slice(decoder.read_slice(len)?);",
+        )
         text = replace_once(text, '#![cfg_attr(not(feature = "python-bindings"), no_std)]\n', "")
         text = replace_once(
             text,
@@ -177,7 +186,8 @@ def build(repository, destination):
             "Remove Python binding attributes/imports and test-only EAD re-export",
             "Freeze four upstream buffer constants to default values: 192, 256, 320, 8",
             "Render upstream external-crate documentation examples as text for private vendoring",
-            "Format source with the specified rustfmt; preserve production algorithms and original comments",
+            "Reject connection identifiers exceeding fixed storage before slicing or consuming input in ConnId::from_decoder",
+            "Format source with the specified rustfmt; preserve original comments",
             "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps",
         ],
         "source_files": source_entries,

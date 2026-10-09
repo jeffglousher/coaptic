@@ -1,4 +1,6 @@
-use super::{CBORDecoder, ConnId, MAX_CONNID_ENCODED_LEN};
+use super::lakers::{CBORDecoder, ConnId};
+
+const MAX_CONNID_ENCODED_LEN: usize = core::mem::size_of::<ConnId>();
 
 #[test]
 fn oversized_connection_identifiers_return_errors() {

@@ -15,9 +15,9 @@
     "Remove Python binding attributes/imports and test-only EAD re-export",
     "Freeze four upstream buffer constants to default values: 192, 256, 320, 8",
     "Render upstream external-crate documentation examples as text for private vendoring",
-    "Format source with the specified rustfmt; preserve production algorithms and original comments",
-    "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps",
-    "Locally reject connection-ID encoded lengths exceeding the fixed destination before slicing; add defensive regression tests"
+    "Reject connection identifiers exceeding fixed storage before slicing or consuming input in ConnId::from_decoder",
+    "Format source with the specified rustfmt; preserve original comments",
+    "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps"
   ],
   "source_files": [
     {
@@ -44,8 +44,8 @@
       "source_git_blob": "73773846df75a72ea57d95f1a6f5a53fc7d10b8c",
       "production_prefix_sha256": "b44659ae55ad8b03464454f130b77c78eb958c0d352df57b4bb12184d7f608be",
       "output": "shared/mod.rs",
-      "pre_format_output_sha256": "a4b5d228a257421fcdb7a31c0520da14529ef8aa48a00bc8e0b19c9226243ac9",
-      "output_sha256": "6def4fb227ad91544e273e6107200a74390de24a8e177a99d75b463ce8b3fdba"
+      "pre_format_output_sha256": "746eeadd26df130b7676f23274fa10755b4f07a3055d7ebbaeeab20178f1d31d",
+      "output_sha256": "241a05620d1f1b08aab4f31a4442321cb5e3f70f09b65458dc8b0f8f8d41d245"
     },
     {
       "source": "shared/src/cred.rs",
@@ -75,5 +75,5 @@
       "output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7"
     }
   ],
-  "facade_sha256": "4ee5eab4782a7ae27ef9228da767cc691bd679e675bed961ac7f47720fed1595"
+  "facade_sha256": "8d36ba507427b4fc96e703db43a981b1b9560f1ade5eed614ab43310a7b23aa0"
 }
