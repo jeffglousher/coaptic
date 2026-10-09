@@ -209,6 +209,9 @@ impl ConnId {
         let len = ConnIdType::classify(decoder.current()?)
             .ok_or(CBORError::DecodingError)?
             .length();
+        if len > s.len() {
+            return Err(CBORError::DecodingError);
+        }
         s[..len].copy_from_slice(decoder.read_slice(len)?);
         Ok(Self(s))
     }
@@ -274,6 +277,10 @@ impl ConnId {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "conn_id_tests.rs"]
+mod conn_id_tests;
 
 #[derive(PartialEq, Debug)]
 pub enum EDHOCMethod {

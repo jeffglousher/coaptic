@@ -16,7 +16,8 @@
     "Freeze four upstream buffer constants to default values: 192, 256, 320, 8",
     "Render upstream external-crate documentation examples as text for private vendoring",
     "Format source with the specified rustfmt; preserve production algorithms and original comments",
-    "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps"
+    "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps",
+    "Locally reject connection-ID encoded lengths exceeding the fixed destination before slicing; add defensive regression tests"
   ],
   "source_files": [
     {
@@ -44,7 +45,7 @@
       "production_prefix_sha256": "b44659ae55ad8b03464454f130b77c78eb958c0d352df57b4bb12184d7f608be",
       "output": "shared/mod.rs",
       "pre_format_output_sha256": "a4b5d228a257421fcdb7a31c0520da14529ef8aa48a00bc8e0b19c9226243ac9",
-      "output_sha256": "94df6209a96ae55adb302ba8cdb12a6d6502c666decdd63ca7d8e56f6dff8467"
+      "output_sha256": "6def4fb227ad91544e273e6107200a74390de24a8e177a99d75b463ce8b3fdba"
     },
     {
       "source": "shared/src/cred.rs",
