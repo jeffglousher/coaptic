@@ -227,7 +227,7 @@ jobs:
       - run: cargo doc --no-deps --all-features
 
   # Tarball check only — do not use `cargo publish --dry-run` here.
-  # After 0.1.0 is live, dry-run of the same version fails CI.
+  # After a version is published, dry-run of that same version fails CI.
   package:
     name: package
     runs-on: ubuntu-latest

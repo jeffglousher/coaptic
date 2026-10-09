@@ -72,7 +72,10 @@ For a release, first merge the reviewed change to `main` with required CI green
 and complete the validation above. Inspect the packaged files and license
 notices. Configure the repository's `CARGO_REGISTRY_TOKEN` secret with a
 crates.io token authorized to publish `coaptic`; do not put credentials in git.
-The publication tag must match the manifest version exactly (`v0.1.0` for
-`0.1.0`). Pushing that tag publishes the crate. After publication, replace the
+Preparation is followed by maintainer/external review and agreement on the
+final release snapshot before publication. The publication tag must match the
+manifest version exactly (`v0.0.10` for `0.0.10`). Pushing that tag publishes
+the crate. Package preparation alone does not authorize that step.
+After publication, replace the
 README's Git dependency with the released version and point the manifest's
 documentation URL to `https://docs.rs/coaptic`.
