@@ -1,4 +1,4 @@
-# Contributing
+# Development
 
 Humans and agents follow [AGENTS.md](AGENTS.md). Planning is
 [GitHub project 2](https://github.com/users/jeffglousher/projects/2). Protocol

@@ -142,7 +142,7 @@ pub fn skip_reason(id: &str) -> Option<&'static str> {
         );
     }
     if id.starts_with("TD_6LoWPAN_") {
-        return Some("future/backlog: 6LoWPAN (contributor opportunity)");
+        return Some("future/backlog: 6LoWPAN");
     }
     None
 }

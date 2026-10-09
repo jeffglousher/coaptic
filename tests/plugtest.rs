@@ -135,7 +135,7 @@ fn inventory() {
     let lowpan = catalog::extract_td_ids(include_str!("plugtest/td-coap4/6lowpan.yml"));
     skipped += lowpan.len();
     lines.push(format!(
-        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN (contributor opportunity))",
+        "SKIP  6LOWPAN {} TDs (future/backlog: 6LoWPAN)",
         lowpan.len()
     ));
     eprintln!(

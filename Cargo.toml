@@ -10,7 +10,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Jeff Glousher"]
 license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
-description = "CoAP from microcontrollers to cloud services: no_std Rust, no heap required, OSCORE protection by default"
+description = "Free, open-source CoAP for devices and cloud services. Rust, no_std, no heap required. OSCORE by default."
 repository = "https://github.com/jeffglousher/coaptic"
 homepage = "https://github.com/jeffglousher/coaptic"
 # docs.rs after registry publication (#132). Until then, use `cargo doc --open`.
@@ -28,7 +28,7 @@ include = [
     "LICENSE-MIT",
     "/README.md",
     "SECURITY.md",
-    "CONTRIBUTING.md",
+    "DEVELOPMENT.md",
     "rust-toolchain.toml",
 ]
 

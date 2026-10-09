@@ -6,4 +6,4 @@
 
 <!-- How you verified this. -->
 
-Required validation is defined in [CONTRIBUTING.md](https://github.com/jeffglousher/coaptic/blob/main/CONTRIBUTING.md).
+Required validation is defined in [DEVELOPMENT.md](https://github.com/jeffglousher/coaptic/blob/main/DEVELOPMENT.md).

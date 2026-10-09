@@ -1,13 +1,11 @@
 # coaptic
 
-CoAP from microcontrollers to cloud services. Protected by default. No heap required.
+Free, open-source CoAP for microcontrollers and cloud services.
 
 - Rust. `no_std`. No allocation by default; optional `alloc` and `std`.
-- OSCORE message protection; optional authenticated EDHOC provisioning.
+- OSCORE message protection by default; optional authenticated EDHOC provisioning.
 - Retransmission, Observe subscriptions, and block-wise transfers.
 - One client/server API. No background runtime.
-
-An alternative to HTTP for telemetry and frequent resource exchanges.
 
 ## Get started
 
@@ -134,11 +132,15 @@ Use `.oscore(context)` on each peer. EDHOC can provision authenticated peers.
 Applications own credentials, secure entropy, and durable replay state.
 [Security boundary](SECURITY.md).
 
-Run a protected client/server exchange: `cargo run --example oscore_pair --features std`.
-
 API reference and larger-payload examples: `cargo doc --open`.
 
-## Preliminary evidence
+## Demonstrations
+
+Run the resource and echo examples above, or a protected UDP exchange:
+
+```sh
+cargo run --example oscore_pair --features std
+```
 
 ESP32-S3 tests cover plaintext Wi-Fi UDP and separate OSCORE loopback.
 Network OSCORE and flash power-loss recovery remain unqualified.
@@ -146,7 +148,7 @@ Network OSCORE and flash power-loss recovery remain unqualified.
 [Test driver](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py) |
 [Benchmark method](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/README.md).
 
-Production readiness has not been established. Early users and contributors welcome.
+Measurements remain preliminary. Production readiness has not been established.
 
 ## License
 
