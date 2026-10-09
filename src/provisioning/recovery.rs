@@ -25,8 +25,8 @@ pub enum RecoveryError<E = Infallible> {
 #[allow(clippy::large_enum_variant)]
 enum CachedRole {
     Client {
-        operations: [Operation; 2],
-        acks: [Option<ResponseAck>; 2],
+        operations: [Operation; 3],
+        acks: [Option<ResponseAck>; 3],
         pending: u8,
     },
     Server {
@@ -46,7 +46,7 @@ impl Cache {
     fn from_controller(controller: CoapProvisioner<'_>, expires: u64, replies: bool) -> Self {
         let role = match controller.role {
             Role::Client(client) => CachedRole::Client {
-                operations: [client.ids.first, client.ids.second],
+                operations: [client.ids.first, client.ids.second, client.ids.echo],
                 acks: client.acks,
                 pending: if replies { client.pending_acks } else { 0 },
             },
@@ -283,6 +283,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                     let mid = MessageId::new(u16::from_be_bytes([bytes[0], bytes[1]]));
                     if !self.reserves_message_id(mid, self.endpoint, now_ms)
                         && !self.reserves_message_id(mid.wrapping_add(1), self.endpoint, now_ms)
+                        && !self.reserves_message_id(mid.wrapping_add(2), self.endpoint, now_ms)
                     {
                         return true;
                     }
@@ -343,13 +344,13 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             return Ok(Status::Ignored);
         };
         let payload = message.payload();
-        if !request_metadata(message)
-            || payload.len() != 38
-            || payload[..5] != [0xf5, 3, 2, 0x58, 0x20]
-        {
+        if !request_metadata(message) || payload.first() != Some(&0xf5) {
             return Ok(Status::Ignored);
         }
-        let Ok(peer_id) = ConnectionId::new(payload[37]) else {
+        let Ok(message_1) = super::super::Message::from_slice(&payload[1..]) else {
+            return Ok(Status::Ignored);
+        };
+        let Ok(peer_id) = super::super::message_1_peer_id(&message_1) else {
             return Ok(Status::Ignored);
         };
         let Some(local_id) = self.available_id(Some(peer_id)) else {
@@ -518,7 +519,13 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         }
         if let Some(candidate) = &self.candidate {
             if let Role::Client(client) = &candidate.role {
-                if [client.ids.first.mid, client.ids.second.mid].contains(&mid) {
+                if [
+                    client.ids.first.mid,
+                    client.ids.second.mid,
+                    client.ids.echo.mid,
+                ]
+                .contains(&mid)
+                {
                     return true;
                 }
             }

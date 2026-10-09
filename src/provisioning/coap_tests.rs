@@ -72,6 +72,117 @@ fn no_authorization(_: &Principal) -> bool {
     panic!("unauthenticated messages must not invoke authorization")
 }
 
+fn echo_response(request: &[u8], echo: &[u8]) -> Vec<u8> {
+    let parsed = decode(request).unwrap();
+    let options = [Opt::echo(echo)];
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::new(
+        Type::Acknowledgement,
+        Code::UNAUTHORIZED,
+        parsed.message_id(),
+    )
+    .with_token(parsed.token())
+    .with_options(&options)
+    .encode(&mut out)
+    .unwrap();
+    out[..len].to_vec()
+}
+
+#[test]
+fn echo_retry_uses_reserved_mid_exact_message1_and_original_wait_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let deadline = match &client.role {
+        Role::Client(client) => client.retry.wait_until.unwrap(),
+        _ => unreachable!(),
+    };
+    let challenge = echo_response(&original, &[8; 24]);
+    client
+        .ingest(
+            &challenge,
+            SERVER,
+            deadline - 1,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    client.flush(&mut io, deadline - 1).unwrap();
+    let retry = io.last();
+    assert_eq!(
+        decode(&retry).unwrap().payload(),
+        decode(&original).unwrap().payload()
+    );
+    assert_eq!(
+        decode(&retry).unwrap().message_id(),
+        decode(&original).unwrap().message_id().wrapping_add(2)
+    );
+    assert_eq!(
+        decode(&retry).unwrap().token(),
+        decode(&original).unwrap().token()
+    );
+    assert_eq!(decode(&retry).unwrap().echo(), Some(&[8; 24][..]));
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.retry.wait_until,
+            _ => unreachable!(),
+        },
+        Some(deadline)
+    );
+    assert_eq!(client.flush(&mut io, deadline), Err(PollError::Timeout));
+    assert_eq!(io.attempts.len(), 2);
+}
+
+#[test]
+fn echoed_request_and_saved_challenge_cannot_be_replaced_by_further_challenges() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let challenge = echo_response(&original, &[8; 24]);
+    let mut malformed = challenge.clone();
+    malformed[1] = 68;
+    assert_eq!(
+        client.ingest(&malformed, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, OTHER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    client
+        .ingest(&challenge, SERVER, 0, no_entropy, no_authorization)
+        .unwrap();
+    io.fail = true;
+    assert_eq!(client.flush(&mut io, 0), Err(PollError::Io(9)));
+    let echoed = io.last();
+    io.fail = false;
+    client.flush(&mut io, 0).unwrap();
+    assert_eq!(io.last(), echoed);
+    let second = echo_response(&echoed, &[9; 24]);
+    assert_eq!(
+        client.ingest(&second, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    assert!(client.take_session().is_none());
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.request.as_slice(),
+            _ => unreachable!(),
+        },
+        echoed
+    );
+}
+
 fn finish(
     client: &mut CoapProvisioner<'_>,
     server: &mut CoapProvisioner<'_>,
@@ -189,6 +300,37 @@ fn nondefault_local_ids_accept_authenticated_peer_choice_and_route_message3() {
     assert_eq!(client_context.sender_key(), server_context.recipient_key());
     assert_eq!(client_context.recipient_key(), server_context.sender_key());
     assert_eq!(client_context.common_iv(), server_context.common_iv());
+}
+
+#[test]
+fn extended_local_ids_route_complete_coap_handshakes_without_truncation() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let client_id = ConnectionId::from_slice(&[1, 2, 3, 4, 5, 6, 7]).unwrap();
+    let server_id = ConnectionId::from_slice(&[9, 8, 7, 6, 5, 4, 3]).unwrap();
+    let mut client =
+        CoapProvisioner::start_with_id(&a, b.peer(), SERVER, client_id, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen_with_id(&b, a.peer(), CLIENT, server_id, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    let (m1, _, m3, _) = finish(&mut client, &mut server, &mut client_io, &mut server_io, 0);
+    assert_eq!(
+        &decode(&m1).unwrap().payload()[37..],
+        client_id.lakers().as_cbor()
+    );
+    assert_eq!(
+        &decode(&m3).unwrap().payload()[..8],
+        server_id.lakers().as_cbor()
+    );
+    let (client, _) = client.take_session().unwrap().into_parts();
+    let (server, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(client.sender_id(), server_id.as_bytes());
+    assert_eq!(client.recipient_id(), client_id.as_bytes());
+    assert_eq!(server.sender_id(), client_id.as_bytes());
+    assert_eq!(server.recipient_id(), server_id.as_bytes());
+    assert_eq!(client.sender_key(), server.recipient_key());
+    assert_eq!(client.recipient_key(), server.sender_key());
+    assert_eq!(client.common_iv(), server.common_iv());
 }
 
 #[test]
@@ -1310,7 +1452,7 @@ fn oversized_response_connection_id_consumes_state_without_ack_or_session() {
             payload.len() - combined_len + crate::provisioning::lakers::P256_ELEM_LEN;
         // Replace the known C_R byte in XOR-encrypted plaintext_2 with an
         // oversized bstr header without changing the CoAP or EDHOC envelope.
-        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8().unwrap() ^ 0x48;
         let bad = recode(
             &good,
             ty,
