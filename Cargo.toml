@@ -90,6 +90,10 @@ required-features = ["std", "edhoc"]
 name = "edhoc_recovery_peer"
 required-features = ["std", "edhoc"]
 
+[[example]]
+name = "authenticated_enrollment"
+required-features = ["std", "edhoc"]
+
 [dev-dependencies]
 # Host examples/doctests and fixtures supply OS entropy; not a library runtime dependency.
 getrandom = "=0.3.4"
