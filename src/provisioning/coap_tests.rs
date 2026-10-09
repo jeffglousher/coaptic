@@ -1285,6 +1285,64 @@ fn wire_valid_malformed_authentication_consumes_state_without_ack_or_session() {
 }
 
 #[test]
+fn oversized_response_connection_id_consumes_state_without_ack_or_session() {
+    for ty in [Type::Acknowledgement, Type::Confirmable] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+        let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+        let mut client_io = Io::default();
+        let mut server_io = Io::default();
+        client.flush(&mut client_io, 0).unwrap();
+        server
+            .ingest(&client_io.last(), CLIENT, 0, entropy(4), no_authorization)
+            .unwrap();
+        server.flush(&mut server_io, 0).unwrap();
+        let good = server_io.last();
+        let parsed = decode(&good).unwrap();
+        let options: Vec<_> = parsed.options().collect();
+        let mut payload = parsed.payload().to_vec();
+        let combined_len = crate::provisioning::lakers::CBORDecoder::new(&payload)
+            .bytes()
+            .unwrap()
+            .len();
+        let ciphertext_start =
+            payload.len() - combined_len + crate::provisioning::lakers::P256_ELEM_LEN;
+        // Replace the known C_R byte in XOR-encrypted plaintext_2 with an
+        // oversized bstr header without changing the CoAP or EDHOC envelope.
+        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+        let bad = recode(
+            &good,
+            ty,
+            if ty == Type::Acknowledgement {
+                parsed.message_id()
+            } else {
+                MessageId::new(900)
+            },
+            parsed.token(),
+            &options,
+            &payload,
+        );
+        let error = PollError::Provisioning(Error::Parsing);
+        assert_eq!(
+            client.ingest(&bad, SERVER, 0, no_entropy, no_authorization),
+            Err(error)
+        );
+        assert_eq!(
+            client.ingest(&good, SERVER, 0, no_entropy, no_authorization),
+            Err(error)
+        );
+        assert_eq!(
+            client.flush(&mut client_io, 0),
+            Err(PollError::Provisioning(Error::Parsing))
+        );
+        assert!(client.take_session().is_none());
+        assert_eq!(client_io.attempts.len(), 1);
+        assert_eq!(client.next_deadline(), None);
+    }
+}
+
+#[test]
 fn backward_clock_and_overflow_are_terminal_before_fresh_entropy() {
     let a = identity(1, 0);
     let b = identity(2, 1);
