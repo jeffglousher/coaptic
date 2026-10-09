@@ -61,7 +61,7 @@ jobs:
       - name: Check publication tag matches crate version
         run: |
           set -euo pipefail
-          version=$(cargo metadata --no-deps --locked --format-version 1 | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "coaptic"))')
+          version=$(cargo metadata --no-deps --locked --format-version 1 | jq -r '.packages[] | select(.name == "coaptic") | .version')
           if [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::Publication tag $GITHUB_REF_NAME must match crate version v$version."
             exit 1

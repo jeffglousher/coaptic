@@ -132,8 +132,8 @@ API reference and larger-payload examples: `cargo doc --open`.
 ESP32-S3 tests cover plaintext Wi-Fi UDP and separate OSCORE loopback.
 Network OSCORE and flash power-loss recovery remain unqualified.
 [Setup, results, and limitations](https://github.com/jeffglousher/coaptic/issues/333) ?
-[Test driver](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py) ?
-[Benchmark method](https://github.com/jeffglousher/coaptic/blob/main/tools/benchmark/README.md).
+[Test driver](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py) |
+[Benchmark method](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/README.md).
 
 Production readiness has not been established. Early users and contributors welcome.
 
