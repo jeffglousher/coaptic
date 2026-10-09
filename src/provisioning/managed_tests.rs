@@ -488,7 +488,12 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
             |_| true,
         )
         .unwrap();
-    let payload: Vec<_> = core::iter::once(confirmation.peer_connection_id().as_u8())
+    let payload: Vec<_> = confirmation
+        .peer_connection_id()
+        .lakers()
+        .as_cbor()
+        .iter()
+        .copied()
         .chain(third.as_bytes().iter().copied())
         .collect();
     let len = Message::new(Type::Confirmable, Code::POST, mid.wrapping_add(1))
@@ -599,6 +604,60 @@ fn bounded_mid_ownership_refuses_bootstrap_app_and_retired_session_collisions() 
     io.prune(LIFETIME);
     io.send(SERVER, &packet(100)).unwrap();
     assert_eq!(network.borrow().sent.len(), sends + 1);
+}
+
+#[test]
+fn transport_reservation_capacity_refuses_before_send_and_recovers_after_expiry() {
+    let network = Rc::new(RefCell::new(Network::default()));
+    let mut io = ConnectionIo::new(
+        Some(Io {
+            local: CLIENT,
+            network: network.clone(),
+        }),
+        0,
+    );
+    let send = |io: &mut ConnectionIo<Io>, mid| {
+        let mut bytes = [0; 8];
+        let len = Message::con(Code::GET, MessageId::new(mid), Token::EMPTY)
+            .encode(&mut bytes)
+            .unwrap();
+        io.send(SERVER, &bytes[..len])
+    };
+
+    io.bootstrap_mode = true;
+    for mid in 0..BOOTSTRAP_MIDS as u16 {
+        send(&mut io, mid).unwrap();
+    }
+    let sends = network.borrow().sent.len();
+    assert!(matches!(
+        send(&mut io, BOOTSTRAP_MIDS as u16),
+        Err(ManagedIoError::Capacity)
+    ));
+    assert_eq!(network.borrow().sent.len(), sends);
+    send(&mut io, 0).unwrap(); // Retransmission retains its original reservation.
+
+    io.bootstrap_mode = false;
+    for epoch in 1..=MID_RANGES as u64 {
+        io.epoch = epoch;
+        send(&mut io, 100 + epoch as u16).unwrap();
+    }
+    io.epoch += 1;
+    assert!(!io.next_epoch_available());
+    let sends = network.borrow().sent.len();
+    assert!(matches!(
+        send(&mut io, 200),
+        Err(ManagedIoError::Capacity)
+    ));
+    assert_eq!(network.borrow().sent.len(), sends);
+
+    io.prune(LIFETIME - 1);
+    assert!(!io.next_epoch_available());
+    io.prune(LIFETIME);
+    assert!(io.next_epoch_available());
+    send(&mut io, 200).unwrap();
+    io.bootstrap_mode = true;
+    send(&mut io, 0).unwrap();
+    assert_eq!(network.borrow().sent.len(), sends + 2);
 }
 
 #[test]
