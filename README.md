@@ -33,18 +33,19 @@ let mut server = App::builder()
 ```
 
 <details>
-<summary>Complete server ? save as examples/server.rs</summary>
+<summary>Complete server (examples/server.rs)</summary>
 
 ```rust
 use std::{net::UdpSocket, thread, time::{Duration, Instant}};
-use coaptic::{App, Request, Response, get, post};
+use coaptic::{App, Code, Request, Response, get, post};
 
 fn temperature(_: Request<'_>) -> Response<'static> {
     Response::content(b"21.5")
 }
 
 fn echo(request: Request<'_>) -> Response<'static> {
-    Response::content_copy(request.payload())
+    Response::try_content_copy(request.payload())
+        .unwrap_or_else(|_| Response::new(Code::REQUEST_ENTITY_TOO_LARGE))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 </details>
 
-Run `cargo run --example server`.
+Run `cargo run --example server --features std`.
 
 ### Client
 
@@ -75,10 +76,10 @@ Run `cargo run --example server`.
 let call = client.get("sensors/temp").to(peer).send(now_ms)?;
 ```
 
-Drive exchanges with `poll`; collect replies with `take_response`.
+Drive exchanges with `poll`; collect complete replies into your buffer.
 
 <details>
-<summary>Complete client ? save as examples/client.rs</summary>
+<summary>Complete client (examples/client.rs)</summary>
 
 ```rust
 use std::{net::UdpSocket, thread, time::{Duration, Instant}};
@@ -89,18 +90,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     socket.set_nonblocking(true)?;
     let mut client = App::builder()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
+        .full_responses()
         .allow_plaintext()
         .bind(socket)?;
 
     let peer = Endpoint::v4([127, 0, 0, 1], 5683);
     let clock = Instant::now();
     let call = client.get("sensors/temp").to(peer).send(0)?;
+    let mut body = [0; 1472];
     loop {
         client.poll(clock.elapsed().as_millis() as u64)?;
-        if let Some(reply) = client.take_response(call) {
+        if let Some(reply) = client.take_response_into(call, &mut body)? {
             let reply = reply?;
+            if !reply.code().is_success() {
+                return Err(format!("peer replied {}", reply.code()).into());
+            }
             println!("{}", String::from_utf8_lossy(reply.payload()));
             return Ok(());
+        }
+        if clock.elapsed() >= Duration::from_secs(5) {
+            return Err("request timed out".into());
         }
         thread::sleep(Duration::from_millis(1));
     }
@@ -109,11 +118,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 </details>
 
-Run `cargo run --example client` in another terminal. It prints `21.5`.
+Run `cargo run --example client --features std` in another terminal. It prints `21.5`.
 
 ### Messages
 
-Replace the GET with a POST to echo a short payload:
+Replace the GET with a POST to echo a payload of up to 128 bytes:
 
 ```rust
 let call = client.post("echo").payload(b"hello").to(peer).send(now_ms)?;
@@ -125,13 +134,15 @@ Use `.oscore(context)` on each peer. EDHOC can provision authenticated peers.
 Applications own credentials, secure entropy, and durable replay state.
 [Security boundary](SECURITY.md).
 
+Run a protected client/server exchange: `cargo run --example oscore_pair --features std`.
+
 API reference and larger-payload examples: `cargo doc --open`.
 
 ## Preliminary evidence
 
 ESP32-S3 tests cover plaintext Wi-Fi UDP and separate OSCORE loopback.
 Network OSCORE and flash power-loss recovery remain unqualified.
-[Setup, results, and limitations](https://github.com/jeffglousher/coaptic/issues/333) ?
+[Setup, results, and limitations](https://github.com/jeffglousher/coaptic/issues/333) |
 [Test driver](https://github.com/jeffglousher/coaptic/blob/f618540597f4062655761e122c8c24d062f13a86/tools/qualification/network_peer.py) |
 [Benchmark method](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/README.md).
 

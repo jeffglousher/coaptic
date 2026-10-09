@@ -17,7 +17,7 @@ Group OSCORE, other ciphers and library-owned DTLS are not supported. DTLS in
 the [test peers](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/README.md)
 does not add a library DTLS API.
 
-When a context is attached, App is fail-closed: a non-empty message without an OSCORE option is rejected (unprotected 4.01 on a request; a token-matching plain 2.xx, plaintext Observe notification, or unprotected Block1/Block2 completion does not complete a Call). Empty ACK/RST (RFC 7252 reliability) stay unprotected. AEAD / replay / OSCORE-option processing failures are a silent drop â€” no unprotected 4.00 that would distinguish decrypt.
+When a context is attached, App is fail-closed: a non-empty message without an OSCORE option is rejected (unprotected 4.01 on a request; a token-matching plain 2.xx, plaintext Observe notification, or unprotected Block1/Block2 completion does not complete a Call). Empty ACK/RST (RFC 7252 reliability) stay unprotected. AEAD / replay / OSCORE-option processing failures are silently dropped without an unprotected error response.
 
 Optional EDHOC provisioning supports pinned P-256 method 3 / suite 2 with
 explicit confirmation before handing off fresh OSCORE keys. Applications own

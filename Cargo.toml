@@ -63,8 +63,20 @@ revision = "462b30f5b3e9cfab96c05fe65f36d19eaa7002ad"
 license = "BSD-3-Clause"
 
 [[example]]
+name = "server"
+required-features = ["std"]
+
+[[example]]
+name = "client"
+required-features = ["std"]
+
+[[example]]
 name = "coap_server"
 required-features = ["std"]
+
+[[example]]
+name = "oscore_pair"
+required-features = ["std", "oscore"]
 
 [[example]]
 name = "edhoc_peer"

@@ -68,6 +68,15 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
+      - name: Run the README client and server
+        shell: bash
+        run: |
+          cargo build --locked --example server --example client --features std
+          target/debug/examples/server &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          target/debug/examples/client
+      - run: cargo run --locked --example oscore_pair --features std
 
   doc:
     name: doc
