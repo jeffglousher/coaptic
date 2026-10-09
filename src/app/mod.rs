@@ -111,7 +111,7 @@
 //! The happy path does not use [`Access`](crate::storage::Access) or
 //! [`SlotId`]. Engine remains the advanced escape hatch
 //! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
-//! and BERT edges (future / backlog).
+//! and codecs not exposed by the App transfer API, such as BERT.
 mod client;
 mod echo;
 mod identity;
@@ -843,7 +843,7 @@ impl<
     ///
     /// Escape hatch for explicit slots, [`crate::storage::Access`] /
     /// [`crate::storage::AccessMut`], custom RST / remaining 4.xx, and
-    /// BERT edges (future / backlog). [`Self::poll`] already pins and
+    /// codecs not exposed by App, such as BERT. [`Self::poll`] already pins and
     /// releases; App handlers do not need this.
     pub const fn engine_mut(&mut self) -> &mut Engine<S> {
         &mut self.engine
@@ -1097,7 +1097,7 @@ where
     /// `now_ms` is the caller monotonic clock. Production CON jitter comes
     /// from the configured [`RandomSource`]; retransmits retain that schedule.
     /// Advanced slots / [`Access`](crate::storage::Access) / remaining RST
-    /// policy / BERT (future / backlog): [`Self::engine_mut`].
+    /// policy or BERT codecs: [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         poll_engine(
             &mut self.engine,

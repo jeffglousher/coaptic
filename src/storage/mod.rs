@@ -12,7 +12,7 @@
 //! sidecars are tables on those slots — not a seventh memory area.
 //! Incoming Q-Block `NON_RECEIVE_TIMEOUT` is [`QBlockReceiveWait`]
 //! (caller `now_ms`). Engine BERT (SZX 7) codecs exist; App does not
-//! expose them (future / backlog).
+//! expose them.
 //!
 //! [`Access`] / [`AccessMut`] pin occupied datagram or body bytes against
 //! [`SlotPool::release`]. The App happy path does not need them.
