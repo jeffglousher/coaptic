@@ -34,8 +34,9 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           output: results
-          # Keep default setup scanning main while this migration is reviewed.
-          # After merge: disable default setup, then enable this repository variable.
+          # Default setup scans Rust/Actions here; moved languages use coaptic-validation.
+          # Keep uploads off while default setup is enabled. An advanced-setup
+          # transition must disable default setup before enabling this variable.
           upload: ${{ vars.CODEQL_ADVANCED_UPLOAD == 'true' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
