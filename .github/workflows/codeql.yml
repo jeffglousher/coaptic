@@ -34,7 +34,7 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           output: results
-          # Default setup scans Rust/Actions here; moved languages use coaptic-validation.
+          # Default setup owns uploads; moved validation sources use coaptic-validation.
           # Keep uploads off while default setup is enabled. An advanced-setup
           # transition must disable default setup before enabling this variable.
           upload: ${{ vars.CODEQL_ADVANCED_UPLOAD == 'true' }}
