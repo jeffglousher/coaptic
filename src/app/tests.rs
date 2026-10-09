@@ -5774,6 +5774,72 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
 }
 
 #[test]
+fn truncated_handler_response_refuses_wire_and_observe_then_recovers() {
+    use crate::ResponseError;
+
+    fn handler(request: Request<'_>) -> Response<'static> {
+        let response = Response::content_copy(request.payload()).observe(0);
+        if request.payload().first() == Some(&b's') {
+            response.separate()
+        } else {
+            response
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("test", get(handler))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for mid in 0..12 {
+        let payload = [if mid % 2 == 0 { b's' } else { b'p' }; INLINE_PAYLOAD + 1];
+        let options = [Opt::observe_register(), Opt::uri_path("test")];
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1800 + mid))
+            .with_token(token)
+            .with_options(&options)
+            .with_payload(&payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(mid)),
+            Err(Error::Response(ResponseError::PayloadTruncated))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert!(!observe_live(&app, peer, token));
+    }
+    let payload = [b'z'; INLINE_PAYLOAD];
+    let options = [Opt::observe_register(), Opt::uri_path("test")];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1900))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&payload);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(observe_live(&app, peer, token));
+    assert_eq!(app.transport().send_n, 1);
+    let io = app.transport();
+    assert_eq!(
+        decode(&io.sends[0][..io.send_lens[0]]).unwrap().payload(),
+        payload
+    );
+    assert_eq!(
+        app.notify(
+            13,
+            &["test"],
+            Response::content_copy(&[0; INLINE_PAYLOAD + 1])
+        ),
+        Err(Error::Response(ResponseError::PayloadTruncated))
+    );
+    assert_eq!(app.transport().send_n, 1);
+}
+
+#[test]
 fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
     use crate::ResponseError;
     use core::sync::atomic::{AtomicBool, Ordering};

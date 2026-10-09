@@ -408,6 +408,77 @@ fn failed_request_checkpoint_burns_live_replay_and_refills_before_receiving_retr
 }
 
 #[test]
+fn truncated_protected_response_keeps_replay_checkpoint_across_restart() {
+    let events = Events::default();
+    let mut sender = client_c1();
+    let packet = request(&mut sender, Type::Confirmable, 109);
+    {
+        let mut server = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .require_oscore_checkpoint()
+            .oscore(server_c1())
+            .bind(DurableIo::new(&events))
+            .unwrap();
+        server.transport_mut().inbox = Some(packet);
+        events.required_sequence.set(Some(0));
+        assert!(matches!(
+            server.poll_with_oscore_checkpoint_and_dispatch(
+                0,
+                |checkpoint| events.persist(checkpoint),
+                |opened, _| {
+                    assert_request(&events, &opened, 0, 109);
+                    Response::changed()
+                        .payload_copy(&[0; crate::app::INLINE_PAYLOAD + 1])
+                        .separate()
+                },
+            ),
+            Err(crate::Error::Response(
+                crate::ResponseError::PayloadTruncated
+            ))
+        ));
+        assert_eq!(events.effects.get(), 1);
+        assert_eq!(server.transport().sent_len, 0);
+    }
+    let mut context = server_c1();
+    context
+        .restore_replay(events.durable.get().unwrap())
+        .unwrap();
+    let mut restarted = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .require_oscore_checkpoint()
+        .oscore(context)
+        .bind(DurableIo::new(&events))
+        .unwrap();
+    restarted.transport_mut().inbox = Some(packet);
+    restarted
+        .poll_with_oscore_checkpoint_and_dispatch(
+            1,
+            |checkpoint| events.persist(checkpoint),
+            |_, _| panic!("response construction failure must not replay an accepted effect"),
+        )
+        .unwrap();
+    assert_eq!(restarted.transport().sent_len, 0);
+    assert_eq!(events.effects.get(), 1);
+
+    restarted.transport_mut().inbox = Some(request(&mut sender, Type::Confirmable, 110));
+    events.required_sequence.set(Some(1));
+    restarted
+        .poll_with_oscore_checkpoint_and_dispatch(
+            2,
+            |checkpoint| events.persist(checkpoint),
+            |opened, _| {
+                assert_request(&events, &opened, 1, 110);
+                Response::changed()
+            },
+        )
+        .unwrap();
+    assert_eq!(restarted.transport().sent_len, 1);
+    assert_eq!(events.effects.get(), 2);
+}
+
+#[test]
 fn restart_after_checkpoint_failure_distinguishes_unwritten_and_committed_state() {
     for persisted_before_failure in [false, true] {
         let events = Events::default();

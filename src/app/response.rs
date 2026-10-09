@@ -33,10 +33,10 @@ pub const RESPONSE_BODY: usize = 4096;
 /// [`Response::validate`] reports the error before App sends it.
 pub const LOCATION_MAX: usize = 8;
 
-/// A handler response exceeds an option bound or contains an invalid option value.
+/// A response exceeds a payload or option bound, or contains an invalid option value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseError {
-    /// Deferred completion cannot send an intent containing a truncated payload.
+    /// A copied payload exceeds its storage bound. App refuses to send it.
     PayloadTruncated,
     /// Deferred completion metadata exceeds its bounded retained header.
     DeferredMetadataBounds,
@@ -52,7 +52,7 @@ pub enum ResponseError {
 impl core::fmt::Display for ResponseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
-            Self::PayloadTruncated => "deferred response payload is truncated",
+            Self::PayloadTruncated => "response payload exceeds its copy bound",
             Self::DeferredMetadataBounds => "deferred response metadata exceeds App bounds",
             Self::EtagLength => "ETag must contain 1 through 8 bytes",
             Self::LocationPathBounds => "Location-Path exceeds its count or byte bound",
@@ -228,15 +228,28 @@ impl<'a> Response<'a> {
         self
     }
 
-    /// Check bounded option setters before returning or sending this response.
+    /// Check payload and option bounds before returning or sending this response.
     ///
     /// Invalid setters retain the first error. Later valid setters do not clear
     /// it; construct a new response to recover. App refuses the invalid intent
-    /// before sending any bytes or registering an Observe subscription.
+    /// before sending any bytes or registering an Observe subscription. A
+    /// truncated payload also fails validation; replacing it with a complete
+    /// payload clears that condition.
     pub const fn validate(&self) -> Result<(), ResponseError> {
         match self.invalid {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => {
+                let len = match self.payload {
+                    Payload::Empty => 0,
+                    Payload::Static(bytes) | Payload::Borrowed(bytes) => bytes.len(),
+                    Payload::Inline { len, .. } => len as usize,
+                };
+                if self.payload_src_len > len {
+                    Err(ResponseError::PayloadTruncated)
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -257,12 +270,21 @@ impl<'a> Response<'a> {
     /// [`INLINE_PAYLOAD`]).
     ///
     /// Same 128-byte cap as a client snapshot [`Self::payload`]. Longer
-    /// input sets [`Self::payload_truncated`]. Prefer [`Self::content`]
+    /// input sets [`Self::payload_truncated`] and App refuses to send it.
+    /// Use [`Self::try_content_copy`] to handle overflow immediately. Prefer [`Self::content`]
     /// (`'static`) or [`Self::payload_copy_full`] (borrow) when the body
     /// must not be cut.
     #[must_use]
     pub fn content_copy(payload: &[u8]) -> Self {
         Self::new(Code::CONTENT).payload_copy(payload)
+    }
+
+    /// 2.05 Content with a complete copy into the inline buffer.
+    ///
+    /// Returns [`ResponseError::PayloadTruncated`] when `payload` exceeds
+    /// [`INLINE_PAYLOAD`], allowing the handler to return a size error instead.
+    pub fn try_content_copy(payload: &[u8]) -> Result<Self, ResponseError> {
+        Self::new(Code::CONTENT).try_payload_copy(payload)
     }
 
     /// 2.01 Created.
@@ -708,7 +730,8 @@ impl<'a> Response<'a> {
     /// Replace the payload by copying into the inline buffer.
     ///
     /// Copies `min(len, `[`INLINE_PAYLOAD`]`)`. Longer input is truncated;
-    /// [`Self::payload_truncated`] is then `true`. This is the same cap
+    /// [`Self::payload_truncated`] is then `true` and App refuses to send it.
+    /// Use [`Self::try_payload_copy`] to handle overflow immediately. This is the same cap
     /// [`super::App::take_response`] uses for a non-Block client snapshot.
     #[must_use]
     pub fn payload_copy(mut self, payload: &[u8]) -> Self {
@@ -727,11 +750,24 @@ impl<'a> Response<'a> {
         self
     }
 
+    /// Replace the payload with a complete copy into the inline buffer.
+    ///
+    /// Returns [`ResponseError::PayloadTruncated`] rather than retaining a
+    /// partial payload when `payload` exceeds [`INLINE_PAYLOAD`].
+    pub fn try_payload_copy(self, payload: &[u8]) -> Result<Self, ResponseError> {
+        if payload.len() > INLINE_PAYLOAD {
+            return Err(ResponseError::PayloadTruncated);
+        }
+        Ok(self.payload_copy(payload))
+    }
+
     /// Use `payload` as the body without copying (catalog / poll scratch).
     ///
     /// Lengths that fit inline use [`Self::payload_copy`]. Larger slices are
     /// borrowed for `'a` (capped at [`RESPONSE_BODY`]). This is the handler
-    /// path that is **not** silently cut at [`INLINE_PAYLOAD`].
+    /// path that is **not** silently cut at [`INLINE_PAYLOAD`]. Input exceeding
+    /// [`RESPONSE_BODY`] is marked truncated and App refuses to send it; use
+    /// [`Self::payload_borrowed`] for a complete borrow without this legacy cap.
     #[must_use]
     pub fn payload_copy_full(self, payload: &'a [u8]) -> Self {
         if payload.len() <= INLINE_PAYLOAD {
@@ -1096,9 +1132,9 @@ pub(crate) type AssembledField<P, const BLOCK_WISE: bool> = <P as AppAssembled<B
 mod assembled_hold_tests {
     use super::{
         AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, INLINE_PAYLOAD, RESPONSE_BODY,
-        Response,
+        Response, ResponseError,
     };
-    use crate::profiles;
+    use crate::{Code, profiles};
     use core::mem::size_of;
 
     #[test]
@@ -1123,6 +1159,40 @@ mod assembled_hold_tests {
         assert_eq!(none.view(), None);
         none.store(b"x");
         assert_eq!(none.view(), None);
+    }
+
+    #[test]
+    fn checked_copy_preserves_complete_payload_and_refuses_overflow() {
+        for len in [0, 1, INLINE_PAYLOAD] {
+            let bytes = [b'x'; INLINE_PAYLOAD];
+            let response = Response::try_content_copy(&bytes[..len]).unwrap();
+            assert_eq!(response.code(), Code::CONTENT);
+            assert_eq!(response.payload(), &bytes[..len]);
+            assert_eq!(response.validate(), Ok(()));
+        }
+        let oversized = [0; INLINE_PAYLOAD + 1];
+        assert_eq!(
+            Response::try_content_copy(&oversized).unwrap_err(),
+            ResponseError::PayloadTruncated
+        );
+        assert_eq!(
+            Response::changed()
+                .try_payload_copy(&oversized)
+                .unwrap_err(),
+            ResponseError::PayloadTruncated
+        );
+        let truncated = Response::content_copy(&oversized);
+        assert_eq!(truncated.validate(), Err(ResponseError::PayloadTruncated));
+        assert_eq!(truncated.with_static(b"complete").validate(), Ok(()));
+        let body = [0; RESPONSE_BODY + 1];
+        assert_eq!(
+            Response::changed().payload_copy_full(&body).validate(),
+            Err(ResponseError::PayloadTruncated)
+        );
+        assert_eq!(
+            Response::changed().payload_borrowed(&body).validate(),
+            Ok(())
+        );
     }
 
     #[test]

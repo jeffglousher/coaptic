@@ -1282,9 +1282,6 @@ where
         if response.is_deferred() {
             return Err(Error::DeferredUnknown);
         }
-        if response.payload_truncated() {
-            return Err(Error::Response(ResponseError::PayloadTruncated));
-        }
         let response = response.with_fresh_piv();
         let row = self.deferred.rows[index].expect("matched row");
         let metadata =
