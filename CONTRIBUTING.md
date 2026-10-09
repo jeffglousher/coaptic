@@ -14,57 +14,34 @@ are squash-only and must pass CI.
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
-cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 cargo test --no-default-features
 cargo test --all-features
 cargo test --no-default-features --features alloc
 cargo test --no-default-features --features oscore
 cargo test --no-default-features --features alloc,oscore
 cargo test --no-default-features --features std
-cargo test -p coaptic-plugtest --features dtls,oscore
 cargo doc --no-deps --all-features
 cargo package -p coaptic --locked
 cargo +1.85.0 check --locked -p coaptic --no-default-features
 cargo +1.85.0 check --locked -p coaptic --all-features
 ```
 
-Transport and harness changes also run the [dogfood checks](crates/coaptic-plugtest/README.md)
-and the [process suite](tools/interop/README.md). Job flags are in
-[CI](.github/workflows/ci.yml). Process timing is the `process-interop` artifact.
-Those timings are a smoke sample.
+## Companion validation
 
-## Qualification commands
+[coaptic-validation](https://github.com/jeffglousher/coaptic-validation) holds
+interoperability peers, hardware tooling, benchmarks, and qualification runners.
+The library, examples, and unit/integration tests here are Rust.
 
-`tools/qualification/cross_build.py --target TARGET --output PATH` builds a
-bounded App probe with Rust 1.97.1 for `thumbv6m-none-eabi`,
-`thumbv7em-none-eabi`, `riscv32imac-unknown-none-elf`, and
-`wasm32-unknown-unknown`, in core, alloc, OSCORE, and alloc+OSCORE. That is
-release code generation. Device execution, stack high-water, allocators,
-entropy, and networking are #202.
-
-`python tools/qualification/seeded.py --output PATH` runs five campaigns on
-Rust 1.97.1: 6,000 body operations, 50,000 datagram mutations, 50,000 CBOR
-mutations, 100,000 replay-window steps, and 512 corruption/original/replay
-sequences. Seeds sit next to the oracles. Fuzzing, branch coverage, and
-compound soak are #202.
-
-`python tools/qualification/host.py --output PATH` runs the six feature modes
-on the host. CI also passes `--target i686-pc-windows-msvc`,
-`--target i686-unknown-linux-gnu`, and, on Linux,
-`--target s390x-unknown-linux-gnu`. The s390x run uses QEMU user-mode, one
-test thread, and no rustdoc. Empty runs, timeouts, a 64-bit image on a 32-bit
-job, or the wrong ELF endian fail the report. These jobs execute library tests.
-They are not the process/DTLS matrix or an MCU run. MCU stack and runtime stay #202.
-
-`python tools/qualification/coverage.py --work-root BUILD_PARENT --output REPORT.json`
-archives LLVM counters for compiled `src/` in the all-feature build, including
-unit-test modules. It is not branch coverage or an RFC checklist. No percentage
-is an acceptance bar. Requirement and branch evidence stay #202.
+CI calls the companion workflow at a pinned commit against the exact library
+revision. Follow its [run instructions](https://github.com/jeffglousher/coaptic-validation#run)
+for transport, security, or harness changes. Preserve both source revisions,
+lockfiles, setup limitations, and reports. The process timings are smoke samples;
+measurements remain preliminary. Updating the suite pin is a reviewed change.
 
 ## Release
 
 Only `coaptic` is published. Harnesses and peers stay out of the crate.
-`cargo package` excludes `knowledge/`, `tools/`, and the workspace test crates.
+`cargo package` includes only the library, Rust examples/tests, and supporting notices.
 Release tags start the rustdoc and crates.io workflows. Ordinary development
 does not create those tags.
 

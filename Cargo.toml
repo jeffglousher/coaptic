@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/coaptic-plugtest", "crates/peer-coaptic", "crates/peer-coap-rs", "crates/qualification-no-std"]
+members = ["."]
 default-members = ["."]
 resolver = "2"
 
@@ -18,7 +18,7 @@ documentation = "https://github.com/jeffglousher/coaptic"
 readme = "README.md"
 categories = ["no-std", "embedded", "network-programming"]
 keywords = ["coap", "no-std", "embedded", "no-alloc"]
-# Library crate only. Workspace harness, RFC copies, and agent/CI files stay out.
+# Library crate only. RFC copies and agent/CI files stay out.
 # Cargo.lock is auto-included (example binary); it is not listed here.
 include = [
     "src/**",

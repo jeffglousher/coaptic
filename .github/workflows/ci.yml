@@ -29,146 +29,6 @@ jobs:
       - run: cargo check --locked -p coaptic --no-default-features
       - run: cargo check --locked -p coaptic --all-features
 
-  host-platforms:
-    name: host library (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.13'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: python -m unittest discover -s tools/qualification -p "test_*.py"
-      - run: python tools/qualification/host.py --output "${{ runner.temp }}/host-qualification.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: host-qualification-${{ matrix.os }}
-          path: ${{ runner.temp }}/host-qualification.json
-          if-no-files-found: error
-
-  host-32bit:
-    name: 32-bit library (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: i686-pc-windows-msvc
-          - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-          targets: ${{ matrix.target }}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.13'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ matrix.target }}
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
-      - run: python -m unittest discover -s tools/qualification -p "test_*.py"
-      - run: python tools/qualification/host.py --target "${{ matrix.target }}" --output "${{ runner.temp }}/host-32bit.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: host-32bit-${{ matrix.target }}
-          path: ${{ runner.temp }}/host-32bit.json
-          if-no-files-found: error
-
-  big-endian:
-    name: big-endian library (emulated s390x)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-          targets: s390x-unknown-linux-gnu
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: s390x-unknown-linux-gnu
-      - run: sudo apt-get update && sudo apt-get install -y qemu-user gcc-s390x-linux-gnu libc6-dev-s390x-cross
-      - run: python3 -m unittest discover -s tools/qualification -p 'test_*.py'
-      - run: python3 tools/qualification/host.py --target s390x-unknown-linux-gnu --output "${{ runner.temp }}/big-endian.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: big-endian-s390x
-          path: ${{ runner.temp }}/big-endian.json
-          if-no-files-found: error
-
-  source-coverage:
-    name: source coverage evidence
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-          components: llvm-tools
-      - run: python3 -m unittest discover -s tools/qualification -p 'test_*.py'
-      - run: python3 tools/qualification/coverage.py --work-root "${{ runner.temp }}/coverage-build" --output "${{ runner.temp }}/coverage/source-coverage.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: source-coverage
-          path: ${{ runner.temp }}/coverage/
-          if-no-files-found: error
-
-  cross-build:
-    name: no_std code generation (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [thumbv6m-none-eabi, thumbv7em-none-eabi, riscv32imac-unknown-none-elf, wasm32-unknown-unknown]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-          targets: ${{ matrix.target }}
-      - run: python3 tools/qualification/cross_build.py --target ${{ matrix.target }} --output ${{ runner.temp }}/cross-build.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: cross-build-${{ matrix.target }}
-          path: ${{ runner.temp }}/cross-build.json
-          if-no-files-found: error
-
-  seeded-qualification:
-    name: seeded qualification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-      - run: python3 tools/qualification/seeded.py --output ${{ runner.temp }}/seeded.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: seeded-qualification
-          path: ${{ runner.temp }}/seeded.json
-          if-no-files-found: error
-
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -192,7 +52,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 
   test:
     name: test
@@ -209,9 +68,6 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
-      - run: cargo test -p coaptic-plugtest --features dtls,oscore
-      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
-      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
 
   doc:
     name: doc
@@ -226,7 +82,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo doc --no-deps --all-features
 
-  # Tarball check only — do not use `cargo publish --dry-run` here.
+  # Tarball check only â€” do not use `cargo publish --dry-run` here.
   # After a version is published, dry-run of that same version fails CI.
   package:
     name: package
@@ -247,38 +103,10 @@ jobs:
           fi
       - run: cargo package -p coaptic --locked
 
-  process-interop:
-    name: independent process interop
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev
-      - name: Pin independent C peer source
-        run: |
-          git init "$RUNNER_TEMP/libcoap"
-          git -C "$RUNNER_TEMP/libcoap" fetch --depth 1 https://github.com/obgm/libcoap.git 851533c3cf63d16984d370ce39d586ecb3694971
-          git -C "$RUNNER_TEMP/libcoap" checkout --detach FETCH_HEAD
-      - name: Build separate peer executables
-        run: |
-          cargo clippy --locked -p peer-coaptic -p peer-coap-rs --all-targets -- -D warnings
-          cargo test --locked -p peer-coaptic -p peer-coap-rs
-          cargo build --locked --release -p peer-coaptic -p peer-coap-rs
-          cmake -S tools/interop/libcoap -B target/libcoap-peer -G Ninja -DLIBCOAP_SOURCE="$RUNNER_TEMP/libcoap" -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
-          cmake --build target/libcoap-peer --parallel 2
-      - name: Supervisor and fault-injection tests
-        run: python3 -m unittest discover -s tools/interop -p 'test_*.py'
-      - name: Wire interoperability, reliability and timing
-        run: python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --build-note "all peers Release; Ubuntu hosted runner" --output target/process-interop.json
-      - name: Retain measurements and fault evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: process-interop
-          path: target/process-interop.json
-          if-no-files-found: warn
+  validation:
+    name: Companion validation
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@66a739cc15d3c5a1771217ad17ee4d325f07d359
+    with:
+      suite_revision: 66a739cc15d3c5a1771217ad17ee4d325f07d359
+      library_repository: ${{ github.repository }}
+      library_revision: ${{ github.sha }}
