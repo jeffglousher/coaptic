@@ -682,6 +682,9 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: 
     /// [`INLINE_PAYLOAD`] (128) is still truncated on
     /// [`App::take_response`] in either mode; enable Block2 and read
     /// [`Response::body`] for the full representation.
+    /// Without body pools, a received Block2 / Q-Block2 reply completes the
+    /// Call with [`CallFailure::BlockTransfer`] containing
+    /// [`BlockTransferError::NoBodyPools`]. No fragment is returned as success.
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED, DEFERRED> {
         AppBuilder {
