@@ -209,7 +209,9 @@ impl ConnId {
         let len = ConnIdType::classify(decoder.current()?)
             .ok_or(CBORError::DecodingError)?
             .length();
-        s[..len].copy_from_slice(decoder.read_slice(len)?);
+        s.get_mut(..len)
+            .ok_or(CBORError::DecodingError)?
+            .copy_from_slice(decoder.read_slice(len)?);
         Ok(Self(s))
     }
 
