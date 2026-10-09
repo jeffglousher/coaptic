@@ -669,8 +669,8 @@ fn all_compact_ids_reserved_refuses_admission_even_with_a_free_cache_slot() {
             expires: EXCHANGE_LIFETIME_MS,
             replies: false,
             role: CachedRole::Client {
-                operations: [operation; 2],
-                acks: [None, None],
+                operations: [operation; 3],
+                acks: [None, None, None],
                 pending: 0,
             },
         });
@@ -706,6 +706,8 @@ fn new_bootstrap_mid_sampling_is_bounded_and_cannot_reuse_old_operations() {
     );
     assert_eq!(calls, 8);
     assert!(!client.has_candidate());
+    let echo_mid = decode(&old[0]).unwrap().message_id().wrapping_add(2);
+    assert!(client.reserves_message_id(echo_mid, SERVER, 1));
     let mut fresh = entropy(5);
     let mut attempts = 0;
     client
