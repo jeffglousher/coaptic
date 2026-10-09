@@ -594,6 +594,8 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     /// Selects an active owner from untrusted OSCORE routing bytes and exact endpoint.
     /// The returned candidate must still authenticate and authorize the packet.
     /// Duplicate OSCORE options, ID Contexts and missing request identifiers fail.
+    /// The shared-listener profile also refuses retained bootstrap MIDs at the
+    /// same endpoint until their original exchange lifetime expires.
     pub fn route_oscore(
         &mut self,
         bytes: &[u8],
@@ -605,7 +607,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         let Ok(parsed) = decode(bytes) else {
             return Ok(None);
         };
-        if !parsed.code().is_request() {
+        if !parsed.code().is_request()
+            || self.reserves_message_id(parsed.message_id(), endpoint, now_ms)
+        {
             return Ok(None);
         }
         let mut options = parsed.get_options(OptionNumber::OSCORE);
