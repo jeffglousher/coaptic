@@ -28,6 +28,7 @@ mod connection_id;
 mod crypto;
 mod identity;
 mod lakers;
+mod receipt;
 mod trust;
 
 pub use cloud::{
@@ -36,6 +37,9 @@ pub use cloud::{
 pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
 pub use connection_id::ConnectionId;
 pub use identity::{Identity, PinnedPeer, Principal};
+pub use receipt::{
+    OperationId, Receipt, ReceiptError, ReceiptStore, TelemetryOperation, commit_telemetry,
+};
 pub use trust::{
     PeerTrust, TrustAnchor, TrustCommitError, TrustError, TrustGrant, TrustRecord, TrustRecordParts,
 };
