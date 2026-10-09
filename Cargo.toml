@@ -75,6 +75,10 @@ name = "edhoc_udp_peer"
 required-features = ["std", "edhoc"]
 
 [[example]]
+name = "edhoc_cloud_peer"
+required-features = ["std", "edhoc"]
+
+[[example]]
 name = "edhoc_recovery_peer"
 required-features = ["std", "edhoc"]
 
