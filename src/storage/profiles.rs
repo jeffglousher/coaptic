@@ -1,6 +1,10 @@
 //! Shipped [`MemoryProfile`] implementations.
 //!
 //! Slot and table counts below are modest starting numbers.
+//! These are payload capacities, not total RAM or stack budgets. Inline storage
+//! also retains protocol state and sidecars; constructing an App by value can
+//! require additional pool temporaries. Measure the concrete App layout and
+//! optimized target frames before choosing a task's stack size.
 
 use super::exchange::ExchangeTable;
 use super::memory::MemoryProfile;
