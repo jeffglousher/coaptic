@@ -4,6 +4,16 @@
 //! [`App`] serves resources and exchanges messages through one client/server API.
 //! OSCORE protection is required by default; EDHOC provisioning is optional.
 //!
+//! # Platform integration
+//!
+//! The core is independent of a microcontroller, board SDK or operating system.
+//! Constrained devices use fixed storage without allocation or the standard
+//! library. Applications supply [`storage::DatagramIo`], secure randomness,
+//! provisioned credentials and a monotonic clock, and drive [`App::poll`].
+//! The same service code can use a device adapter or a host transport.
+//! Our physical constrained-device qualification uses an ESP32-S3; other targets
+//! need their own integration and qualification evidence.
+//!
 //! # Client and server
 //!
 //! Apps require a provisioned pairwise OSCORE context before binding. Supply
