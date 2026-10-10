@@ -20,6 +20,7 @@ cargo test --no-default-features --features alloc
 cargo test --no-default-features --features oscore
 cargo test --no-default-features --features alloc,oscore
 cargo test --no-default-features --features std
+cargo test --features std --test std_fixed_storage
 cargo doc --no-deps --all-features
 cargo package -p coaptic --locked
 cargo +1.85.0 check --locked -p coaptic --no-default-features
