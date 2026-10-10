@@ -1,5 +1,9 @@
 //! README server; explicitly plaintext on localhost.
 
+#[path = "support/host_error.rs"]
+pub mod host_error;
+
+use coaptic::storage::UdpSocketIo;
 use coaptic::{App, Code, Request, Response, get, post};
 use std::{
     net::UdpSocket,
@@ -16,7 +20,7 @@ fn echo(request: Request<'_>) -> Response<'static> {
         .unwrap_or_else(|_| Response::new(Code::REQUEST_ENTITY_TOO_LARGE))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), host_error::Error> {
     let socket = UdpSocket::bind("127.0.0.1:5683")?;
     socket.set_nonblocking(true)?;
     let mut server = App::builder()
@@ -24,11 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("sensors/temp", get(temperature))
         .route("echo", post(echo))
         .allow_plaintext()
-        .bind(socket)?;
+        .bind(UdpSocketIo::new(socket, [0; 1473])?)?;
 
     let clock = Instant::now();
     loop {
-        server.poll(clock.elapsed().as_millis() as u64)?;
+        server.poll(
+            u64::try_from(clock.elapsed().as_millis()).map_err(|_| host_error::Error::Clock)?,
+        )?;
         thread::sleep(Duration::from_millis(1));
     }
 }
