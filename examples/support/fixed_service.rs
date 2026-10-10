@@ -1,6 +1,6 @@
 //! The same fixed-storage protected service for a device or host transport.
 //!
-//! This is platform-independent application code, not ESP32 firmware. The caller
+//! This application code is independent of a microcontroller or board SDK. The caller
 //! supplies bounded datagram I/O, secure randomness and a fresh or safely restored
 //! OSCORE context, then drives `poll` with a monotonic millisecond clock. Retained
 //! credentials need durable sender reservations and replay checkpoints; see
