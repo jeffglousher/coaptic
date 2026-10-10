@@ -38,6 +38,12 @@ every response byte, and exits. No device, account or manually entered key is
 needed for this demonstration. Both peers live in this process; this does not
 enroll a device or install persistent credentials.
 
+For the same fixed and bounded-heap modes in a Linux container, use the
+[executed container recipe](https://github.com/jeffglousher/coaptic-validation#protected-linux-container).
+It pins the image and records both source revisions, complete responses,
+argument refusals and successful retries. The peers remain container-local;
+this is packaging and execution evidence, not a sustained-load qualification.
+
 ## 2. Choose where and how it runs
 
 The operating system and storage choice are separate:
