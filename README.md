@@ -78,9 +78,11 @@ Its custom ESPHome package preserves the consuming configuration's Wi-Fi and
 API/OTA settings and requires explicit test-mode selection. The shared Rust
 service above is application code, not a complete ESP32 firmware image.
 
-The reserved Waveshare ESP32-S3 has provenance-bound plaintext Wi-Fi UDP results.
-Protected ESP-to-host exchanges and flash power-loss recovery remain unqualified;
-[device evidence and limitations](https://github.com/jeffglousher/coaptic/issues/333).
+The reserved Waveshare ESP32-S3 has passed finite protected LAN checks, complete
+2000-byte replies, refusal cases and a software-restart replay check with a
+fixed-storage Rust host. Credentials are privately staged by the operator.
+Flash power-loss recovery, hostile rollback and production key custody remain
+unqualified; [device evidence and limitations](https://github.com/jeffglousher/coaptic/issues/333).
 
 ### Linux or container service
 
