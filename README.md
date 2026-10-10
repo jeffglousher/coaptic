@@ -89,10 +89,9 @@ looks like this; `io`, `context`, `secure_random` and `now_ms` come from those
 platform services:
 
 ```rust
-use coaptic::{App, get, profiles};
+use coaptic::{App, get, resources::SmallDevice};
 
-let mut service = App::profile::<profiles::Constrained>()
-    .block_wise::<false>()
+let mut service = App::with_resources(SmallDevice::new())
     .randomness(secure_random)
     .oscore(context)
     .route("telemetry", get(telemetry))
@@ -173,31 +172,30 @@ coaptic = { git = "https://github.com/jeffglousher/coaptic", features = ["std", 
 getrandom = "0.3"
 ```
 
-Choose capacities and call `bind_alloc` instead of `bind`. For example, this
-startup configuration doubles the constrained example's datagram slots and
-uses 1472-byte datagrams:
+Select the service resource preset and an explicit heap request limit before
+building the application. The final `bind` call is the same in either storage mode:
 
 ```rust
 use std::net::UdpSocket;
-use coaptic::{App, get, profiles, storage::Capacities};
+use coaptic::{App, get, resources::Service};
 use coaptic::storage::UdpSocketIo;
 
 let socket = UdpSocket::bind("127.0.0.1:0")?;
 socket.set_nonblocking(true)?;
 let io = UdpSocketIo::new(socket, [0; 1473])?;
-let capacities = Capacities::from_profile::<profiles::Default>();
-let mut service = App::builder()
+let resources = Service::new().allocated(512 * 1024);
+let mut service = App::with_resources(resources)
     .randomness(secure_random)
     .oscore(context)
     .route("telemetry", get(telemetry))
-    .bind_alloc(io, capacities)?;
+    .bind(io)?;
 service.poll(now_ms)?;
 ```
 
-The [complete heap-storage example](examples/oscore_pair.rs) spells out its
-capacities: four RX and four TX slots of 1472 bytes, eight deduplication entries,
-four Observe entries and no body pools. It keeps socket scratch and the complete
-response buffer in fixed arrays. Run it explicitly:
+The [complete heap-storage example](examples/oscore_pair.rs) uses this preset:
+32 RX and 32 TX datagram slots of 1472 bytes, four 16384-byte body slots in each
+direction, 64 deduplication entries and 32 Observe entries. Socket scratch and
+the complete response output remain caller-owned fixed arrays. Run it explicitly:
 
 ```sh
 cargo run --locked --example oscore_pair --features std,alloc -- --alloc
@@ -206,24 +204,62 @@ cargo run --locked --example oscore_pair --features std,alloc -- --alloc
 Expected output:
 
 ```text
-Storage: bounded heap pools (4 RX/TX slots, 1472 bytes each)
+Storage: service heap pools (32 RX/TX slots, 1472 bytes each; 512 KiB heap request limit)
 OSCORE: received all 200 bytes
 ```
 
-Pools are allocated once at binding and do not grow during polling. Larger pools
-do not automatically raise the App's call, route or security-association limits.
-Use `.client_calls::<N>()` on the same builder to size the inline live-call and
-completion tables: four by default, one for a small client, or zero for a
-server-only App. Untaken replies and Observe subscriptions retain their slots.
-`client_metadata_bytes()` reports these tables' footprint, separately from
-packet/body pools and temporary stack use. OSCORE still has four live request
-bindings in its single attached context; a larger Call table does not expand it.
-Further independent capacity configuration is tracked in
+The byte limit covers requested pool allocations, including metadata and
+occupancy flags. A configuration over the limit refuses before allocation;
+allocator failure returns an error and releases partial storage. Pools are
+allocated once and do not grow during polling. Inline App state, stack/scratch,
+allocator overhead, OS buffers and application memory are outside this limit.
+
+### Presets and custom resources
+
+Choose one resource configuration, customize it, then pass it to
+`App::with_resources`. Its application builder configures routes, security and
+platform services; it has no resource overrides.
+
+- `SmallDevice`: small datagram pools, four routes, one client Call, no deferred
+  jobs or body pools.
+- `Device`: default pools with 4096-byte bodies, eight routes, four client Calls
+  and two deferred jobs.
+- `Gateway`: eight RX/TX datagram slots, two 8192-byte bodies in each direction,
+  sixteen routes, four client Calls and four deferred jobs.
+- `Service`: the larger pools above, thirty-two routes, four client Calls and
+  eight deferred jobs.
+
+These are starting resource budgets, independent of board, operating system
+and storage backend. They do not promise power consumption or throughput.
+Larger fixed presets need explicit construction-stack headroom: pool bytes alone
+are not a task-stack budget. Measure the optimized target before deployment.
+
+Customize the configuration before selecting the application:
+
+```rust
+use coaptic::{App, resources::SmallDevice};
+let resources = SmallDevice::new().client_calls::<2>().routes::<6>();
+let builder = App::with_resources(resources);
+```
+
+For custom fixed pool sizes, `memory_profile!` defines named capacities and
+matching array types; use that type with `resources::Resources::<MyMemory>::new()`.
+For allocated storage, customize runtime pool sizes with `.capacities(...)` on
+the allocated resource configuration. See the `resources` and `memory_profile!`
+rustdoc for complete examples. Allocated datagram sizes currently cannot exceed
+the 1472-byte scratch ceiling; incompatible dimensions refuse at binding.
+
+Complete responses are retained on this construction path; collect them using
+`take_response_into` and your own output buffer. Untaken replies and Observe
+subscriptions retain Call slots. OSCORE still has four live request bindings in
+one attached context; more pools or Calls do not add security associations.
+Independent resource/fairness qualification remains in
 [#340](https://github.com/jeffglousher/coaptic/issues/340).
 
-Cargo features are additive. Another dependency can enable `coaptic/alloc`, but
-`bind` still selects fixed storage. This example also requires `--alloc` to choose
-heap storage; requesting it without the Cargo feature is an error.
+Cargo features are additive. Enabling `alloc` makes `.allocated(limit)` available;
+it does not change a fixed resource configuration. The example also requires
+`--alloc` to select heap storage. Existing `App::builder`, `App::profile`,
+`bind_storage` and `bind_alloc` callers remain supported as a compatibility path.
 
 ## 3. Carry the example into a real deployment
 

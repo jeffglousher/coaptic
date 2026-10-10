@@ -8,7 +8,7 @@
 
 use coaptic::{
     App, BuildError, Code, Request, Response, app::RandomSource, get, oscore::SecurityContext,
-    post, profiles,
+    post, profiles, resources,
 };
 
 pub const TELEMETRY: [u8; 200] = [b'x'; 200];
@@ -24,13 +24,15 @@ pub fn echo(request: Request<'_>) -> Response<'static> {
 
 /// Bind fixed constrained-profile storage without enabling body pools or allocation.
 /// No plaintext opt-out is present: the supplied context protects both routes.
+pub type Service<T> =
+    App<profiles::Constrained, T, 4, false, coaptic::storage::Memory<profiles::Constrained>, 0, 1>;
+
 pub fn server<T>(
     io: T,
     context: SecurityContext,
     secure_random: RandomSource,
-) -> Result<App<profiles::Constrained, T>, BuildError> {
-    App::profile::<profiles::Constrained>()
-        .block_wise::<false>()
+) -> Result<Service<T>, BuildError> {
+    App::with_resources(resources::SmallDevice::new())
         .randomness(secure_random)
         .oscore(context)
         .route("telemetry", get(telemetry))

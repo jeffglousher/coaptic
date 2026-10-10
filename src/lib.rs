@@ -91,16 +91,19 @@
 //!
 //! # One interface, adjustable resources
 //!
-//! [`App::builder`] supplies fixed default datagram storage. Profile, body pools,
-//! routes, custom storage and allocator-backed storage remain choices on that
-//! same builder. `alloc` does not require `std`; default remains no allocator.
-//! [`app::AppBuilder::client_calls`] sizes inline live-call/completion tables
-//! independently of packet pools (default four; zero for server-only Apps).
-//! [`App::client_metadata_bytes`] reports their footprint. Observe shares the
-//! Call budget; OSCORE's request-binding capacity remains an independent limit.
-//! [`app::AppBuilder::full_responses`] + [`App::take_response_into`] retain and
-//! collect exact complete representations into caller-owned buffers. Short
-//! buffers are refused without consuming or partially copying the reply.
+//! [`App::with_resources`] selects one configuration from [`resources`], then
+//! binds routes, security and platform I/O. Presets support fixed storage or,
+//! with `alloc`, bounded heap storage with an explicit byte limit. Customize
+//! resource bounds before constructing the App; the configured builder has no
+//! resource overrides. [`memory_profile!`] defines custom fixed pool sizes.
+//! `std` and `alloc` remain independent. Existing [`App::builder`] and
+//! [`App::profile`] construction is retained for compatibility.
+//!
+//! The configured path retains complete responses by default. Collect them
+//! with [`App::take_response_into`] and caller-owned output. Short buffers refuse
+//! without consuming or partially copying the reply. Observe shares the client
+//! Call budget; the single OSCORE context still has four live request bindings.
+//! Larger storage is not a security-association or throughput guarantee.
 //!
 //! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],
 //! [`DeferredReply`] and [`App::complete`]. The empty ACK is only reception.
@@ -187,6 +190,7 @@ pub mod oscore;
 pub mod provisioning;
 pub mod storage;
 
+pub use app::resources;
 pub use storage::profiles;
 
 pub use app::{
