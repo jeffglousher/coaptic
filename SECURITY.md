@@ -42,7 +42,11 @@ report. Individual scenarios do not establish full protocol conformance.
 
 Production readiness and end-to-end device security qualification remain in
 progress. Hardware reports in [#202](https://github.com/jeffglousher/coaptic/issues/202)
-and [#333](https://github.com/jeffglousher/coaptic/issues/333) distinguish
-protected loopback tests from plaintext Wi-Fi exchanges. Network OSCORE,
-durable flash state, and power-loss recovery are not yet qualified. Test
-timings and coverage counters are not security or performance guarantees.
+and [#333](https://github.com/jeffglousher/coaptic/issues/333) retain exact source
+and firmware identities. The reserved Waveshare ESP32-S3 has passed finite
+protected LAN exchanges and a replay-first software-restart check with privately
+staged pairwise credentials. See the
+[recorded methods and limits](https://github.com/jeffglousher/coaptic/issues/333#issuecomment-6092855382).
+Flash power-loss recovery, hostile valid-snapshot rollback, production key
+custody and the full enrollment/application-effect workflow remain unqualified.
+Test timings and coverage counters are not security or performance guarantees.

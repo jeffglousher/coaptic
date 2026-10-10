@@ -22,14 +22,15 @@ pub fn echo(request: Request<'_>) -> Response<'static> {
         .unwrap_or_else(|_| Response::new(Code::REQUEST_ENTITY_TOO_LARGE))
 }
 
-/// Bind fixed default-profile storage without enabling body pools or allocation.
+/// Bind fixed constrained-profile storage without enabling body pools or allocation.
 /// No plaintext opt-out is present: the supplied context protects both routes.
 pub fn server<T>(
     io: T,
     context: SecurityContext,
     secure_random: RandomSource,
-) -> Result<App<profiles::Default, T>, BuildError> {
-    App::builder()
+) -> Result<App<profiles::Constrained, T>, BuildError> {
+    App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
         .randomness(secure_random)
         .oscore(context)
         .route("telemetry", get(telemetry))
