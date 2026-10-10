@@ -36,7 +36,7 @@ include = [
 default = ["oscore"]
 alloc = []
 diagnostics = []
-std = ["alloc"]
+std = []
 # Pairwise OSCORE (RFC 8613). AES-CCM-16-64-128 + HKDF-SHA-256 via RustCrypto.
 oscore = ["dep:aes", "dep:ccm", "dep:hkdf", "dep:sha2"]
 edhoc = ["oscore", "dep:defmt-or-log", "dep:subtle", "dep:p256", "dep:blake3", "dep:uuid"]

@@ -68,6 +68,7 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
+      - run: cargo test --features std --test std_fixed_storage
       - name: Run the README client and server
         shell: bash
         run: |
