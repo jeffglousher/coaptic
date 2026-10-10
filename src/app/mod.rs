@@ -813,6 +813,9 @@ where
     /// Allocate bounded pools once, then use the ordinary App API.
     ///
     /// Requires `alloc`, independently of `std`. There is no growth during poll.
+    /// Allocation/layout failure returns [`BuildError`]. For an aggregate heap
+    /// request limit, construct [`crate::storage::AllocMemory::try_new`] and pass
+    /// it to [`Self::bind_storage`].
     #[cfg(feature = "alloc")]
     pub fn bind_alloc<T>(
         self,
