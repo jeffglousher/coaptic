@@ -81,7 +81,7 @@ coaptic = { git = "https://github.com/jeffglousher/coaptic" }
 ```
 
 Coaptic needs neither `std` nor an allocator in this configuration. The board's
-SDK, Wi-Fi stack and application have their own memory requirements.
+SDK, network stack and application have their own memory requirements.
 
 Your platform integration supplies a bounded `DatagramIo` adapter, secure entropy, a
 provisioned OSCORE context and a monotonic millisecond clock. The integration
