@@ -80,6 +80,9 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           target/debug/examples/client
       - run: cargo run --locked --example oscore_pair --features std
+      - run: cargo test --locked --example oscore_pair --features std
+      - run: cargo run --locked --example oscore_pair --features std,alloc -- --alloc
+      - run: cargo test --locked --example oscore_pair --features std,alloc
 
   doc:
     name: doc

@@ -10,6 +10,7 @@ pub enum Error {
     #[cfg(feature = "oscore")]
     Oscore(coaptic::oscore::Error),
     Entropy,
+    Arguments(&'static str),
     Clock,
     UnexpectedReply,
     Timeout,
@@ -27,6 +28,7 @@ impl core::fmt::Display for Error {
             #[cfg(feature = "oscore")]
             Self::Oscore(error) => write!(f, "OSCORE: {error:?}"),
             Self::Entropy => f.write_str("OS entropy unavailable"),
+            Self::Arguments(message) => f.write_str(message),
             Self::Clock => f.write_str("millisecond clock overflow"),
             Self::UnexpectedReply => f.write_str("unexpected response"),
             Self::Timeout => f.write_str("exchange timed out"),
