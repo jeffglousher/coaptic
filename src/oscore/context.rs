@@ -623,6 +623,11 @@ impl SecurityContext {
     /// (RFC 8613 section 7.5). [`crate::App::poll_with_oscore_checkpoint`] provides
     /// a durable inbound-request barrier. With the lower-level unprotect API,
     /// commit the updated checkpoint yourself before application effects.
+    /// If that lower-level commit fails, stop using the live context until
+    /// recovery; its in-memory replay window has already advanced. Termination
+    /// after a successful commit can leave the effect unapplied. Exactly-once
+    /// effects require a caller-owned transaction joining replay and application
+    /// state, or durable operation receipts across fresh security sessions.
     pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
         if checkpoint.left < self.replay_left {
             return Err(Error::ReplayRollback);
