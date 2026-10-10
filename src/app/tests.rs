@@ -5451,6 +5451,202 @@ fn deadline_progresses_when_receive_fails() {
     assert_eq!(app.engine_mut().rx_occupied(), 0);
 }
 
+#[derive(Default)]
+struct ReceiveFaultIo<T> {
+    inner: T,
+    fail_receive: bool,
+    fail_send: bool,
+}
+
+impl<T: DatagramIo<Error = &'static str>> DatagramIo for ReceiveFaultIo<T> {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        if self.fail_receive {
+            Err("receive failure")
+        } else {
+            self.inner.recv(buf)
+        }
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if self.fail_send {
+            Err("send failure")
+        } else {
+            self.inner.send(dest, bytes)
+        }
+    }
+}
+
+#[test]
+fn receive_failure_preserves_con_retries_and_give_up() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<RecordIo>::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let first = app.transport().inner.sent[0].unwrap();
+    app.transport_mut().fail_receive = true;
+
+    let error = Err(Error::Io(crate::storage::DatagramIoError::Io(
+        "receive failure",
+    )));
+    let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for attempt in 0..Transmission::MAX_RETRANSMIT {
+        // Failed receives must neither advance an early RTO nor skip a due one.
+        assert_eq!(app.poll(now - 1), error);
+        assert_eq!(app.transport().inner.sent_n, 1 + usize::from(attempt));
+        assert_eq!(app.poll(now), error);
+        assert_eq!(app.transport().inner.sent_n, 2 + usize::from(attempt));
+        let retry = app.transport().inner.sent[1 + usize::from(attempt)].unwrap();
+        assert_eq!(retry, first, "retransmit the original complete datagram");
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        timeout *= 2;
+        now += u64::from(timeout);
+    }
+    assert_eq!(app.poll(now), error);
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::TimedOut
+    );
+    assert_eq!(
+        app.transport().inner.sent_n,
+        1 + usize::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.metrics().con_retransmit,
+        u32::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.metrics().give_up, 1);
+    assert_eq!(
+        app.metrics().rx_error,
+        2 * u32::from(Transmission::MAX_RETRANSMIT) + 1
+    );
+    assert!(app.get("value").to(peer).send(now).is_ok());
+}
+
+#[test]
+fn receive_failure_reports_later_send_failure_first() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<RecordIo>::default())
+        .unwrap();
+    app.get("value").to(peer).send(0).unwrap();
+    app.transport_mut().fail_receive = true;
+    app.transport_mut().fail_send = true;
+    assert_eq!(
+        app.poll(u64::from(Transmission::ACK_TIMEOUT_MS)),
+        Err(Error::Io(crate::storage::DatagramIoError::Io(
+            "send failure"
+        )))
+    );
+    assert_eq!(app.metrics().rx_error, 1);
+    assert_eq!(app.metrics().tx_fail, 1);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+}
+
+#[test]
+fn receive_failure_does_not_starve_observe_notification() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register()],
+        0x1001,
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
+        .bind(ReceiveFaultIo {
+            inner: WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            },
+            ..ReceiveFaultIo::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(app.signal(&["sensors", "temp"]), 1);
+    app.transport_mut().inner.send_n = 0;
+    app.transport_mut().fail_receive = true;
+    for now in [10, 11] {
+        assert_eq!(
+            app.poll(now),
+            Err(Error::Io(crate::storage::DatagramIoError::Io(
+                "receive failure"
+            )))
+        );
+    }
+    assert_eq!(app.transport().inner.send_n, 1);
+    let inner = &app.transport().inner;
+    let note = decode(&inner.sends[0][..inner.send_lens[0]]).unwrap();
+    assert_eq!(note.observe(), Some(Ok(1)));
+    assert_eq!(note.payload(), b"obs-snap");
+}
+
+#[test]
+fn receive_failure_preserves_qblock_recovery_and_releases_exhausted_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(put_body))
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<Loopback>::default())
+        .unwrap();
+    for (num, now) in [(0, 0), (3, 1)] {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, num != 3, 100 + num as u16, 64));
+        wire[0] |= 0x10; // NON; holes 1 and 2 remain in the received set.
+        app.transport_mut().inner.inbox = Some((peer, wire, n));
+        app.poll(now).unwrap();
+    }
+    app.transport_mut().fail_receive = true;
+    let mut delay = u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+    let mut now = 1 + delay;
+    for _ in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+        app.transport_mut().inner.last_send = None;
+        assert_eq!(
+            app.poll(now),
+            Err(Error::Io(crate::storage::DatagramIoError::Io(
+                "receive failure"
+            )))
+        );
+        let (_, bytes, n) = app.transport().inner.last_send.unwrap();
+        let report = decode(&bytes[..n]).unwrap();
+        assert_eq!(report.ty(), Type::NonConfirmable);
+        assert_eq!(report.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+        let mut missing = [0; 4];
+        let count = MissingBlocks::decode(report.payload(), &mut missing).unwrap();
+        assert_eq!(&missing[..count], &[1, 2]);
+        delay *= 2;
+        now += delay;
+    }
+    app.transport_mut().inner.last_send = None;
+    assert!(app.poll(now).is_err());
+    assert!(app.transport().inner.last_send.is_none());
+    for index in 0..app.engine().capacities().rx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
 #[test]
 fn deadline_wins_at_exact_boundary_but_preserves_an_earlier_response() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);

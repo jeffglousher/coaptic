@@ -1101,6 +1101,12 @@ where
     /// expire after RFC 7252 §4.8.2 `EXCHANGE_LIFETIME` / `NON_LIFETIME`.
     /// `now_ms` is the caller monotonic clock. Production CON jitter comes
     /// from the configured [`RandomSource`]; retransmits retain that schedule.
+    /// Receive errors, including refusal of oversized datagrams, still allow
+    /// this bounded progress pass. If later dispatch or progress fails, that
+    /// error takes precedence; otherwise the receive error is returned. An
+    /// error therefore does not mean that no datagrams were sent or retained
+    /// work was dispatched. Bound transport calls and callbacks separately
+    /// when budgeting wall-clock polling latency.
     /// Advanced slots / [`Access`](crate::storage::Access) / remaining RST
     /// policy or BERT codecs: [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
@@ -1428,16 +1434,15 @@ where
     oscore_checkpoint.flush(oscore, &mut checkpoint_commit)?;
     #[cfg(feature = "diagnostics")]
     crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().polls, 1);
-    // RX pool full must not skip RTO / Observe / Q-Block recover. Surface
-    // Saturated after those timers still run (RFC 7252 §4.2).
+    // RX saturation or transport refusal must not skip RTO / Observe /
+    // Q-Block recovery. Return the receive error after progressing work.
     // Local deadlines must progress even if receiving the next packet fails.
     deferred.expire(engine, now_ms);
     expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
-    let (received, recv_saturated) = match engine.recv_from(io) {
-        Ok(id) => (id, false),
-        Err(DatagramIoError::Saturated) => (None, true),
-        Err(e) => return Err(e.into()),
+    let (received, recv_error) = match engine.recv_from(io) {
+        Ok(id) => (id, None),
+        Err(e) => (None, Some(e)),
     };
     let progress = engine.progress_before_dispatch(now_ms);
     if let Some(retransmit) = progress.retransmit() {
@@ -1544,8 +1549,8 @@ where
             dedup_closed,
         )?;
     }
-    if recv_saturated {
-        return Err(Error::Saturated);
+    if let Some(error) = recv_error {
+        return Err(error.into());
     }
     Ok(())
 }
