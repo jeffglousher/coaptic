@@ -20,9 +20,9 @@ pub mod host_error;
 use coaptic::storage::{MemoryLayout, UdpSocketIo};
 use coaptic::{
     App, Code, Endpoint,
-    app::{AppAssembled, AppStorage, DEFAULT_ROUTES},
+    app::{AppAssembled, AppStorage},
     oscore::{DeriveParams, SecurityContext},
-    profiles,
+    resources,
 };
 
 #[path = "support/fixed_service.rs"]
@@ -94,11 +94,9 @@ fn main() -> Result<(), host_error::Error> {
                 server_context,
                 |bytes| getrandom::fill(bytes).is_ok(),
             )?;
-            let client = App::profile::<profiles::Constrained>()
-                .block_wise::<false>()
+            let client = App::with_resources(resources::SmallDevice::new())
                 .randomness(|bytes| getrandom::fill(bytes).is_ok())
                 .oscore(client_context)
-                .full_responses()
                 .bind(UdpSocketIo::new(client_socket, [0; 1153])?)?;
             println!("Storage: fixed constrained profile (2 RX/TX slots, 1152 bytes each)");
             exchange(server, client, peer)
@@ -107,43 +105,41 @@ fn main() -> Result<(), host_error::Error> {
         Mode::Alloc => {
             // Allocated once at bind; no pool growth during polling. Larger storage
             // does not increase App's route, peer or security-context limits.
-            let capacities = coaptic::storage::Capacities {
-                rx_datagram_slots: 4,
-                rx_datagram_bytes: 1472,
-                tx_datagram_slots: 4,
-                tx_datagram_bytes: 1472,
-                dedup_entries: 8,
-                observe_entries: 4,
-                rx_body_slots: None,
-                rx_body_bytes: None,
-                tx_body_slots: None,
-                tx_body_bytes: None,
-            };
-            let server = App::builder()
+            let heap_limit = 512 * 1024;
+            let server = App::with_resources(resources::Service::new().allocated(heap_limit))
                 .randomness(|bytes| getrandom::fill(bytes).is_ok())
                 .oscore(server_context)
                 .route("telemetry", coaptic::get(fixed_service::telemetry))
                 .route("echo", coaptic::post(fixed_service::echo))
-                .bind_alloc(UdpSocketIo::new(server_socket, [0; 1473])?, capacities)?;
-            let client = App::builder()
+                .bind(UdpSocketIo::new(server_socket, [0; 1473])?)?;
+            let client = App::with_resources(resources::Service::new().allocated(heap_limit))
                 .randomness(|bytes| getrandom::fill(bytes).is_ok())
                 .oscore(client_context)
-                .full_responses()
-                .bind_alloc(UdpSocketIo::new(client_socket, [0; 1473])?, capacities)?;
-            println!("Storage: bounded heap pools (4 RX/TX slots, 1472 bytes each)");
+                .bind(UdpSocketIo::new(client_socket, [0; 1473])?)?;
+            println!(
+                "Storage: service heap pools (32 RX/TX slots, 1472 bytes each; 512 KiB heap request limit)"
+            );
             exchange(server, client, peer)
         }
     }
 }
 
 // One request/poll/response path for both storage backends.
-fn exchange<P, S, const SCRATCH: usize>(
-    mut server: App<P, UdpSocketIo<[u8; SCRATCH]>, DEFAULT_ROUTES, false, S>,
-    mut client: App<P, UdpSocketIo<[u8; SCRATCH]>, DEFAULT_ROUTES, false, S>,
+fn exchange<
+    P,
+    S,
+    const SCRATCH: usize,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+>(
+    mut server: App<P, UdpSocketIo<[u8; SCRATCH]>, N, B, S, D, C>,
+    mut client: App<P, UdpSocketIo<[u8; SCRATCH]>, N, B, S, D, C>,
     peer: Endpoint,
 ) -> Result<(), host_error::Error>
 where
-    P: MemoryLayout<false> + AppAssembled<false>,
+    P: MemoryLayout<B> + AppAssembled<B>,
     S: AppStorage,
 {
     let clock = Instant::now();

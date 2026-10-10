@@ -117,6 +117,7 @@ mod echo;
 mod identity;
 mod oscore;
 mod request;
+pub mod resources;
 mod response;
 mod routing;
 mod site;

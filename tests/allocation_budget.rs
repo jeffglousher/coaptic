@@ -217,3 +217,59 @@ fn missing_security_refuses_before_any_allocation() {
     assert_eq!(error, Some(BuildError::SecurityRequired));
     assert_eq!(record.attempts, 0);
 }
+
+#[test]
+fn configured_heap_refusals_precede_allocation_and_allow_recovery() {
+    use coaptic::resources::SmallDevice;
+    let (error, record) = track(Some(1), || {
+        App::with_resources(SmallDevice::new().allocated(64 * 1024))
+            .deterministic_for_tests()
+            .bind(())
+            .err()
+    });
+    assert_eq!(error, Some(BuildError::SecurityRequired));
+    assert_eq!(record.attempts, 0);
+
+    let required = SmallDevice::new()
+        .allocated(64 * 1024)
+        .required_heap_bytes()
+        .unwrap();
+    let (error, record) = track(Some(1), || {
+        App::with_resources(SmallDevice::new().allocated(required - 1))
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .bind(())
+            .err()
+    });
+    assert_eq!(
+        error,
+        Some(BuildError::HeapBudgetExceeded {
+            required,
+            limit: required - 1
+        })
+    );
+    assert_eq!(record.attempts, 0);
+
+    let mut c = SmallDevice::new().pool_capacities();
+    c.rx_datagram_bytes = 1473;
+    let (error, record) = track(Some(1), || {
+        App::with_resources(SmallDevice::new().allocated(64 * 1024).capacities(c))
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .bind(())
+            .err()
+    });
+    assert_eq!(error, Some(BuildError::SizeMismatch));
+    assert_eq!(record.attempts, 0);
+
+    let (result, record) = track(None, || {
+        App::with_resources(SmallDevice::new().allocated(required))
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .bind(())
+            .map(drop)
+    });
+    assert_eq!(result, Ok(()));
+    assert_eq!(record.requested, required);
+    assert_eq!(record.live, 0);
+}
