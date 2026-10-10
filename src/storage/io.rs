@@ -19,6 +19,11 @@ use super::Storage;
 /// `Box`; platform network-stack and task allocations remain outside Coaptic's
 /// storage budget. [`Engine::recv_from`] and [`Engine::send_tx`] borrow the
 /// transport directly. `Ok(None)` means timeout or would-block.
+///
+/// Engine work is bounded by storage capacity, not by elapsed time. For a
+/// bounded polling latency, implementations must bound the time spent in both
+/// receive and send (for example, use nonblocking sockets). The caller must
+/// also bound application callbacks and the interval between polls.
 pub trait DatagramIo {
     /// Transport-specific failure. Not a CoAP code.
     type Error;
