@@ -13,14 +13,15 @@
 //! [`Response::payload_truncated`]. The full assembled representation is
 //! [`Response::body`], not a 4KiB field on [`Response`].
 //!
-//! App holds at most four live client requests, including Observe
-//! subscriptions and replies waiting for `take_response`. Resource-specific
-//! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! App defaults to four live client requests, including Observe subscriptions
+//! and replies waiting for `take_response`. [`super::AppBuilder::client_calls`]
+//! sizes those inline tables independently of packet storage. Other pool and
+//! security limits can be lower. Call-table exhaustion is `Error::Saturated`.
 //! Upload continuation and cleanup select request-body roles separately from
 //! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
-//! continuation identity. This bounded state adds about 1.1 KiB per App on
-//! 64-bit hosts; it is separate from the optional assembled-body storage.
+//! continuation identity. With the default four Calls this bounded state adds
+//! about 1.1 KiB on 64-bit hosts, separate from assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
 //! unknown elective options are retained in `Response::received_options`.
 //! New Observe representations retain their initial Content-Format, including
@@ -46,7 +47,7 @@
 //! Download follow-ups retain If-Match, If-None-Match and Content-Format.
 //! Classic Block2 also retains request ETag; Q-Block2 omits it to request
 //! payloads instead of cache-validation responses. Two retained 8-byte tags
-//! and their presence/condition flags cost at most 96 bytes across four Calls
+//! and their presence/condition flags cost at most 96 bytes across the default four Calls
 //! including host alignment.
 //! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
 //! use caller-managed Engine transfers for larger selection bodies.
@@ -203,13 +204,6 @@ impl core::fmt::Display for CallFailure {
 #[cfg(feature = "std")]
 impl std::error::Error for CallFailure {}
 
-/// How many outstanding client [`Call`]s [`App`](super::App) holds.
-///
-/// Caps both the completed-reply inbox and the live-request table. A fifth
-/// [`Outgoing::send`] without [`App::take_response`](super::App::take_response)
-/// is [`Error::Saturated`] — no silent eviction.
-pub(crate) const RESPONSE_INBOX: usize = 4;
-
 /// Maximum options retained per client response, including unknown elective options.
 pub const RESPONSE_OPTION_COUNT: usize = 24;
 /// Maximum encoded header, Token and options retained per client response (no payload).
@@ -217,7 +211,7 @@ pub const RESPONSE_OPTION_BYTES: usize = 512;
 
 /// Maximum canonical Observe request bytes retained per live Call for exact
 /// cancellation matching, including a fixed four-byte header and payload.
-/// Four App Call slots each reserve this space plus bounded length metadata.
+/// Each configured App Call slot reserves this space plus bounded length metadata.
 /// Observe and ETag options are excluded; no hash replaces exact comparison.
 pub const OBSERVE_REQUEST_BYTES: usize = 512;
 
@@ -332,15 +326,15 @@ struct InboxRow {
 
 /// Bounded completed-reply table (not a seventh memory area).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientInbox {
-    rows: [Option<InboxRow>; RESPONSE_INBOX],
+pub(crate) struct ClientInbox<const CALLS: usize> {
+    rows: [Option<InboxRow>; CALLS],
     held: Option<ReplyMeta>,
 }
 
-impl ClientInbox {
+impl<const CALLS: usize> ClientInbox<CALLS> {
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
             held: None,
         }
     }
@@ -562,14 +556,14 @@ struct LiveCall {
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientLives {
-    rows: [Option<LiveCall>; RESPONSE_INBOX],
+pub(crate) struct ClientLives<const CALLS: usize> {
+    rows: [Option<LiveCall>; CALLS],
 }
 
-impl ClientLives {
+impl<const CALLS: usize> ClientLives<CALLS> {
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
         }
     }
 
@@ -771,10 +765,11 @@ pub struct Outgoing<
     const BLOCK_WISE: bool = false,
     S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
+    const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
 > where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -799,8 +794,15 @@ pub struct Outgoing<
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
-    App<P, T, N, BLOCK_WISE, S, DEFERRED>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -812,7 +814,7 @@ where
     pub fn get(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Get, path)
     }
 
@@ -821,7 +823,7 @@ where
     pub fn put(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Put, path)
     }
 
@@ -830,7 +832,7 @@ where
     pub fn post(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Post, path)
     }
 
@@ -839,7 +841,7 @@ where
     pub fn delete(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Delete, path)
     }
 
@@ -849,7 +851,7 @@ where
     pub fn fetch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Fetch, path)
     }
 
@@ -858,7 +860,7 @@ where
     pub fn patch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::Patch, path)
     }
 
@@ -867,7 +869,7 @@ where
     pub fn ipatch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         self.request(Method::IPatch, path)
     }
 
@@ -877,7 +879,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -906,8 +908,15 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
-    App<P, T, N, BLOCK_WISE, S, DEFERRED>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1088,13 +1097,17 @@ impl<
     const BLOCK_WISE: bool,
     S: super::AppStorage,
     const DEFERRED: usize,
-> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED>
+    const CALLS: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED> {
+    pub fn to(
+        self,
+        peer: Endpoint,
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -1335,8 +1348,15 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: super::AppStorage, const DEFERRED: usize>
-    Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1356,8 +1376,8 @@ where
     /// peer received no datagrams or performed no action; retry policy must
     /// account for that uncertainty. Security sequence numbers are not reset.
     ///
-    /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
-    /// lives cap) and this Token is not one of them.
+    /// [`Error::Saturated`] if the configured client Call table is full and
+    /// this Token is not one of its retained Calls. No reply is evicted.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
@@ -1445,6 +1465,9 @@ where
             }) {
                 return Ok(existing.call);
             }
+        }
+        if !replacing && self.app.lives.rows.iter().all(Option::is_some) {
+            return Err(Error::Saturated);
         }
         let token = if replacing {
             self.app
@@ -1570,7 +1593,8 @@ impl<
     const BLOCK_WISE: bool,
     S: super::AppStorage,
     const DEFERRED: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED>
+    const CALLS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
@@ -1879,11 +1903,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn complete_client<Mem, T>(
+pub(crate) fn complete_client<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     response_state: super::oscore::ResponseState,
@@ -2263,10 +2287,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_assembled<Mem>(
+fn finish_assembled<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2318,9 +2342,9 @@ fn finish_assembled<Mem>(
     let _ = engine.release_rx(rx);
 }
 
-fn store_reply<Mem: Storage + BodySlots + DatagramSlots>(
+fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
+    inbox: &mut ClientInbox<CALLS>,
     call: Call,
     meta: ReplyMeta,
     body: Option<SlotId>,
@@ -2395,10 +2419,10 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block2_continue<Mem, T>(
+fn send_block2_continue<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2432,10 +2456,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_q_block2_continue<Mem, T>(
+fn send_q_block2_continue<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2469,11 +2493,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn recover_qblock2<Mem, T>(
+pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2525,10 +2549,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_followup<Mem, T>(
+fn send_followup<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2659,10 +2683,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reissue_qblock1_missing<Mem, T>(
+fn reissue_qblock1_missing<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2723,11 +2747,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn continue_qblock1_ack<Mem, T>(
+pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -2797,10 +2821,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn continue_block1_tx<Mem, T>(
+fn continue_block1_tx<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
@@ -3229,9 +3253,9 @@ fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: 
     engine.lookup_observe(key).is_some()
 }
 
-fn accept_client_observe<Mem>(
+fn accept_client_observe<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     now_ms: u64,
@@ -3260,10 +3284,10 @@ fn accept_client_observe<Mem>(
 }
 
 /// Retransmission give-up completes the call rather than silently losing it.
-pub(crate) fn give_up_client<Mem>(
+pub(crate) fn give_up_client<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     tx: SlotId,
 ) where
@@ -3307,10 +3331,10 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
 
 // Retire a timed-out Q download in the same poll that reclaims its body.
 // The inbox must not keep a partial SlotId that another transfer can reuse.
-pub(crate) fn qblock_give_up<Mem>(
+pub(crate) fn qblock_give_up<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     key: ExchangeKey,
 ) where
@@ -3331,10 +3355,10 @@ pub(crate) fn qblock_give_up<Mem>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fail_call<Mem>(
+fn fail_call<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     call: Call,
     failure: CallFailure,
@@ -3395,10 +3419,10 @@ fn fail_call<Mem>(
     }
 }
 
-pub(crate) fn complete_client_rst<Mem>(
+pub(crate) fn complete_client_rst<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     message_id: MessageId,
     peer: Endpoint,
@@ -3422,16 +3446,16 @@ pub(crate) fn complete_client_rst<Mem>(
     }
 }
 
-pub(crate) fn expire_client_exchanges<Mem>(
+pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     oscore: &mut super::oscore::Field,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let mut due = [None; RESPONSE_INBOX];
+    let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
         let Some(live) = *live else {
             continue;
