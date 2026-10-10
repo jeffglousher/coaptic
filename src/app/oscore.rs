@@ -405,7 +405,7 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
             super::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
         }
         OscoreError::Encode(e) => super::Error::Message(SlotMessageError::Encode(e)),
-        OscoreError::Options | OscoreError::Saturated => {
+        OscoreError::Options => {
             super::Error::Message(SlotMessageError::Encode(EncodeError::OptionsFull))
         }
         other => super::Error::Oscore(other),
