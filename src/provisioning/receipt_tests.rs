@@ -99,10 +99,86 @@ fn lost_acknowledgement_recovers_same_receipt_without_repeating_effect() {
         commit_telemetry(&trust, &grant, &operation, &mut store),
         Err(ReceiptError::Persistence(_))
     ));
-    let receipt = commit_telemetry(&trust, &grant, &operation, &mut store).unwrap();
+    // Reconstruct pending work after reconnecting; retain the exact ID/content.
+    let recovered = TelemetryOperation::new(
+        operation.id(),
+        *operation.resource(),
+        operation.content_format(),
+        operation.payload(),
+    )
+    .unwrap();
+    let receipt = commit_telemetry(&trust, &grant, &recovered, &mut store).unwrap();
     assert_eq!(store.effects, 1);
     assert_eq!(receipt, store.receipt.unwrap());
     assert_eq!(Receipt::decode(&receipt.encode()), Some(receipt));
+    assert_eq!(recovered.accept_receipt(&receipt.encode()), Ok(receipt));
+}
+
+#[test]
+fn client_receipt_acceptance_matches_id_and_all_content_fields() {
+    let id = OperationId::new([4; 16]);
+    let original = TelemetryOperation::new(id, [7; 32], None, b"value").unwrap();
+    let receipt = Receipt::from_parts(id, *original.digest(), 1).unwrap();
+    let wire = receipt.encode();
+    assert_eq!(original.accept_receipt(&wire), Ok(receipt));
+
+    for (id, resource, format, payload) in [
+        (
+            OperationId::new([5; 16]),
+            [7; 32],
+            None,
+            b"value".as_slice(),
+        ),
+        (id, [8; 32], None, b"value".as_slice()),
+        (id, [7; 32], Some(0), b"value".as_slice()),
+        (id, [7; 32], None, b"other".as_slice()),
+        (id, [7; 32], None, b"value\0".as_slice()),
+    ] {
+        let changed = TelemetryOperation::new(id, resource, format, payload).unwrap();
+        assert_eq!(
+            changed.accept_receipt(&wire),
+            Err(ReceiptError::InvalidReceipt)
+        );
+    }
+
+    // Every ID/digest byte matters even when the receipt remains well formed.
+    for index in 0..48 {
+        let mut changed = wire;
+        changed[index] ^= 1;
+        assert!(Receipt::decode(&changed).is_some());
+        assert_eq!(
+            original.accept_receipt(&changed),
+            Err(ReceiptError::InvalidReceipt)
+        );
+    }
+    // Refusal leaves the pending work usable for its subsequent valid receipt.
+    assert_eq!(original.accept_receipt(&wire), Ok(receipt));
+}
+
+#[test]
+fn client_receipt_acceptance_refuses_malformed_complete_payloads() {
+    let operation = TelemetryOperation::new(OperationId::new([4; 16]), [7; 32], None, b"").unwrap();
+    // The store sequence is opaque, independent of a session's sender sequence.
+    let receipt = Receipt::from_parts(operation.id(), *operation.digest(), u64::MAX).unwrap();
+    let wire = receipt.encode();
+    for len in 0..wire.len() {
+        assert_eq!(
+            operation.accept_receipt(&wire[..len]),
+            Err(ReceiptError::InvalidReceipt)
+        );
+    }
+    let mut extra = [0; 57];
+    extra[..wire.len()].copy_from_slice(&wire);
+    assert_eq!(
+        operation.accept_receipt(&extra),
+        Err(ReceiptError::InvalidReceipt)
+    );
+    extra[48..56].fill(0);
+    assert_eq!(
+        operation.accept_receipt(&extra[..56]),
+        Err(ReceiptError::InvalidReceipt)
+    );
+    assert_eq!(operation.accept_receipt(&wire), Ok(receipt));
 }
 
 #[test]
@@ -191,11 +267,16 @@ fn exact_payload_bound_commits_complete_content_and_changed_last_byte_conflicts(
     let original_digest = *operation.digest();
     let receipt = commit_telemetry(&trust, &grant, &operation, &mut store).unwrap();
     assert_eq!(receipt.digest(), &original_digest);
+    assert_eq!(operation.accept_receipt(&receipt.encode()), Ok(receipt));
     assert_eq!(store.effects, 1);
 
     payload[TelemetryOperation::MAX_PAYLOAD - 1] = 0;
     let changed = TelemetryOperation::new(id, [7; 32], Some(42), &payload).unwrap();
     assert_ne!(changed.digest(), &original_digest);
+    assert_eq!(
+        changed.accept_receipt(&receipt.encode()),
+        Err(ReceiptError::InvalidReceipt)
+    );
     assert_eq!(
         commit_telemetry(&trust, &grant, &changed, &mut store),
         Err(ReceiptError::Conflict)
