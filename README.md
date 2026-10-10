@@ -67,9 +67,9 @@ fn telemetry(_: Request<'_>) -> Response<'static> {
 
 The [shared service](examples/support/fixed_service.rs) also provides `/echo`:
 up to 128 bytes succeed; larger requests receive `4.13 Request Entity Too Large`.
-These small examples omit body pools. Larger block-wise messages need explicit
-body storage; use `take_response_into` to collect complete replies into a
-caller-owned buffer.
+The small fixed-storage example omits body pools; the service preset includes
+them for larger block-wise messages. Use `take_response_into` to collect complete
+replies into a caller-owned buffer.
 
 ### Constrained device
 
