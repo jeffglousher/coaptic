@@ -12,16 +12,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "support/host_error.rs"]
+pub mod host_error;
+
+use coaptic::storage::UdpSocketIo;
 use coaptic::{
-    App, Code, Endpoint, Request, Response, get,
+    App, Code, Endpoint,
     oscore::{DeriveParams, SecurityContext},
 };
 
-const BODY: [u8; 200] = [b'x'; 200];
+#[path = "support/fixed_service.rs"]
+mod fixed_service;
 
-fn representation(_: Request<'_>) -> Response<'static> {
-    Response::content(&BODY)
-}
+use fixed_service::TELEMETRY;
 
 fn context(
     secret: &[u8],
@@ -37,44 +40,45 @@ fn context(
     })
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), host_error::Error> {
     let mut secret = [0; 32];
-    getrandom::fill(&mut secret).map_err(|error| std::io::Error::other(error.to_string()))?;
+    getrandom::fill(&mut secret).map_err(|_| host_error::Error::Entropy)?;
     let server_socket = UdpSocket::bind("127.0.0.1:0")?;
     server_socket.set_nonblocking(true)?;
     let peer = Endpoint::from(server_socket.local_addr()?);
     let client_socket = UdpSocket::bind("127.0.0.1:0")?;
     client_socket.set_nonblocking(true)?;
 
-    let mut server = App::builder()
-        .randomness(|bytes| getrandom::fill(bytes).is_ok())
-        .oscore(context(&secret, &[2], &[1])?)
-        .route("telemetry", get(representation))
-        .bind(server_socket)?;
+    let mut server = fixed_service::server(
+        UdpSocketIo::new(server_socket, [0; 1473])?,
+        context(&secret, &[2], &[1])?,
+        |bytes| getrandom::fill(bytes).is_ok(),
+    )?;
     let mut client = App::builder()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .oscore(context(&secret, &[1], &[2])?)
         .full_responses()
-        .bind(client_socket)?;
+        .bind(UdpSocketIo::new(client_socket, [0; 1473])?)?;
     secret.fill(0);
 
     let clock = Instant::now();
     let call = client.get("telemetry").to(peer).send(0)?;
-    let mut output = [0; BODY.len()];
+    let mut output = [0; TELEMETRY.len()];
     loop {
-        let now = u64::try_from(clock.elapsed().as_millis())?;
+        let now =
+            u64::try_from(clock.elapsed().as_millis()).map_err(|_| host_error::Error::Clock)?;
         server.poll(now)?;
         client.poll(now)?;
         if let Some(reply) = client.take_response_into(call, &mut output)? {
             let reply = reply?;
-            if reply.code() != Code::CONTENT || reply.payload() != BODY {
-                return Err("unexpected protected response".into());
+            if reply.code() != Code::CONTENT || reply.payload() != TELEMETRY {
+                return Err(host_error::Error::UnexpectedReply);
             }
             println!("OSCORE: received all {} bytes", reply.payload().len());
             return Ok(());
         }
         if clock.elapsed() >= Duration::from_secs(5) {
-            return Err("protected exchange timed out".into());
+            return Err(host_error::Error::Timeout);
         }
         thread::sleep(Duration::from_millis(1));
     }
