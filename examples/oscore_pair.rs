@@ -22,6 +22,7 @@ use coaptic::{
     App, Code, Endpoint,
     app::{AppAssembled, AppStorage},
     oscore::{DeriveParams, SecurityContext},
+    platform::CheckedClock,
     resources,
 };
 
@@ -142,12 +143,12 @@ where
     P: MemoryLayout<B> + AppAssembled<B>,
     S: AppStorage,
 {
-    let clock = Instant::now();
-    let call = client.get("telemetry").to(peer).send(0)?;
+    let epoch = Instant::now();
+    let mut clock = CheckedClock::new(|| u64::try_from(epoch.elapsed().as_millis()));
+    let call = client.get("telemetry").to(peer).send(clock.now_ms()?)?;
     let mut output = [0; TELEMETRY.len()];
     loop {
-        let now =
-            u64::try_from(clock.elapsed().as_millis()).map_err(|_| host_error::Error::Clock)?;
+        let now = clock.now_ms()?;
         server.poll(now)?;
         client.poll(now)?;
         if let Some(reply) = client.take_response_into(call, &mut output)? {
@@ -158,7 +159,7 @@ where
             println!("OSCORE: received all {} bytes", reply.payload().len());
             return Ok(());
         }
-        if clock.elapsed() >= Duration::from_secs(5) {
+        if epoch.elapsed() >= Duration::from_secs(5) {
             return Err(host_error::Error::Timeout);
         }
         thread::sleep(Duration::from_millis(1));
