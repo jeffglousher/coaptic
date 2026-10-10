@@ -99,6 +99,32 @@ impl<'a> TelemetryOperation<'a> {
     pub const fn digest(&self) -> &[u8; 32] {
         &self.digest
     }
+
+    /// Accepts a complete receipt only for this operation's ID and exact content.
+    ///
+    /// Call this after authenticating a successful protected response from the
+    /// intended service for the original principal. Receipt bytes contain no
+    /// principal or service identity and do not authenticate themselves. Success
+    /// relies on that service honoring the [`ReceiptStore`] durability contract;
+    /// it does not independently prove persistence or backup freshness.
+    ///
+    /// Malformed or mismatched receipts return [`ReceiptError::InvalidReceipt`].
+    /// Keep the pending operation's ID and content across uncertain replies and
+    /// reconnects; retire it only after accepting a matching receipt and recording
+    /// that completion at the caller's durable boundary. A CoAP ACK alone does
+    /// not complete the operation.
+    pub fn accept_receipt(
+        &self,
+        payload: &[u8],
+    ) -> Result<Receipt, ReceiptError<core::convert::Infallible>> {
+        Receipt::decode(payload)
+            .filter(|receipt| self.matches_receipt(receipt))
+            .ok_or(ReceiptError::InvalidReceipt)
+    }
+
+    fn matches_receipt(&self, receipt: &Receipt) -> bool {
+        receipt.id == self.id && receipt.digest == self.digest
+    }
 }
 
 /// A durable store's committed operation and complete content digest.
@@ -144,6 +170,9 @@ impl Receipt {
     }
 
     /// Validates the complete payload; trailing and truncated bytes fail.
+    ///
+    /// This checks structure only. Use [`TelemetryOperation::accept_receipt`]
+    /// to match a response to pending work after authenticating its service.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != 56 {
             return None;
@@ -165,7 +194,7 @@ pub enum ReceiptError<E> {
     Unauthorized,
     /// This operation ID already names different content for this principal.
     Conflict,
-    /// The provider returned metadata for a different operation.
+    /// Receipt bytes are malformed or metadata names a different operation.
     InvalidReceipt,
     /// Commit outcome is unknown; retry the same operation after reconciliation.
     Persistence(E),
@@ -207,7 +236,7 @@ pub fn commit_telemetry<S: ReceiptStore>(
         return Err(ReceiptError::Unauthorized);
     }
     let receipt = store.commit(&grant.anchor(), grant.principal(), operation)?;
-    if receipt.id != operation.id || receipt.digest != operation.digest {
+    if !operation.matches_receipt(&receipt) {
         return Err(ReceiptError::InvalidReceipt);
     }
     Ok(receipt)
