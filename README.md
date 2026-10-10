@@ -7,6 +7,11 @@ larger bodies with block-wise messages through one client/server API. Coaptic
 uses fixed storage and OSCORE message protection by default. Applications supply
 the transport, clock, secure credentials and polling loop.
 
+The core is independent of a particular microcontroller, board SDK or operating
+system. Constrained devices use it without allocation or the Rust standard
+library. ESP32-S3 is our current physical qualification platform; it does not
+define the library's supported programming model.
+
 Version **0.0.10** is available from Git while publication is being prepared.
 `no_std` is supported; `std` and `alloc` are independent optional features.
 
@@ -31,14 +36,15 @@ The [complete example](examples/oscore_pair.rs) starts a client and server on
 localhost, gives them a fresh secret from the OS, requests `/telemetry`, checks
 every response byte, and exits. No device, account or manually entered key is
 needed for this demonstration. Both peers live in this process; this does not
-enroll an ESP or install persistent credentials.
+enroll a device or install persistent credentials.
 
 ## 2. Choose where and how it runs
 
 The operating system and storage choice are separate:
 
-- **[Constrained ESP32](#constrained-esp32):** `no_std`, fixed Coaptic storage,
-  and an SDK transport. Our Waveshare ESP32-S3 is the constrained test device.
+- **[Constrained device](#constrained-device):** `no_std`, fixed Coaptic storage,
+  and a platform-supplied transport. The example is independent of a board;
+  our physical qualification uses a Waveshare ESP32-S3.
 - **[Constrained Linux](#constrained-linux):** OS sockets with the same small,
   fixed Coaptic storage. Useful when a Linux process also needs a predictable
   memory budget.
@@ -65,7 +71,7 @@ These small examples omit body pools. Larger block-wise messages need explicit
 body storage; use `take_response_into` to collect complete replies into a
 caller-owned buffer.
 
-### Constrained ESP32
+### Constrained device
 
 In the device's Rust crate, keep the default features:
 
@@ -75,9 +81,9 @@ coaptic = { git = "https://github.com/jeffglousher/coaptic" }
 ```
 
 Coaptic needs neither `std` nor an allocator in this configuration. The board's
-SDK, Wi-Fi stack and application have their own memory requirements.
+SDK, network stack and application have their own memory requirements.
 
-Your firmware supplies a bounded `DatagramIo` adapter, secure entropy, a
+Your platform integration supplies a bounded `DatagramIo` adapter, secure entropy, a
 provisioned OSCORE context and a monotonic millisecond clock. The integration
 looks like this; `io`, `context`, `secure_random` and `now_ms` come from those
 platform services:
@@ -106,7 +112,14 @@ cargo check --locked --example fixed_service
 cargo test --locked --example fixed_service
 ```
 
-For a firmware build, continue with the
+To use another microcontroller or SDK, provide those platform services and
+choose capacities for its memory budget. The service handlers and Coaptic API
+stay the same. A working integration still needs target-specific validation;
+portable code and cross-compilation alone do not establish physical qualification.
+
+#### Current hardware qualification: ESP32-S3
+
+Our constrained-device test case runs on a Waveshare ESP32-S3. Its firmware uses the
 [custom ESPHome integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification)
 in the companion repository. It supplies board startup, ESP-IDF/ESPHome bindings,
 Wi-Fi and deployment tooling. Our reserved Waveshare test setup preserves
@@ -123,7 +136,7 @@ coaptic = { git = "https://github.com/jeffglousher/coaptic", features = ["std"] 
 getrandom = "0.3"
 ```
 
-Use a nonblocking UDP socket in place of the ESP's SDK adapter. The
+Use a nonblocking UDP socket in place of the device platform's adapter. The
 `fixed_service` module below is the [shared example module](examples/support/fixed_service.rs):
 
 ```rust
@@ -139,7 +152,7 @@ service.poll(now_ms)?;
 
 The extra scratch byte detects oversized UDP datagrams so a truncated prefix is
 not accepted as a complete message. The example uses the same constrained pools
-as the ESP-facing service and a fixed 200-byte response buffer.
+as the constrained-device service and a fixed 200-byte response buffer.
 
 Run the complete client/server pair with the command from step 1:
 
