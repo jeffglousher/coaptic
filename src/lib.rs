@@ -142,7 +142,7 @@
 //! # Features
 //!
 //! - `alloc` — enable the allocator. Off by default.
-//! - `std` — enable the standard library. Implies `alloc`.
+//! - `std` — enable OS networking and standard error integration; independent of `alloc`.
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
 //!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
 //!   `--no-default-features` retains the zero-dependency Engine and requires

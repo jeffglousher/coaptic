@@ -199,7 +199,9 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 /// Receives into scratch with one extra byte so exact-capacity datagrams are
 /// accepted and oversized datagrams cannot become valid-looking prefixes.
 /// Uses default-profile-sized stack scratch; larger caller buffers use a
-/// fallible temporary allocation of `buf.len() + 1` bytes. Native receive errors
+/// fallible temporary allocation of `buf.len() + 1` bytes only with `alloc`.
+/// Without `alloc`, larger buffers return `InvalidInput` before socket I/O.
+/// Native receive errors
 /// (including platform-specific truncation errors) are preserved.
 /// Use [`UdpSocketIo`] with caller-supplied scratch to avoid that temporary
 /// allocation when receiving larger datagrams.
@@ -210,18 +212,25 @@ impl DatagramIo for std::net::UdpSocket {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         const STACK_BYTES: usize =
             <super::profiles::Default as super::MemoryProfile>::RX_DATAGRAM_BYTES + 1;
-        let required = buf.len().checked_add(1).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "receive buffer too large")
-        })?;
+        let required = buf
+            .len()
+            .checked_add(1)
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
         let mut stack = [0; STACK_BYTES];
+        #[cfg(feature = "alloc")]
         let mut heap = std::vec::Vec::new();
         let scratch = if required <= stack.len() {
             &mut stack[..required]
         } else {
-            heap.try_reserve_exact(required)
-                .map_err(std::io::Error::other)?;
-            heap.resize(required, 0);
-            heap.as_mut_slice()
+            #[cfg(feature = "alloc")]
+            {
+                heap.try_reserve_exact(required)
+                    .map_err(std::io::Error::other)?;
+                heap.resize(required, 0);
+                heap.as_mut_slice()
+            }
+            #[cfg(not(feature = "alloc"))]
+            return Err(std::io::ErrorKind::InvalidInput.into());
         };
         recv_udp(self, buf, scratch)
     }
@@ -305,10 +314,7 @@ fn recv_udp(
         .get_mut(..required)
         .ok_or(std::io::ErrorKind::InvalidInput)?;
     match socket.recv_from(scratch) {
-        Ok((n, _)) if n > buf.len() => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "datagram exceeds receive capacity",
-        )),
+        Ok((n, _)) if n > buf.len() => Err(std::io::ErrorKind::InvalidData.into()),
         Ok((n, from)) => {
             buf[..n].copy_from_slice(&scratch[..n]);
             Ok(Some((n, Endpoint::from(from))))
@@ -658,8 +664,13 @@ mod udp_tests {
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let dest = receiver.local_addr().unwrap();
-            // Includes zero capacity, built-in profiles and the heap fallback.
-            for capacity in [0, 64, 1472, 2048] {
+            // The large raw-socket fallback is an explicit allocator capability.
+            let capacities = if cfg!(feature = "alloc") {
+                &[0, 64, 1472, 2048][..]
+            } else {
+                &[0, 64, 1472][..]
+            };
+            for &capacity in capacities {
                 let mut output = std::vec![0xA5; capacity];
                 for extra in [0, 1, 100] {
                     let payload = std::vec![0x39; capacity + extra];

@@ -36,7 +36,7 @@ include = [
 default = ["oscore"]
 alloc = []
 diagnostics = []
-std = ["alloc"]
+std = []
 # Pairwise OSCORE (RFC 8613). AES-CCM-16-64-128 + HKDF-SHA-256 via RustCrypto.
 oscore = ["dep:aes", "dep:ccm", "dep:hkdf", "dep:sha2"]
 edhoc = ["oscore", "dep:defmt-or-log", "dep:subtle", "dep:p256", "dep:blake3", "dep:uuid"]
@@ -61,6 +61,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 repository = "https://github.com/jeffglousher/lakers"
 revision = "462b30f5b3e9cfab96c05fe65f36d19eaa7002ad"
 license = "BSD-3-Clause"
+
+[[example]]
+name = "fixed_service"
+crate-type = ["lib"]
+required-features = ["oscore"]
 
 [[example]]
 name = "server"

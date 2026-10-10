@@ -68,6 +68,9 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
+      - run: cargo test --features std --test std_fixed_storage
+      - run: cargo check --locked --example fixed_service
+      - run: cargo test --locked --example fixed_service
       - name: Run the README client and server
         shell: bash
         run: |
@@ -114,8 +117,8 @@ jobs:
 
   validation:
     name: Companion validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@656759fd9989f61eea3fe593c265ccca97c6c469
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@a33d8cc3df2a2b4266186ca64e92d37e87516f8b
     with:
-      suite_revision: 656759fd9989f61eea3fe593c265ccca97c6c469
+      suite_revision: a33d8cc3df2a2b4266186ca64e92d37e87516f8b
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
