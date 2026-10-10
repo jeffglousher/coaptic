@@ -6189,5 +6189,8 @@ fn older_concurrent_request_binding_is_not_authenticated() {
 #[path = "replay_tests.rs"]
 mod replay_barrier;
 
+#[path = "progress_tests.rs"]
+mod rejected_traffic_progress;
+
 #[path = "checkpoint_q_tests.rs"]
 mod checkpoint_q;
