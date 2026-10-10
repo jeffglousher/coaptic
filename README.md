@@ -211,8 +211,14 @@ OSCORE: received all 200 bytes
 ```
 
 Pools are allocated once at binding and do not grow during polling. Larger pools
-do not automatically raise the App's call, route or security-association limits;
-independent capacity configuration is tracked in
+do not automatically raise the App's call, route or security-association limits.
+Use `.client_calls::<N>()` on the same builder to size the inline live-call and
+completion tables: four by default, one for a small client, or zero for a
+server-only App. Untaken replies and Observe subscriptions retain their slots.
+`client_metadata_bytes()` reports these tables' footprint, separately from
+packet/body pools and temporary stack use. OSCORE still has four live request
+bindings in its single attached context; a larger Call table does not expand it.
+Further independent capacity configuration is tracked in
 [#340](https://github.com/jeffglousher/coaptic/issues/340).
 
 Cargo features are additive. Another dependency can enable `coaptic/alloc`, but

@@ -94,6 +94,10 @@
 //! [`App::builder`] supplies fixed default datagram storage. Profile, body pools,
 //! routes, custom storage and allocator-backed storage remain choices on that
 //! same builder. `alloc` does not require `std`; default remains no allocator.
+//! [`app::AppBuilder::client_calls`] sizes inline live-call/completion tables
+//! independently of packet pools (default four; zero for server-only Apps).
+//! [`App::client_metadata_bytes`] reports their footprint. Observe shares the
+//! Call budget; OSCORE's request-binding capacity remains an independent limit.
 //! [`app::AppBuilder::full_responses`] + [`App::take_response_into`] retain and
 //! collect exact complete representations into caller-owned buffers. Short
 //! buffers are refused without consuming or partially copying the reply.

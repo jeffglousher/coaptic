@@ -126,6 +126,9 @@ mod lifecycle_soak;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod capacity_tests;
+
 use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
@@ -142,6 +145,9 @@ use crate::storage::{
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
 pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
+
+/// Default number of live client Calls and retained completions per App.
+pub const DEFAULT_CLIENT_CALLS: usize = 4;
 
 pub use client::{
     Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
@@ -369,6 +375,7 @@ pub struct App<
     const BLOCK_WISE: bool = false,
     S: AppStorage = AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
+    const CALLS: usize = { DEFAULT_CLIENT_CALLS },
 > where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -376,8 +383,8 @@ pub struct App<
     io: T,
     site: Site<N>,
     ids: AppIds,
-    inbox: client::ClientInbox,
-    lives: client::ClientLives,
+    inbox: client::ClientInbox<CALLS>,
+    lives: client::ClientLives<CALLS>,
     echo_policy: Option<EchoPolicy>,
     full_responses: bool,
     deferred_lifetime_ms: u64,
@@ -408,6 +415,7 @@ pub struct AppBuilder<
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
     const DEFERRED: usize = 0,
+    const CALLS: usize = { DEFAULT_CLIENT_CALLS },
 > {
     site: Site<N>,
     echo_policy: Option<EchoPolicy>,
@@ -450,9 +458,53 @@ impl App {
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize>
-    AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED>
+impl<
+    P: MemoryProfile,
+    Block,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, CALLS>
 {
+    /// Size the live client Call and completion tables independently of pools.
+    ///
+    /// Defaults to [`DEFAULT_CLIENT_CALLS`]. Zero is useful for a server-only
+    /// App: all new client requests refuse with [`Error::Saturated`]. Untaken
+    /// replies and Observe subscriptions retain their Call slot. Collection
+    /// frees ordinary Calls; subscriptions require cancellation or expiry.
+    ///
+    /// Both tables are inline fixed arrays, even with allocator-backed packet
+    /// storage. Each Call reserves request/Observe and response-header metadata;
+    /// expiry also uses bounded scratch proportional to this count. This does
+    /// not resize packet/body pools, server observers, routes or security state.
+    /// Pairwise OSCORE still has four live request bindings per context. A
+    /// larger Call table does not increase that independent protected limit.
+    /// Counts are fixed-array lengths checked by Rust's type layout; there is
+    /// no runtime multiplication or allocator growth for these tables.
+    ///
+    /// ```
+    /// let _small_client = coaptic::App::builder().client_calls::<1>();
+    /// let _server_only = coaptic::App::builder().client_calls::<0>();
+    /// ```
+    #[must_use]
+    pub fn client_calls<const SLOTS: usize>(
+        self,
+    ) -> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, SLOTS> {
+        AppBuilder {
+            site: self.site,
+            echo_policy: self.echo_policy,
+            full_responses: self.full_responses,
+            deferred_lifetime_ms: self.deferred_lifetime_ms,
+            identity: self.identity,
+            oscore: self.oscore,
+            oscore_checkpoint: self.oscore_checkpoint,
+            allow_plaintext: self.allow_plaintext,
+            _p: PhantomData,
+            _b: PhantomData,
+        }
+    }
+
     /// Site table size (default [`DEFAULT_ROUTES`]). Call before
     /// [`Self::route`].
     ///
@@ -460,7 +512,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
     ///
     /// If a route is already registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED> {
+    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED, CALLS> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -498,7 +550,7 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
     /// smaller pool, App reclaims a dedup wire pin into an empty-ACK tombstone:
     /// the original request is acknowledged without repeating its handler.
     #[must_use]
-    pub fn deferred<const SLOTS: usize>(self) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS> {
+    pub fn deferred<const SLOTS: usize>(self) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS, CALLS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -667,8 +719,14 @@ impl<P: MemoryProfile, Block, const N: usize, const BLOCK_WISE: bool, const DEFE
     }
 }
 
-impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: usize>
-    AppBuilder<P, Block, N, PREV, DEFERRED>
+impl<
+    P: MemoryProfile,
+    Block,
+    const N: usize,
+    const PREV: bool,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> AppBuilder<P, Block, N, PREV, DEFERRED, CALLS>
 {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
@@ -688,7 +746,9 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: 
     /// Call with [`CallFailure::BlockTransfer`] containing
     /// [`BlockTransferError::NoBodyPools`]. No fragment is returned as success.
     #[must_use]
-    pub fn block_wise<const ENABLED: bool>(self) -> AppBuilder<P, Present, N, ENABLED, DEFERRED> {
+    pub fn block_wise<const ENABLED: bool>(
+        self,
+    ) -> AppBuilder<P, Present, N, ENABLED, DEFERRED, CALLS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -704,8 +764,8 @@ impl<P: MemoryProfile, Block, const N: usize, const PREV: bool, const DEFERRED: 
     }
 }
 
-impl<P, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize>
-    AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED>
+impl<P, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize, const CALLS: usize>
+    AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED, CALLS>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -717,7 +777,8 @@ where
     pub fn bind<T>(
         self,
         io: T,
-    ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED, CALLS>, BuildError>
+    {
         self.validate_security()?;
         let engine = EngineBuilder::new()
             .profile::<P>()
@@ -736,7 +797,7 @@ where
         self,
         io: T,
         storage: S,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>, BuildError> {
         self.validate_security()?;
         let c = storage.capacities();
         let engine = EngineBuilder::new()
@@ -757,7 +818,8 @@ where
         self,
         io: T,
         c: crate::storage::Capacities,
-    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED, CALLS>, BuildError>
+    {
         self.validate_security()?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
@@ -773,7 +835,7 @@ where
         self,
         io: T,
         engine: Engine<S>,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>, BuildError> {
         Ok(App {
             engine,
             io,
@@ -800,8 +862,24 @@ impl<
     const BLOCK_WISE: bool,
     S: AppStorage,
     const DEFERRED: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED>
+    const CALLS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
 {
+    /// Number of live client Calls/completions selected at build time.
+    pub const fn client_capacity(&self) -> usize {
+        CALLS
+    }
+
+    /// Inline client-table bytes, including retained response metadata.
+    ///
+    /// Excludes packet/body pools, security state, other App fields and
+    /// temporary stack space. Allocator-backed packet storage does not move
+    /// these tables to the heap.
+    pub const fn client_metadata_bytes(&self) -> usize {
+        core::mem::size_of::<client::ClientInbox<CALLS>>()
+            + core::mem::size_of::<client::ClientLives<CALLS>>()
+    }
+
     /// Bind `methods` on Uri-Path `path`.
     ///
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
@@ -1002,8 +1080,15 @@ impl<
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool, S: AppStorage, const DEFERRED: usize>
-    App<P, T, N, BLOCK_WISE, S, DEFERRED>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1409,13 +1494,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn poll_engine<Mem, T, const N: usize, const DEFERRED: usize>(
+fn poll_engine<Mem, T, const N: usize, const DEFERRED: usize, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
     ids: &mut AppIds,
-    inbox: &mut client::ClientInbox,
-    lives: &mut client::ClientLives,
+    inbox: &mut client::ClientInbox<CALLS>,
+    lives: &mut client::ClientLives<CALLS>,
     oscore: &mut oscore::Field,
     oscore_checkpoint: &mut oscore::CheckpointState,
     mut checkpoint_commit: Option<&mut oscore::CheckpointCommit<'_>>,
@@ -1705,11 +1790,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_qblock_recover<Mem, T>(
+fn send_qblock_recover<Mem, T, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut client::ClientInbox,
-    lives: &mut client::ClientLives,
+    inbox: &mut client::ClientInbox<CALLS>,
+    lives: &mut client::ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut oscore::Field,
     now_ms: u64,
@@ -1836,12 +1921,12 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dispatch_rx<Mem, T, const N: usize, const DEFERRED: usize>(
+fn dispatch_rx<Mem, T, const N: usize, const DEFERRED: usize, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
-    inbox: &mut client::ClientInbox,
-    lives: &mut client::ClientLives,
+    inbox: &mut client::ClientInbox<CALLS>,
+    lives: &mut client::ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut oscore::Field,
     oscore_checkpoint: &mut oscore::CheckpointState,

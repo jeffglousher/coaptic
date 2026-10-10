@@ -412,8 +412,8 @@ impl SecurityContext {
     /// Remember `(token, request)` for the matching response.
     ///
     /// Replaces an existing row for `token`. The table holds
-    /// [`crate::oscore::LIVE_REQUESTS`] (4) bindings — the same cap as the
-    /// App client inbox. A fifth distinct Token is [`Error::Saturated`].
+    /// [`crate::oscore::LIVE_REQUESTS`] (4) bindings, independently of the
+    /// configured App client capacity. A fifth distinct Token is [`Error::Saturated`].
     pub fn remember(&mut self, token: Token, request: RequestRef) -> Result<(), Error> {
         self.remember_live(token, request, false)
     }
