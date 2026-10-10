@@ -181,21 +181,21 @@ impl<const N: usize> Occupancy<N> {
 /// Runtime occupancy for the `alloc` backend. Flags are allocated once.
 #[cfg(feature = "alloc")]
 pub(crate) struct HeapOccupancy {
-    occupied: alloc::boxed::Box<[bool]>,
-    pinned: alloc::boxed::Box<[bool]>,
+    occupied: alloc::vec::Vec<bool>,
+    pinned: alloc::vec::Vec<bool>,
     cursor: usize,
     count: usize,
 }
 
 #[cfg(feature = "alloc")]
 impl HeapOccupancy {
-    pub(crate) fn new(n: usize) -> Self {
-        Self {
-            occupied: alloc::vec![false; n].into_boxed_slice(),
-            pinned: alloc::vec![false; n].into_boxed_slice(),
+    pub(crate) fn new(n: usize) -> Result<Self, crate::error::BuildError> {
+        Ok(Self {
+            occupied: super::alloc_memory::try_array(n, || Ok(false))?,
+            pinned: super::alloc_memory::try_array(n, || Ok(false))?,
             cursor: 0,
             count: 0,
-        }
+        })
     }
 
     pub(crate) fn acquire(&mut self) -> Option<SlotId> {
