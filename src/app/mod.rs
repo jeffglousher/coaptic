@@ -203,8 +203,8 @@ struct DeferredRow {
     meta: SendResponse<'static>,
     deadline_ms: u64,
     selection: DeferredSelection,
-    completed: Option<(SlotId, client::ReplyMeta)>,
-    attempted_body: Option<SlotId>,
+    snapshot: Option<(SlotId, client::ReplyMeta)>,
+    completed: bool,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct DeferredSelection {
@@ -301,17 +301,14 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             let Some(value) = *row else {
                 continue;
             };
-            let body = value
-                .completed
-                .map(|(body, _)| body)
-                .or(value.attempted_body);
+            let body = value.snapshot.map(|(body, _)| body);
             let body_live = body.is_some_and(|body| {
                 engine.tx_body_transfer(body).is_some_and(|transfer| {
                     transfer.key().token() == value.meta.token
                         && transfer.key().endpoint() == value.meta.dest
                 })
             });
-            if now_ms >= value.deadline_ms || (value.completed.is_some() && !body_live) {
+            if now_ms >= value.deadline_ms || (value.completed && !body_live) {
                 if body_live {
                     let _ = engine.release_tx_body(body.expect("live body"));
                 }
@@ -351,8 +348,8 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             meta,
             deadline_ms,
             selection,
-            completed: None,
-            attempted_body: None,
+            snapshot: None,
+            completed: false,
         });
     }
 }
@@ -1516,7 +1513,7 @@ where
     /// Failure leaves the handle available for
     /// retry until its deadline; remote effects can already have happened. Never
     /// re-run durable work on a send failure. OSCORE sequences are never rewound.
-    /// Once a Q snapshot is retained, retries must preserve its body and ETag;
+    /// Once a Q snapshot is retained, retries must preserve its body, ETag, code and retained options;
     /// an error or Valid response cannot replace that attempted representation.
     /// Observe registration and Q-Block2 multi-selection deferral are unsupported.
     pub fn complete(
@@ -1530,7 +1527,7 @@ where
             .deferred
             .rows
             .iter()
-            .position(|row| row.is_some_and(|row| row.handle == handle && row.completed.is_none()))
+            .position(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
             .ok_or(Error::DeferredUnknown)?;
         response.validate().map_err(Error::Response)?;
         if response.is_deferred() {
@@ -1539,7 +1536,7 @@ where
         let response = response.with_fresh_piv();
         let row = self.deferred.rows[index].expect("matched row");
         if row.meta.q_block2.is_some()
-            && row.attempted_body.is_some()
+            && row.snapshot.is_some()
             && (!response.code().is_success() || response.code() == Code::VALID)
         {
             // A partial representation may already be visible remotely. Keep
@@ -1549,6 +1546,13 @@ where
         }
         let metadata =
             deferred_reply_metadata(&response, row.meta, now_ms).map_err(Error::Response)?;
+        if row.meta.q_block2.is_some()
+            && row
+                .snapshot
+                .is_some_and(|(_, retained)| !retained.same_header(&metadata))
+        {
+            return Err(Error::Block(BlockTransferError::IdentityMismatch));
+        }
         let outcome = if row.meta.q_block2.is_some()
             && response.code().is_success()
             && response.code() != Code::VALID
@@ -1582,17 +1586,22 @@ where
         };
         let body = response_body_for(&self.engine, BlockKey::new(row.meta.token, row.meta.dest));
         if let Some(body) = body {
+            let retained = if row.meta.q_block2.is_some() {
+                row.snapshot.map_or(metadata, |(_, retained)| retained)
+            } else {
+                metadata
+            };
             self.deferred.rows[index]
                 .as_mut()
                 .expect("matched row")
-                .attempted_body = Some(body);
+                .snapshot = Some((body, retained));
         }
         outcome?;
-        if let Some(body) = body {
+        if body.is_some() {
             self.deferred.rows[index]
                 .as_mut()
                 .expect("matched row")
-                .completed = Some((body, metadata));
+                .completed = true;
         } else {
             self.deferred.rows[index] = None;
         }
@@ -1608,11 +1617,11 @@ where
             .deferred
             .rows
             .iter_mut()
-            .find(|row| row.is_some_and(|row| row.handle == handle && row.completed.is_none()))
+            .find(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
         else {
             return false;
         };
-        if let Some(body) = row.and_then(|row| row.attempted_body) {
+        if let Some(body) = row.and_then(|row| row.snapshot.map(|(body, _)| body)) {
             let _ = self.engine.release_tx_body(body);
         }
         *row = None;
@@ -1625,7 +1634,7 @@ where
             .rows
             .iter()
             .flatten()
-            .any(|row| row.handle == handle && row.completed.is_none() && now_ms < row.deadline_ms)
+            .any(|row| row.handle == handle && !row.completed && now_ms < row.deadline_ms)
     }
 
     /// Send the current representation to server-side observers of `path`.
@@ -2595,54 +2604,18 @@ where
     if meta.block2.is_some() || meta.q_block2.is_some() {
         if let Some(index) = deferred.rows.iter().position(|row| {
             row.is_some_and(|row| {
-                row.completed.is_some() && row.meta.token == meta.token && row.meta.dest == peer
+                row.completed && row.meta.token == meta.token && row.meta.dest == peer
             })
         }) {
             let row = deferred.rows[index].expect("matched snapshot");
-            let (body, retained) = row.completed.expect("completed snapshot");
-            let outcome = if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
-                || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
-                || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                || parsed.q_block2().nth(1).is_some()
-            {
-                send_response(
-                    engine,
-                    io,
-                    ids,
-                    meta,
-                    &Response::bad_request(),
-                    now_ms,
-                    oscore,
-                    dedup_closed,
-                )
-            } else if meta.q_block2.is_some() {
-                let response = retained.response();
-                let ty = if meta.ty == Type::Confirmable {
-                    Type::Acknowledgement
-                } else {
-                    Type::NonConfirmable
-                };
-                let meta = if ty == Type::NonConfirmable {
-                    SendResponse {
-                        mid: ids.next_for(engine, io, now_ms)?,
-                        ..meta
-                    }
-                } else {
-                    meta
-                };
-                match issue_deferred_q(
-                    engine,
-                    io,
-                    ids,
-                    now_ms,
-                    meta,
-                    &response,
-                    ty,
-                    body,
-                    oscore,
-                    dedup_closed,
-                ) {
-                    Err(Error::Block(BlockTransferError::Gap)) => send_response(
+            let (body, retained) = row.snapshot.expect("completed snapshot");
+            let outcome = (|| {
+                if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
+                    || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
+                    || row.meta.q_block2.is_some() != meta.q_block2.is_some()
+                    || parsed.q_block2().nth(1).is_some()
+                {
+                    send_response(
                         engine,
                         io,
                         ids,
@@ -2651,35 +2624,73 @@ where
                         now_ms,
                         oscore,
                         dedup_closed,
-                    ),
-                    other => other,
+                    )
+                } else if meta.q_block2.is_some() {
+                    let response = retained.response();
+                    let ty = if meta.ty == Type::Confirmable {
+                        Type::Acknowledgement
+                    } else {
+                        Type::NonConfirmable
+                    };
+                    let meta = if ty == Type::NonConfirmable {
+                        SendResponse {
+                            mid: ids.next_for(engine, io, now_ms)?,
+                            ..meta
+                        }
+                    } else {
+                        meta
+                    };
+                    match issue_deferred_q(
+                        engine,
+                        io,
+                        ids,
+                        now_ms,
+                        meta,
+                        &response,
+                        ty,
+                        body,
+                        oscore,
+                        dedup_closed,
+                    ) {
+                        Err(Error::Block(BlockTransferError::Gap)) => send_response(
+                            engine,
+                            io,
+                            ids,
+                            meta,
+                            &Response::bad_request(),
+                            now_ms,
+                            oscore,
+                            dedup_closed,
+                        ),
+                        other => other,
+                    }
+                } else {
+                    let response = retained.response();
+                    let ty = if meta.ty == Type::Confirmable {
+                        Type::Acknowledgement
+                    } else {
+                        Type::NonConfirmable
+                    };
+                    let mid = if ty == Type::Acknowledgement {
+                        meta.mid
+                    } else {
+                        ids.next_for(engine, io, now_ms)?
+                    };
+                    issue_classic(
+                        engine,
+                        io,
+                        meta,
+                        &response,
+                        ty,
+                        mid,
+                        body,
+                        None,
+                        true,
+                        Some((now_ms, dedup_closed)),
+                        oscore,
+                    )
                 }
-            } else {
-                let response = retained.response();
-                let ty = if meta.ty == Type::Confirmable {
-                    Type::Acknowledgement
-                } else {
-                    Type::NonConfirmable
-                };
-                let mid = if ty == Type::Acknowledgement {
-                    meta.mid
-                } else {
-                    ids.next_for(engine, io, now_ms)?
-                };
-                issue_classic(
-                    engine,
-                    io,
-                    meta,
-                    &response,
-                    ty,
-                    mid,
-                    body,
-                    None,
-                    true,
-                    Some((now_ms, dedup_closed)),
-                    oscore,
-                )
-            };
+            })();
             let _ = engine.release_rx(rx);
             deferred.expire(engine, now_ms);
             return outcome;
