@@ -273,3 +273,101 @@ fn configured_heap_refusals_precede_allocation_and_allow_recovery() {
     assert_eq!(record.requested, required);
     assert_eq!(record.live, 0);
 }
+
+#[test]
+fn legacy_app_scratch_capacity_refuses_before_allocation() {
+    for rx in [true, false] {
+        let mut c = Capacities::from_profile::<profiles::Default>();
+        if rx {
+            c.rx_datagram_bytes += 1;
+        } else {
+            c.tx_datagram_bytes += 1;
+        }
+        let (result, record) = track(None, || {
+            App::builder()
+                .allow_plaintext()
+                .deterministic_for_tests()
+                .bind_alloc((), c)
+                .map(drop)
+        });
+        assert_eq!(result, Err(BuildError::SizeMismatch), "RX={rx}");
+        assert_eq!(record.attempts, 0);
+    }
+}
+
+#[test]
+fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
+    use coaptic::storage::DatagramIo;
+    struct NoIo;
+    impl DatagramIo for NoIo {
+        type Error = ();
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, coaptic::Endpoint)>, ()> {
+            panic!("no receive during bind")
+        }
+        fn send(&mut self, _: coaptic::Endpoint, _: &[u8]) -> Result<usize, ()> {
+            panic!("no send during bind")
+        }
+    }
+    for rx in [true, false] {
+        let mut c = Capacities::from_profile::<profiles::Default>();
+        if rx {
+            c.rx_datagram_bytes += 1;
+        } else {
+            c.tx_datagram_bytes += 1;
+        }
+        let entropy = Cell::new(0);
+        let mut random = |out: &mut [u8]| {
+            entropy.set(entropy.get() + 1);
+            out.fill(7);
+            true
+        };
+        let (result, record) = track(None, || {
+            App::builder()
+                .allow_plaintext()
+                .bind_alloc_with_entropy(NoIo, c, &mut random)
+                .map(drop)
+        });
+        assert_eq!(result, Err(BuildError::SizeMismatch));
+        assert_eq!(record.attempts, 0);
+        assert_eq!(entropy.get(), 0);
+        let (result, record) = track(None, || {
+            App::with_resources(
+                coaptic::resources::Resources::<profiles::Default>::new()
+                    .allocated(usize::MAX)
+                    .capacities(c),
+            )
+            .allow_plaintext()
+            .bind_with_entropy(NoIo, &mut random)
+            .map(drop)
+        });
+        assert_eq!(result, Err(BuildError::SizeMismatch));
+        assert_eq!(record.attempts, 0);
+        assert_eq!(entropy.get(), 0);
+        // Engine-only storage remains legal; App adds the scratch admission rule.
+        let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
+        assert_eq!(
+            App::builder()
+                .allow_plaintext()
+                .bind_storage_with_entropy(NoIo, memory, &mut random)
+                .err(),
+            Some(BuildError::SizeMismatch)
+        );
+        assert_eq!(entropy.get(), 0);
+        let c = Capacities::from_profile::<profiles::Default>();
+        assert!(
+            App::builder()
+                .allow_plaintext()
+                .bind_alloc_with_entropy(NoIo, c, &mut random)
+                .is_ok()
+        );
+        assert_eq!(entropy.get(), 1);
+        let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
+        assert!(
+            App::builder()
+                .allow_plaintext()
+                .deterministic_for_tests()
+                .bind_storage(NoIo, memory)
+                .is_ok()
+        );
+    }
+}

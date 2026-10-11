@@ -486,6 +486,10 @@ impl<
         >,
         BuildError,
     > {
+        self.inner.validate_entropy_source()?;
+        AppBuilder::<P, Present, N, B, D, C, REQUESTS>::validate_scratch::<
+            crate::storage::AllocMemory,
+        >(self.storage.capacities)?;
         let (inner, io) = self.inner.prepare_entropy(io, random)?;
         ConfiguredBuilder {
             inner,
@@ -500,14 +504,9 @@ impl<
         io: T,
     ) -> Result<App<P, T, N, B, crate::storage::AllocMemory, D, C, REQUESTS>, BuildError> {
         self.inner.validate_security()?;
-        self.storage.capacities.validate_for_build(B)?;
-        let c = self.storage.capacities;
-        if c.rx_datagram_bytes > <crate::storage::AllocMemory as DatagramSlots>::RX_DATAGRAM_BYTES
-            || c.tx_datagram_bytes
-                > <crate::storage::AllocMemory as DatagramSlots>::TX_DATAGRAM_BYTES
-        {
-            return Err(BuildError::SizeMismatch);
-        }
+        AppBuilder::<P, Present, N, B, D, C, REQUESTS>::validate_scratch::<
+            crate::storage::AllocMemory,
+        >(self.storage.capacities)?;
         let storage =
             crate::storage::AllocMemory::try_new(self.storage.capacities, self.storage.heap_limit)?;
         self.inner.bind_storage(io, storage)
