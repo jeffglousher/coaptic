@@ -1,4 +1,4 @@
-//! Deferred single Q-Block2 selections retain complete bounded snapshots.
+//! Deferred bounded Q-Block2 selector lists retain complete snapshots.
 use coaptic::app::AppStorage;
 use coaptic::message::ContentFormat;
 use coaptic::message::decode;
@@ -1660,6 +1660,58 @@ fn deferred_qblock2_initial_order_size_and_capacity_refuse_without_admission() {
                 )
                 .unwrap();
             packets(&mut server, &peer, 0, 10, 6);
+        });
+    }
+}
+
+#[test]
+fn deferred_qblock2_initial_ack_failure_retries_without_redispatch() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        without_allocating(|| {
+            let request = peer.custom(
+                1,
+                Code::GET,
+                "snapshot",
+                &[
+                    BlockValue::new(0, false, 6).unwrap(),
+                    BlockValue::new(1, false, 6).unwrap(),
+                ],
+                false,
+                None,
+                b"",
+            );
+            server.transport_mut().incoming = Some(request);
+            server.transport_mut().fail_at = Some(1);
+            let mut handle = None;
+            assert!(matches!(
+                server.poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                }),
+                Err(coaptic::app::Error::Io(_))
+            ));
+            assert!(handle.is_some());
+            assert!(server.transport_mut().take().is_none());
+            server.transport_mut().fail_at = None;
+            server.transport_mut().incoming = Some(request);
+            server
+                .poll_with(1, |_, _| {
+                    panic!("duplicate admitted work must not redispatch")
+                })
+                .unwrap();
+            ack(&mut server, 1);
+            server
+                .complete(
+                    handle.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    2,
+                )
+                .unwrap();
+            packets(&mut server, &peer, 0, 2, 6);
         });
     }
 }

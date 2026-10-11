@@ -1476,7 +1476,7 @@ where
     /// Deferred rows selected by [`AppBuilder::deferred`] are bounded
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
-    /// zero, or Observe/repeated Q-Block2 selection needs
+    /// zero, initial Q-Block2 has more than ten selectors, or Observe needs
     /// synchronous dispatch. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
@@ -1609,14 +1609,15 @@ where
     /// finish or the original deferred deadline expires. Matching method/path/
     /// queries/selection never dispatch domain work again. FETCH selection includes
     /// the original request ETag options; changing, adding or omitting a validator
-    /// cannot select the retained snapshot. A single Q-Block2 selection retains
+    /// cannot select the retained snapshot. An admitted Q-Block2 selector list retains
     /// its complete snapshot until the original deadline, including after the
     /// last block is sent. Follow-ups can reselect individual blocks or the
     /// remainder of a payload set, using a smaller block size if needed. Recovery
     /// may include ordered equal-size selectors; overlapping blocks are sent once.
     /// The entire union is validated before sending: at most ten unique NON
-    /// payloads per call. A larger union or any invalid range returns Bad Request
-    /// without sending a partial selection or changing the retained snapshot.
+    /// payloads per call. A larger union or any invalid range refuses without sending a partial
+    /// selection or changing the retained snapshot: completion returns
+    /// `BlockTransferError::Gap`, while a follow-up receives Bad Request.
     /// Explicit Q responses require an ETag even when the body fits one datagram.
     /// Metadata is bounded
     /// to 24 options and 512 encoded bytes; overflow fails before sending.
