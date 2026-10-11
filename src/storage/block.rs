@@ -523,30 +523,31 @@ struct NotificationSnapshot {
 
 /// Exact bounded request matchability context, not a hash. Token/MID and block
 /// control options may change, but method and cache-key options may not.
-/// Classic Block1 retains the NUM0-only If-None-Match separately from the
+/// Block1/Q-Block1 retain the NUM0-only If-None-Match separately from the
 /// options repeated on later blocks; the receive path checks that transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RequestBinding {
     bytes: [u8; BlockTransfer::REQUEST_IDENTITY_BYTES],
     len: u16,
-    if_none_match: bool,
+    // None: NUM0 unseen; Some(false/true): its validated immutable condition.
+    if_none_match: Option<bool>,
 }
 impl RequestBinding {
     pub(crate) fn from_message(
         message: &crate::message::ParsedMessage<'_>,
-        classic_block1: bool,
+        num: u32,
     ) -> Result<Self, BlockTransferError> {
         use crate::message::{OptionNumber as N, OptionValueFormat};
         let mut binding = Self {
             bytes: [0; BlockTransfer::REQUEST_IDENTITY_BYTES],
             len: 1,
-            if_none_match: classic_block1 && message.if_none_match(),
+            if_none_match: (num == 0).then(|| message.if_none_match()),
         };
         binding.bytes[0] = message.code().as_raw();
         let mut saw_if_none_match = false;
         for option in message.options() {
             let number = option.number();
-            if classic_block1 && number == N::IF_NONE_MATCH {
+            if number == N::IF_NONE_MATCH {
                 if saw_if_none_match || !option.value().is_empty() {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
@@ -585,7 +586,20 @@ impl RequestBinding {
         self.len == other.len && self.bytes == other.bytes
     }
     pub(crate) const fn if_none_match(self) -> bool {
-        self.if_none_match
+        matches!(self.if_none_match, Some(true))
+    }
+    /// Merge only validated NUM0 knowledge; later omission cannot erase it.
+    pub(crate) fn retain_condition(self, candidate: Self) -> Result<Self, BlockTransferError> {
+        if !self.same_options(candidate)
+            || matches!((self.if_none_match, candidate.if_none_match),
+                (Some(left), Some(right)) if left != right)
+        {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        Ok(Self {
+            if_none_match: self.if_none_match.or(candidate.if_none_match),
+            ..self
+        })
     }
 }
 
@@ -633,10 +647,12 @@ const _: () = assert!(core::mem::size_of::<IssueCheckpoint>() <= 16);
 
 impl BlockTransfer {
     pub(crate) fn if_none_match(&self) -> bool {
-        self.role == BlockRole::IncomingBlock1
-            && self
-                .request_binding
-                .is_some_and(RequestBinding::if_none_match)
+        matches!(
+            self.role,
+            BlockRole::IncomingBlock1 | BlockRole::IncomingQBlock1
+        ) && self
+            .request_binding
+            .is_some_and(RequestBinding::if_none_match)
     }
     pub(crate) fn issue_checkpoint(&self) -> IssueCheckpoint {
         IssueCheckpoint {

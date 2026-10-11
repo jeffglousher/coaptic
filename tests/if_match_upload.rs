@@ -513,35 +513,56 @@ fn if_match_qblock_missing_reissue_preserves_condition_and_protected_inner() {
 
 #[test]
 fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
-    for qblock in [false, true] {
+    // Classic Block1 now selects a smaller initial fragment when the condition
+    // pushes the 1024-byte candidate beyond TX capacity; Q retains explicit refusal.
+    let long_path = core::str::from_utf8(&[b'x'; 255]).unwrap();
+    let mut client = fresh_client();
+    without_allocating(|| {
+        for now in 0..16 {
+            let call = client
+                .put(long_path)
+                .to(PEER)
+                .payload(&BODY)
+                .if_match(b"12345678")
+                .request_tag(BodyTag::new(b"transfer").unwrap())
+                .send(now)
+                .unwrap();
+            let frame = client.transport_mut().take().unwrap();
+            let parsed = decode(&frame.bytes[..frame.len]).unwrap();
+            assert_eq!(parsed.block1().unwrap().unwrap().szx(), 5);
+            assert_eq!(parsed.if_match().next(), Some(&b"12345678"[..]));
+            assert_eq!(parsed.payload(), &BODY[..512]);
+            assert!(client.cancel(call));
+            assert!(client.take_response(call).unwrap().is_err());
+            assert_eq!(client.transport_mut().len, 0);
+        }
+    });
+    exercise(client, false, false, Some(1), None, false);
+    {
         static PATH_BYTES: [u8; 255] = [b'x'; 255];
         let mut found = false;
         for length in 200..=255 {
             let path = core::str::from_utf8(&PATH_BYTES[..length]).unwrap();
             let mut client = fresh_client();
-            let mut plain = client
+            let plain = client
                 .put(path)
                 .to(PEER)
                 .payload(&BODY)
-                .request_tag(BodyTag::new(b"transfer").unwrap());
-            if qblock {
-                plain = plain.q_block1();
-            }
+                .request_tag(BodyTag::new(b"transfer").unwrap())
+                .q_block1();
             let Ok(call) = plain.send(0) else {
                 continue;
             };
             assert!(client.cancel(call));
             assert!(client.take_response(call).unwrap().is_err());
             client.transport_mut().take().unwrap();
-            let mut conditioned = client
+            let conditioned = client
                 .put(path)
                 .to(PEER)
                 .payload(&BODY)
                 .if_match(b"12345678")
-                .request_tag(BodyTag::new(b"transfer").unwrap());
-            if qblock {
-                conditioned = conditioned.q_block1();
-            }
+                .request_tag(BodyTag::new(b"transfer").unwrap())
+                .q_block1();
             let result = conditioned.send(1);
             if let Ok(call) = result {
                 client.cancel(call);
@@ -566,15 +587,13 @@ fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
                 // More than the two body slots and default Call capacity: every failed encode
                 // and cancellation must return its ownership before the next admission.
                 for now in 2..18 {
-                    let mut request = client
+                    let request = client
                         .put(path)
                         .to(PEER)
                         .payload(&BODY)
                         .if_match(b"12345678")
-                        .request_tag(BodyTag::new(b"transfer").unwrap());
-                    if qblock {
-                        request = request.q_block1();
-                    }
+                        .request_tag(BodyTag::new(b"transfer").unwrap())
+                        .q_block1();
                     assert!(matches!(
                         request.send(now),
                         Err(coaptic::app::Error::Message(
@@ -584,15 +603,13 @@ fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
                         ))
                     ));
                     assert_eq!(client.transport_mut().len, 0);
-                    let mut request = client
+                    let request = client
                         .put("upload")
                         .to(PEER)
                         .payload(&BODY)
                         .if_match(&[1])
-                        .request_tag(BodyTag::new(b"transfer").unwrap());
-                    if qblock {
-                        request = request.q_block1();
-                    }
+                        .request_tag(BodyTag::new(b"transfer").unwrap())
+                        .q_block1();
                     let call = request.send(now).unwrap();
                     assert!(client.cancel(call));
                     assert_eq!(
@@ -603,7 +620,7 @@ fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
                     assert_eq!(client.transport_mut().len, 0);
                 }
             });
-            exercise(client, qblock, false, Some(1), None, false);
+            exercise(client, true, false, Some(1), None, false);
             break;
         }
         assert!(
