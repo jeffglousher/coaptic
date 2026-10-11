@@ -4961,6 +4961,17 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                 assert_eq!(queries.next(), Some(Ok("version=2")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(
+                    parsed.no_response(),
+                    Some(Ok(crate::message::NoResponse::DEFAULT))
+                );
+                assert_eq!(
+                    parsed
+                        .get_option(OptionNumber::NO_RESPONSE)
+                        .unwrap()
+                        .value(),
+                    &[]
+                );
                 assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(
                     parsed.content_format(),
@@ -5007,6 +5018,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .accept(ContentFormat::OCTET_STREAM)
             .echo(EchoOpt::new(b"challenge").unwrap())
             .content_format(ContentFormat::OCTET_STREAM)
+            .no_response(crate::message::NoResponse::DEFAULT)
             .payload(&LARGE);
         if qblock {
             request = request
@@ -6561,6 +6573,49 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
 }
 
 #[test]
+fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
+    use crate::message::NoResponse;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = pipe_app();
+        for mask in [2, 8, 16, 26] {
+            let mut request = app
+                .put("upload")
+                .to(peer)
+                .payload(&LARGE)
+                .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+                .no_response(NoResponse::new(mask));
+            if qblock {
+                request = request.q_block1();
+            }
+            assert_eq!(request.send(0), Err(Error::NoResponseUploadUnsupported));
+            assert_eq!(app.transport().len, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+        let mut request = app
+            .put("upload")
+            .to(peer)
+            .payload(&LARGE)
+            .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+            .no_response(NoResponse::DEFAULT);
+        if qblock {
+            request = request.q_block1();
+        }
+        let call = request.send(0).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
 fn no_response_unsupported_upload_and_observe_refuse_before_io() {
     use crate::message::NoResponse;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -6569,7 +6624,7 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
         app.put("upload")
             .to(peer)
             .payload(&LARGE)
-            .no_response(NoResponse::DEFAULT)
+            .no_response(NoResponse::new(2))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );

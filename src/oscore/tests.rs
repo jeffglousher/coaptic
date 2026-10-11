@@ -1518,9 +1518,21 @@ fn app_oscore_block1_put_assembles() {
         .unwrap();
     client.set_oscore(client_c1());
 
+    assert!(matches!(
+        client
+            .put("upload")
+            .payload(&LARGE)
+            .to(server_ep)
+            .no_response(crate::message::NoResponse::new(2))
+            .send(0),
+        Err(crate::app::Error::NoResponseUploadUnsupported)
+    ));
+    assert!(client.transport().last_send.is_none());
+    assert_eq!(client.engine_mut().tx_occupied(), 0);
     let call = client
         .put("upload")
         .payload(&LARGE)
+        .no_response(crate::message::NoResponse::DEFAULT)
         .content_format(ContentFormat::OCTET_STREAM)
         .to(server_ep)
         .send(0)
@@ -4136,6 +4148,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
             .q_block1()
             .request_tag(crate::storage::BodyTag::new(&[iteration as u8]).unwrap())
             .payload(&LARGE)
+            .no_response(crate::message::NoResponse::DEFAULT)
             .to(server_ep)
             .send(now)
             .unwrap();
@@ -4301,6 +4314,7 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
         .non()
         .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
         .payload(&LARGE)
+        .no_response(crate::message::NoResponse::DEFAULT)
         .to(peer)
         .send(0)
         .unwrap();
@@ -4352,6 +4366,10 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
     assert_eq!(outer.ty(), Type::NonConfirmable);
     let (inner, recovery_ref) = server.unprotect_request(&outer, &mut scratch).unwrap();
     assert_eq!(inner.q_block1().unwrap().unwrap().num(), 1);
+    assert_eq!(
+        inner.no_response(),
+        Some(Ok(crate::message::NoResponse::DEFAULT))
+    );
     assert_eq!(inner.payload(), &LARGE[1024..]);
     assert_eq!(inner.request_tag().next(), Some(&b"tag"[..]));
     let final_reply = Message::new(Type::NonConfirmable, Code::CHANGED, MessageId::new(600))

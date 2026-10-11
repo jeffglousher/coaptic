@@ -1167,8 +1167,9 @@ where
     /// optional: returned responses remain observable. Silence is never reported
     /// as success; use [`Self::deadline`] for a partial mask, or [`App::cancel`]
     /// to cease listening when suppressing all classes. Empty ACKs only stop RTO.
-    /// Fragmented uploads and suppressed Observe registration are explicit App
-    /// boundaries; use Engine for caller-managed interactions in those cases.
+    /// Zero is also retained on every Block1 or Q-Block1 upload fragment.
+    /// Nonzero masks on fragmented uploads or Observe registration are explicit
+    /// App boundaries; use Engine for caller-managed interactions in those cases.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1393,7 +1394,7 @@ where
         if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
             return Err(Error::ObserveMethodUnsupported);
         }
-        if self.no_response.is_some() && self.q_block1 {
+        if self.no_response.is_some_and(|value| value.get() != 0) && self.q_block1 {
             return Err(Error::NoResponseUploadUnsupported);
         }
         if self.no_response.is_some_and(|value| value.get() != 0)
@@ -1767,7 +1768,7 @@ where
         )
         .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            if spec.no_response.is_some() {
+            if spec.no_response.is_some_and(|value| value.get() != 0) {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
@@ -1799,6 +1800,7 @@ where
                 spec.request_tag,
                 spec.content_format,
                 spec.echo,
+                spec.no_response,
                 spec.q_block1,
                 tx,
             )
@@ -1828,6 +1830,7 @@ fn send_client_block1<Mem, T>(
     request_tag: BodyTag,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     q_block1: bool,
     tx: SlotId,
 ) -> Result<Call, Error<T::Error>>
@@ -1870,6 +1873,7 @@ where
             accept,
             content_format,
             echo,
+            no_response,
             body,
             Some(tx),
             None,
@@ -1891,6 +1895,7 @@ where
             accept,
             content_format,
             echo,
+            no_response,
             body,
             Some(tx),
         )
@@ -2738,6 +2743,7 @@ where
             live.accept,
             live.content_format,
             live.echo,
+            live.no_response,
             issued,
             true,
             None,
@@ -2857,6 +2863,7 @@ where
     let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
     let echo = live.and_then(|live| live.echo);
+    let no_response = live.and_then(|live| live.no_response);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
     let mut query_n = 0;
@@ -2885,6 +2892,7 @@ where
                 accept,
                 content_format,
                 echo,
+                no_response,
                 body,
                 None,
             )
@@ -2908,6 +2916,7 @@ where
                 accept,
                 content_format,
                 echo,
+                no_response,
                 body,
                 None,
                 Some((token, peer)),
@@ -2934,6 +2943,7 @@ fn issue_block1<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     body: SlotId,
     tx: Option<SlotId>,
 ) -> Result<(), Error<T::Error>>
@@ -2957,6 +2967,7 @@ where
         accept,
         content_format,
         echo,
+        no_response,
         issued,
         false,
         tx,
@@ -2979,6 +2990,7 @@ fn issue_q_block1_window<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     body: SlotId,
     mut tx: Option<SlotId>,
     take_first: Option<(Token, Endpoint)>,
@@ -3015,6 +3027,7 @@ where
             accept,
             content_format,
             echo,
+            no_response,
             issued,
             true,
             tx.take(),
@@ -3044,6 +3057,7 @@ fn send_block1_issued<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     issued: OutgoingBlock,
     q_block1: bool,
     tx: Option<SlotId>,
@@ -3077,6 +3091,7 @@ where
     let acc = accept.map(ContentFormat::encode);
     let blk = issued.block().encode();
     let size = size1.map(encode_uint);
+    let no_response = no_response.map(crate::message::NoResponse::encode);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let filled = (|| -> Result<(), EncodeError> {
         for segment in path {
@@ -3098,6 +3113,9 @@ where
         }
         if let Some(ref encoded) = size {
             push_opt(&mut opts, Opt::size1(encoded))?;
+        }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
         }
         if let Some(echo) = echo.as_ref() {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
