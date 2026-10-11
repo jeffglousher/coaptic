@@ -199,3 +199,18 @@ fn incompatible_heap_dimensions_refuse_then_valid_configuration_recovers() {
             .is_ok()
     );
 }
+
+#[cfg(not(feature = "oscore"))]
+#[test]
+fn security_resource_bound_is_zero_sized_without_oscore() {
+    let resources = resources::SmallDevice::new().security_requests::<64>();
+    assert_eq!(resources.security_request_capacity(), 64);
+    let mut app = App::with_resources(resources)
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert_eq!(app.security_request_capacity(), 64);
+    assert_eq!(app.security_metadata_bytes(), 0);
+    app.poll(0).unwrap();
+}

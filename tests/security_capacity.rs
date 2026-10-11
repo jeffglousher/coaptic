@@ -225,16 +225,24 @@ fn capacity<S: AppStorage>(mut client: Client<S, 6>) {
         assert!(client.cancel(next));
         client.take_response(recovered).unwrap().unwrap_err();
         client.take_response(next).unwrap().unwrap_err();
-        for _ in 0..6 {
+        let expiring = core::array::from_fn::<_, 6, _>(|_| {
             client
                 .get("value")
                 .non()
                 .deadline(30)
                 .to(PEER)
                 .send(20)
-                .unwrap();
-        }
+                .unwrap()
+        });
         client.poll(30).unwrap();
+        for call in expiring {
+            assert!(client.oscore().unwrap().lookup(call.token()).is_none());
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap_err(),
+                CallFailure::DeadlineExceeded
+            );
+        }
+        client.get("value").non().to(PEER).send(31).unwrap();
         assert!(client.oscore().unwrap().sender_seq() > 6);
     });
 }
