@@ -365,3 +365,44 @@ fn allocated_empty_storage() {
         assert!(storage.poll_retransmit(u64::MAX).is_none());
     });
 }
+
+fn quiet_scan<S: Storage + DatagramSlots + PendingCons>(mut engine: Engine<S>) {
+    no_alloc(|| {
+        let a = engine.acquire_tx().unwrap();
+        let b = engine.acquire_tx().unwrap();
+        let owner_a = Endpoint::v4([192, 0, 2, 1], 5683);
+        let owner_b = Endpoint::v4([192, 0, 2, 2], 5683);
+        engine.write_tx(a, b"A", owner_a).unwrap();
+        engine.write_tx(b, b"B", owner_b).unwrap();
+        engine
+            .record_pending_con(a, owner_a, MessageId::new(1), 0, 0)
+            .unwrap();
+        engine
+            .record_pending_con(b, owner_b, MessageId::new(2), 10_000, 0)
+            .unwrap();
+        let Some(Retransmit::Due(first)) = engine.poll_retransmit(2_000) else {
+            panic!("first")
+        };
+        let waiting = engine.pending_con(b).unwrap();
+        assert!(engine.poll_retransmit(3_000).is_none());
+        assert_eq!(engine.pending_con(a), Some(first));
+        assert_eq!(engine.pending_con(b), Some(waiting));
+        // Refused malformed replacement must not reset the selection cursor
+        // or the already-advanced exact retry snapshot.
+        assert!(engine.replace_pending_con(first, b"bad").is_err());
+        assert_eq!(engine.pending_con(a), Some(first));
+        let Some(Retransmit::Due(next)) = engine.poll_retransmit(60_000) else {
+            panic!("waiting")
+        };
+        assert_eq!(next.tx_slot(), b);
+    });
+}
+#[test]
+fn fixed_quiet_scan_and_refusal_preserve_cursor() {
+    quiet_scan(fixed());
+}
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_quiet_scan_and_refusal_preserve_cursor() {
+    quiet_scan(allocated(4));
+}
