@@ -13436,3 +13436,19 @@ fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry()
         }
     }
 }
+
+#[test]
+fn deferred_selection_preserves_get_validator_behavior() {
+    let with_tag = [Opt::etag(b"v1"), Opt::uri_path("select")];
+    let no_tag = [Opt::uri_path("select")];
+    for code in [Code::GET, Code::FETCH] {
+        let make = |options: &[Opt<'_>]| {
+            let message =
+                Message::new(Type::NonConfirmable, code, MessageId::new(1)).with_options(options);
+            let mut wire = [0; 64];
+            let n = encode(&message, &mut wire).unwrap();
+            super::DeferredSelection::from_request(&decode(&wire[..n]).unwrap()).unwrap()
+        };
+        assert_eq!(make(&with_tag) == make(&no_tag), code == Code::GET);
+    }
+}

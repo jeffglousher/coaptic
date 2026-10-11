@@ -215,15 +215,16 @@ impl DeferredSelection {
     fn from_request(parsed: &ParsedMessage<'_>) -> Result<Self, EncodeError> {
         let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
         for option in parsed.options().filter(|option| {
-            matches!(
-                option.number(),
-                crate::message::OptionNumber::IF_MATCH
-                    | crate::message::OptionNumber::IF_NONE_MATCH
-                    | crate::message::OptionNumber::URI_PATH
-                    | crate::message::OptionNumber::URI_QUERY
-                    | crate::message::OptionNumber::CONTENT_FORMAT
-                    | crate::message::OptionNumber::ACCEPT
-            )
+            (parsed.code() == Code::FETCH && option.number() == crate::message::OptionNumber::ETAG)
+                || matches!(
+                    option.number(),
+                    crate::message::OptionNumber::IF_MATCH
+                        | crate::message::OptionNumber::IF_NONE_MATCH
+                        | crate::message::OptionNumber::URI_PATH
+                        | crate::message::OptionNumber::URI_QUERY
+                        | crate::message::OptionNumber::CONTENT_FORMAT
+                        | crate::message::OptionNumber::ACCEPT
+                )
         }) {
             push_opt(&mut options, option)?;
         }
@@ -1502,7 +1503,9 @@ where
     /// any pending CON retransmissions in App. A large response retains bounded
     /// header metadata and its TX-body snapshot until matching Block2 follow-ups
     /// finish or the original deferred deadline expires. Matching method/path/
-    /// queries/selection never dispatch domain work again. Metadata is bounded
+    /// queries/selection never dispatch domain work again. FETCH selection includes
+    /// the original request ETag options; changing, adding or omitting a validator
+    /// cannot select the retained snapshot. Metadata is bounded
     /// to 24 options and 512 encoded bytes; overflow fails before sending.
     /// Failure leaves the handle available for
     /// retry until its deadline; remote effects can already have happened. Never
