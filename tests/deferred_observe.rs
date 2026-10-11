@@ -1000,7 +1000,7 @@ fn deferred_observe_latest_ambiguous_mid_rst_revokes_only_current_owner() {
 }
 
 #[test]
-fn deferred_observe_large_initial_never_uses_available_block_body_storage() {
+fn deferred_observe_large_initial_without_etag_refuses_available_body_storage() {
     static LARGE: [u8; 300] = [b'b'; 300];
     let mut server = App::with_resources(
         Resources::<Buffers>::new()
