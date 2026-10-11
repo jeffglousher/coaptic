@@ -98,10 +98,9 @@ platform services:
 use coaptic::{App, get, resources::SmallDevice};
 
 let mut service = App::with_resources(SmallDevice::new())
-    .randomness(secure_random)
     .oscore(context)
     .route("telemetry", get(telemetry))
-    .bind(io)?;
+    .bind_with_entropy(io, secure_random)?;
 service.poll(now_ms)?;
 ```
 
@@ -116,6 +115,14 @@ refuses failed or backward readings before protocol work; repeated ticks are
 valid. Keep the same epoch while the App lives. Your adapter must extend wrapping
 hardware counters and qualify the timer; the guard cannot detect a stopped clock
 or an incorrect forward jump. The protected Linux example uses this same guard.
+
+`secure_random` is a callback that fills the requested bytes and returns `true`,
+or returns `false` when secure entropy is unavailable. `bind_with_entropy` can
+own a closure that borrows your hardware RNG; it needs no global state or
+allocation. It samples initial identity during binding and supplies later Tokens
+and retransmission jitter. Failures refuse work instead of selecting predictable
+values. The callback does not provision keys or replace EDHOC's entropy source;
+those remain separate platform responsibilities. The host examples use OS entropy.
 
 Check the platform-independent service from this repository:
 
@@ -251,7 +258,10 @@ Customize the configuration before selecting the application:
 
 ```rust
 use coaptic::{App, resources::SmallDevice};
-let resources = SmallDevice::new().client_calls::<2>().routes::<6>();
+let resources = SmallDevice::new()
+    .client_calls::<2>()
+    .observe_entries::<4>()
+    .routes::<6>();
 let builder = App::with_resources(resources);
 ```
 
@@ -268,6 +278,11 @@ subscriptions retain Call slots. OSCORE defaults to four live request bindings;
 select a different inline bound with `.security_requests::<N>()` and a matching
 `BoundedSecurityContext<N>`. Fixed and allocated Apps keep the same explicit bound.
 There is still one attached context; more bindings do not add security associations.
+Client and server Observe registrations share the configured Observe table. Use
+`.observe_entries::<N>()` on fixed resources or `.observe_entries(n)` after
+`.allocated(limit)` for a runtime capacity; the latter is included in the heap
+request limit. Extra Observe rows do not increase client Call or security-binding
+capacity. Exhaustion refuses a new registration without evicting another owner.
 Independent resource/fairness qualification remains in
 [#340](https://github.com/jeffglousher/coaptic/issues/340).
 
@@ -336,6 +351,11 @@ The reserved Waveshare ESP32-S3 has passed finite protected LAN checks, complete
 2000-byte replies, refusal cases and a replay-first software-restart check. This
 evidence belongs to its recorded firmware and source revisions:
 [device methods and limitations](https://github.com/jeffglousher/coaptic/issues/333#issuecomment-6092855382).
+A later, separately identified firmware run retained a telemetry operation across
+a lost receipt and device software restart. A fresh host process returned its
+matching durable receipt with one committed effect:
+[telemetry sources, hashes and limits](https://github.com/jeffglousher/coaptic/issues/333#issuecomment-6104836022).
+Both demonstrations use manually staged pairwise credentials.
 Flash power-loss recovery, hostile rollback, production key custody and the full
 end-user flow remain open. Production readiness has not been established.
 
