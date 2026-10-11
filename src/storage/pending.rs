@@ -159,7 +159,7 @@ pub enum Retransmit {
 ///
 /// Insert, lookup, take, and poll scan the configured TX slot count (O(n) in
 /// capacity). Capacity is the TX Datagram Pool: a slot must already be
-/// occupied. [`super::Memory`] and [`super::AllocMemory`] implement this.
+/// occupied. [`super::Memory`] and `AllocMemory` (with `alloc`) implement this.
 pub trait PendingCons {
     /// Mark occupied TX `id` as pending and start RTO.
     ///

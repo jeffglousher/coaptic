@@ -80,7 +80,7 @@
 //!
 //! [`App::builder`] starts with fixed default datagram storage. Adjust the
 //! same builder with [`AppBuilder::block_wise`], [`AppBuilder::bind_storage`]
-//! or [`AppBuilder::bind_alloc`] (`alloc` independently of `std`). No separate
+//! or `AppBuilder::bind_alloc` (`alloc` independently of `std`). No separate
 //! advanced reactor is needed for custom storage. [`AppBuilder::full_responses`]
 //! and [`App::take_response_into`] collect exact bytes into caller storage;
 //! insufficient capacity leaves the complete reply available for retry.
@@ -173,8 +173,8 @@ use response::AssembledField;
 
 /// Storage capabilities used by the single [`App`] interface.
 ///
-/// Fixed [`crate::storage::Memory`] and allocator-backed [`crate::storage::AllocMemory`] use
-/// the same routing, request builders and protocol reactor.
+/// Fixed [`crate::storage::Memory`] and allocator-backed `AllocMemory` (with
+/// `alloc`) use the same routing, request builders and protocol reactor.
 pub trait AppStorage:
     Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots
 {
@@ -776,7 +776,7 @@ where
 {
     /// Bind the profile's fixed memory, with or without body pools.
     ///
-    /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
+    /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.
     /// Missing security configuration is rejected before storage construction.
     pub fn bind<T>(
@@ -797,7 +797,7 @@ where
     /// Storage sizes, scratch and body presence are validated by the same
     /// Engine builder as fixed profiles. `P` remains the default-memory marker;
     /// the selected `S` supplies actual datagram/body dimensions and scratch.
-    /// With `alloc`, use [`Self::bind_alloc`] for one-time bounded allocation.
+    /// With `alloc`, use `Self::bind_alloc` for one-time bounded allocation.
     pub fn bind_storage<T, S: AppStorage>(
         self,
         io: T,
