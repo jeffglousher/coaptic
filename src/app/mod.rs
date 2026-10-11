@@ -229,9 +229,39 @@ struct DeferredRow {
     meta: SendResponse<'static>,
     deadline_ms: u64,
     selection: DeferredSelection,
+    q_selectors: DeferredQSelectors,
     snapshot: Option<(SlotId, client::ReplyMeta)>,
     completed: bool,
 }
+// Owned wire values only; the representation key retains its separate 512-byte bound.
+#[derive(Clone, Copy)]
+struct DeferredQSelectors {
+    values: [u32; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
+    len: usize,
+}
+impl DeferredQSelectors {
+    fn from_request(parsed: &ParsedMessage<'_>) -> Option<Self> {
+        let mut result = Self {
+            values: [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
+            len: 0,
+        };
+        for value in parsed.q_block2() {
+            let value = value.ok()?;
+            if result.len == result.values.len() {
+                return None;
+            }
+            result.values[result.len] = value.as_uint();
+            result.len += 1;
+        }
+        Some(result)
+    }
+    fn iter(&self) -> impl Iterator<Item = BlockValue> + '_ {
+        self.values[..self.len]
+            .iter()
+            .map(|&value| BlockValue::from_uint(value).expect("validated selector"))
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct DeferredSelection {
     bytes: [u8; client::RESPONSE_OPTION_BYTES],
@@ -363,6 +393,7 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         meta: SendResponse<'static>,
         deadline_ms: u64,
         selection: DeferredSelection,
+        q_selectors: DeferredQSelectors,
     ) {
         let row = self
             .rows
@@ -374,6 +405,7 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             meta,
             deadline_ms,
             selection,
+            q_selectors,
             snapshot: None,
             completed: false,
         });
@@ -1593,7 +1625,10 @@ where
     /// re-run durable work on a send failure. OSCORE sequences are never rewound.
     /// Once a Q snapshot is retained, retries must preserve its body, ETag, code and retained options;
     /// an error or Valid response cannot replace that attempted representation.
-    /// Initial Observe registration and Q-Block2 multi-selection deferral are unsupported.
+    /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
+    /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
+    /// Completion preflights every range before identity allocation or sending.
+    /// Initial Observe registration deferral remains unsupported.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -1642,6 +1677,7 @@ where
                 now_ms,
                 row.meta,
                 &response,
+                &row.q_selectors,
                 &mut self.oscore,
                 &mut self.dedup_closed,
             )
@@ -2726,6 +2762,7 @@ where
                         &response,
                         ty,
                         body,
+                        None,
                         oscore,
                         dedup_closed,
                     ) {
@@ -2853,11 +2890,12 @@ where
     }
 
     let selection = DeferredSelection::from_request(&parsed).ok();
+    let q_selectors = DeferredQSelectors::from_request(&parsed);
     let deferred_handle = if selection.is_some()
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
         && parsed.observe().is_none()
-        && parsed.q_block2().nth(1).is_none()
+        && q_selectors.is_some()
     {
         match deferred.candidate(ids, io) {
             Ok(handle) => handle,
@@ -2928,6 +2966,7 @@ where
                 },
                 now_ms.saturating_add(deferred_lifetime_ms),
                 selection.expect("admitted selection"),
+                q_selectors.expect("admitted selectors"),
             );
             if meta.ty == Type::Confirmable {
                 let outcome = send_empty_ack(engine, io, peer, meta.mid);
@@ -4301,6 +4340,7 @@ fn complete_deferred_q<S, T, const REQUESTS: usize>(
     now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
+    selectors: &DeferredQSelectors,
     oscore: &mut oscore::Field<REQUESTS>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
@@ -4311,6 +4351,7 @@ where
     if meta.no_response.suppresses(response.code()) {
         return Ok(());
     }
+    let plan = plan_deferred_q(selectors.iter(), response.payload().len()).map_err(Error::Block)?;
     let key = response_block_key(meta.token, meta.dest, response)?;
     if response.etag_bytes().is_none() {
         return Err(Error::Block(BlockTransferError::MissingIdentity));
@@ -4348,9 +4389,51 @@ where
         response,
         Type::NonConfirmable,
         body,
+        Some(plan),
         oscore,
         closed,
     )
+}
+struct DeferredQPlan {
+    selected: [u32; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
+    used: usize,
+}
+fn plan_deferred_q(
+    values: impl Iterator<Item = BlockValue>,
+    length: usize,
+) -> Result<DeferredQPlan, BlockTransferError> {
+    let mut plan = DeferredQPlan {
+        selected: [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
+        used: 0,
+    };
+    for value in values {
+        let size = usize::from(value.size());
+        let start = value.num() as usize * size;
+        if start >= length && !(start == 0 && length == 0) {
+            return Err(BlockTransferError::Gap);
+        }
+        let count = if value.more() {
+            u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+                - value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+        } else {
+            1
+        };
+        for step in 0..count {
+            let num = value.num() + step;
+            if num as usize * size >= length && step != 0 {
+                break;
+            }
+            if plan.used != 0 && num <= plan.selected[plan.used - 1] {
+                continue;
+            }
+            if plan.used == plan.selected.len() {
+                return Err(BlockTransferError::Gap);
+            }
+            plan.selected[plan.used] = num;
+            plan.used += 1;
+        }
+    }
+    Ok(plan)
 }
 #[allow(clippy::too_many_arguments)]
 fn issue_deferred_q<S, T, const REQUESTS: usize>(
@@ -4362,6 +4445,7 @@ fn issue_deferred_q<S, T, const REQUESTS: usize>(
     response: &Response<'_>,
     first_ty: Type,
     body: SlotId,
+    plan: Option<DeferredQPlan>,
     oscore: &mut oscore::Field<REQUESTS>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
@@ -4375,46 +4459,21 @@ where
         .ok_or(Error::Block(BlockTransferError::NoTransfer))?
         .len();
     let size = usize::from(q.size());
-    // Preflight the entire union before even the empty ACK. Selection ordering
-    // and SZX equality were checked at ingress. Completed snapshots use the
-    // parsed recovery request; complete() has only its retained single value.
-    let mut selected = [0u32; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
-    let mut used = 0;
-    let mut plan = |value: BlockValue| -> Result<(), Error<T::Error>> {
-        let start = value.num() as usize * size;
-        if start >= length && !(start == 0 && length == 0) {
-            return Err(Error::Block(BlockTransferError::Gap));
-        }
-        let count = if value.more() {
-            u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-                - value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+    let plan = match plan {
+        Some(plan) => plan,
+        None => if let Some(request) = meta.q_request {
+            plan_deferred_q(
+                request
+                    .q_block2()
+                    .map(|value| value.expect("validated ingress")),
+                length,
+            )
         } else {
-            1
-        };
-        for step in 0..count {
-            let num = value.num() + step;
-            if num as usize * size >= length && step != 0 {
-                break;
-            }
-            if used != 0 && num <= selected[used - 1] {
-                continue;
-            }
-            if used == selected.len() {
-                return Err(Error::Block(BlockTransferError::Gap));
-            }
-            selected[used] = num;
-            used += 1;
+            plan_deferred_q(core::iter::once(q), length)
         }
-        Ok(())
+        .map_err(Error::Block)?,
     };
-    if let Some(request) = meta.q_request {
-        for value in request.q_block2() {
-            plan(value.map_err(|error| Error::Block(error.into()))?)?;
-        }
-    } else {
-        plan(q)?;
-    }
-    for (step, &num) in selected[..used].iter().enumerate() {
+    for (step, &num) in plan.selected[..plan.used].iter().enumerate() {
         let offset = num as usize * size;
         if offset >= length && step != 0 {
             break;

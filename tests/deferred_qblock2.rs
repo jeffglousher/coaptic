@@ -206,7 +206,7 @@ impl Peer {
         etag: Option<&[u8]>,
         body: &[u8],
     ) -> Frame {
-        let mut options = coaptic::message::OptionsBuilder::<12>::new();
+        let mut options = coaptic::message::OptionsBuilder::<16>::new();
         if let Some(tag) = etag {
             options.push(Opt::etag(tag)).unwrap();
         }
@@ -220,18 +220,13 @@ impl Peer {
         if code == Code::FETCH {
             options.push(Opt::content_format(&cf)).unwrap();
         }
-        let values = [
+        let values: [_; 11] = core::array::from_fn(|index| {
             blocks
-                .first()
+                .get(index)
                 .copied()
                 .unwrap_or(BlockValue::new(0, false, 6).unwrap())
-                .encode(),
-            blocks
-                .get(1)
-                .copied()
-                .unwrap_or(BlockValue::new(0, false, 6).unwrap())
-                .encode(),
-        ];
+                .encode()
+        });
         for value in &values[..blocks.len()] {
             options.push(Opt::q_block2(value)).unwrap();
         }
@@ -252,7 +247,7 @@ impl Peer {
         frame
     }
     fn invalid_fetch(&mut self, mid: u16, tags: &[&[u8]], q: &[u8]) -> Frame {
-        let mut options = coaptic::message::OptionsBuilder::<12>::new();
+        let mut options = coaptic::message::OptionsBuilder::<16>::new();
         for tag in tags {
             options.push(Opt::etag(tag)).unwrap();
         }
@@ -402,11 +397,33 @@ fn deferred_qblock2_allocated_exact_budget_preserves_full_snapshot() {
 
 #[test]
 fn deferred_qblock2_failed_partial_send_retains_snapshot_and_recovers() {
+    partial_send(false);
+}
+#[test]
+fn deferred_qblock2_initial_partial_send_preserves_snapshot_and_recovers() {
+    partial_send(true);
+}
+fn partial_send(initial_repeated: bool) {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut server = fixed();
         let mut peer = Peer::new(&mut server, protected);
         without_allocating(|| {
-            server.transport_mut().incoming = Some(peer.request(1, 0, true, 6));
+            server.transport_mut().incoming = Some(if initial_repeated {
+                peer.custom(
+                    1,
+                    Code::GET,
+                    "snapshot",
+                    &[
+                        BlockValue::new(0, false, 6).unwrap(),
+                        BlockValue::new(1, true, 6).unwrap(),
+                    ],
+                    false,
+                    None,
+                    b"",
+                )
+            } else {
+                peer.request(1, 0, true, 6)
+            });
             let mut handle = None;
             server
                 .poll_with(0, |_, h| {
@@ -502,10 +519,32 @@ fn deferred_qblock2_failed_partial_send_retains_snapshot_and_recovers() {
 }
 #[test]
 fn deferred_qblock2_expiry_and_full_pool_refusal_recover() {
+    capacity_expiry(false);
+}
+#[test]
+fn deferred_qblock2_initial_capacity_expiry_and_recovery() {
+    capacity_expiry(true);
+}
+fn capacity_expiry(initial_repeated: bool) {
     let mut server = fixed();
     let mut peer = Peer::new(&mut server, false);
     without_allocating(|| {
-        server.transport_mut().incoming = Some(peer.request(1, 4, false, 6));
+        server.transport_mut().incoming = Some(if initial_repeated {
+            peer.custom(
+                1,
+                Code::GET,
+                "snapshot",
+                &[
+                    BlockValue::new(4, false, 6).unwrap(),
+                    BlockValue::new(5, false, 6).unwrap(),
+                ],
+                false,
+                None,
+                b"",
+            )
+        } else {
+            peer.request(1, 4, false, 6)
+        });
         let mut handle = None;
         server
             .poll_with(0, |_, h| {
@@ -549,7 +588,13 @@ fn deferred_qblock2_expiry_and_full_pool_refusal_recover() {
                 18,
             )
             .unwrap();
-        packets(&mut server, &peer, 4, 5, 6);
+        packets(
+            &mut server,
+            &peer,
+            4,
+            if initial_repeated { 6 } else { 5 },
+            6,
+        );
         server.poll(40).unwrap();
         assert!(matches!(
             server.complete(handle, Response::content(&BODY).etag(b"snapshot"), 41),
@@ -600,10 +645,9 @@ fn deferred_qblock2_unsupported_admission_and_selection_refuse_then_recover() {
                     mid,
                     Code::GET,
                     "snapshot",
-                    &[
-                        BlockValue::new(0, false, 6).unwrap(),
-                        BlockValue::new(1, false, 6).unwrap(),
-                    ][..if repeated { 2 } else { 1 }],
+                    &core::array::from_fn::<_, 11, _>(|index| {
+                        BlockValue::new(index as u32, false, 6).unwrap()
+                    })[..if repeated { 11 } else { 1 }],
                     observe,
                     None,
                     b"",
@@ -688,13 +732,17 @@ fn deferred_qblock2_unsupported_admission_and_selection_refuse_then_recover() {
 
 #[test]
 fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
-    fetch_selection(false);
+    fetch_selection(false, false);
 }
 #[test]
 fn deferred_qblock2_repeated_fetch_validator_and_payload_bind_snapshot() {
-    fetch_selection(true);
+    fetch_selection(true, false);
 }
-fn fetch_selection(repeated: bool) {
+#[test]
+fn deferred_qblock2_initial_fetch_validator_and_payload_bind_snapshot() {
+    fetch_selection(true, true);
+}
+fn fetch_selection(repeated: bool, initial_repeated: bool) {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut server = fixed();
         let mut peer = Peer::new(&mut server, protected);
@@ -713,7 +761,7 @@ fn fetch_selection(repeated: bool) {
                 1,
                 Code::FETCH,
                 "snapshot",
-                &[q],
+                &[q, BlockValue::new(1, false, 6).unwrap()][..if initial_repeated { 2 } else { 1 }],
                 false,
                 Some(b"selected"),
                 b"query",
@@ -736,7 +784,13 @@ fn fetch_selection(repeated: bool) {
                     1,
                 )
                 .unwrap();
-            packets(&mut server, &peer, 0, 1, 6);
+            packets(
+                &mut server,
+                &peer,
+                0,
+                if initial_repeated { 2 } else { 1 },
+                6,
+            );
             for (mid, tag, body) in [
                 (2, Some(&b"changed"[..]), &b"query"[..]),
                 (3, None, &b"query"[..]),
@@ -1324,6 +1378,288 @@ fn deferred_qblock2_repeated_failed_send_and_expiry_preserve_bounds() {
                 )
                 .unwrap();
             packets(&mut server, &peer, 10, 11, 6);
+        });
+    }
+}
+
+fn initial_repeated_campaign<S: AppStorage>(mut server: Server<S>, protected: bool, non: bool) {
+    let mut peer = Peer::new(&mut server, protected);
+    without_allocating(|| {
+        server.transport_mut().incoming = Some(peer.custom(
+            1,
+            Code::GET,
+            "snapshot",
+            &[
+                BlockValue::new(1, true, 6).unwrap(),
+                BlockValue::new(4, false, 6).unwrap(),
+            ],
+            false,
+            None,
+            b"",
+        ));
+        if non {
+            let frame = server.transport_mut().incoming.as_mut().unwrap();
+            frame.bytes[0] = (frame.bytes[0] & !0x30) | 0x10;
+        }
+        let mut handle = None;
+        server
+            .poll_with(0, |_, candidate| {
+                handle = candidate;
+                Response::deferred()
+            })
+            .unwrap();
+        if non {
+            assert!(server.transport_mut().take().is_none());
+        } else {
+            ack(&mut server, 1);
+        }
+        server
+            .complete(
+                handle.unwrap(),
+                Response::content(&BODY)
+                    .etag(b"snapshot")
+                    .content_format(ContentFormat::OCTET_STREAM),
+                1,
+            )
+            .unwrap();
+        packets(&mut server, &peer, 1, 10, 6);
+        for (mid, first, last, szx, start, end) in [
+            (2, (1, true), (4, false), 6, 1, 10),
+            (3, (8, true), (10, false), 6, 8, 11),
+            (4, (18, true), (20, false), 5, 18, 21),
+        ] {
+            server.transport_mut().incoming = Some(peer.custom(
+                mid,
+                Code::GET,
+                "snapshot",
+                &[
+                    BlockValue::new(first.0, first.1, szx).unwrap(),
+                    BlockValue::new(last.0, last.1, szx).unwrap(),
+                ],
+                false,
+                None,
+                b"",
+            ));
+            server
+                .poll_with(u64::from(mid), |_, _| {
+                    panic!("recovery must not redispatch")
+                })
+                .unwrap();
+            ack(&mut server, mid);
+            packets(&mut server, &peer, start, end, szx);
+        }
+    });
+}
+
+#[test]
+fn deferred_qblock2_initial_fixed_overlap_and_downsize() {
+    for non in [false, true] {
+        initial_repeated_campaign(fixed(), false, non);
+    }
+}
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_qblock2_initial_protected_overlap_and_downsize() {
+    for non in [false, true] {
+        initial_repeated_campaign(fixed(), true, non);
+    }
+}
+#[cfg(feature = "alloc")]
+#[test]
+fn deferred_qblock2_initial_allocated_exact_budget() {
+    let resources = || {
+        Resources::<Buffers>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<2>()
+    };
+    let bytes = resources()
+        .allocated(usize::MAX)
+        .required_heap_bytes()
+        .unwrap();
+    for protected in [false, cfg!(feature = "oscore")] {
+        assert!(
+            App::with_resources(resources().allocated(bytes - 1))
+                .allow_plaintext()
+                .deterministic_for_tests()
+                .bind(Io::default())
+                .is_err()
+        );
+        let server = App::with_resources(resources().allocated(bytes))
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .deferred_lifetime(40)
+            .bind(Io::default())
+            .unwrap();
+        initial_repeated_campaign(server, protected, false);
+    }
+}
+#[test]
+fn deferred_qblock2_initial_union_refuses_before_identity_and_recovers() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for values in [
+            [
+                BlockValue::new(0, false, 6).unwrap(),
+                BlockValue::new(11, false, 6).unwrap(),
+            ],
+            [
+                BlockValue::new(1, true, 6).unwrap(),
+                BlockValue::new(10, true, 6).unwrap(),
+            ],
+        ] {
+            let mut server = fixed();
+            let mut peer = Peer::new(&mut server, protected);
+            without_allocating(|| {
+                // The second case's boundary M=1 is wire-invalid in a repeated request;
+                // use two non-boundary suffixes spanning more than ten unique outputs instead.
+                let values = if values[1].more() {
+                    [
+                        BlockValue::new(1, true, 5).unwrap(),
+                        BlockValue::new(11, true, 5).unwrap(),
+                    ]
+                } else {
+                    values
+                };
+                server.transport_mut().incoming =
+                    Some(peer.custom(1, Code::GET, "snapshot", &values, false, None, b""));
+                let mut handle = None;
+                server
+                    .poll_with(0, |_, candidate| {
+                        handle = candidate;
+                        Response::deferred()
+                    })
+                    .unwrap();
+                ack(&mut server, 1);
+                let sends = server.transport().sends;
+                #[cfg(feature = "oscore")]
+                let seq = server.oscore().map(|ctx| ctx.sender_seq());
+                assert!(matches!(
+                    server.complete(
+                        handle.unwrap(),
+                        Response::content(&BODY)
+                            .etag(b"snapshot")
+                            .content_format(ContentFormat::OCTET_STREAM),
+                        1
+                    ),
+                    Err(coaptic::app::Error::Block(
+                        coaptic::error::BlockTransferError::Gap
+                    ))
+                ));
+                assert_eq!(server.transport().sends, sends);
+                #[cfg(feature = "oscore")]
+                assert_eq!(server.oscore().map(|ctx| ctx.sender_seq()), seq);
+                assert!(server.cancel_deferred(handle.unwrap()));
+                server.transport_mut().incoming = Some(peer.custom(
+                    2,
+                    Code::GET,
+                    "snapshot",
+                    &[
+                        BlockValue::new(0, false, 6).unwrap(),
+                        BlockValue::new(1, false, 6).unwrap(),
+                    ],
+                    false,
+                    None,
+                    b"",
+                ));
+                server
+                    .poll_with(2, |_, candidate| {
+                        handle = candidate;
+                        Response::deferred()
+                    })
+                    .unwrap();
+                ack(&mut server, 2);
+                server
+                    .complete(
+                        handle.unwrap(),
+                        Response::content(&BODY)
+                            .etag(b"snapshot")
+                            .content_format(ContentFormat::OCTET_STREAM),
+                        3,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    decode(&server.transport().output[0].bytes[..server.transport().output[0].len])
+                        .unwrap()
+                        .message_id(),
+                    MessageId::new(1),
+                    "refused completion did not consume MID"
+                );
+                packets(&mut server, &peer, 0, 2, 6);
+            });
+        }
+    }
+}
+
+#[test]
+fn deferred_qblock2_initial_order_size_and_capacity_refuse_without_admission() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        without_allocating(|| {
+            for (index, values) in [
+                [
+                    BlockValue::new(2, false, 6).unwrap(),
+                    BlockValue::new(1, false, 6).unwrap(),
+                ],
+                [
+                    BlockValue::new(1, false, 6).unwrap(),
+                    BlockValue::new(1, false, 6).unwrap(),
+                ],
+                [
+                    BlockValue::new(1, false, 6).unwrap(),
+                    BlockValue::new(2, false, 5).unwrap(),
+                ],
+            ]
+            .iter()
+            .enumerate()
+            {
+                server.transport_mut().incoming = Some(peer.custom(
+                    index as u16 + 1,
+                    Code::GET,
+                    "snapshot",
+                    values,
+                    false,
+                    None,
+                    b"",
+                ));
+                server
+                    .poll_with(index as u64, |_, _| {
+                        panic!("invalid wire selection cannot dispatch")
+                    })
+                    .unwrap();
+                reply_code(&mut server, &peer, Code::BAD_REQUEST);
+            }
+            let values: [_; 11] =
+                core::array::from_fn(|n| BlockValue::new(n as u32, false, 6).unwrap());
+            server.transport_mut().incoming =
+                Some(peer.custom(4, Code::GET, "snapshot", &values, false, None, b""));
+            server
+                .poll_with(4, |_, candidate| {
+                    assert!(candidate.is_none());
+                    Response::deferred()
+                })
+                .unwrap();
+            reply_code(&mut server, &peer, Code::SERVICE_UNAVAILABLE);
+            server.transport_mut().incoming =
+                Some(peer.custom(5, Code::GET, "snapshot", &values[..10], false, None, b""));
+            let mut handle = None;
+            server
+                .poll_with(5, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+            ack(&mut server, 5);
+            server
+                .complete(
+                    handle.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    6,
+                )
+                .unwrap();
+            packets(&mut server, &peer, 0, 10, 6);
         });
     }
 }
