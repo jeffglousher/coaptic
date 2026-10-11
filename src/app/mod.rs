@@ -2013,6 +2013,7 @@ where
             dedup_closed,
         )?;
     }
+    client::pace_qblock1(engine, io, inbox, lives, ids, oscore, now_ms)?;
     if let Some(error) = recv_error {
         return Err(error.into());
     }

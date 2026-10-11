@@ -544,6 +544,12 @@ pub trait BodySlots {
         id: SlotId,
     ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
 
+    /// Open a fully issued NON Q-Block1 set after caller-enforced pacing.
+    /// No peer receipt is inferred. Custom storage may refuse this capability.
+    fn pace_q_block1(&mut self, _id: SlotId) -> Result<(), crate::error::BlockTransferError> {
+        Err(crate::error::BlockTransferError::IdentityMismatch)
+    }
+
     /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
     fn ack_q_block1(
         &mut self,

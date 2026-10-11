@@ -437,18 +437,13 @@ fn refuse_and_reclaim<S: AppStorage>(client: &mut Peer<S>) {
     use coaptic::app::{CallFailure, Error};
     use coaptic::message::NoResponse;
     for now in 0..16 {
-        for mask in [1, 2, 8, 10, 18, 24, 26, 128, 255] {
+        for mask in [1, 8, 10, 24, 26, 128, 255] {
             let request = client
                 .put("upload")
                 .to(PEER)
                 .payload(&BODY)
                 .q_block1()
                 .no_response(NoResponse::new(mask));
-            let request = if matches!(mask, 2 | 18) {
-                request.non()
-            } else {
-                request
-            };
             assert_eq!(request.send(now), Err(Error::NoResponseUploadUnsupported));
         }
         assert_eq!(

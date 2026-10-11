@@ -298,7 +298,7 @@ fn q_con_success_no_response_unsupported_modes_refuse_before_io_then_recover() {
             for now in 0..16 {
                 for non in [false, true] {
                     for mask in [1, 2, 8, 10, 18, 24, 26, 128, 255] {
-                        if !non && matches!(mask, 2 | 18) {
+                        if matches!(mask, 2 | 18) {
                             continue;
                         }
                         let request = client

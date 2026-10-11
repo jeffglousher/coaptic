@@ -1112,6 +1112,10 @@ where
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingQBlock1)
     }
 
+    fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.bodies.tx.pace_q_block1(id)
+    }
+
     fn ack_q_block1(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
         self.bodies
             .tx
