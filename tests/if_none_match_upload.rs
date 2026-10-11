@@ -182,9 +182,9 @@ fn reset(exists: bool) {
     EFFECTS.with(|v| v.set(0));
     DISPATCHES.with(|v| v.set(0));
 }
-fn complete<S: AppStorage>(
+fn complete<S: AppStorage, R: AppStorage>(
     client: &mut Client<S>,
-    server: &mut Server,
+    server: &mut Client<R>,
     now: u64,
     create_between: bool,
     protected: bool,
@@ -224,8 +224,11 @@ fn complete<S: AppStorage>(
     client.poll(now + 2).unwrap();
     client.take_response(call).unwrap().unwrap().code()
 }
-fn exercise<S: AppStorage>(mut client: Client<S>, protected: bool) {
-    let mut server = server();
+fn exercise<S: AppStorage, R: AppStorage>(
+    mut client: Client<S>,
+    mut server: Client<R>,
+    protected: bool,
+) {
     #[cfg(feature = "oscore")]
     if protected {
         client.set_oscore(context(&[1], &[2]));
@@ -261,12 +264,12 @@ fn exercise<S: AppStorage>(mut client: Client<S>, protected: bool) {
 }
 #[test]
 fn if_none_match_classic_complete_current_existence_and_recovery() {
-    exercise(client(), false);
+    exercise(client(), server(), false);
 }
 #[cfg(feature = "oscore")]
 #[test]
 fn if_none_match_protected_classic_inner_condition_and_recovery() {
-    exercise(client(), true);
+    exercise(client(), server(), true);
 }
 #[cfg(feature = "alloc")]
 #[test]
@@ -278,19 +281,24 @@ fn if_none_match_classic_bounded_heap_has_same_behavior() {
         .required_heap_bytes()
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
-        exercise(
-            App::with_resources(
-                Resources::<Buffers>::new()
-                    .routes::<1>()
-                    .block_wise::<true>()
-                    .allocated(bytes),
-            )
+        let resources = || {
+            Resources::<Buffers>::new()
+                .routes::<1>()
+                .block_wise::<true>()
+                .allocated(bytes)
+        };
+        let client = App::with_resources(resources())
             .allow_plaintext()
             .deterministic_for_tests()
             .bind(Io::default())
-            .unwrap(),
-            protected,
-        );
+            .unwrap();
+        let server = App::with_resources(resources())
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .route("upload", put(replace))
+            .bind(Io::default())
+            .unwrap();
+        exercise(client, server, protected);
     }
 }
 
@@ -612,7 +620,7 @@ fn if_none_match_added_option_capacity_refuses_without_stale_ownership() {
                 assert_eq!(client.transport_mut().len, 0);
             }
         });
-        exercise(client, false);
+        exercise(client, server(), false);
         break;
     }
     assert!(
