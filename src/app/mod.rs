@@ -1665,6 +1665,20 @@ where
     ///
     /// Returns how many rows were marked. Use [`Self::notify`] when you
     /// already have the [`Response`].
+    ///
+    /// For an outstanding CON notification, signals coalesce until its next
+    /// retransmission deadline. A successful single-datagram source response
+    /// replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
+    /// the same TX slot, retry count and backoff. Without a signal, retries use
+    /// identical bytes. Block2, terminal and Content-Format-changing replacements
+    /// are refused; the due attempt still uses the retained packet.
+    /// Staging refusal does not consume the signal or extend the retry budget.
+    ///
+    /// Superseded ACKs do not complete or prolong the current chain. Up to four
+    /// superseded MIDs remain on the Observe row so an exact-peer RST can cancel
+    /// that chain. Current ACK, cancellation, re-registration or final timeout
+    /// clears this history; it is not a history across registrations. The row's
+    /// storage is included in fixed profiles and allocated heap-budget checks.
     pub fn signal(&mut self, path: &[&str]) -> usize {
         let resource = self.site.observe_resource(path);
         self.engine.signal_observe_resource(resource)
@@ -1715,10 +1729,16 @@ where
         Err(e) => (None, Some(e)),
     };
     let progress = engine.progress_before_dispatch(now_ms);
+    let mut replacement_error = None;
     if let Some(retransmit) = progress.retransmit() {
         match retransmit {
             Retransmit::Due(pending) => {
+                let replacement =
+                    supersede_notification(engine, io, site, ids, oscore, now_ms, pending);
+                // Staging refusal still makes the due attempt with retained bytes;
+                // no plaintext fallback and no retry-budget reset.
                 engine.send_tx(io, pending.tx_slot())?;
+                replacement_error = replacement.err();
             }
             Retransmit::GiveUp(pending) => {
                 client::give_up_client(engine, inbox, lives, oscore, pending.tx_slot());
@@ -1821,6 +1841,9 @@ where
     }
     if let Some(error) = recv_error {
         return Err(error.into());
+    }
+    if let Some(error) = replacement_error {
+        return Err(error);
     }
     Ok(())
 }
@@ -2188,6 +2211,18 @@ where
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
         } else {
+            // Delayed RST: retire the exact current packet before detaching its
+            // relation. A pinned packet refuses with both owners intact.
+            if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer) {
+                if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
+                    if let Some(tx) = engine.lookup_pending_con(mid, peer) {
+                        if let Err(error) = engine.release_tx(tx) {
+                            let _ = engine.release_rx(rx);
+                            return Err(error.into());
+                        }
+                    }
+                }
+            }
             // RST identifies a server notification by MID and endpoint. Its
             // request reference belongs to the removed server interest;
             // outgoing client bindings may independently use the same Token.
@@ -2742,7 +2777,16 @@ where
         let _ = engine.release_rx(rx);
         return Err(Error::Response(error));
     }
-    let response = apply_observe(engine, now_ms, peer, response, plan, oscore_req);
+    let response = match apply_observe(engine, now_ms, peer, response, plan, oscore_req) {
+        Ok(response) => response,
+        Err(error) => {
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
+            }
+            let _ = engine.release_rx(rx);
+            return Err(error.into());
+        }
+    };
 
     let outcome = if response.is_separate() {
         send_separate(
@@ -2809,19 +2853,31 @@ impl ObservePlan {
     }
 }
 
-fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots>(
+fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     engine: &mut Engine<S>,
     now_ms: u64,
     peer: Endpoint,
     mut response: Response<'a>,
     plan: ObservePlan,
     oscore_req: oscore::Request,
-) -> Response<'a> {
+) -> Result<Response<'a>, crate::storage::SlotError> {
     let key = ObserveKey::new(plan.token, peer);
 
     let opted = response.observe_seq().is_some() || plan.has_source;
     response = response.without_observe();
     let previous = if plan.deregister || plan.register {
+        // Retire only this relation's current notification before replacing its
+        // row. A pinned TX refuses without detaching the old row or body.
+        if let Some(interest) = engine
+            .lookup_observe(key)
+            .and_then(|id| engine.observe_interest(id))
+        {
+            if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
+                if let Some(tx) = engine.lookup_pending_con(mid, peer) {
+                    engine.release_tx(tx)?;
+                }
+            }
+        }
         engine.take_observe(key)
     } else {
         None
@@ -2854,7 +2910,91 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots>(
     if plan.delete && response.code().is_success() {
         let _ = engine.mark_observe_resource_deleted(plan.resource);
     }
-    response
+    Ok(response)
+}
+
+fn supersede_notification<S, T, const N: usize, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    site: &Site<N>,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS>,
+    now_ms: u64,
+    pending: crate::storage::PendingCon,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    T: DatagramIo,
+{
+    let interest = (0..engine.capacities().observe_entries).find_map(|index| {
+        let row = engine.observe_interest(SlotId::from_index(index))?;
+        (!row.key().is_client()
+            && row.is_pending()
+            && row.endpoint() == pending.endpoint()
+            && row.notify_hold().and_then(|hold| hold.con_mid()) == Some(pending.message_id()))
+        .then_some(row)
+    });
+    let Some(interest) = interest else {
+        return Ok(());
+    };
+    let Some(source) = site.observe_source(interest.resource()) else {
+        return Ok(());
+    };
+    let mut response = source();
+    response.validate().map_err(Error::Response)?;
+    if interest.is_deleted()
+        || !response.code().is_success()
+        || response.format() != interest.content_format()
+        || response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint())).is_some()
+    {
+        return Err(Error::ObserveSupersessionUnsupported);
+    }
+    if interest.superseded_con_mids().len() == usize::from(Transmission::MAX_RETRANSMIT) {
+        return Err(Error::Saturated);
+    }
+    let mid = ids.next_for(engine, io, now_ms)?;
+    let replacement = interest
+        .supersede_con(now_ms, mid)
+        .ok_or(Error::Saturated)?;
+    response.set_observe(replacement.seq());
+    let mut wire = S::TxScratch::default();
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let age = response.max_age_secs().map(EncodedUint::new);
+    let seq = encode_uint(replacement.seq());
+    let mut options = OptionsBuilder::<4>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(tag) = response.etag_bytes() {
+            push_opt(&mut options, Opt::etag(tag))?;
+        }
+        push_opt(&mut options, Opt::observe(&seq))?;
+        if let Some(ref value) = cf {
+            push_opt(&mut options, Opt::content_format(value))?;
+        }
+        if let Some(ref value) = age {
+            push_opt(&mut options, Opt::max_age(value))?;
+        }
+        Ok(())
+    })();
+    filled.map_err(|error| Error::Message(SlotMessageError::Encode(error)))?;
+    let message = Message::new(Type::Confirmable, response.code(), mid)
+        .with_token(interest.token())
+        .with_options(options.as_slice())
+        .with_payload(response.payload());
+    let n = oscore::stage_notification(
+        oscore,
+        oscore::request_from_interest(interest),
+        &message,
+        wire.as_mut(),
+    )?;
+    engine
+        .supersede_observe_con(pending, interest, replacement, &wire.as_ref()[..n])
+        .map_err(|error| match error {
+            crate::storage::PendingReplaceError::Slot(slot) => Error::Slot(slot),
+            crate::storage::PendingReplaceError::Unsupported => {
+                Error::ObserveSupersessionUnsupported
+            }
+            _ => Error::Saturated,
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4961,6 +5101,9 @@ pub enum Error<E> {
     ObserveRefreshMismatch,
     /// Observe registration/cancellation is defined only for GET and FETCH.
     ObserveMethodUnsupported,
+    /// Signaled CON replacement needs a successful single-datagram representation
+    /// with unchanged Content-Format. Original bytes and delivery budget remain.
+    ObserveSupersessionUnsupported,
     /// Multiple subscriptions match; select one with `deregister_call`.
     ObserveCancellationAmbiguous,
     /// Observe request identity exceeds the App's 512 encoded-byte bound.
@@ -5027,6 +5170,9 @@ where
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
             Self::ObserveMethodUnsupported => f.write_str("Observe requires GET or FETCH"),
+            Self::ObserveSupersessionUnsupported => f.write_str(
+                "pending Observe replacement requires a successful single-datagram representation",
+            ),
             Self::ObserveRefreshMismatch => {
                 f.write_str("Observe refresh does not match a live subscription")
             }
@@ -5087,6 +5233,7 @@ where
             | Self::FetchContentFormatRequired
             | Self::FetchRequestTooLarge
             | Self::ObserveRequestTooLarge
+            | Self::ObserveSupersessionUnsupported
             | Self::RequestTagRequired
             | Self::RequestTagInUse => None,
             #[cfg(feature = "oscore")]

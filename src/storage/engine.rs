@@ -887,9 +887,26 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         message_id: MessageId,
         endpoint: Endpoint,
     ) -> Option<ObserveInterest> {
-        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint).or_else(|| {
+            self.superseded_observe_notify(message_id, endpoint)
+                .and_then(|row| self.lookup_observe(row.key()))
+        })?;
         let interest = self.storage.observe_interest(id)?;
         self.take_observe(interest.key())
+    }
+
+    pub(crate) fn superseded_observe_notify(
+        &self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        (0..self.storage.capacities().observe_entries).find_map(|index| {
+            let row = self.storage.observe_interest(SlotId::from_index(index))?;
+            (!row.key().is_client()
+                && row.endpoint() == endpoint
+                && row.superseded_con_mids().contains(&message_id))
+            .then_some(row)
+        })
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.
@@ -1103,6 +1120,22 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             )
             .ok()?;
         Some(id)
+    }
+}
+
+impl<S: Storage + PendingCons + ObserveSlots> Engine<S> {
+    pub(crate) fn supersede_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError> {
+        self.storage
+            .replace_observe_con(pending, original, replacement, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(())
     }
 }
 

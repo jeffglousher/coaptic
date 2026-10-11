@@ -359,20 +359,36 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
     #[cfg(not(feature = "oscore"))]
     let _ = (ctx, request);
     #[cfg(feature = "oscore")]
-    if let Some(oscore) = ctx.as_mut() {
-        let Some(request) = request else {
-            return Err(protect_err(OscoreError::Context));
-        };
+    if ctx.is_some() {
         let mut wire = S::TxScratch::default();
-        let n = oscore
-            .protect_response_with_piv(msg, request, wire.as_mut())
-            .map_err(protect_err)?;
+        let n = stage_notification(ctx, request, msg, wire.as_mut())?;
         return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
         .encode_tx(tx, msg)
         .map(|_| ())
         .map_err(super::Error::from)
+}
+
+pub(crate) fn stage_notification<E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
+    request: Request,
+    msg: &Message<'_>,
+    out: &mut [u8],
+) -> Result<usize, super::Error<E>> {
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, request);
+    #[cfg(feature = "oscore")]
+    if let Some(oscore) = ctx.as_mut() {
+        let Some(request) = request else {
+            return Err(protect_err(OscoreError::Context));
+        };
+        return oscore
+            .protect_response_with_piv(msg, request, out)
+            .map_err(protect_err);
+    }
+    crate::message::encode(msg, out)
+        .map_err(|error| super::Error::Message(SlotMessageError::Encode(error)))
 }
 
 #[cfg_attr(not(feature = "oscore"), allow(dead_code))]

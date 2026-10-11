@@ -954,6 +954,31 @@ impl BodySlots for AllocMemory {
 }
 
 impl ObserveSlots for AllocMemory {
+    fn replace_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError>
+    where
+        Self: PendingCons,
+    {
+        let id = super::table::validate_observe_replacement(
+            self,
+            pending,
+            original,
+            replacement,
+            bytes,
+        )?;
+        self.replace_pending_con(pending, bytes)?;
+        // ObserveStore is private: the owned table cannot fail an occupied-row
+        // write while this exclusive borrow retains the validated row.
+        self.observe
+            .set_entry(id, replacement)
+            .expect("validated occupied Observe row");
+        Ok(())
+    }
     fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
         self.observe.insert(interest)
     }

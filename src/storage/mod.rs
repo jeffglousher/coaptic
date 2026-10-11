@@ -279,6 +279,25 @@ pub trait DedupSlots {
 /// §4.5 / §4.5.1 confirm / NSTART hold stay on the row; bodies are not
 /// stored here.
 pub trait ObserveSlots {
+    /// Atomically replace one exact pending CON and its exact Observe row.
+    ///
+    /// Any failure must leave both unchanged. Implementations must validate the
+    /// endpoint, current hold, replacement key/MID and complete pending view
+    /// before committing either area. Custom backends opt in explicitly; the
+    /// default refuses without mutation.
+    fn replace_observe_con(
+        &mut self,
+        _pending: PendingCon,
+        _original: ObserveInterest,
+        _replacement: ObserveInterest,
+        _bytes: &[u8],
+    ) -> Result<(), PendingReplaceError>
+    where
+        Self: PendingCons,
+    {
+        Err(PendingReplaceError::Unsupported)
+    }
+
     /// Insert `interest`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.

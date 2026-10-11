@@ -13237,3 +13237,79 @@ fn explicit_con_notification_preserves_per_endpoint_admission_and_validation() {
     assert_eq!(app.metrics().observe_notify, 1);
     assert_eq!(app.metrics().nstart_reject, 1);
 }
+
+#[test]
+fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for block_body in [false, true] {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["sensors", "temp"],
+            &[Opt::observe_register()],
+            0x1001,
+        );
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+            .allow_plaintext()
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        let key = ObserveKey::new(last_wide(&app).token(), peer);
+        let response = if block_body {
+            Response::content(&[7; 2000])
+                .content_format(ContentFormat::TEXT_PLAIN)
+                .etag(b"large")
+        } else {
+            obs_snapshot()
+        };
+        app.notify_confirmable(1, &["sensors", "temp"], response)
+            .unwrap();
+        let mid = last_wide(&app).message_id();
+        let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
+        let original = app.engine.pending_con(slot).unwrap();
+        let row_id = app.engine.lookup_observe(key).unwrap();
+        let old_row = app.engine.observe_interest(row_id).unwrap();
+        let old_wire = app.transport().sends[1];
+        let old_len = app.transport().send_lens[1];
+        if !block_body {
+            for _ in 1..65536 {
+                app.ids
+                    .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 1)
+                    .unwrap();
+            }
+        }
+        assert_eq!(app.signal(&["sensors", "temp"]), 1);
+        let due = original.rto().next_timeout_ms();
+        let error = app.poll(due).unwrap_err();
+        if block_body {
+            assert_eq!(error, Error::ObserveSupersessionUnsupported);
+        } else {
+            assert_eq!(
+                error,
+                Error::Identity(super::IdentityError::MessageIdExhausted)
+            );
+        }
+        assert_eq!(last_wide(&app).message_id(), mid);
+        assert_eq!(
+            &app.transport().sends[2][..app.transport().send_lens[2]],
+            &old_wire[..old_len]
+        );
+        let after = app.engine.pending_con(slot).unwrap();
+        assert_eq!(after.rto(), original.rto().next_attempt(due).unwrap());
+        let row = app.engine.observe_interest(row_id).unwrap();
+        assert_eq!(row.notify_hold(), old_row.notify_hold());
+        assert_eq!(row.seq(), old_row.seq());
+        assert!(row.is_pending());
+        assert!(row.superseded_con_mids().is_empty());
+        if block_body {
+            let body =
+                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).unwrap();
+            assert_eq!(app.engine.tx_body_payload(body), Some(&[7; 2000][..]));
+        }
+    }
+}
