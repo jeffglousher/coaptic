@@ -1172,8 +1172,12 @@ where
     /// as success; use [`Self::deadline`] for a partial mask, or [`App::cancel`]
     /// to cease listening when suppressing all classes. Empty ACKs only stop RTO.
     /// Zero is also retained on every Block1 or Q-Block1 upload fragment.
-    /// Nonzero masks on fragmented uploads or Observe registration are explicit
-    /// App boundaries; use Engine for caller-managed interactions in those cases.
+    /// Classic Block1 also supports error-only masks 8, 16 and 24: successful
+    /// Continue responses still advance the upload. Suppressed errors leave the
+    /// outcome unknown; deadline or cancellation bounds the local wait without
+    /// proving success. A peer may still return a selected error response.
+    /// Other nonzero upload masks, all nonzero Q-Block1 masks, and nonzero masks
+    /// on Observe registration remain explicit App boundaries.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1779,7 +1783,15 @@ where
         )
         .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            if spec.no_response.is_some_and(|value| value.get() != 0) {
+            // Classic Block1 requires 2.xx Continue. This bounded App combination
+            // supports only the defined error-class bits; undefined bits are an
+            // API boundary, not a wire-validity judgment. Q refuses nonzero earlier.
+            if spec.no_response.is_some_and(|value| {
+                value.get()
+                    & !(crate::message::NoResponse::SUPPRESS_4
+                        | crate::message::NoResponse::SUPPRESS_5)
+                    != 0
+            }) {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }

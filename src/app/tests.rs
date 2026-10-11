@@ -6581,7 +6581,10 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
         let mut app = pipe_app();
-        for mask in [2, 8, 16, 26] {
+        for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
+            if !qblock && matches!(mask, 8 | 16 | 24) {
+                continue;
+            }
             let mut request = app
                 .put("upload")
                 .to(peer)
