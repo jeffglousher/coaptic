@@ -1799,10 +1799,8 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // Fragmented ETag remains unsupported.
-            // Until the App retains their transfer-specific semantics, refuse
-            // fragmentation instead of turning a conditional write into an
-            // unconditional one (RFC 7959 section 2.10).
+            // Fragmented ETag remains unsupported: refuse before sending until
+            // the App can preserve its cache-validator semantics across the transfer.
             if spec.etag.is_some() {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
