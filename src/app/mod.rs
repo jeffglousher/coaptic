@@ -1106,11 +1106,40 @@ impl<
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
+    fn validate_scratch<S: DatagramSlots>(c: crate::storage::Capacities) -> Result<(), BuildError> {
+        c.validate_for_build(BLOCK_WISE)?;
+        // Check the actual borrowed slices: custom storage need not use the
+        // default associated constants. This is App admission, not Engine policy.
+        {
+            let mut rx = S::RxScratch::default();
+            if c.rx_datagram_bytes > rx.as_ref().len() || c.rx_datagram_bytes > rx.as_mut().len() {
+                return Err(BuildError::SizeMismatch);
+            }
+        }
+        {
+            let mut tx = S::TxScratch::default();
+            if c.tx_datagram_bytes > tx.as_ref().len() || c.tx_datagram_bytes > tx.as_mut().len() {
+                return Err(BuildError::SizeMismatch);
+            }
+        }
+        Ok(())
+    }
+
+    fn fixed_capacities() -> crate::storage::Capacities {
+        let c = crate::storage::Capacities::from_profile::<P>();
+        if BLOCK_WISE {
+            c.with_block_wise::<P>()
+        } else {
+            c
+        }
+    }
+
     /// Bind the profile's fixed memory, with or without body pools.
     ///
     /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.
-    /// Missing security configuration is rejected before storage construction.
+    /// Missing security configuration and scratch dimensions that cannot hold
+    /// the declared datagrams are rejected before storage construction.
     pub fn bind<T>(
         self,
         io: T,
@@ -1119,6 +1148,7 @@ where
         BuildError,
     > {
         self.validate_security()?;
+        Self::validate_scratch::<AppStore<P, BLOCK_WISE>>(Self::fixed_capacities())?;
         let engine = EngineBuilder::new()
             .profile::<P>()
             .block_wise(BLOCK_WISE)
@@ -1128,8 +1158,9 @@ where
 
     /// Bind caller-selected storage without changing the App interface.
     ///
-    /// Storage sizes, scratch and body presence are validated by the same
-    /// Engine builder as fixed profiles. `P` remains the default-memory marker;
+    /// App validates datagram sizes against both readable and writable scratch
+    /// slices before construction; Engine validates pool/body dimensions.
+    /// `P` remains the default-memory marker;
     /// the selected `S` supplies actual datagram/body dimensions and scratch.
     /// With `alloc`, use `Self::bind_alloc` for one-time bounded allocation.
     pub fn bind_storage<T, S: AppStorage>(
@@ -1139,6 +1170,7 @@ where
     ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
         self.validate_security()?;
         let c = storage.capacities();
+        Self::validate_scratch::<S>(c)?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -1165,6 +1197,7 @@ where
         BuildError,
     > {
         self.validate_security()?;
+        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -1181,7 +1214,9 @@ where
     /// in bounded time or return false. No allocation or global callback state is
     /// introduced. A prior `randomness` or `deterministic_for_tests` selection is
     /// an error, even if it would select the same source. Security and source
-    /// ambiguity are checked before invoking entropy or touching the socket.
+    /// ambiguity are checked first. Invalid datagram/scratch dimensions then
+    /// refuse before invoking entropy or touching the socket. Scratch defaults
+    /// are constructed for validation; caller-defined scratch owns its costs.
     /// See [`crate::platform::WithEntropy`] for adapter composition and limits.
     // Preserve the existing App type parameters; only the transport is wrapped.
     #[allow(clippy::type_complexity)]
@@ -1202,6 +1237,8 @@ where
         >,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<AppStore<P, BLOCK_WISE>>(Self::fixed_capacities())?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind(io)
     }
@@ -1217,6 +1254,8 @@ where
         App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<S>(storage.capacities())?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind_storage(io, storage)
     }
@@ -1242,8 +1281,18 @@ where
         >,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind_alloc(io, c)
+    }
+
+    fn validate_entropy_source(&self) -> Result<(), BuildError> {
+        self.validate_security()?;
+        if self.identity.is_some() {
+            return Err(BuildError::RandomnessAlreadyConfigured);
+        }
+        Ok(())
     }
 
     fn prepare_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
@@ -1251,10 +1300,7 @@ where
         io: T,
         random: R,
     ) -> Result<(Self, crate::platform::WithEntropy<T, R>), BuildError> {
-        self.validate_security()?;
-        if self.identity.is_some() {
-            return Err(BuildError::RandomnessAlreadyConfigured);
-        }
+        self.validate_entropy_source()?;
         let mut io = crate::platform::WithEntropy::new(io, random);
         let mut seed = [0; 2];
         if !io.fill_random(&mut seed) {
