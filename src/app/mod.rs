@@ -1505,8 +1505,11 @@ where
     /// cannot select the retained snapshot. A single Q-Block2 selection retains
     /// its complete snapshot until the original deadline, including after the
     /// last block is sent. Follow-ups can reselect individual blocks or the
-    /// remainder of a payload set, using a smaller block size if needed. Each
-    /// call sends at most ten NON payloads; the next set requires a follow-up.
+    /// remainder of a payload set, using a smaller block size if needed. Recovery
+    /// may include ordered equal-size selectors; overlapping blocks are sent once.
+    /// The entire union is validated before sending: at most ten unique NON
+    /// payloads per call. A larger union or any invalid range returns Bad Request
+    /// without sending a partial selection or changing the retained snapshot.
     /// Explicit Q responses require an ETag even when the body fits one datagram.
     /// Metadata is bounded
     /// to 24 options and 512 encoded bytes; overflow fails before sending.
@@ -1515,7 +1518,7 @@ where
     /// re-run durable work on a send failure. OSCORE sequences are never rewound.
     /// Once a Q snapshot is retained, retries must preserve its body, ETag, code and retained options;
     /// an error or Valid response cannot replace that attempted representation.
-    /// Observe registration and Q-Block2 multi-selection deferral are unsupported.
+    /// Initial Observe registration and Q-Block2 multi-selection deferral are unsupported.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -2600,7 +2603,7 @@ where
     }
 
     // Deferred responses own a stable bounded TX snapshot. Authenticated
-    // classic or single Q-Block2 follow-ups select it without re-running work.
+    // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if meta.block2.is_some() || meta.q_block2.is_some() {
         if let Some(index) = deferred.rows.iter().position(|row| {
             row.is_some_and(|row| {
@@ -2613,7 +2616,6 @@ where
                 if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
                     || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
                     || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                    || parsed.q_block2().nth(1).is_some()
                 {
                     send_response(
                         engine,
@@ -4292,24 +4294,52 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let q = meta.q_block2.expect("one Q selection");
+    let q = meta.q_block2.expect("Q selection");
     let length = engine
         .tx_body_payload(body)
         .ok_or(Error::Block(BlockTransferError::NoTransfer))?
         .len();
     let size = usize::from(q.size());
-    let start = q.num() as usize * size;
-    if start >= length && !(start == 0 && length == 0) {
-        return Err(Error::Block(BlockTransferError::Gap));
-    }
-    let count = if q.more() {
-        u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-            - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-    } else {
-        1
+    // Preflight the entire union before even the empty ACK. Selection ordering
+    // and SZX equality were checked at ingress. Completed snapshots use the
+    // parsed recovery request; complete() has only its retained single value.
+    let mut selected = [0u32; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let mut used = 0;
+    let mut plan = |value: BlockValue| -> Result<(), Error<T::Error>> {
+        let start = value.num() as usize * size;
+        if start >= length && !(start == 0 && length == 0) {
+            return Err(Error::Block(BlockTransferError::Gap));
+        }
+        let count = if value.more() {
+            u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+                - value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+        } else {
+            1
+        };
+        for step in 0..count {
+            let num = value.num() + step;
+            if num as usize * size >= length && step != 0 {
+                break;
+            }
+            if used != 0 && num <= selected[used - 1] {
+                continue;
+            }
+            if used == selected.len() {
+                return Err(Error::Block(BlockTransferError::Gap));
+            }
+            selected[used] = num;
+            used += 1;
+        }
+        Ok(())
     };
-    for step in 0..count {
-        let num = q.num() + step;
+    if let Some(request) = meta.q_request {
+        for value in request.q_block2() {
+            plan(value.map_err(|error| Error::Block(error.into()))?)?;
+        }
+    } else {
+        plan(q)?;
+    }
+    for (step, &num) in selected[..used].iter().enumerate() {
         let offset = num as usize * size;
         if offset >= length && step != 0 {
             break;
