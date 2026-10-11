@@ -155,7 +155,10 @@ impl<P: MemoryProfile> WithBodies<P> {
 /// }
 /// ```
 ///
+/// Includes one inline `usize` cursor for due-CON selection, independent of
+/// each pool's acquisition cursor. It adds no per-slot or heap storage.
 pub struct Memory<P: MemoryProfile, B = NoBodies> {
+    retransmit_cursor: usize,
     rx: P::RxDatagram,
     tx: P::TxDatagram,
     dedup: P::Dedup,
@@ -170,6 +173,7 @@ impl<P: MemoryProfile> Memory<P> {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            retransmit_cursor: 0,
             rx: P::RxDatagram::default(),
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
@@ -191,6 +195,7 @@ impl<P: MemoryProfile> Memory<P, WithBodies<P>> {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            retransmit_cursor: 0,
             rx: P::RxDatagram::default(),
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
@@ -489,7 +494,9 @@ where
     }
 
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
-        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        let due = next_due_slot(self.tx.slot_count(), self.retransmit_cursor, now_ms, |id| {
+            self.pending_con(id)
+        })?;
         match due.mark {
             Some(mark) => {
                 DatagramBytes::set_pending(&mut self.tx, due.id, mark.message_id, mark.rto).ok()?;
@@ -498,6 +505,7 @@ where
                 DatagramBytes::clear_pending_mid(&mut self.tx, due.id).ok()?;
             }
         }
+        self.retransmit_cursor = due.id.index() + 1;
         Some(due.event)
     }
 }
