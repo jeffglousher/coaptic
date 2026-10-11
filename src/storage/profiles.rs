@@ -11,6 +11,35 @@ use super::memory::MemoryProfile;
 use super::pool::{BodyPool, DatagramPool, DatagramScratch};
 use super::table::{DedupTable, ObserveTable};
 
+/// A profile with only its shared client/server Observe table resized.
+///
+/// Usually selected through [`crate::resources::Resources::observe_entries`].
+/// Other pool dimensions, scratch, Calls and security bindings are unchanged.
+pub struct WithObserve<P, const ENTRIES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, ENTRIES> {
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = P::RxBody;
+    type TxBody = P::TxBody;
+    type Dedup = P::Dedup;
+    type Observe = ObserveTable<ENTRIES>;
+    type Exchange = P::Exchange;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+}
+
 macro_rules! impl_profile {
     (
         $name:ident

@@ -84,6 +84,27 @@ impl<
         }
     }
 
+    /// Set the shared client/server Observe-interest capacity before binding.
+    ///
+    /// Both roles consume this table; this does not reserve slots for either role.
+    /// Zero disables retained interests. Calls and OSCORE request bindings remain
+    /// independently bounded. Other profile dimensions are unchanged.
+    ///
+    /// ```
+    /// use coaptic::resources::Device;
+    /// let resources = Device::new().observe_entries::<6>().client_calls::<2>();
+    /// assert_eq!(resources.pool_capacities().observe_entries, 6);
+    /// ```
+    #[must_use]
+    pub const fn observe_entries<const M: usize>(
+        self,
+    ) -> Resources<crate::profiles::WithObserve<P, M>, N, B, D, C, Fixed, REQUESTS> {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
     /// Select whether complete-body pools are present. Configure before allocation.
     #[must_use]
     pub const fn block_wise<const ENABLED: bool>(
@@ -200,6 +221,17 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
 impl<P, const N: usize, const B: bool, const D: usize, const C: usize, const REQUESTS: usize>
     Resources<P, N, B, D, C, Allocated, REQUESTS>
 {
+    /// Set the shared client/server Observe-interest count in allocated storage.
+    ///
+    /// Both roles consume this table; no slots are reserved for either role.
+    /// Binding checks the existing heap limit, including table metadata, before
+    /// allocation. No growth occurs while polling; other capacities are unchanged.
+    #[must_use]
+    pub fn observe_entries(mut self, entries: usize) -> Self {
+        self.storage.capacities.observe_entries = entries;
+        self
+    }
+
     /// Effective packet/body/table capacities, including runtime customization.
     #[must_use]
     pub const fn pool_capacities(&self) -> crate::storage::Capacities {

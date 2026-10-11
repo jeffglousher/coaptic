@@ -112,6 +112,54 @@ fn custom_macro_carries_named_dimensions() {
     assert_eq!((c.dedup_entries, c.observe_entries), (2, 1));
 }
 
+#[test]
+fn observe_override_preserves_other_dimensions_and_body_selection() {
+    let base = resources::Device::new().pool_capacities();
+    let configured = resources::Device::new()
+        .observe_entries::<1>()
+        .observe_entries::<6>()
+        .client_calls::<2>()
+        .security_requests::<3>();
+    let mut expected = base;
+    expected.observe_entries = 6;
+    assert_eq!(configured.pool_capacities(), expected);
+    assert_eq!(configured.client_capacity(), 2);
+    assert_eq!(configured.security_request_capacity(), 3);
+    assert_eq!(configured.route_capacity(), 8);
+    assert_eq!(configured.deferred_capacity(), 2);
+    let mut app = App::with_resources(configured)
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert_eq!(app.engine().capacities(), expected);
+    app.poll(0).unwrap();
+    let disabled = resources::Device::new()
+        .observe_entries::<0>()
+        .block_wise::<false>();
+    assert_eq!(disabled.pool_capacities().observe_entries, 0);
+    assert!(!disabled.pool_capacities().has_body_pools());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_observe_override_preserves_custom_pool_dimensions() {
+    let mut expected = Capacities::from_profile::<Custom>();
+    expected.tx_datagram_slots = 7;
+    let config = resources::Resources::<Custom>::new()
+        .allocated(128 * 1024)
+        .capacities(expected)
+        .observe_entries(9);
+    expected.observe_entries = 9;
+    assert_eq!(config.pool_capacities(), expected);
+    let app = App::with_resources(config)
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert_eq!(app.engine().capacities(), expected);
+}
+
 #[cfg(feature = "alloc")]
 #[test]
 fn allocated_presets_require_budget_and_preserve_call_bounds() {
