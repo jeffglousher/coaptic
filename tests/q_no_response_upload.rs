@@ -538,6 +538,12 @@ fn q_server_error_no_response_con_retry_is_exact_and_recovers() {
             let lost = client.transport_mut().take().unwrap();
             client.poll(3000).unwrap();
             let retry = client.transport_mut().take().unwrap();
+            let parsed = decode(&retry.bytes[..retry.len]).unwrap();
+            if protected {
+                assert!(parsed.oscore().is_some());
+            } else {
+                assert_eq!(parsed.no_response(), Some(Ok(NoResponse::new(16))));
+            }
             assert_eq!(retry.peer, lost.peer);
             assert_eq!(&retry.bytes[..retry.len], &lost.bytes[..lost.len]);
             server.transport_mut().incoming = Some(retry);
