@@ -292,8 +292,8 @@ impl<'a> Request<'a> {
         self.message.if_match()
     }
 
-    /// Effective If-None-Match, including NUM0 metadata on a complete classic
-    /// Block1 body. [`Self::message`] still exposes only the current datagram.
+    /// Effective If-None-Match, including NUM0 metadata on a complete
+    /// Block1/Q-Block1 body. [`Self::message`] still exposes only the current datagram.
     #[must_use]
     pub fn if_none_match(&self) -> bool {
         self.retained_if_none_match || self.message.if_none_match()
@@ -301,7 +301,7 @@ impl<'a> Request<'a> {
 
     /// Classify effective If-Match / If-None-Match against the current state.
     /// The handler checks this atomically with its effect; the library does not
-    /// invent 4.12. Complete classic Block1 includes the retained NUM0 condition.
+    /// invent 4.12. Complete Block1/Q-Block1 includes the retained NUM0 condition.
     #[must_use]
     pub fn precondition(&self, exists: bool, etag: Option<&[u8]>) -> Precondition {
         if self.retained_if_none_match && exists {

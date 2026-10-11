@@ -5087,35 +5087,26 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
 }
 
 #[test]
-fn fragmented_if_none_match_and_etag_refuse_instead_of_becoming_unconditional() {
+fn fragmented_etag_refuses_instead_of_becoming_unconditional() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
-        for if_none_match in [true, false] {
-            if if_none_match && !qblock {
-                continue;
-            }
-            let mut app = pipe_app();
-            let mut request = app.put("upload").to(peer).payload(&LARGE);
-            if qblock {
-                request = request
-                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
-                    .q_block1();
-            }
-            request = if if_none_match {
-                request.if_none_match()
-            } else {
-                request.etag(b"version")
-            };
-            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
-            assert_eq!(
-                app.transport().len,
-                0,
-                "no unconditional fragment may escape"
-            );
-            assert_eq!(app.engine_mut().tx_occupied(), 0);
-            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
-            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        let mut app = pipe_app();
+        let mut request = app.put("upload").to(peer).payload(&LARGE);
+        if qblock {
+            request = request
+                .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                .q_block1();
         }
+        request = request.etag(b"version");
+        assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+        assert_eq!(
+            app.transport().len,
+            0,
+            "no unconditional fragment may escape"
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
     }
 }
 
