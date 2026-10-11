@@ -690,10 +690,12 @@ impl<'a> Response<'a> {
 
     /// Set Observe sequence.
     ///
-    /// On a successful GET/FETCH with Observe=0 this opts the handler into
+    /// On a successful queryless GET with Observe=0 this opts the handler into
     /// registration ([`App`](super::App) writes sequence 0 on the wire).
     /// [`App::notify`](super::App::notify) overwrites this with the table
     /// sequence. Mutating in place avoids copying the payload.
+    /// App server FETCH and query-bearing GET responses omit Observe:
+    /// request-specific selection ownership for notifications is not implemented.
     #[must_use]
     pub const fn observe(mut self, sequence: u32) -> Self {
         self.set_observe(sequence);
