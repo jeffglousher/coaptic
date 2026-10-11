@@ -241,7 +241,7 @@ struct DeferredObserve {
     // Sequence and format of this handle's transport-ambiguous attempt.
     attempted: Option<(u32, Option<ContentFormat>)>,
     // Only the latest send that reached the transport grants empty-RST authority.
-    failed_mid: Option<MessageId>,
+    failed_mid: Option<(MessageId, u64)>,
 }
 // Owned wire values only; the representation key retains its separate 512-byte bound.
 #[derive(Clone, Copy)]
@@ -412,13 +412,16 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         engine: &mut Engine<S>,
         mid: MessageId,
         endpoint: Endpoint,
+        now_ms: u64,
     ) -> Result<(), SlotError> {
         for row in &mut self.rows {
             if let Some(value) = *row {
                 if value.meta.dest == endpoint
-                    && value
-                        .observe
-                        .is_some_and(|observe| observe.failed_mid == Some(mid))
+                    && value.observe.is_some_and(|observe| {
+                        observe
+                            .failed_mid
+                            .is_some_and(|(sent, expires)| sent == mid && now_ms < expires)
+                    })
                     && deferred_observe_owner(engine, value).is_some()
                 {
                     retire_deferred_observe(engine, value)?;
@@ -643,7 +646,10 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
                 &error,
                 Error::Io(DatagramIoError::Io(_) | DatagramIoError::SendLength { .. })
             ) {
-                row.observe.as_mut().expect("Observe completion").failed_mid = Some(mid);
+                row.observe.as_mut().expect("Observe completion").failed_mid = Some((
+                    mid,
+                    now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+                ));
             }
         }
         return Err(error);
@@ -1890,7 +1896,9 @@ where
     /// a new Observe sequence and, when protected, a fresh Partial IV. Successful
     /// retries must preserve the initial Content-Format. An exact-peer empty RST
     /// for the latest transport-ambiguous attempt revokes that handle and relation;
-    /// earlier failed-attempt MIDs are not retained. Preflight failures grant no new
+    /// earlier failed-attempt MIDs are not retained. This reset authority expires
+    /// after EXCHANGE_LIFETIME even if the deferred deadline is longer, so MID reuse
+    /// cannot revoke an old handle. Preflight failures grant no new
     /// RST authority. Pending notifications
     /// remain coalesced but blocked until completion succeeds. Cancellation,
     /// expiry, or a newer same-peer/token registration or deregistration revokes
@@ -2682,7 +2690,9 @@ where
 
     if parsed.is_empty_ack_or_rst() {
         if parsed.is_empty_rst() {
-            if let Err(error) = deferred.reject_observe_attempt(engine, parsed.message_id(), peer) {
+            if let Err(error) =
+                deferred.reject_observe_attempt(engine, parsed.message_id(), peer, now_ms)
+            {
                 let _ = engine.release_rx(rx);
                 return Err(error.into());
             }
@@ -3496,6 +3506,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     Ok(response)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn supersede_notification<S, T, const N: usize, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
