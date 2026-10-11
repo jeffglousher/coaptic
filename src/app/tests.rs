@@ -13111,13 +13111,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
         1,
     )
     .unwrap();
-    assert!(
-        app.deferred
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.completed.is_some())
-    );
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
     app.transport_mut().send_n = 0;
     let block = BlockValue::from_size(1, false, 1024).unwrap().encode();
     let (wire, n) = encode_wide(Code::POST, &["another"], &[Opt::block2(&block)], 101);
@@ -13129,13 +13123,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
         decode(&io.sends[0][..io.send_lens[0]]).unwrap().code(),
         Code::BAD_REQUEST
     );
-    assert!(
-        app.deferred
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.completed.is_some())
-    );
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
     app.poll(10).unwrap();
     assert!(app.deferred.rows.iter().all(Option::is_none));
     for i in 0..app.engine().capacities().tx_body_slots.unwrap() {

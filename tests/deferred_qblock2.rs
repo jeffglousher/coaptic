@@ -11,7 +11,11 @@ use std::cell::Cell;
 
 thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
-
+    static FAIL_RANDOM: Cell<bool> = const { Cell::new(false) };
+}
+fn random_for_refusal(bytes: &mut [u8]) -> bool {
+    bytes.fill(0x42);
+    !FAIL_RANDOM.with(Cell::get)
 }
 struct TrackingAllocator;
 // Test instrumentation counts only this thread and delegates to the system allocator.
@@ -424,6 +428,27 @@ fn deferred_qblock2_failed_partial_send_retains_snapshot_and_recovers() {
                 Err(coaptic::app::Error::Io(_))
             ));
             packets(&mut server, &peer, 0, 1, 6);
+            for response in [
+                Response::content(&BODY)
+                    .etag(b"snapshot")
+                    .content_format(ContentFormat::TEXT_PLAIN),
+                Response::new(Code::CHANGED)
+                    .payload_borrowed(&BODY)
+                    .etag(b"snapshot")
+                    .content_format(ContentFormat::OCTET_STREAM),
+                Response::content(&BODY)
+                    .etag(b"snapshot")
+                    .content_format(ContentFormat::OCTET_STREAM)
+                    .location_path("changed"),
+            ] {
+                assert!(matches!(
+                    server.complete(handle, response, 2),
+                    Err(coaptic::app::Error::Block(
+                        coaptic::error::BlockTransferError::IdentityMismatch
+                    ))
+                ));
+                assert!(server.transport_mut().take().is_none());
+            }
             for response in [
                 Response::new(Code::VALID).etag(b"snapshot"),
                 Response::new(Code::PRECONDITION_FAILED)
@@ -937,6 +962,76 @@ fn deferred_qblock2_cancel_reclaims_attempted_snapshot_and_fresh_work() {
                         .content_format(ContentFormat::OCTET_STREAM),
                     4,
                 )
+                .unwrap();
+            packets(&mut server, &peer, 10, 11, 6);
+        });
+    }
+}
+
+#[test]
+fn deferred_qblock2_non_identity_refusal_releases_rx_then_recovers() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = App::with_resources(
+            Resources::<Buffers>::new()
+                .routes::<1>()
+                .block_wise::<true>()
+                .deferred::<2>(),
+        )
+        .allow_plaintext()
+        .randomness(random_for_refusal)
+        .bind(Io::default())
+        .unwrap();
+        let mut peer = Peer::new(&mut server, protected);
+        without_allocating(|| {
+            server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
+            let mut handle = None;
+            server
+                .poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+            ack(&mut server, 1);
+            server
+                .complete(
+                    handle.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    1,
+                )
+                .unwrap();
+            packets(&mut server, &peer, 0, 1, 6);
+            for mid in 2..18 {
+                let mut frame = peer.request(mid, 10, false, 6);
+                frame.bytes[0] = (frame.bytes[0] & !0x30) | 0x10; // NON; unchanged authenticated inner request.
+                server.transport_mut().incoming = Some(frame);
+                FAIL_RANDOM.with(|flag| flag.set(true));
+                let result = server.poll_with(u64::from(mid), |_, _| {
+                    panic!("identity refusal cannot redispatch")
+                });
+                FAIL_RANDOM.with(|flag| flag.set(false));
+                assert!(matches!(
+                    result,
+                    Err(coaptic::app::Error::Identity(
+                        coaptic::app::IdentityError::RandomnessUnavailable
+                    ))
+                ));
+                assert!(server.transport_mut().take().is_none());
+                let a = server.engine_mut().acquire_rx().unwrap();
+                let b = server.engine_mut().acquire_rx().unwrap();
+                let c = server.engine_mut().acquire_rx().unwrap();
+                let d = server.engine_mut().acquire_rx().unwrap();
+                assert!(server.engine_mut().acquire_rx().is_none());
+                for id in [a, b, c, d] {
+                    server.engine_mut().release_rx(id).unwrap();
+                }
+            }
+            let mut frame = peer.request(18, 10, false, 6);
+            frame.bytes[0] = (frame.bytes[0] & !0x30) | 0x10;
+            server.transport_mut().incoming = Some(frame);
+            server
+                .poll_with(18, |_, _| panic!("fresh NON followup cannot redispatch"))
                 .unwrap();
             packets(&mut server, &peer, 10, 11, 6);
         });
