@@ -2092,6 +2092,29 @@ where
                 }
                 qblock1_wait(engine, rx, parsed, true)
             }
+            Err(BlockTransferError::OutsideWindow) if parsed.ty() == Type::NonConfirmable => {
+                match engine.validated_q1_future_rx(rx) {
+                    Ok(id) => {
+                        #[cfg(feature = "oscore")]
+                        if let Some(request) = oscore_request {
+                            engine.remember_qblock1_request(id, parsed.token(), request);
+                        }
+                        // Future traffic is not body progress and cannot reset
+                        // an armed recovery's finite retry budget.
+                        if engine
+                            .rx_body_transfer(id)
+                            .is_some_and(|t| t.q_receive().is_none())
+                        {
+                            let _ = engine.note_q_receive(id, now_ms);
+                        }
+                        InboundBody::QWait(None)
+                    }
+                    Err(BlockTransferError::Overflow) => {
+                        InboundBody::Refused(Code::REQUEST_ENTITY_TOO_LARGE)
+                    }
+                    Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
+                }
+            }
             Err(BlockTransferError::MissingBlock) => InboundBody::None,
             Err(BlockTransferError::NoBodyPools) => InboundBody::Refused(Code::BAD_OPTION),
             Err(BlockTransferError::Overflow) => {

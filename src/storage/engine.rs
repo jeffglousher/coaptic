@@ -1306,6 +1306,53 @@ impl<S: Storage + BodySlots> Engine<S> {
         }
     }
 
+    // A future NON Q1 datagram may refresh the authenticated report owner only
+    // after the same immutable checks as accepted data. The bytes stay discarded.
+    pub(crate) fn validated_q1_future_rx(&self, rx: SlotId) -> Result<SlotId, BlockTransferError>
+    where
+        S: DatagramSlots + BodySlots,
+    {
+        let endpoint = self.storage.rx_endpoint(rx).ok_or(SlotError::NotOccupied)?;
+        let parsed =
+            crate::message::decode(self.storage.rx_payload(rx).ok_or(SlotError::NotOccupied)?)?;
+        if parsed.ty() != crate::message::Type::NonConfirmable {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let block = parsed
+            .q_block1()
+            .ok_or(BlockTransferError::MissingBlock)??;
+        let expected = parsed.size1().ok_or(BlockTransferError::MissingSize)??;
+        let tag = RxBlockOpt::QBlock1.read_identity(&parsed)?;
+        if tag.is_absent() || (block.num() != 0 && parsed.if_none_match()) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let key = BlockKey::new(parsed.token(), endpoint).with_identity(tag);
+        let id = (0..self.capacities().rx_body_slots.unwrap_or(0))
+            .find_map(|i| {
+                let id = SlotId::from_index(i);
+                let transfer = self.storage.rx_body_transfer(id)?;
+                same_body_identity(transfer, key, BlockRole::IncomingQBlock1).then_some(id)
+            })
+            .ok_or(BlockTransferError::NoTransfer)?;
+        let transfer = self
+            .storage
+            .rx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.expected_len() != Some(expected) {
+            return Err(BlockTransferError::LengthInconsistent);
+        }
+        transfer
+            .request_binding
+            .ok_or(BlockTransferError::IdentityMismatch)?
+            .retain_condition(RequestBinding::from_message(&parsed, block.num())?)?;
+        transfer.validate_q1_future(
+            block,
+            parsed.payload().len(),
+            self.capacities().rx_body_bytes.unwrap_or(0),
+        )?;
+        Ok(id)
+    }
+
     /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
     ///
     /// [`Self::apply_q_block1`] / [`Self::apply_q_block2`] do not take a clock.
