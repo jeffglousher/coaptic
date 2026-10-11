@@ -116,6 +116,9 @@ impl<C> CheckedClock<C> {
 /// without allocation, global state or a platform SDK. Fill every requested byte
 /// securely or return false. Calls must finish in bounded time and not re-enter
 /// App. App's existing token and jitter sampling limits still apply.
+/// The wrapper itself allocates nothing. Its transport and callback state add
+/// to App storage; allocations made by external drivers or callbacks remain
+/// outside Coaptic's pool heap budget.
 ///
 /// Place this wrapper outside transport decorators: a decorator which does not
 /// forward [`crate::storage::DatagramIo::fill_random`] refuses entropy by default.
