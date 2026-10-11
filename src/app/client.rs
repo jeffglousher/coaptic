@@ -1238,10 +1238,14 @@ where
         self
     }
 
-    /// If-None-Match option. Classic Block1 sends it only on NUM0 and retains
+    /// If-None-Match option. Block1/Q-Block1 send it only on NUM0 and retain
     /// it for complete-body handler evaluation. The handler checks current
     /// existence atomically with its application effect; partial ACKs are not success.
-    /// Fragmented Q-Block1 returns [`Error::ConditionalUploadUnsupported`].
+    /// Q-Block1 retains the condition even when NUM0 arrives after later blocks.
+    /// With OSCORE and one Token, the client accepts only its latest request
+    /// binding: a response to an older reordered fragment may remain unknown.
+    /// Missing-block reports and fresh selective reissues preserve this security
+    /// boundary. Use a deadline and check current state when retrying an uncertain effect.
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -1795,11 +1799,11 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // Q-Block1 If-None-Match and fragmented ETag remain unsupported.
+            // Fragmented ETag remains unsupported.
             // Until the App retains their transfer-specific semantics, refuse
             // fragmentation instead of turning a conditional write into an
             // unconditional one (RFC 7959 section 2.10).
-            if (spec.if_none_match && spec.q_block1) || spec.etag.is_some() {
+            if spec.etag.is_some() {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }

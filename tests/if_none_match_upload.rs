@@ -489,7 +489,7 @@ fn if_none_match_num0_retry_is_exact_and_completes_after_loss() {
 }
 
 #[test]
-fn if_none_match_q_refusal_cancel_and_deadline_reclaim_before_recovery() {
+fn fragmented_etag_refusal_cancel_and_deadline_reclaim_before_recovery() {
     use coaptic::app::{CallFailure, Error};
     let mut client = client();
     without_allocating(|| {
@@ -500,7 +500,7 @@ fn if_none_match_q_refusal_cancel_and_deadline_reclaim_before_recovery() {
                     .put("upload")
                     .to(PEER)
                     .payload(&BODY)
-                    .if_none_match()
+                    .etag(b"version")
                     .request_tag(BodyTag::new(b"transfer").unwrap())
                     .q_block1()
                     .send(now),

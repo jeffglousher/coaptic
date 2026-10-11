@@ -2234,14 +2234,10 @@ impl<S: Storage + BodySlots> Engine<S> {
                 _ => {}
             }
             let binding = if which.uses_size1() {
-                if matches!(which, RxBlockOpt::Block1) && block.num() != 0 && parsed.if_none_match()
-                {
+                if block.num() != 0 && parsed.if_none_match() {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
-                Some(RequestBinding::from_message(
-                    &parsed,
-                    matches!(which, RxBlockOpt::Block1),
-                )?)
+                Some(RequestBinding::from_message(&parsed, block.num())?)
             } else {
                 None
             };
@@ -2300,16 +2296,14 @@ impl<S: Storage + BodySlots> Engine<S> {
                     .request_binding
                     .ok_or(BlockTransferError::IdentityMismatch)?;
                 let restart = untagged_classic && block.num() == 0 && key != transfer.key();
-                let classic = matches!(which, RxBlockOpt::Block1);
-                if !stored.same_options(candidate)
-                    || (!classic && stored != candidate)
-                    || (classic && block.num() == 0 && !restart && stored != candidate)
-                {
-                    return Err(BlockTransferError::IdentityMismatch);
-                }
-                if classic && !restart {
-                    // A later block's legal omission must not erase NUM0's condition.
-                    binding = Some(stored);
+                if restart {
+                    if !stored.same_options(candidate) {
+                        return Err(BlockTransferError::IdentityMismatch);
+                    }
+                } else {
+                    // Q may admit NUM0 last. Validate its immutable condition before
+                    // applying bytes, then commit the merged knowledge only on success.
+                    binding = Some(stored.retain_condition(candidate)?);
                 }
                 if untagged_classic {
                     if block.num() == 0 && key != transfer.key() {
