@@ -1152,6 +1152,9 @@ where
     /// Request body. A payload that does not fit one datagram is sent as
     /// Block1 (or Q-Block1 after [`.q_block1`](Self::q_block1)) when
     /// block-wise is enabled.
+    /// Initial classic Block1 sizing tries at most seven sizes against the
+    /// configured TX capacity, including security overhead. Later block-number
+    /// or security-sequence growth can still refuse a continuation.
     #[must_use]
     pub const fn payload(mut self, payload: &'a [u8]) -> Self {
         self.payload = payload;
@@ -1224,9 +1227,7 @@ where
     /// existing 512-byte canonical selection bound. Other fragmented methods
     /// and Q-Block1 return [`Error::ConditionalUploadUnsupported`].
     /// The handler validates the complete selection and may return 2.03 Valid.
-    /// Initial classic Block1 sizing tries at most seven sizes against the real
-    /// encoder, including security overhead. Later NUM/PIV growth can still
-    /// refuse a continuation. FETCH Block2 follow-ups repeat the full selection
+    /// FETCH Block2 follow-ups repeat the full selection
     /// and must fit one datagram; their size failure terminates the Call.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
