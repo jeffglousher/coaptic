@@ -165,8 +165,8 @@ fn exercise<C: AppStorage, S: AppStorage>(
     use coaptic::message::NoResponse;
     #[cfg(feature = "oscore")]
     if protected {
-        client.set_oscore(context(&[1], &[2]));
-        server.set_oscore(context(&[2], &[1]));
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     EFFECTS.with(|v| v.set(0));
     DISPATCHES.with(|v| v.set(0));
@@ -299,8 +299,8 @@ fn q_server_error_no_response_missing_report_and_selective_reissue_recover() {
         EFFECTS.with(|v| v.set(0));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let call = client
@@ -381,7 +381,7 @@ fn q_server_error_no_response_optional_returned_5xx_is_observable() {
         let mut peer_context = context(&[2], &[1]);
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
         }
         without_allocating(|| {
             let call = client
@@ -524,8 +524,8 @@ fn q_server_error_no_response_con_retry_is_exact_and_recovers() {
         EFFECTS.with(|v| v.set(0));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let call = client

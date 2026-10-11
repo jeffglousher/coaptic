@@ -328,7 +328,7 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
 fn protected<S: AppStorage>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
-    app.set_oscore(context(&[2], &[1]));
+    app.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     let mut peer = context(&[1], &[2]);
     no_alloc(|| {
         let plain = packet(100, "old", OWNER);

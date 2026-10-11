@@ -340,6 +340,11 @@ pub(crate) struct ClientInbox<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientInbox<CALLS> {
+    #[cfg(feature = "oscore")]
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; CALLS],
@@ -569,6 +574,11 @@ pub(crate) struct ClientLives<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
+    #[cfg(feature = "oscore")]
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; CALLS],

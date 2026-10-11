@@ -337,8 +337,8 @@ fn exercise<C: AppStorage, S: AppStorage>(
 ) {
     #[cfg(feature = "oscore")]
     if protected {
-        client.set_oscore(context(&[1], &[2]));
-        server.set_oscore(context(&[2], &[1]));
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     without_allocating(|| {
         transfer(&mut client, &mut server, 0, Schedule::Con, 1, protected);
@@ -508,8 +508,8 @@ fn q_fetch_etag_retry_retains_exact_protected_or_plaintext_bytes() {
         CURRENT.with(|v| v.set(1));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let call = client
@@ -679,7 +679,7 @@ fn q_fetch_etag_full_body_pool_refuses_without_eviction_then_recovers() {
 fn q_fetch_etag_protected_invalid_and_exhausted_sizing_refuse_without_io() {
     use coaptic::app::Error;
     let mut client = fixed();
-    client.set_oscore(context(&[1], &[2]));
+    client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
     without_allocating(|| {
         for now in 0..8 {
             for tag in [&[][..], &b"123456789"[..]] {
@@ -729,14 +729,14 @@ fn q_fetch_etag_protected_invalid_and_exhausted_sizing_refuse_without_io() {
         }
     });
     let mut server = fixed();
-    server.set_oscore(context(&[2], &[1]));
+    server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     let before = client.oscore().unwrap().sender_seq();
     transfer(&mut client, &mut server, 100000, Schedule::Con, 1, true);
     assert!(client.oscore().unwrap().sender_seq() > before);
     let mut exhausted = fixed();
     let mut ctx = context(&[3], &[4]);
     ctx.set_sender_seq((1 << 40) - 1).unwrap();
-    exhausted.set_oscore(ctx);
+    exhausted.set_oscore(&mut Some(ctx)).unwrap();
     assert!(matches!(
         exhausted
             .fetch("selection")
@@ -818,16 +818,18 @@ fn q_fetch_protected_body_admission_refusal_reclaims_single_request_binding() {
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap();
-    client.set_oscore(
-        coaptic::oscore::BoundedSecurityContext::<1>::derive(coaptic::oscore::DeriveParams {
-            master_secret: &[0x24; 16],
-            master_salt: &[],
-            sender_id: &[1],
-            recipient_id: &[2],
-            id_context: &[],
-        })
-        .unwrap(),
-    );
+    client
+        .set_oscore(&mut Some(
+            coaptic::oscore::BoundedSecurityContext::<1>::derive(coaptic::oscore::DeriveParams {
+                master_secret: &[0x24; 16],
+                master_salt: &[],
+                sender_id: &[1],
+                recipient_id: &[2],
+                id_context: &[],
+            })
+            .unwrap(),
+        ))
+        .unwrap();
     without_allocating(|| {
         let a = client.engine_mut().acquire_tx_body().unwrap();
         let b = client.engine_mut().acquire_tx_body().unwrap();
