@@ -283,6 +283,12 @@ Client and server Observe registrations share the configured Observe table. Use
 `.allocated(limit)` for a runtime capacity; the latter is included in the heap
 request limit. Extra Observe rows do not increase client Call or security-binding
 capacity. Exhaustion refuses a new registration without evicting another owner.
+Duplicate-reply history is independently sized with `.dedup_entries::<N>()`
+on fixed resources or `.dedup_entries(n)` on allocated resources. Allocated
+history counts toward the heap limit. Cached replies still share TX storage;
+full history retains the existing oldest-entry eviction policy. Zero disables
+the history table and keeps only one non-idempotent request fallback. Expiration
+or eviction can permit redispatch, so durable effects need application receipts.
 Independent resource/fairness qualification remains in
 [#340](https://github.com/jeffglousher/coaptic/issues/340).
 
@@ -355,7 +361,12 @@ A later, separately identified firmware run retained a telemetry operation acros
 a lost receipt and device software restart. A fresh host process returned its
 matching durable receipt with one committed effect:
 [telemetry sources, hashes and limits](https://github.com/jeffglousher/coaptic/issues/333#issuecomment-6104836022).
-Both demonstrations use manually staged pairwise credentials.
+A separate finite UDP trial accounted for all 256 oversized datagram refusals
+while complete protected replies and timer progress continued. Its qualification
+image enabled IPv4 reassembly with a ten-packet-buffer platform bound:
+[UDP sources, failed trials and limits](https://github.com/jeffglousher/coaptic/issues/462#issuecomment-6107306240).
+This establishes neither sustained availability nor a whole-device memory ceiling.
+These demonstrations use manually staged pairwise credentials.
 Flash power-loss recovery, hostile rollback, production key custody and the full
 end-user flow remain open. Production readiness has not been established.
 
