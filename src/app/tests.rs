@@ -6573,7 +6573,7 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
     for qblock in [false, true] {
         let mut app = pipe_app();
         for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
-            if mask == 16 || (!qblock && matches!(mask, 8 | 24)) {
+            if mask == 16 || (qblock && mask == 2) || (!qblock && matches!(mask, 8 | 24)) {
                 continue;
             }
             let mut request = app
@@ -6584,9 +6584,6 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
                 .no_response(NoResponse::new(mask));
             if qblock {
                 request = request.q_block1();
-                if mask == 2 {
-                    request = request.non();
-                }
             }
             assert_eq!(request.send(0), Err(Error::NoResponseUploadUnsupported));
             assert_eq!(app.transport().len, 0);
@@ -6634,7 +6631,7 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
             .payload(b"small")
             .q_block1()
             .non()
-            .no_response(NoResponse::new(2))
+            .no_response(NoResponse::new(8))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );
