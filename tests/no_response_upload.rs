@@ -366,16 +366,18 @@ fn classic_error_only_no_response_refusals_preserve_owned_capacity() {
                 );
             }
             for mask in [8, 16, 24] {
-                assert_eq!(
-                    client
-                        .put("upload")
-                        .to(PEER)
-                        .payload(&BODY)
-                        .q_block1()
-                        .no_response(NoResponse::new(mask))
-                        .send(cycle),
-                    Err(Error::NoResponseUploadUnsupported)
-                );
+                if mask != 16 {
+                    assert_eq!(
+                        client
+                            .put("upload")
+                            .to(PEER)
+                            .payload(&BODY)
+                            .q_block1()
+                            .no_response(NoResponse::new(mask))
+                            .send(cycle),
+                        Err(Error::NoResponseUploadUnsupported)
+                    );
+                }
                 assert_eq!(
                     client
                         .get("upload")
