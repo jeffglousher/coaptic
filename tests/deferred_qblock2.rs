@@ -171,7 +171,7 @@ impl Peer {
                 .unwrap()
             };
             if protected {
-                server.set_oscore(make(&[2], &[1]));
+                server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
             }
             Self {
                 context: protected.then(|| make(&[1], &[2])),
@@ -642,7 +642,7 @@ fn deferred_qblock2_unsupported_admission_and_selection_refuse_then_recover() {
                     "snapshot",
                     [
                         BlockValue::new(0, false, 6).unwrap(),
-                        BlockValue::new(1, false, 6).unwrap(),
+                        BlockValue::new(11, false, 6).unwrap(),
                     ],
                 ),
             ] {
@@ -688,11 +688,27 @@ fn deferred_qblock2_unsupported_admission_and_selection_refuse_then_recover() {
 
 #[test]
 fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
+    fetch_selection(false);
+}
+#[test]
+fn deferred_qblock2_repeated_fetch_validator_and_payload_bind_snapshot() {
+    fetch_selection(true);
+}
+fn fetch_selection(repeated: bool) {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut server = fixed();
         let mut peer = Peer::new(&mut server, protected);
         without_allocating(|| {
             let q = BlockValue::new(0, false, 6).unwrap();
+            let selections = [
+                BlockValue::new(9, false, 6).unwrap(),
+                BlockValue::new(10, false, 6).unwrap(),
+            ];
+            let selections = if repeated {
+                &selections[..]
+            } else {
+                &selections[1..]
+            };
             server.transport_mut().incoming = Some(peer.custom(
                 1,
                 Code::FETCH,
@@ -726,15 +742,8 @@ fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
                 (3, None, &b"query"[..]),
                 (4, Some(&b"selected"[..]), &b"other"[..]),
             ] {
-                server.transport_mut().incoming = Some(peer.custom(
-                    mid,
-                    Code::FETCH,
-                    "snapshot",
-                    &[BlockValue::new(10, false, 6).unwrap()],
-                    false,
-                    tag,
-                    body,
-                ));
+                server.transport_mut().incoming =
+                    Some(peer.custom(mid, Code::FETCH, "snapshot", selections, false, tag, body));
                 server
                     .poll_with(mid as u64, |_, _| {
                         panic!("mismatched FETCH cannot redispatch")
@@ -746,7 +755,7 @@ fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
                 5,
                 Code::FETCH,
                 "snapshot",
-                &[BlockValue::new(10, false, 6).unwrap()],
+                selections,
                 false,
                 Some(b"selected"),
                 b"query",
@@ -755,7 +764,7 @@ fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
                 .poll_with(5, |_, _| panic!("matching FETCH cannot redispatch"))
                 .unwrap();
             ack(&mut server, 5);
-            packets(&mut server, &peer, 10, 11, 6);
+            packets(&mut server, &peer, if repeated { 9 } else { 10 }, 11, 6);
             for (mid, tags, q, expected) in [
                 (
                     6,
@@ -779,7 +788,7 @@ fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
                 10,
                 Code::FETCH,
                 "snapshot",
-                &[BlockValue::new(10, false, 6).unwrap()],
+                selections,
                 false,
                 Some(b"selected"),
                 b"query",
@@ -788,7 +797,7 @@ fn deferred_qblock2_fetch_validator_and_payload_bind_snapshot() {
                 .poll_with(10, |_, _| panic!("recovered selection cannot redispatch"))
                 .unwrap();
             ack(&mut server, 10);
-            packets(&mut server, &peer, 10, 11, 6);
+            packets(&mut server, &peer, if repeated { 9 } else { 10 }, 11, 6);
         });
     }
 }
@@ -970,6 +979,13 @@ fn deferred_qblock2_cancel_reclaims_attempted_snapshot_and_fresh_work() {
 
 #[test]
 fn deferred_qblock2_non_identity_refusal_releases_rx_then_recovers() {
+    non_identity_refusal(false);
+}
+#[test]
+fn deferred_qblock2_repeated_non_identity_refusal_releases_rx_then_recovers() {
+    non_identity_refusal(true);
+}
+fn non_identity_refusal(repeated: bool) {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut server = App::with_resources(
             Resources::<Buffers>::new()
@@ -982,6 +998,15 @@ fn deferred_qblock2_non_identity_refusal_releases_rx_then_recovers() {
         .bind(Io::default())
         .unwrap();
         let mut peer = Peer::new(&mut server, protected);
+        let selections = [
+            BlockValue::new(9, false, 6).unwrap(),
+            BlockValue::new(10, false, 6).unwrap(),
+        ];
+        let selections = if repeated {
+            &selections[..]
+        } else {
+            &selections[1..]
+        };
         without_allocating(|| {
             server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
             let mut handle = None;
@@ -1003,7 +1028,8 @@ fn deferred_qblock2_non_identity_refusal_releases_rx_then_recovers() {
                 .unwrap();
             packets(&mut server, &peer, 0, 1, 6);
             for mid in 2..18 {
-                let mut frame = peer.request(mid, 10, false, 6);
+                let mut frame =
+                    peer.custom(mid, Code::GET, "snapshot", selections, false, None, b"");
                 frame.bytes[0] = (frame.bytes[0] & !0x30) | 0x10; // NON; unchanged authenticated inner request.
                 server.transport_mut().incoming = Some(frame);
                 FAIL_RANDOM.with(|flag| flag.set(true));
@@ -1027,11 +1053,275 @@ fn deferred_qblock2_non_identity_refusal_releases_rx_then_recovers() {
                     server.engine_mut().release_rx(id).unwrap();
                 }
             }
-            let mut frame = peer.request(18, 10, false, 6);
+            let mut frame = peer.custom(18, Code::GET, "snapshot", selections, false, None, b"");
             frame.bytes[0] = (frame.bytes[0] & !0x30) | 0x10;
             server.transport_mut().incoming = Some(frame);
             server
                 .poll_with(18, |_, _| panic!("fresh NON followup cannot redispatch"))
+                .unwrap();
+            packets(&mut server, &peer, if repeated { 9 } else { 10 }, 11, 6);
+        });
+    }
+}
+
+fn repeated_campaign<S: AppStorage>(mut server: Server<S>, protected: bool) {
+    let mut peer = Peer::new(&mut server, protected);
+    without_allocating(|| {
+        server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
+        let mut handle = None;
+        server
+            .poll_with(0, |_, candidate| {
+                handle = candidate;
+                Response::deferred()
+            })
+            .unwrap();
+        ack(&mut server, 1);
+        server
+            .complete(
+                handle.unwrap(),
+                Response::content(&BODY)
+                    .etag(b"snapshot")
+                    .content_format(ContentFormat::OCTET_STREAM),
+                1,
+            )
+            .unwrap();
+        packets(&mut server, &peer, 0, 1, 6);
+        for (mid, first, last, szx, start, end) in [
+            (2, (1, true), (4, false), 6, 1, 10),
+            (3, (8, true), (10, false), 6, 8, 11),
+            (4, (18, true), (20, false), 5, 18, 21),
+        ] {
+            server.transport_mut().incoming = Some(peer.custom(
+                mid,
+                Code::GET,
+                "snapshot",
+                &[
+                    BlockValue::new(first.0, first.1, szx).unwrap(),
+                    BlockValue::new(last.0, last.1, szx).unwrap(),
+                ],
+                false,
+                None,
+                b"",
+            ));
+            server
+                .poll_with(u64::from(mid), |_, _| {
+                    panic!("recovery must not redispatch")
+                })
+                .unwrap();
+            ack(&mut server, mid);
+            packets(&mut server, &peer, start, end, szx);
+        }
+    });
+}
+#[test]
+fn deferred_qblock2_repeated_fixed_overlap_and_downsize() {
+    repeated_campaign(fixed(), false);
+}
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_qblock2_repeated_protected_overlap_and_downsize() {
+    repeated_campaign(fixed(), true);
+}
+#[cfg(feature = "alloc")]
+#[test]
+fn deferred_qblock2_repeated_allocated_exact_budget() {
+    let resources = || {
+        Resources::<Buffers>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<2>()
+    };
+    let bytes = resources()
+        .allocated(usize::MAX)
+        .required_heap_bytes()
+        .unwrap();
+    for protected in [false, cfg!(feature = "oscore")] {
+        let server = App::with_resources(resources().allocated(bytes))
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .bind(Io::default())
+            .unwrap();
+        repeated_campaign(server, protected);
+    }
+}
+
+#[test]
+fn deferred_qblock2_repeated_preflight_refuses_whole_union_then_recovers() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        without_allocating(|| {
+            server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
+            let mut handle = None;
+            server
+                .poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+            ack(&mut server, 1);
+            server
+                .complete(
+                    handle.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    1,
+                )
+                .unwrap();
+            packets(&mut server, &peer, 0, 1, 6);
+            for (index, values) in [
+                [(4, false, 6), (1, false, 6)],   // unsorted
+                [(1, false, 6), (1, false, 6)],   // duplicate
+                [(1, false, 6), (2, false, 5)],   // mixed SZX
+                [(10, false, 6), (11, false, 6)], // later invalid after body end
+                [(1, true, 5), (11, true, 5)],    // eighteen unique payloads
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mid = index as u16 + 2;
+                let blocks =
+                    values.map(|(num, more, szx)| BlockValue::new(num, more, szx).unwrap());
+                server.transport_mut().incoming =
+                    Some(peer.custom(mid, Code::GET, "snapshot", &blocks, false, None, b""));
+                let before = server.transport_mut().sends;
+                server
+                    .poll_with(u64::from(mid), |_, _| {
+                        panic!("invalid union cannot redispatch")
+                    })
+                    .unwrap();
+                // Exactly one error, no empty ACK or partial selected payload.
+                assert_eq!(server.transport_mut().sends, before + 1);
+                reply_code(&mut server, &peer, Code::BAD_REQUEST);
+                let spare = server.engine_mut().acquire_tx_body().unwrap();
+                assert!(server.engine_mut().acquire_tx_body().is_none());
+                server.engine_mut().release_tx_body(spare).unwrap();
+            }
+            let good = BlockValue::new(1, false, 6).unwrap().encode();
+            for (mid, bad) in [(8, &[0, 0, 0, 0][..]), (9, &[0x27][..])] {
+                let opts = [
+                    Opt::uri_path("snapshot"),
+                    Opt::q_block2(&good),
+                    Opt::new(coaptic::message::OptionNumber::Q_BLOCK2, bad),
+                ];
+                server.transport_mut().incoming = Some(
+                    peer.encode(
+                        &Message::new(Type::Confirmable, Code::GET, MessageId::new(mid))
+                            .with_token(Token::new(b"owner").unwrap())
+                            .with_options(&opts),
+                    ),
+                );
+                server
+                    .poll_with(u64::from(mid), |_, _| {
+                        panic!("malformed union cannot redispatch")
+                    })
+                    .unwrap();
+                reply_code(&mut server, &peer, Code::BAD_OPTION);
+            }
+            // Exactly ten distinct responses are allowed; the original body remains complete.
+            server.transport_mut().incoming = Some(peer.custom(
+                10,
+                Code::GET,
+                "snapshot",
+                &[
+                    BlockValue::new(1, true, 6).unwrap(),
+                    BlockValue::new(10, false, 6).unwrap(),
+                ],
+                false,
+                None,
+                b"",
+            ));
+            server
+                .poll_with(10, |_, _| panic!("valid union cannot redispatch"))
+                .unwrap();
+            ack(&mut server, 10);
+            packets(&mut server, &peer, 1, 11, 6);
+        });
+    }
+}
+
+#[test]
+fn deferred_qblock2_repeated_failed_send_and_expiry_preserve_bounds() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        without_allocating(|| {
+            server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
+            let mut handle = None;
+            server
+                .poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+            ack(&mut server, 1);
+            server
+                .complete(
+                    handle.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    1,
+                )
+                .unwrap();
+            packets(&mut server, &peer, 0, 1, 6);
+            let selections = [
+                BlockValue::new(8, true, 6).unwrap(),
+                BlockValue::new(10, false, 6).unwrap(),
+            ];
+            let mut other = peer.custom(2, Code::GET, "snapshot", &selections, false, None, b"");
+            other.peer = Endpoint::v4([192, 0, 2, 3], 5683);
+            server.transport_mut().incoming = Some(other);
+            let mut calls = 0;
+            server
+                .poll_with(2, |_, _| {
+                    calls += 1;
+                    Response::new(Code::SERVICE_UNAVAILABLE)
+                })
+                .unwrap();
+            assert_eq!(calls, 1);
+            reply_code(&mut server, &peer, Code::SERVICE_UNAVAILABLE);
+            server.transport_mut().incoming =
+                Some(peer.custom(3, Code::GET, "snapshot", &selections, false, None, b""));
+            server.transport_mut().fail_at = Some(server.transport_mut().sends + 3);
+            assert!(matches!(
+                server.poll_with(3, |_, _| panic!("owned union cannot redispatch")),
+                Err(coaptic::app::Error::Io(_))
+            ));
+            ack(&mut server, 3);
+            packets(&mut server, &peer, 8, 9, 6);
+            server.transport_mut().fail_at = None;
+            server.transport_mut().incoming =
+                Some(peer.custom(4, Code::GET, "snapshot", &selections, false, None, b""));
+            server
+                .poll_with(39, |_, _| panic!("fresh union cannot redispatch"))
+                .unwrap();
+            ack(&mut server, 4);
+            packets(&mut server, &peer, 8, 11, 6);
+            // Selection at deadline-1 must not renew the original lifetime.
+            server.poll(40).unwrap();
+            let a = server.engine_mut().acquire_tx_body().unwrap();
+            let b = server.engine_mut().acquire_tx_body().unwrap();
+            server.engine_mut().release_tx_body(a).unwrap();
+            server.engine_mut().release_tx_body(b).unwrap();
+            server.transport_mut().incoming = Some(peer.request(5, 10, false, 6));
+            let mut fresh = None;
+            server
+                .poll_with(41, |_, candidate| {
+                    fresh = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+            ack(&mut server, 5);
+            server
+                .complete(
+                    fresh.unwrap(),
+                    Response::content(&BODY)
+                        .etag(b"snapshot")
+                        .content_format(ContentFormat::OCTET_STREAM),
+                    42,
+                )
                 .unwrap();
             packets(&mut server, &peer, 10, 11, 6);
         });

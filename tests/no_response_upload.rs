@@ -165,8 +165,8 @@ fn exercise<C: AppStorage, S: AppStorage>(
     use coaptic::message::NoResponse;
     #[cfg(feature = "oscore")]
     if protected {
-        client.set_oscore(context(&[1], &[2]));
-        server.set_oscore(context(&[2], &[1]));
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     EFFECTS.with(|v| v.set(0));
     DISPATCHES.with(|v| v.set(0));
@@ -296,8 +296,8 @@ fn classic_error_only_no_response_exact_retry_and_optional_error() {
             STATUS.with(|v| v.set(Code::CHANGED));
             #[cfg(feature = "oscore")]
             if protected {
-                client.set_oscore(context(&[1], &[2]));
-                server.set_oscore(context(&[2], &[1]));
+                client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+                server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
             }
             without_allocating(|| {
                 let call = client

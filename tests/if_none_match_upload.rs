@@ -231,8 +231,8 @@ fn exercise<S: AppStorage, R: AppStorage>(
 ) {
     #[cfg(feature = "oscore")]
     if protected {
-        client.set_oscore(context(&[1], &[2]));
-        server.set_oscore(context(&[2], &[1]));
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     without_allocating(|| {
         for (i, (exists, create_between)) in
@@ -447,8 +447,8 @@ fn if_none_match_num0_retry_is_exact_and_completes_after_loss() {
         DISPATCHES.with(|v| v.set(0));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let request = client

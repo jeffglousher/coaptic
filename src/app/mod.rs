@@ -130,6 +130,9 @@ mod tests;
 #[cfg(test)]
 mod capacity_tests;
 
+#[cfg(all(test, feature = "oscore"))]
+mod oscore_install_tests;
+
 use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
@@ -170,6 +173,29 @@ pub use site::{
 };
 
 use response::AssembledField;
+
+/// Refusal to install a staged OSCORE context. No key material is retained here.
+#[cfg(feature = "oscore")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OscoreInstallError {
+    /// The caller did not stage a replacement context.
+    MissingCandidate,
+    /// App-owned protocol state has not drained under the current context.
+    Busy,
+}
+
+#[cfg(feature = "oscore")]
+impl core::fmt::Display for OscoreInstallError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::MissingCandidate => "no OSCORE context was staged",
+            Self::Busy => "OSCORE context replacement requires drained protocol state",
+        })
+    }
+}
+
+#[cfg(all(feature = "oscore", feature = "std"))]
+impl std::error::Error for OscoreInstallError {}
 
 /// Storage capabilities used by the single [`App`] interface.
 ///
@@ -1074,8 +1100,24 @@ impl<
     ///
     /// There is exactly one context per App, with `REQUESTS` live request bindings
     /// shared by in-flight requests and Observe registrations. Replacing it
-    /// does not migrate live exchanges, tokens, replay state, or subscriptions;
-    /// drain them first or use separate Apps for separate peers/key epochs.
+    /// does not migrate live exchanges, tokens, replay state, or subscriptions.
+    /// Drain, collect, cancel or expire work under the current context first,
+    /// including cached replies and fail-closed dedup history. Busy refusal
+    /// leaves both the App and the caller's staged candidate unchanged, performs
+    /// no I/O, and preserves checkpoint status. Success takes the candidate and
+    /// invalidates the durable checkpoint; protection is never removed.
+    ///
+    /// Stage rare replacements in a caller-owned `Option`, then call
+    /// `app.set_oscore(&mut candidate)?`. An empty option returns
+    /// [`OscoreInstallError::MissingCandidate`]; live App state returns
+    /// [`OscoreInstallError::Busy`]. The compact error does not move or expose
+    /// context secrets and requires no allocation. Already-collected reply
+    /// backing is cleared on success and does not keep the App busy forever.
+    ///
+    /// This checks App-owned lifecycle state, not key freshness, safe same-key
+    /// rollback, external adapter queues or revocation policy. `oscore_mut` and
+    /// `engine_mut` remain advanced escape hatches, not context-rotation APIs.
+    /// Use separate Apps for separate peers or simultaneous key epochs.
     /// Timed Q-Block2 recovery for a live client GET uses a fresh protected
     /// request and retains its path, queries and selection options. Only the
     /// latest request binding is retained; late responses to earlier requests
@@ -1127,11 +1169,40 @@ impl<
     #[cfg(feature = "oscore")]
     pub fn set_oscore(
         &mut self,
-        ctx: crate::oscore::BoundedSecurityContext<REQUESTS>,
-    ) -> &mut Self {
-        self.oscore = Some(ctx);
+        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS>>,
+    ) -> Result<&mut Self, OscoreInstallError> {
+        if candidate.is_none() {
+            return Err(OscoreInstallError::MissingCandidate);
+        }
+        if self.inbox.has_protocol_state()
+            || self.lives.has_protocol_state()
+            || self.deferred.rows.iter().any(Option::is_some)
+            || self.dedup_closed.is_some()
+            || self
+                .oscore
+                .as_ref()
+                .is_some_and(|ctx| ctx.has_live_requests())
+        {
+            return Err(OscoreInstallError::Busy);
+        }
+        let storage = self.engine.storage_mut();
+        if !storage.rx_datagram().is_empty()
+            || !storage.tx_datagram().is_empty()
+            || !storage.dedup().is_empty()
+            || !storage.observe().is_empty()
+            || storage.rx_body().is_some_and(|pool| !pool.is_empty())
+            || storage.tx_body().is_some_and(|pool| !pool.is_empty())
+            || (0..storage.capacities().tx_datagram_slots)
+                .any(|index| storage.exchange_entry(SlotId::from_index(index)).is_some())
+        {
+            return Err(OscoreInstallError::Busy);
+        }
+        // Collected replies are only borrow backing, not outstanding work.
+        self.inbox = client::ClientInbox::new();
+        P::store(&mut self.assembled, &[]);
+        self.oscore = candidate.take();
         self.oscore_checkpoint.invalidate();
-        self
+        Ok(self)
     }
 
     /// Borrow the attached OSCORE context, if any.
@@ -1142,6 +1213,10 @@ impl<
     }
 
     /// Mutably borrow the attached OSCORE context.
+    ///
+    /// Advanced escape hatch: this bypasses the lifecycle checks in
+    /// [`Self::set_oscore`]. Do not replace keys or reset sender/replay state
+    /// while App-owned protocol work remains live.
     #[cfg(feature = "oscore")]
     pub const fn oscore_mut(
         &mut self,
@@ -1505,8 +1580,11 @@ where
     /// cannot select the retained snapshot. A single Q-Block2 selection retains
     /// its complete snapshot until the original deadline, including after the
     /// last block is sent. Follow-ups can reselect individual blocks or the
-    /// remainder of a payload set, using a smaller block size if needed. Each
-    /// call sends at most ten NON payloads; the next set requires a follow-up.
+    /// remainder of a payload set, using a smaller block size if needed. Recovery
+    /// may include ordered equal-size selectors; overlapping blocks are sent once.
+    /// The entire union is validated before sending: at most ten unique NON
+    /// payloads per call. A larger union or any invalid range returns Bad Request
+    /// without sending a partial selection or changing the retained snapshot.
     /// Explicit Q responses require an ETag even when the body fits one datagram.
     /// Metadata is bounded
     /// to 24 options and 512 encoded bytes; overflow fails before sending.
@@ -1515,7 +1593,7 @@ where
     /// re-run durable work on a send failure. OSCORE sequences are never rewound.
     /// Once a Q snapshot is retained, retries must preserve its body, ETag, code and retained options;
     /// an error or Valid response cannot replace that attempted representation.
-    /// Observe registration and Q-Block2 multi-selection deferral are unsupported.
+    /// Initial Observe registration and Q-Block2 multi-selection deferral are unsupported.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -2600,7 +2678,7 @@ where
     }
 
     // Deferred responses own a stable bounded TX snapshot. Authenticated
-    // classic or single Q-Block2 follow-ups select it without re-running work.
+    // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if meta.block2.is_some() || meta.q_block2.is_some() {
         if let Some(index) = deferred.rows.iter().position(|row| {
             row.is_some_and(|row| {
@@ -2613,7 +2691,6 @@ where
                 if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
                     || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
                     || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                    || parsed.q_block2().nth(1).is_some()
                 {
                     send_response(
                         engine,
@@ -4292,24 +4369,52 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let q = meta.q_block2.expect("one Q selection");
+    let q = meta.q_block2.expect("Q selection");
     let length = engine
         .tx_body_payload(body)
         .ok_or(Error::Block(BlockTransferError::NoTransfer))?
         .len();
     let size = usize::from(q.size());
-    let start = q.num() as usize * size;
-    if start >= length && !(start == 0 && length == 0) {
-        return Err(Error::Block(BlockTransferError::Gap));
-    }
-    let count = if q.more() {
-        u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-            - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
-    } else {
-        1
+    // Preflight the entire union before even the empty ACK. Selection ordering
+    // and SZX equality were checked at ingress. Completed snapshots use the
+    // parsed recovery request; complete() has only its retained single value.
+    let mut selected = [0u32; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let mut used = 0;
+    let mut plan = |value: BlockValue| -> Result<(), Error<T::Error>> {
+        let start = value.num() as usize * size;
+        if start >= length && !(start == 0 && length == 0) {
+            return Err(Error::Block(BlockTransferError::Gap));
+        }
+        let count = if value.more() {
+            u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+                - value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
+        } else {
+            1
+        };
+        for step in 0..count {
+            let num = value.num() + step;
+            if num as usize * size >= length && step != 0 {
+                break;
+            }
+            if used != 0 && num <= selected[used - 1] {
+                continue;
+            }
+            if used == selected.len() {
+                return Err(Error::Block(BlockTransferError::Gap));
+            }
+            selected[used] = num;
+            used += 1;
+        }
+        Ok(())
     };
-    for step in 0..count {
-        let num = q.num() + step;
+    if let Some(request) = meta.q_request {
+        for value in request.q_block2() {
+            plan(value.map_err(|error| Error::Block(error.into()))?)?;
+        }
+    } else {
+        plan(q)?;
+    }
+    for (step, &num) in selected[..used].iter().enumerate() {
         let offset = num as usize * size;
         if offset >= length && step != 0 {
             break;

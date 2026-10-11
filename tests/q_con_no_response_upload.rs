@@ -167,10 +167,10 @@ fn campaign<C: AppStorage, S: AppStorage>(
     #[cfg(feature = "oscore")]
     if protected {
         if client.oscore().is_none() {
-            client.set_oscore(context(&[1], &[2]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
         }
         if server.oscore().is_none() {
-            server.set_oscore(context(&[2], &[1]));
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
     }
     without_allocating(|| {
@@ -292,7 +292,7 @@ fn q_con_success_no_response_unsupported_modes_refuse_before_io_then_recover() {
         let mut client = fixed();
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
         }
         without_allocating(|| {
             for now in 0..16 {
@@ -347,8 +347,8 @@ fn q_con_success_no_response_lost_acks_wrong_owner_retry_and_fresh_recovery() {
             EFFECTS.with(|v| v.set(0));
             #[cfg(feature = "oscore")]
             if protected {
-                client.set_oscore(context(&[1], &[2]));
-                server.set_oscore(context(&[2], &[1]));
+                client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+                server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
             }
             without_allocating(|| {
                 let call = client
@@ -456,7 +456,7 @@ fn q_con_success_no_response_full_body_refusal_cancel_and_recovery() {
         let mut client = fixed();
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
         }
         without_allocating(|| {
             let first = client
@@ -515,7 +515,7 @@ fn q_con_success_no_response_full_body_refusal_cancel_and_recovery() {
         let mut server = fixed();
         #[cfg(feature = "oscore")]
         if protected {
-            server.set_oscore(context(&[2], &[1]));
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         MASK.with(|v| v.set(0));
         LENGTH.with(|v| v.set(3000));
