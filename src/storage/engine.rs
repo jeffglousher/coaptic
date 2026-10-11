@@ -2199,7 +2199,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         // Profile-sized copy so Constrained does not stack Default 1472.
         let mut tmp = S::RxScratch::default();
-        let (token, block, expected, identity, binding, n) = {
+        let (token, block, expected, identity, mut binding, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
@@ -2234,7 +2234,14 @@ impl<S: Storage + BodySlots> Engine<S> {
                 _ => {}
             }
             let binding = if which.uses_size1() {
-                Some(RequestBinding::from_message(&parsed)?)
+                if matches!(which, RxBlockOpt::Block1) && block.num() != 0 && parsed.if_none_match()
+                {
+                    return Err(BlockTransferError::IdentityMismatch);
+                }
+                Some(RequestBinding::from_message(
+                    &parsed,
+                    matches!(which, RxBlockOpt::Block1),
+                )?)
             } else {
                 None
             };
@@ -2257,7 +2264,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let key = BlockKey::new(token, endpoint).with_identity(identity);
         let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
         let mut classic_body = None;
-        if let Some(binding) = binding {
+        if let Some(candidate) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
             } else {
@@ -2270,7 +2277,9 @@ impl<S: Storage + BodySlots> Engine<S> {
                     (transfer.role() == role
                         && transfer.endpoint() == endpoint
                         && transfer.identity().is_absent()
-                        && transfer.request_binding == Some(binding))
+                        && transfer
+                            .request_binding
+                            .is_some_and(|stored| stored.same_options(candidate)))
                     .then_some(id)
                 })
             } else {
@@ -2287,8 +2296,20 @@ impl<S: Storage + BodySlots> Engine<S> {
                     .storage
                     .rx_body_transfer(id)
                     .ok_or(BlockTransferError::NoTransfer)?;
-                if transfer.request_binding != Some(binding) {
+                let stored = transfer
+                    .request_binding
+                    .ok_or(BlockTransferError::IdentityMismatch)?;
+                let restart = untagged_classic && block.num() == 0 && key != transfer.key();
+                let classic = matches!(which, RxBlockOpt::Block1);
+                if !stored.same_options(candidate)
+                    || (!classic && stored != candidate)
+                    || (classic && block.num() == 0 && !restart && stored != candidate)
+                {
                     return Err(BlockTransferError::IdentityMismatch);
+                }
+                if classic && !restart {
+                    // A later block's legal omission must not erase NUM0's condition.
+                    binding = Some(stored);
                 }
                 if untagged_classic {
                     if block.num() == 0 && key != transfer.key() {

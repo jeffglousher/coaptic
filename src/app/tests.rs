@@ -5087,10 +5087,13 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
 }
 
 #[test]
-fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() {
+fn fragmented_if_none_match_and_etag_refuse_instead_of_becoming_unconditional() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
-        for condition in 0..3 {
+        for if_none_match in [true, false] {
+            if if_none_match && !qblock {
+                continue;
+            }
             let mut app = pipe_app();
             let mut request = app.put("upload").to(peer).payload(&LARGE);
             if qblock {
@@ -5098,10 +5101,10 @@ fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() 
                     .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
                     .q_block1();
             }
-            request = match condition {
-                0 => request.if_match(b"version"),
-                1 => request.if_none_match(),
-                _ => request.etag(b"version"),
+            request = if if_none_match {
+                request.if_none_match()
+            } else {
+                request.etag(b"version")
             };
             assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
             assert_eq!(

@@ -1217,25 +1217,27 @@ where
 
     /// ETag option (conditional GET / validation).
     /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`]; conditional upload retention is not implemented.
+    /// [`Error::ConditionalUploadUnsupported`]; fragmented ETag retention is not implemented.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
         self
     }
 
-    /// If-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-Match option, retained on every Block1/Q-Block1 fragment and reissue.
+    /// An empty tag requires any current representation. The receiving handler
+    /// evaluates the precondition against its current representation when it
+    /// commits the complete body; intermediate ACKs do not prove it has passed.
     #[must_use]
     pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
         self.if_match = Some(tag);
         self
     }
 
-    /// If-None-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-None-Match option. Classic Block1 sends it only on NUM0 and retains
+    /// it for complete-body handler evaluation. The handler checks current
+    /// existence atomically with its application effect; partial ACKs are not success.
+    /// Fragmented Q-Block1 returns [`Error::ConditionalUploadUnsupported`].
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -1781,11 +1783,11 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // These conditions cannot be dropped while changing to Block1.
+            // Q-Block1 If-None-Match and fragmented ETag remain unsupported.
             // Until the App retains their transfer-specific semantics, refuse
             // fragmentation instead of turning a conditional write into an
             // unconditional one (RFC 7959 section 2.10).
-            if spec.if_match.is_some() || spec.if_none_match || spec.etag.is_some() {
+            if (spec.if_none_match && spec.q_block1) || spec.etag.is_some() {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }
@@ -1810,6 +1812,8 @@ where
                 spec.content_format,
                 spec.echo,
                 spec.no_response,
+                spec.if_match,
+                spec.if_none_match,
                 spec.q_block1,
                 tx,
             )
@@ -1840,6 +1844,8 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    if_none_match: bool,
     q_block1: bool,
     tx: SlotId,
 ) -> Result<Call, Error<T::Error>>
@@ -1883,6 +1889,8 @@ where
             content_format,
             echo,
             no_response,
+            if_match,
+            if_none_match,
             body,
             Some(tx),
             None,
@@ -1905,6 +1913,8 @@ where
             content_format,
             echo,
             no_response,
+            if_match,
+            if_none_match,
             body,
             Some(tx),
         )
@@ -2753,6 +2763,8 @@ where
             live.content_format,
             live.echo,
             live.no_response,
+            live.if_match.as_slice(),
+            live.if_none_match,
             issued,
             true,
             None,
@@ -2873,6 +2885,8 @@ where
     let content_format = live.and_then(|live| live.content_format);
     let echo = live.and_then(|live| live.echo);
     let no_response = live.and_then(|live| live.no_response);
+    let if_match = live.as_ref().and_then(|live| live.if_match.as_slice());
+    let if_none_match = live.is_some_and(|live| live.if_none_match);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
     let mut query_n = 0;
@@ -2902,6 +2916,8 @@ where
                 content_format,
                 echo,
                 no_response,
+                if_match,
+                if_none_match,
                 body,
                 None,
             )
@@ -2926,6 +2942,8 @@ where
                 content_format,
                 echo,
                 no_response,
+                if_match,
+                if_none_match,
                 body,
                 None,
                 Some((token, peer)),
@@ -2953,6 +2971,8 @@ fn issue_block1<Mem, T, const REQUESTS: usize>(
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     tx: Option<SlotId>,
 ) -> Result<(), Error<T::Error>>
@@ -2977,6 +2997,8 @@ where
         content_format,
         echo,
         no_response,
+        if_match,
+        if_none_match,
         issued,
         false,
         tx,
@@ -3000,6 +3022,8 @@ fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     mut tx: Option<SlotId>,
     take_first: Option<(Token, Endpoint)>,
@@ -3037,6 +3061,8 @@ where
             content_format,
             echo,
             no_response,
+            if_match,
+            if_none_match,
             issued,
             true,
             tx.take(),
@@ -3067,6 +3093,8 @@ fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    if_none_match: bool,
     issued: OutgoingBlock,
     q_block1: bool,
     tx: Option<SlotId>,
@@ -3103,6 +3131,12 @@ where
     let no_response = no_response.map(crate::message::NoResponse::encode);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let filled = (|| -> Result<(), EncodeError> {
+        if let Some(value) = if_match {
+            push_opt(&mut opts, Opt::if_match(value))?;
+        }
+        if if_none_match && issued.block().num() == 0 {
+            push_opt(&mut opts, Opt::if_none_match())?;
+        }
         for segment in path {
             push_opt(&mut opts, Opt::uri_path(segment))?;
         }
