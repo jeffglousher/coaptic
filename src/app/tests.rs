@@ -5087,35 +5087,26 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
 }
 
 #[test]
-fn fragmented_if_none_match_and_etag_refuse_instead_of_becoming_unconditional() {
+fn fragmented_etag_refuses_instead_of_becoming_unconditional() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
-        for if_none_match in [true, false] {
-            if if_none_match && !qblock {
-                continue;
-            }
-            let mut app = pipe_app();
-            let mut request = app.put("upload").to(peer).payload(&LARGE);
-            if qblock {
-                request = request
-                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
-                    .q_block1();
-            }
-            request = if if_none_match {
-                request.if_none_match()
-            } else {
-                request.etag(b"version")
-            };
-            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
-            assert_eq!(
-                app.transport().len,
-                0,
-                "no unconditional fragment may escape"
-            );
-            assert_eq!(app.engine_mut().tx_occupied(), 0);
-            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
-            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        let mut app = pipe_app();
+        let mut request = app.put("upload").to(peer).payload(&LARGE);
+        if qblock {
+            request = request
+                .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                .q_block1();
         }
+        request = request.etag(b"version");
+        assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+        assert_eq!(
+            app.transport().len,
+            0,
+            "no unconditional fragment may escape"
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
     }
 }
 
@@ -7605,28 +7596,154 @@ fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
         bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) == 0
     }
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .randomness(fill)
+            .block_wise::<true>()
+            .allow_plaintext()
+            .bind(RecordIo::default())
+            .unwrap();
+        for _ in 0..12 {
+            // Classic retains the first MID/jitter when fitting its first block.
+            // Q-Block still obtains a second identity after body admission.
+            DRAWS.store(usize::from(!qblock), Ordering::SeqCst);
+            let request = app.put("value").to(peer).payload(&[7; 3000]);
+            let result = if qblock {
+                request
+                    .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+                    .q_block1()
+                    .send(0)
+            } else {
+                request.send(0)
+            };
+            assert_eq!(
+                result,
+                Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+            );
+            assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+            assert_eq!(app.transport().sent_n, 0);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            // Restoring entropy admits fresh work without resetting the App.
+            DRAWS.store(0, Ordering::SeqCst);
+            let fresh = app.get("value").to(peer).send(1).unwrap();
+            assert_eq!(app.transport().sent_n, 1);
+            assert!(app.cancel(fresh));
+            assert!(app.take_response(fresh).unwrap().is_err());
+            app.transport_mut().sent_n = 0;
+        }
+    }
+}
+
+#[test]
+fn entropy_failure_during_classic_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<true>()
         .allow_plaintext()
-        .bind(RecordIo::default())
+        .bind(WideLoopback::default())
         .unwrap();
-    for _ in 0..12 {
-        DRAWS.store(0, Ordering::SeqCst);
-        assert_eq!(
-            app.put("value").to(peer).payload(&[7; 3000]).send(0),
-            Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let encoded = block.encode();
+    let options = [Opt::block1(&encoded)];
+    let reply = Message::new(Type::Acknowledgement, Code::CONTINUE, first.message_id())
+        .with_token(call.token())
+        .with_options(&options);
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
         );
-        assert_eq!(app.transport().sent_n, 0);
-        assert_eq!(app.engine.tx_occupied(), 0);
-        for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
-            assert!(
-                app.engine
-                    .tx_body_transfer(crate::storage::SlotId::from_index(i))
-                    .is_none()
-            );
-        }
     }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let encoded = block.encode();
+        let options = [Opt::block1(&encoded)];
+        let reply = Message::new(
+            Type::Acknowledgement,
+            if index < 2 {
+                Code::CONTINUE
+            } else {
+                Code::CHANGED
+            },
+            sent.message_id(),
+        )
+        .with_token(fresh.token())
+        .with_options(&options);
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
 }
 
 #[test]

@@ -489,7 +489,7 @@ fn if_none_match_num0_retry_is_exact_and_completes_after_loss() {
 }
 
 #[test]
-fn if_none_match_q_refusal_cancel_and_deadline_reclaim_before_recovery() {
+fn fragmented_etag_refusal_cancel_and_deadline_reclaim_before_recovery() {
     use coaptic::app::{CallFailure, Error};
     let mut client = client();
     without_allocating(|| {
@@ -500,7 +500,7 @@ fn if_none_match_q_refusal_cancel_and_deadline_reclaim_before_recovery() {
                     .put("upload")
                     .to(PEER)
                     .payload(&BODY)
-                    .if_none_match()
+                    .etag(b"version")
                     .request_tag(BodyTag::new(b"transfer").unwrap())
                     .q_block1()
                     .send(now),
@@ -542,89 +542,28 @@ fn if_none_match_q_refusal_cancel_and_deadline_reclaim_before_recovery() {
     });
 }
 #[test]
-fn if_none_match_added_option_capacity_refuses_without_stale_ownership() {
-    static PATH_BYTES: [u8; 255] = [b'x'; 255];
-    let mut found = false;
-    for length in 200..=255 {
-        let path = core::str::from_utf8(&PATH_BYTES[..length]).unwrap();
-        let mut client = client();
-        let plain = client
-            .put(path)
-            .to(PEER)
-            .payload(&BODY)
-            .request_tag(BodyTag::new(b"transfer").unwrap());
-        let Ok(call) = plain.send(0) else {
-            continue;
-        };
-        assert!(client.cancel(call));
-        assert!(client.take_response(call).unwrap().is_err());
-        client.transport_mut().take().unwrap();
-        let conditioned = client
-            .put(path)
-            .to(PEER)
-            .payload(&BODY)
-            .if_none_match()
-            .request_tag(BodyTag::new(b"transfer").unwrap());
-        let result = conditioned.send(1);
-        if let Ok(call) = result {
-            client.cancel(call);
-            client.take_response(call);
-            continue;
+fn if_none_match_added_option_capacity_shrinks_without_stale_ownership() {
+    let path = core::str::from_utf8(&[b'x'; 255]).unwrap();
+    let mut client = client();
+    without_allocating(|| {
+        for now in 0..16 {
+            let call = client
+                .put(path)
+                .to(PEER)
+                .payload(&BODY)
+                .if_none_match()
+                .request_tag(BodyTag::new(b"transfer").unwrap())
+                .send(now)
+                .unwrap();
+            let frame = client.transport_mut().take().unwrap();
+            let parsed = decode(&frame.bytes[..frame.len]).unwrap();
+            assert_eq!(parsed.block1().unwrap().unwrap().szx(), 5);
+            assert!(parsed.if_none_match());
+            assert_eq!(parsed.payload(), &BODY[..512]);
+            assert!(client.cancel(call));
+            assert!(client.take_response(call).unwrap().is_err());
+            assert_eq!(client.transport_mut().len, 0);
         }
-        assert!(matches!(
-            result,
-            Err(coaptic::app::Error::Message(
-                coaptic::error::SlotMessageError::Encode(
-                    coaptic::error::EncodeError::BufferTooSmall
-                )
-            ))
-        ));
-        found = true;
-        assert_eq!(
-            client.transport_mut().len,
-            0,
-            "added option must not escape truncated"
-        );
-        without_allocating(|| {
-            // More than the two body slots and default Call capacity: every failed encode
-            // and cancellation must return its ownership before the next admission.
-            for now in 2..18 {
-                let request = client
-                    .put(path)
-                    .to(PEER)
-                    .payload(&BODY)
-                    .if_none_match()
-                    .request_tag(BodyTag::new(b"transfer").unwrap());
-                assert!(matches!(
-                    request.send(now),
-                    Err(coaptic::app::Error::Message(
-                        coaptic::error::SlotMessageError::Encode(
-                            coaptic::error::EncodeError::BufferTooSmall
-                        )
-                    ))
-                ));
-                assert_eq!(client.transport_mut().len, 0);
-                let request = client
-                    .put("upload")
-                    .to(PEER)
-                    .payload(&BODY)
-                    .if_none_match()
-                    .request_tag(BodyTag::new(b"transfer").unwrap());
-                let call = request.send(now).unwrap();
-                assert!(client.cancel(call));
-                assert_eq!(
-                    client.take_response(call).unwrap().unwrap_err(),
-                    coaptic::app::CallFailure::Cancelled
-                );
-                assert!(client.transport_mut().take().is_some());
-                assert_eq!(client.transport_mut().len, 0);
-            }
-        });
-        exercise(client, server(), false);
-        break;
-    }
-    assert!(
-        found,
-        "fixture must exercise an added-If-None-Match datagram capacity boundary"
-    );
+    });
+    exercise(client, server(), false);
 }
