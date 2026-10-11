@@ -345,7 +345,7 @@ impl<const ENTRIES: usize> SlotPool for ExchangeTable<ENTRIES> {
 ///
 /// Insert, lookup, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the TX Datagram Pool count, with independent
-/// occupancy. [`super::Memory`] and [`super::AllocMemory`] implement this.
+/// occupancy. [`super::Memory`] and `AllocMemory` (with `alloc`) implement this.
 pub trait Exchanges {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///

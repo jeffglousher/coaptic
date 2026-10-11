@@ -2,7 +2,7 @@
 //!
 //! Presets are starting budgets, not power, throughput or whole-device RAM promises.
 //! All support fixed storage without `std` or `alloc`. With `alloc`, call
-//! [`Resources::allocated`] with an explicit heap request limit before construction.
+//! `Resources::allocated` with an explicit heap request limit before construction.
 //! The configured builder deliberately has no resource setters:
 //!
 //! ```compile_fail
