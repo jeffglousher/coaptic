@@ -2725,20 +2725,35 @@ fn outer_observe_cannot_replace_protected_registration_or_notification() {
 
 #[test]
 fn protected_observe_cancellation_selects_one_subscription_and_releases_binding() {
-    use crate::{App, Request, Response, get, profiles};
-    fn value(_: Request<'_>) -> Response<'static> {
-        Response::content(b"value").observe(0)
+    use crate::{App, profiles};
+    // Explicit capable peer: unlike App's requestless route source, this
+    // fixture retains the selected request binding for each query.
+    fn reply(
+        server: &mut SecurityContext,
+        wire: &[u8],
+        query: &str,
+        register: bool,
+    ) -> ([u8; 256], usize, RequestRef) {
+        let mut inner = [0; 256];
+        let (request, reference) = server
+            .unprotect_request(&decode(wire).unwrap(), &mut inner)
+            .unwrap();
+        assert_eq!(request.uri_query().next(), Some(Ok(query)));
+        assert_eq!(request.observe(), Some(Ok(u32::from(!register))));
+        let options = [Opt::observe_register()];
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(request.token())
+            .with_options(if register { &options } else { &[] })
+            .with_payload(b"value");
+        let mut bytes = [0; 256];
+        let n = server
+            .protect_response_with_piv(&response, reference, &mut bytes)
+            .unwrap();
+        (bytes, n, reference)
     }
-    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut server = App::profile::<profiles::Default>()
-        .deterministic_for_tests()
-        .block_wise::<false>()
-        .route("obs", get(value))
-        .allow_plaintext()
-        .bind(Loopback::default())
-        .unwrap();
-    server.set_oscore(&mut Some(server_c1())).unwrap();
+    let mut server = server_c1();
+    let mut bindings = [None; 2];
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
@@ -2756,9 +2771,8 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
             .send(i as u64)
             .unwrap();
         let (_, bytes, n) = client.transport().last_send.unwrap();
-        server.transport_mut().inbox = Some((client_ep, bytes, n));
-        server.poll(i as u64).unwrap();
-        let (_, bytes, n) = server.transport().last_send.unwrap();
+        let (bytes, n, reference) = reply(&mut server, &bytes[..n], query, true);
+        bindings[i] = Some(reference);
         client.transport_mut().inbox = Some((server_ep, bytes, n));
         client.poll(i as u64).unwrap();
         assert!(
@@ -2795,9 +2809,8 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
     );
     let (_, bytes, n) = client.transport().last_send.unwrap();
     assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
-    server.transport_mut().inbox = Some((client_ep, bytes, n));
-    server.poll(2).unwrap();
-    let (_, bytes, n) = server.transport().last_send.unwrap();
+    let (bytes, n, _) = reply(&mut server, &bytes[..n], "a", false);
+    bindings[0] = None;
     assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(2).unwrap();
@@ -2811,13 +2824,17 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
     );
     assert!(client.oscore().unwrap().lookup(a.token()).is_none());
     assert!(client.oscore().unwrap().lookup(b.token()).is_some());
-    assert_eq!(
-        server
-            .notify(10, &["obs"], Response::content(b"only b"))
-            .unwrap(),
-        1
-    );
-    let (_, bytes, n) = server.transport().last_send.unwrap();
+    assert!(bindings[0].is_none());
+    let seq = encode_uint(1);
+    let opts = [Opt::observe(&seq)];
+    let notification = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(300))
+        .with_token(b.token())
+        .with_options(&opts)
+        .with_payload(b"only b");
+    let mut bytes = [0; 256];
+    let n = server
+        .protect_response_with_piv(&notification, bindings[1].unwrap(), &mut bytes)
+        .unwrap();
     assert_eq!(decode(&bytes[..n]).unwrap().token(), b.token());
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(10).unwrap();

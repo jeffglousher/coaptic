@@ -283,6 +283,10 @@ Client and server Observe registrations share the configured Observe table. Use
 `.allocated(limit)` for a runtime capacity; the latter is included in the heap
 request limit. Extra Observe rows do not increase client Call or security-binding
 capacity. Exhaustion refuses a new registration without evicting another owner.
+App servers register queryless GET observations. Ordinary FETCH and query-selected
+GET replies contain the selected response without Observe registration because
+notification callbacks do not retain those selections. Clients can still observe
+these resources on an external server that supports them.
 Duplicate-reply history is independently sized with `.dedup_entries::<N>()`
 on fixed resources or `.dedup_entries(n)` on allocated resources. Allocated
 history counts toward the heap limit. Cached replies still share TX storage;

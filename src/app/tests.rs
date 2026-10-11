@@ -11041,16 +11041,24 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
 
 #[test]
 fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
+    // A synthetic capable peer retains client interoperability coverage;
+    // App server declines FETCH/query Observe until it owns selection.
+    fn capable_reply(wire: &[u8], sequence: u32) -> ([u8; WIRE], usize) {
+        let request = decode(wire).unwrap();
+        let seq = encode_uint(sequence);
+        let cf = encode_uint(0);
+        let opts = [Opt::observe(&seq), Opt::content_format(&cf)];
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(request.token())
+            .with_options(&opts)
+            .with_payload(b"selected");
+        let mut bytes = [0; WIRE];
+        let n = encode(&response, &mut bytes).unwrap();
+        (bytes, n)
+    }
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     for fetch_request in [false, true] {
-        let mut server = App::profile::<profiles::Default>()
-            .deterministic_for_tests()
-            .block_wise::<false>()
-            .route("obs", get(get_obs).fetch(get_obs))
-            .allow_plaintext()
-            .bind(WideLoopback::default())
-            .unwrap();
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
@@ -11074,9 +11082,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
             .send(0)
             .unwrap();
         let (wire, n) = (client.transport().sends[0], client.transport().send_lens[0]);
-        server.transport_mut().inbox = Some((client_ep, wire, n));
-        server.poll(0).unwrap();
-        let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+        let (wire, n) = capable_reply(&wire[..n], 0);
         client.transport_mut().inbox = Some((server_ep, wire, n));
         client.poll(1).unwrap();
         assert_eq!(
@@ -11122,7 +11128,6 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
         }
         for round in 1..=3u32 {
             client.transport_mut().send_n = 0;
-            server.transport_mut().send_n = 0;
             let request = if fetch_request {
                 client.fetch("obs")
             } else {
@@ -11180,9 +11185,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
                 0,
                 "stale ACK must stop request retransmission"
             );
-            server.transport_mut().inbox = Some((client_ep, wire, n));
-            server.poll(u64::from(round) * 100 + 2).unwrap();
-            let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+            let (wire, n) = capable_reply(&wire[..n], round);
             client.transport_mut().inbox = Some((server_ep, wire, n));
             client.poll(u64::from(round) * 100 + 3).unwrap();
             assert_eq!(
@@ -11934,7 +11937,7 @@ fn observe_reregistration_after_removal_starts_a_new_relation() {
 }
 
 #[test]
-fn observe_notifications_use_the_path_not_the_query() {
+fn observe_notifications_decline_query_selection_and_recover_queryless() {
     let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
     let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
     let token_a = Token::new(&[0xa1]).unwrap();
@@ -11964,43 +11967,42 @@ fn observe_notifications_use_the_path_not_the_query() {
     );
     app.transport_mut().inbox = Some((peer_b, wire, n));
     app.poll(1).unwrap();
+    assert!(last_wide(&app).observe().is_none());
     app.transport_mut().send_n = 0;
     assert_eq!(
         app.notify(
             2,
             &["sensors", "temp"],
-            Response::content(b"same").content_format(ContentFormat::TEXT_PLAIN),
+            Response::content(b"wrong").content_format(ContentFormat::TEXT_PLAIN)
         )
         .unwrap(),
-        2
+        0
     );
-    assert_eq!(app.transport().send_n, 2);
-    for index in 0..2 {
-        let parsed =
-            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
-        assert_eq!(parsed.payload(), b"same");
-        assert!(parsed.uri_query().next().is_none());
-    }
+    assert_eq!(app.transport().send_n, 0);
+    assert!(!observe_live(&app, peer_a, token_a));
+    assert!(!observe_live(&app, peer_b, token_b));
     let (wire, n) = encode_wide_token(
         Code::GET,
         &["sensors", "temp"],
-        &[Opt::observe_register(), Opt::uri_query("u=z")],
+        &[Opt::observe_register()],
         0x1203,
         token_a,
     );
     app.transport_mut().inbox = Some((peer_a, wire, n));
     app.poll(3).unwrap();
-    assert_eq!(last_wide(&app).observe(), Some(Ok(2)));
-    assert!(observe_live(&app, peer_a, token_a));
-    assert!(observe_live(&app, peer_b, token_b));
-    let live = (0..app.engine().capacities().observe_entries)
-        .filter(|index| {
-            app.engine()
-                .observe_interest(crate::storage::SlotId::from_index(*index))
-                .is_some()
-        })
-        .count();
-    assert_eq!(live, 2);
+    assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            4,
+            &["sensors", "temp"],
+            Response::content(b"fresh").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).payload(), b"fresh");
+    assert!(!observe_live(&app, peer_b, token_b));
 }
 
 #[test]
@@ -13538,4 +13540,90 @@ fn deferred_selection_preserves_get_validator_behavior() {
         };
         assert_eq!(make(&with_tag) == make(&no_tag), code == Code::GET);
     }
+}
+
+#[test]
+fn fetch_observe_requestless_source_does_not_register_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        if request.payload() == b"b" {
+            Response::content(b"selected-b")
+        } else {
+            Response::content(b"selected-a")
+        }
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", fetch(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let zero = encode_uint(0);
+    let options = [
+        Opt::observe(&zero),
+        Opt::uri_path("obs"),
+        Opt::content_format(&zero),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::FETCH, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options)
+        .with_payload(b"b");
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+}
+
+#[test]
+fn get_observe_requestless_source_does_not_register_query_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        Response::content(if request.uri_query().next() == Some(Ok("b")) {
+            b"selected-b"
+        } else {
+            b"selected-a"
+        })
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let options = [
+        Opt::observe_register(),
+        Opt::uri_path("obs"),
+        Opt::uri_query("b"),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(
+        last_wide(&app).payload(),
+        b"selected-b",
+        "source cannot recover GET query"
+    );
 }

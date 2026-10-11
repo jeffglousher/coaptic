@@ -95,13 +95,15 @@
 //! [`.routes::<16>()`](AppBuilder::routes) before bind. Paths accept
 //! `"sensors/temp"` or `&["sensors", "temp"]` ([`IntoPath`]).
 //!
-//! Observe: return [`.observe`](Response::observe) on a successful GET, or
+//! Observe: return [`.observe`](Response::observe) on a successful queryless GET, or
 //! attach [`MethodRouter::observe`]; later representations are
 //! [`App::notify`]. Server re-registration with the same peer, Token and route
 //! advances the retained 24-bit sequence while replacing scheduling and OSCORE
 //! request state. After that relation is removed, or when a new App is
 //! constructed, the next registration starts at sequence 0. Notifications are
-//! selected by exact path segments; Uri-Query is not stored on the relation.
+//! selected by exact path segments. App declines FETCH and query-bearing GET
+//! registrations with an ordinary selected response without Observe, including
+//! explicit handler opt-in: per-relation selection ownership is not implemented.
 //! Client subscribe/refresh uses [`Outgoing::observe`] /
 //! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
@@ -1106,11 +1108,40 @@ impl<
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
+    fn validate_scratch<S: DatagramSlots>(c: crate::storage::Capacities) -> Result<(), BuildError> {
+        c.validate_for_build(BLOCK_WISE)?;
+        // Check the actual borrowed slices: custom storage need not use the
+        // default associated constants. This is App admission, not Engine policy.
+        {
+            let mut rx = S::RxScratch::default();
+            if c.rx_datagram_bytes > rx.as_ref().len() || c.rx_datagram_bytes > rx.as_mut().len() {
+                return Err(BuildError::SizeMismatch);
+            }
+        }
+        {
+            let mut tx = S::TxScratch::default();
+            if c.tx_datagram_bytes > tx.as_ref().len() || c.tx_datagram_bytes > tx.as_mut().len() {
+                return Err(BuildError::SizeMismatch);
+            }
+        }
+        Ok(())
+    }
+
+    fn fixed_capacities() -> crate::storage::Capacities {
+        let c = crate::storage::Capacities::from_profile::<P>();
+        if BLOCK_WISE {
+            c.with_block_wise::<P>()
+        } else {
+            c
+        }
+    }
+
     /// Bind the profile's fixed memory, with or without body pools.
     ///
     /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.
-    /// Missing security configuration is rejected before storage construction.
+    /// Missing security configuration and scratch dimensions that cannot hold
+    /// the declared datagrams are rejected before storage construction.
     pub fn bind<T>(
         self,
         io: T,
@@ -1119,6 +1150,7 @@ where
         BuildError,
     > {
         self.validate_security()?;
+        Self::validate_scratch::<AppStore<P, BLOCK_WISE>>(Self::fixed_capacities())?;
         let engine = EngineBuilder::new()
             .profile::<P>()
             .block_wise(BLOCK_WISE)
@@ -1128,8 +1160,9 @@ where
 
     /// Bind caller-selected storage without changing the App interface.
     ///
-    /// Storage sizes, scratch and body presence are validated by the same
-    /// Engine builder as fixed profiles. `P` remains the default-memory marker;
+    /// App validates datagram sizes against both readable and writable scratch
+    /// slices before construction; Engine validates pool/body dimensions.
+    /// `P` remains the default-memory marker;
     /// the selected `S` supplies actual datagram/body dimensions and scratch.
     /// With `alloc`, use `Self::bind_alloc` for one-time bounded allocation.
     pub fn bind_storage<T, S: AppStorage>(
@@ -1139,6 +1172,7 @@ where
     ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
         self.validate_security()?;
         let c = storage.capacities();
+        Self::validate_scratch::<S>(c)?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -1165,6 +1199,7 @@ where
         BuildError,
     > {
         self.validate_security()?;
+        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
@@ -1181,7 +1216,9 @@ where
     /// in bounded time or return false. No allocation or global callback state is
     /// introduced. A prior `randomness` or `deterministic_for_tests` selection is
     /// an error, even if it would select the same source. Security and source
-    /// ambiguity are checked before invoking entropy or touching the socket.
+    /// ambiguity are checked first. Invalid datagram/scratch dimensions then
+    /// refuse before invoking entropy or touching the socket. Scratch defaults
+    /// are constructed for validation; caller-defined scratch owns its costs.
     /// See [`crate::platform::WithEntropy`] for adapter composition and limits.
     // Preserve the existing App type parameters; only the transport is wrapped.
     #[allow(clippy::type_complexity)]
@@ -1202,6 +1239,8 @@ where
         >,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<AppStore<P, BLOCK_WISE>>(Self::fixed_capacities())?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind(io)
     }
@@ -1217,6 +1256,8 @@ where
         App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<S>(storage.capacities())?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind_storage(io, storage)
     }
@@ -1242,8 +1283,18 @@ where
         >,
         BuildError,
     > {
+        self.validate_entropy_source()?;
+        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind_alloc(io, c)
+    }
+
+    fn validate_entropy_source(&self) -> Result<(), BuildError> {
+        self.validate_security()?;
+        if self.identity.is_some() {
+            return Err(BuildError::RandomnessAlreadyConfigured);
+        }
+        Ok(())
     }
 
     fn prepare_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
@@ -1251,10 +1302,7 @@ where
         io: T,
         random: R,
     ) -> Result<(Self, crate::platform::WithEntropy<T, R>), BuildError> {
-        self.validate_security()?;
-        if self.identity.is_some() {
-            return Err(BuildError::RandomnessAlreadyConfigured);
-        }
+        self.validate_entropy_source()?;
         let mut io = crate::platform::WithEntropy::new(io, random);
         let mut seed = [0; 2];
         if !io.fill_random(&mut seed) {
@@ -1733,8 +1781,8 @@ where
     /// Deferred rows selected by [`AppBuilder::deferred`] are bounded
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
-    /// zero, or initial Q-Block2 has more than ten selectors. An observable GET
-    /// registration without Block2/Q-Block2 may defer one datagram; other Observe
+    /// zero, or initial Q-Block2 has more than ten selectors. An observable
+    /// queryless GET registration without Block2/Q-Block2 may defer one datagram; other Observe
     /// requests need synchronous dispatch. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
@@ -1887,8 +1935,8 @@ where
     /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
-    /// An observable GET registration without Block2/Q-Block2 can defer its initial
-    /// response. Completion must fit the actual datagram capacity, including
+    /// An observable queryless GET registration without Block2/Q-Block2 can defer
+    /// its initial response. Completion must fit the actual datagram capacity, including
     /// OSCORE overhead; it never falls back to a block-wise Observe response.
     /// If the bounded Observe table is full, success is an ordinary response
     /// without Observe. Registration is installed before sending. An ambiguous
@@ -1906,7 +1954,8 @@ where
     /// registration that has not attempted output does not own an earlier live
     /// relation. Direct mutation through `engine_mut` remains an advanced caller
     /// ownership boundary: do not replace App-owned relations while a deferred
-    /// handle is live. Deferred FETCH Observe and block-wise Observe remain unsupported.
+    /// handle is live. Deferred FETCH, query-bearing GET Observe and block-wise
+    /// Observe remain unsupported. Ordinary deferred queries without Observe remain available.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -3244,7 +3293,7 @@ where
             plan.register
                 && plan.has_source
                 && !plan.resource.is_none()
-                && parsed.code() == Code::GET
+                && plan.registration_supported
                 && parsed.block2().is_none()
                 && parsed.q_block2().next().is_none()
                 && parsed.block1().is_none()
@@ -3415,6 +3464,7 @@ where
 #[derive(Clone, Copy)]
 struct ObservePlan {
     register: bool,
+    registration_supported: bool,
     deregister: bool,
     delete: bool,
     has_source: bool,
@@ -3426,6 +3476,7 @@ impl ObservePlan {
     fn idle() -> Self {
         Self {
             register: false,
+            registration_supported: false,
             deregister: false,
             delete: false,
             has_source: false,
@@ -3437,6 +3488,12 @@ impl ObservePlan {
     fn from_request<const N: usize>(site: &Site<N>, request: &Request<'_>) -> Self {
         Self {
             register: request.is_observe_register(),
+            // A requestless route snapshot cannot retain a FETCH or query selection.
+            // RFC 7641 section 4.1 permits declining registration while
+            // returning the requested representation; RFC 8132 section 2.4
+            // applies that behavior to FETCH as well.
+            registration_supported: request.method() == Some(Method::Get)
+                && request.uri_query().next().is_none(),
             deregister: request.is_observe_deregister(),
             delete: request.method() == Some(Method::Delete),
             has_source: site.has_observe_source(request.path()),
@@ -3478,7 +3535,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     if let Some(interest) = previous {
         release_observe_response_body(engine, interest);
     }
-    if plan.register && response.code().is_success() && opted {
+    if plan.register && plan.registration_supported && response.code().is_success() && opted {
         // Re-registration replaces scheduling and protection state, but the
         // same Token/resource must retain ordering across that replacement.
         let sequence = previous
