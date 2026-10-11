@@ -5107,8 +5107,10 @@ pub enum Error<E> {
     /// or Q-Block1 If-None-Match semantics. Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,
-    /// A nonzero No-Response mask is unsupported by App's upload handshake.
-    /// Nothing was sent; use a single datagram or caller-managed Engine transfer.
+    /// The upload's No-Response mask is outside the supported App combinations.
+    /// Classic Block1 permits zero and error-only masks 8, 16 and 24; Q-Block1
+    /// permits only zero. Nothing was sent. Other masks need a single datagram
+    /// or a caller-managed Engine transfer.
     NoResponseUploadUnsupported,
     /// App requires a response when registering Observe. Deregistration is allowed.
     NoResponseObserveUnsupported,
