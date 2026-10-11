@@ -1179,8 +1179,9 @@ where
     /// Continue responses still advance the upload. Suppressed errors leave the
     /// outcome unknown; deadline or cancellation bounds the local wait without
     /// proving success. A peer may still return a selected error response.
-    /// Other nonzero upload masks, all nonzero Q-Block1 masks, and nonzero masks
-    /// on Observe registration remain explicit App boundaries.
+    /// Q-Block1 also permits mask 16 (5.xx only), preserving Continue and 4.08
+    /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
+    /// Observe registration remain explicit App boundaries.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1416,7 +1417,11 @@ where
         if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
             return Err(Error::ObserveMethodUnsupported);
         }
-        if self.no_response.is_some_and(|value| value.get() != 0) && self.q_block1 {
+        if self
+            .no_response
+            .is_some_and(|value| !matches!(value.get(), 0 | 16))
+            && self.q_block1
+        {
             return Err(Error::NoResponseUploadUnsupported);
         }
         if self.no_response.is_some_and(|value| value.get() != 0)
@@ -1801,7 +1806,7 @@ where
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             // Classic Block1 requires 2.xx Continue. This bounded App combination
             // supports only the defined error-class bits; undefined bits are an
-            // API boundary, not a wire-validity judgment. Q refuses nonzero earlier.
+            // API boundary, not a wire-validity judgment. Q permits only 0/16 earlier.
             if spec.no_response.is_some_and(|value| {
                 value.get()
                     & !(crate::message::NoResponse::SUPPRESS_4
