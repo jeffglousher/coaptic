@@ -1224,9 +1224,11 @@ where
     }
 
     /// ETag cache validator (1..=8 bytes), distinct from a write precondition.
-    /// Classic Block1 FETCH retains this validator on every fragment, with the
+    /// Classic/Q-Block1 FETCH retains this validator on every fragment, with the
     /// existing 512-byte canonical selection bound. Other fragmented methods
-    /// and Q-Block1 return [`Error::ConditionalUploadUnsupported`].
+    /// return [`Error::ConditionalUploadUnsupported`]. First-fragment sizing tries
+    /// at most seven block sizes against the actual plaintext/protected TX limit.
+    /// Later option or Partial-IV growth can still refuse; no security state rewinds.
     /// The handler validates the complete selection and may return 2.03 Valid.
     /// FETCH Block2 follow-ups repeat the full selection
     /// and must fit one datagram; their size failure terminates the Call.
@@ -1816,9 +1818,9 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // Only classic FETCH has retained fragmented cache-validator semantics.
+            // FETCH retains fragmented cache-validator semantics.
             // An ETag is not an If-Match write precondition.
-            if spec.etag.is_some() && (spec.code != Code::FETCH || spec.q_block1) {
+            if spec.etag.is_some() && spec.code != Code::FETCH {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }
@@ -1891,52 +1893,50 @@ where
     // At most seven candidate SZX values. Only size misses try a smaller
     // prefix. Protection may consume sequence numbers; never rewind them.
     let mut initial_szx = BlockValue::SZX_MAX;
-    if !q_block1 {
-        loop {
-            let size = 1usize << (initial_szx + 4);
-            let count = payload.len().min(size);
-            let block = BlockValue::new(0, count < payload.len(), initial_szx)
-                .map_err(BlockTransferError::from)
-                .map_err(Error::Block)?;
-            match encode_block1_request(
-                engine,
-                oscore,
-                tx,
-                ty,
-                code,
-                mid,
-                token,
-                path,
-                queries,
-                accept,
-                content_format,
-                echo,
-                no_response,
-                if_match,
-                etag,
-                if_none_match,
-                block,
-                false,
-                request_tag,
-                u32::try_from(payload.len()).ok(),
-                &payload[..count],
-            ) {
-                Ok(()) => break,
-                Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
-                    if initial_szx > 0 =>
-                {
-                    initial_szx -= 1
-                }
-                Err(error) => {
-                    let _ = engine.release_tx(tx);
-                    return Err(error);
-                }
+    loop {
+        let size = 1usize << (initial_szx + 4);
+        let count = payload.len().min(size);
+        let block = BlockValue::new(0, count < payload.len(), initial_szx)
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?;
+        match encode_block1_request(
+            engine,
+            oscore,
+            tx,
+            ty,
+            code,
+            mid,
+            token,
+            path,
+            queries,
+            accept,
+            content_format,
+            echo,
+            no_response,
+            if_match,
+            etag,
+            if_none_match,
+            block,
+            q_block1,
+            request_tag,
+            u32::try_from(payload.len()).ok(),
+            &payload[..count],
+        ) {
+            Ok(()) => break,
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if initial_szx > 0 =>
+            {
+                initial_szx -= 1
+            }
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                return Err(error);
             }
         }
     }
     let key = BlockKey::new(token, dest).with_identity(request_tag);
     let started = if q_block1 {
-        engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_q_block1(key, payload, initial_szx)
     } else {
         engine.start_block1(key, payload, initial_szx)
     };
@@ -1953,40 +1953,49 @@ where
             return Err(Error::Block(e));
         }
     };
-    let outcome = if q_block1 {
-        issue_q_block1_window(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            echo,
-            no_response,
-            if_match,
-            etag,
-            if_none_match,
-            body,
-            Some(tx),
-            None,
-        )
-        .map(|_| ())
+    // The first datagram already owns its MID, jitter and protected RequestRef.
+    // Advance the admitted body once and send those exact bytes. A NON Q set
+    // continues only after that successful send; CON waits for its matching ACK.
+    let first = if q_block1 {
+        engine.next_q_block1(body)
     } else {
-        // The first datagram is already encoded, including its RequestRef.
-        // Advance the newly admitted body once, then send those exact bytes.
-        match engine.next_block1(body) {
-            Ok(_) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter()),
-            Err(error) => {
-                let _ = engine.release_tx(tx);
-                Err(Error::Block(error))
-            }
+        engine.next_block1(body)
+    };
+    let outcome = match first {
+        Ok(issued) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+            .and_then(|()| {
+                if q_block1 && ty == Type::NonConfirmable && !issued.complete() {
+                    issue_q_block1_window(
+                        engine,
+                        io,
+                        ids,
+                        oscore,
+                        now_ms,
+                        dest,
+                        ty,
+                        code,
+                        token,
+                        path,
+                        queries,
+                        accept,
+                        content_format,
+                        echo,
+                        no_response,
+                        if_match,
+                        etag,
+                        if_none_match,
+                        body,
+                        None,
+                        None,
+                    )
+                    .map(|_| ())
+                } else {
+                    Ok(())
+                }
+            }),
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            Err(Error::Block(error))
         }
     };
     if outcome.is_err() {
@@ -2834,7 +2843,7 @@ where
             live.echo,
             live.no_response,
             live.if_match.as_slice(),
-            None, // Q-Block1 ETag remains unsupported.
+            live.etag.as_slice(),
             live.if_none_match,
             issued,
             true,
