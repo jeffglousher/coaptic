@@ -435,6 +435,14 @@ impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
 where
     P::TxDatagram: DatagramBytes + SlotPool,
 {
+    fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        self.tx.replace_pending(expected, bytes)
+    }
+
     fn record_pending_con(
         &mut self,
         id: SlotId,

@@ -502,6 +502,31 @@ impl DatagramSlots for AllocMemory {
 }
 
 impl PendingCons for AllocMemory {
+    fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        let id = expected.tx_slot();
+        let replacement = super::pending::validate_replacement(
+            expected,
+            self.pending_con(id),
+            self.tx.payload(id),
+            bytes,
+            self.tx.slot_bytes,
+            self.tx.occ.is_pinned(id),
+        )?;
+        // Validation proves this slot exists and all lengths fit; commit cannot fail.
+        let slot = &mut self.tx.slots[id.index()];
+        slot.buf[..bytes.len()].copy_from_slice(bytes);
+        slot.len = bytes.len();
+        slot.pending = Some(PendingMark::new(
+            replacement.message_id(),
+            replacement.rto(),
+        ));
+        Ok(replacement)
+    }
+
     fn record_pending_con(
         &mut self,
         id: SlotId,

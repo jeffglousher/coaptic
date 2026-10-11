@@ -447,6 +447,21 @@ impl<S: Storage + DedupSlots> Engine<S> {
 }
 
 impl<S: Storage + PendingCons> Engine<S> {
+    /// Atomically replace one exact pending CON, retaining its slot and RTO.
+    ///
+    /// See [`PendingCons::replace_pending_con`] for staging, MID selection,
+    /// refusal guarantees and higher-layer ownership responsibilities.
+    pub fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        let replacement = self.storage.replace_pending_con(expected, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(replacement)
+    }
+
     /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
     ///
     /// Initializes RTO from [`crate::message::Transmission`] using caller `now_ms`
