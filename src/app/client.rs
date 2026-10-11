@@ -1219,9 +1219,15 @@ where
         self
     }
 
-    /// ETag option (conditional GET / validation).
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`]; fragmented ETag retention is not implemented.
+    /// ETag cache validator (1..=8 bytes), distinct from a write precondition.
+    /// Classic Block1 FETCH retains this validator on every fragment, with the
+    /// existing 512-byte canonical selection bound. Other fragmented methods
+    /// and Q-Block1 return [`Error::ConditionalUploadUnsupported`].
+    /// The handler validates the complete selection and may return 2.03 Valid.
+    /// Initial classic Block1 sizing tries at most seven sizes against the real
+    /// encoder, including security overhead. Later NUM/PIV growth can still
+    /// refuse a continuation. FETCH Block2 follow-ups repeat the full selection
+    /// and must fit one datagram; their size failure terminates the Call.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
@@ -1427,6 +1433,11 @@ where
         let if_match = BodyTag::from_first(self.if_match).map_err(|_| {
             Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
         })?;
+        if self.etag.is_some_and(<[u8]>::is_empty) {
+            return Err(Error::Message(SlotMessageError::Parse(
+                crate::error::ParseError::BadOptionFormat(crate::message::OptionNumber::ETAG),
+            )));
+        }
         let etag = BodyTag::from_first(self.etag).map_err(|_| {
             Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
         })?;
@@ -1799,9 +1810,9 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // Fragmented ETag remains unsupported: refuse before sending until
-            // the App can preserve its cache-validator semantics across the transfer.
-            if spec.etag.is_some() {
+            // Only classic FETCH has retained fragmented cache-validator semantics.
+            // An ETag is not an If-Match write precondition.
+            if spec.etag.is_some() && (spec.code != Code::FETCH || spec.q_block1) {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }
@@ -1827,9 +1838,11 @@ where
                 spec.echo,
                 spec.no_response,
                 spec.if_match,
+                spec.etag,
                 spec.if_none_match,
                 spec.q_block1,
                 tx,
+                mid,
             )
         }
         Err(e) => {
@@ -1859,19 +1872,67 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
     if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
     if_none_match: bool,
     q_block1: bool,
     tx: SlotId,
+    mid: MessageId,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
+    // At most seven candidate SZX values. Only size misses try a smaller
+    // prefix. Protection may consume sequence numbers; never rewind them.
+    let mut initial_szx = BlockValue::SZX_MAX;
+    if !q_block1 {
+        loop {
+            let size = 1usize << (initial_szx + 4);
+            let count = payload.len().min(size);
+            let block = BlockValue::new(0, count < payload.len(), initial_szx)
+                .map_err(BlockTransferError::from)
+                .map_err(Error::Block)?;
+            match encode_block1_request(
+                engine,
+                oscore,
+                tx,
+                ty,
+                code,
+                mid,
+                token,
+                path,
+                queries,
+                accept,
+                content_format,
+                echo,
+                no_response,
+                if_match,
+                etag,
+                if_none_match,
+                block,
+                false,
+                request_tag,
+                u32::try_from(payload.len()).ok(),
+                &payload[..count],
+            ) {
+                Ok(()) => break,
+                Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                    if initial_szx > 0 =>
+                {
+                    initial_szx -= 1
+                }
+                Err(error) => {
+                    let _ = engine.release_tx(tx);
+                    return Err(error);
+                }
+            }
+        }
+    }
     let key = BlockKey::new(token, dest).with_identity(request_tag);
     let started = if q_block1 {
         engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
     } else {
-        engine.start_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_block1(key, payload, initial_szx)
     };
     let body = match started {
         Ok(id) => id,
@@ -1904,6 +1965,7 @@ where
             echo,
             no_response,
             if_match,
+            etag,
             if_none_match,
             body,
             Some(tx),
@@ -1911,27 +1973,15 @@ where
         )
         .map(|_| ())
     } else {
-        issue_block1(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            echo,
-            no_response,
-            if_match,
-            if_none_match,
-            body,
-            Some(tx),
-        )
+        // The first datagram is already encoded, including its RequestRef.
+        // Advance the newly admitted body once, then send those exact bytes.
+        match engine.next_block1(body) {
+            Ok(_) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter()),
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                Err(Error::Block(error))
+            }
+        }
     };
     if outcome.is_err() {
         let _ = engine.release_tx_body(body);
@@ -2778,6 +2828,7 @@ where
             live.echo,
             live.no_response,
             live.if_match.as_slice(),
+            None, // Q-Block1 ETag remains unsupported.
             live.if_none_match,
             issued,
             true,
@@ -2900,6 +2951,7 @@ where
     let echo = live.and_then(|live| live.echo);
     let no_response = live.and_then(|live| live.no_response);
     let if_match = live.as_ref().and_then(|live| live.if_match.as_slice());
+    let etag = live.as_ref().and_then(|live| live.etag.as_slice());
     let if_none_match = live.is_some_and(|live| live.if_none_match);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
@@ -2931,6 +2983,7 @@ where
                 echo,
                 no_response,
                 if_match,
+                etag,
                 if_none_match,
                 body,
                 None,
@@ -2957,6 +3010,7 @@ where
                 echo,
                 no_response,
                 if_match,
+                etag,
                 if_none_match,
                 body,
                 None,
@@ -2986,6 +3040,7 @@ fn issue_block1<Mem, T, const REQUESTS: usize>(
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
     if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
     if_none_match: bool,
     body: SlotId,
     tx: Option<SlotId>,
@@ -3012,6 +3067,7 @@ where
         echo,
         no_response,
         if_match,
+        etag,
         if_none_match,
         issued,
         false,
@@ -3037,6 +3093,7 @@ fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
     if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
     if_none_match: bool,
     body: SlotId,
     mut tx: Option<SlotId>,
@@ -3076,6 +3133,7 @@ where
             echo,
             no_response,
             if_match,
+            etag,
             if_none_match,
             issued,
             true,
@@ -3108,6 +3166,7 @@ fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
     if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
     if_none_match: bool,
     issued: OutgoingBlock,
     q_block1: bool,
@@ -3138,9 +3197,66 @@ where
             return Err(error);
         }
     };
+    if let Err(error) = encode_block1_request(
+        engine,
+        oscore,
+        tx,
+        ty,
+        code,
+        mid,
+        token,
+        path,
+        queries,
+        accept,
+        content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
+        issued.block(),
+        q_block1,
+        tag,
+        size1,
+        &chunk[..n],
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+
+    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_block1_request<Mem, E, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    tx: SlotId,
+    ty: Type,
+    code: Code,
+    mid: MessageId,
+    token: Token,
+    path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
+    content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
+    block: BlockValue,
+    q_block1: bool,
+    tag: BodyTag,
+    size1: Option<u32>,
+    payload: &[u8],
+) -> Result<(), Error<E>>
+where
+    Mem: Storage + DatagramSlots,
+{
     let cf = content_format.map(ContentFormat::encode);
     let acc = accept.map(ContentFormat::encode);
-    let blk = issued.block().encode();
+    let blk = block.encode();
     let size = size1.map(encode_uint);
     let no_response = no_response.map(crate::message::NoResponse::encode);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
@@ -3148,7 +3264,10 @@ where
         if let Some(value) = if_match {
             push_opt(&mut opts, Opt::if_match(value))?;
         }
-        if if_none_match && issued.block().num() == 0 {
+        if let Some(value) = etag {
+            push_opt(&mut opts, Opt::etag(value))?;
+        }
+        if if_none_match && block.num() == 0 {
             push_opt(&mut opts, Opt::if_none_match())?;
         }
         for segment in path {
@@ -3183,18 +3302,13 @@ where
         Ok(())
     })();
     if let Err(e) = filled {
-        let _ = engine.release_tx(tx);
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
-        .with_payload(&chunk[..n]);
-    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(e);
-    }
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+        .with_payload(payload);
+    super::oscore::encode_request(oscore, engine, tx, &msg)
 }
 
 #[allow(clippy::too_many_arguments)]

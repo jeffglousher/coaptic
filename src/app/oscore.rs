@@ -303,9 +303,14 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
     let _ = ctx;
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
+        let capacity = engine
+            .access_tx_mut(tx)
+            .map_err(super::Error::from)?
+            .capacity();
         let mut wire = S::TxScratch::default();
+        let limit = capacity.min(wire.as_ref().len());
         let n = ctx
-            .protect_request(msg, wire.as_mut())
+            .protect_request(msg, &mut wire.as_mut()[..limit])
             .map_err(protect_err)?;
         return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
@@ -496,4 +501,79 @@ where
     });
     let _ = engine.release_tx(tx);
     result
+}
+
+#[cfg(all(test, feature = "alloc", feature = "oscore"))]
+mod request_capacity_tests {
+    use super::*;
+    use crate::message::{Code, MessageId, Token, Type};
+    use crate::storage::{AllocMemory, Capacities};
+
+    #[test]
+    fn request_protection_respects_actual_tx_before_replacing_binding() {
+        let capacities = Capacities {
+            rx_datagram_slots: 1,
+            rx_datagram_bytes: 128,
+            tx_datagram_slots: 1,
+            tx_datagram_bytes: 128,
+            dedup_entries: 1,
+            observe_entries: 1,
+            rx_body_slots: None,
+            rx_body_bytes: None,
+            tx_body_slots: None,
+            tx_body_bytes: None,
+        };
+        assert!(
+            <AllocMemory as DatagramSlots>::TxScratch::default()
+                .as_ref()
+                .len()
+                > 128
+        );
+        let memory = AllocMemory::try_new(capacities, usize::MAX).unwrap();
+        let mut engine = Engine::from_storage(memory);
+        let mut ctx = Some(
+            crate::oscore::SecurityContext::derive(crate::oscore::DeriveParams {
+                master_secret: &[0x24; 16],
+                master_salt: &[],
+                sender_id: &[1],
+                recipient_id: &[2],
+                id_context: &[],
+            })
+            .unwrap(),
+        );
+        let token = Token::from_checked(&[7]);
+        let short =
+            Message::new(Type::Confirmable, Code::POST, MessageId::new(1)).with_token(token);
+        let tx = engine.acquire_tx().unwrap();
+        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
+            .unwrap();
+        let original = ctx.as_ref().unwrap().lookup(token).unwrap();
+        let before = ctx.as_ref().unwrap().sender_seq();
+        let mut bytes = [0u8; 128];
+        let retained = {
+            let view = engine.access_tx(tx).unwrap();
+            let body = view.as_bytes();
+            bytes[..body.len()].copy_from_slice(body);
+            body.len()
+        };
+        let large = Message::new(Type::Confirmable, Code::POST, MessageId::new(2))
+            .with_token(token)
+            .with_payload(&[0x5a; 200]);
+        assert!(matches!(
+            encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &large),
+            Err(super::super::Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall
+            )))
+        ));
+        assert_eq!(ctx.as_ref().unwrap().lookup(token), Some(original));
+        assert_eq!(ctx.as_ref().unwrap().sender_seq(), before + 1);
+        assert_eq!(engine.access_tx(tx).unwrap().as_bytes(), &bytes[..retained]);
+        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
+            .unwrap();
+        assert_eq!(
+            ctx.as_ref().unwrap().lookup(token).unwrap().piv().seq(),
+            before + 1
+        );
+        engine.release_tx(tx).unwrap();
+    }
 }
