@@ -334,6 +334,30 @@ pub(crate) fn outstanding_pending(
         .count()
 }
 
+/// Whether a new pending CON may be recorded on `id`.
+///
+/// `Some(false)` is an idempotent hit (keep existing RTO). `Some(true)`
+/// admits a new or replacement mark. `None` is an NSTART reject.
+pub(crate) fn record_admission(
+    existing: Option<PendingCon>,
+    message_id: MessageId,
+    endpoint: Endpoint,
+    outstanding: usize,
+) -> Option<bool> {
+    if let Some(pending) = existing {
+        if pending.message_id() == message_id && pending.endpoint() == endpoint {
+            return Some(false);
+        }
+        if pending.endpoint() == endpoint {
+            return Some(true);
+        }
+    }
+    if outstanding >= usize::from(Transmission::NSTART) {
+        return None;
+    }
+    Some(true)
+}
+
 #[cfg(test)]
 mod fairness_tests {
     use super::*;
@@ -373,28 +397,4 @@ mod fairness_tests {
             ready.tx_slot()
         );
     }
-}
-
-/// Whether a new pending CON may be recorded on `id`.
-///
-/// `Some(false)` is an idempotent hit (keep existing RTO). `Some(true)`
-/// admits a new or replacement mark. `None` is an NSTART reject.
-pub(crate) fn record_admission(
-    existing: Option<PendingCon>,
-    message_id: MessageId,
-    endpoint: Endpoint,
-    outstanding: usize,
-) -> Option<bool> {
-    if let Some(pending) = existing {
-        if pending.message_id() == message_id && pending.endpoint() == endpoint {
-            return Some(false);
-        }
-        if pending.endpoint() == endpoint {
-            return Some(true);
-        }
-    }
-    if outstanding >= usize::from(Transmission::NSTART) {
-        return None;
-    }
-    Some(true)
 }
