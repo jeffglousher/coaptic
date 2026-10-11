@@ -463,6 +463,7 @@ pub struct ObserveInterest {
     key: ObserveKey,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
+    block2_max_szx: Option<u8>,
     seq: u32,
     pending: bool,
     deleted: bool,
@@ -485,6 +486,7 @@ impl ObserveInterest {
             key: ObserveKey::new(token, endpoint),
             resource: ObserveResource::NONE,
             content_format: None,
+            block2_max_szx: None,
             seq: 0,
             pending: false,
             deleted: false,
@@ -551,6 +553,18 @@ impl ObserveInterest {
     ) -> Self {
         Self {
             content_format,
+            ..self
+        }
+    }
+
+    /// App-owned early Block2 negotiation; raw Engine interests default to none.
+    pub(crate) const fn block2_max_szx(self) -> Option<u8> {
+        self.block2_max_szx
+    }
+
+    pub(crate) const fn with_block2_max_szx(self, block2_max_szx: Option<u8>) -> Self {
+        Self {
+            block2_max_szx,
             ..self
         }
     }
