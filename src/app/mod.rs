@@ -601,7 +601,8 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         let mut interest = ObserveInterest::new(row.meta.token, row.meta.dest)
             .with_resource(observe.resource)
             .with_seq(sequence)
-            .with_content_format(response.format());
+            .with_content_format(response.format())
+            .with_block2_max_szx(row.meta.block2.map(|b| b.szx()));
         #[cfg(feature = "oscore")]
         {
             interest = interest.with_oscore(row.meta.oscore);
@@ -703,19 +704,36 @@ fn prepare_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>
         }
     } else {
         let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
-        match encode_response(
-            engine,
-            tx,
-            ty,
-            mid,
-            row.meta.token,
-            response,
-            response.payload(),
-            None,
-            None,
-            oscore,
-            row.meta.oscore,
-        ) {
+        let preference = row
+            .meta
+            .block2
+            .filter(|_| response.code().is_success() && response.code() != Code::VALID);
+        let too_large =
+            preference.is_some_and(|b| response.payload().len() > usize::from(b.size()));
+        let encoded = if too_large {
+            Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall,
+            )))
+        } else {
+            encode_response(
+                engine,
+                tx,
+                ty,
+                mid,
+                row.meta.token,
+                response,
+                response.payload(),
+                preference.map(|value| BlockOpt {
+                    value,
+                    q_block: false,
+                    size2: Some(response.payload().len()),
+                }),
+                None,
+                oscore,
+                row.meta.oscore,
+            )
+        };
+        match encoded {
             Ok(()) => return Ok(tx),
             Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
                 if response.code().is_success() && response.code() != Code::VALID =>
@@ -742,7 +760,7 @@ fn prepare_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>
         }
     };
     let outcome = (|| {
-        for szx in (0..=6).rev() {
+        for szx in (0..=row.meta.block2.map_or(6, |b| b.szx())).rev() {
             let block = BlockValue::new(0, false, szx).expect("bounded SZX");
             let issued = engine.requested_block2(body, block).map_err(Error::Block)?;
             match encode_issued::<S, T, REQUESTS>(
@@ -1878,8 +1896,9 @@ where
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
     /// zero, or initial Q-Block2 has more than ten selectors. An observable
-    /// queryless GET registration without Block2/Q-Block2 may defer one datagram; other Observe
-    /// requests need synchronous dispatch. Returning deferred without a handle produces 5.03.
+    /// queryless GET registration with no block option or a classic Block2 NUM=0
+    /// preference may defer a response; other Observe requests need synchronous
+    /// dispatch. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
         &mut self,
@@ -2031,8 +2050,8 @@ where
     /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
-    /// An observable queryless GET registration without Block2/Q-Block2 can defer
-    /// its initial response. With body storage enabled, an oversized successful
+    /// An observable queryless GET registration with no block option or a classic
+    /// Block2 NUM=0 preference can defer its initial response. With body storage enabled, an oversized successful
     /// completion requires an ETag and retains one immutable classic Block2
     /// snapshot. The first block is sized against actual datagram capacity,
     /// including OSCORE overhead, before registration or sending. Matching
@@ -2059,8 +2078,10 @@ where
     /// registration that has not attempted output does not own an earlier live
     /// relation. Direct mutation through `engine_mut` remains an advanced caller
     /// ownership boundary: do not replace App-owned relations while a deferred
-    /// handle is live. Deferred FETCH and query-bearing GET Observe, explicitly
-    /// requested Block2 and Q-Block2 Observe remain unsupported. Ordinary
+    /// handle is live. Deferred FETCH and query-bearing GET Observe,
+    /// nonzero initial Block2 and Q-Block2 Observe remain unsupported. A requested
+    /// classic block size is retained as a maximum for later notifications until
+    /// re-registration. Encoding may select a smaller block. Ordinary
     /// deferred queries without Observe remain available.
     pub fn complete(
         &mut self,
@@ -3414,7 +3435,7 @@ where
                 && plan.has_source
                 && !plan.resource.is_none()
                 && plan.registration_supported
-                && parsed.block2().is_none()
+                && block2.is_none_or(|b| b.num() == 0 && !b.more() && !b.is_bert())
                 && parsed.q_block2().next().is_none()
                 && parsed.block1().is_none()
                 && parsed.q_block1().is_none()
@@ -3585,6 +3606,7 @@ where
 struct ObservePlan {
     register: bool,
     registration_supported: bool,
+    block2_max_szx: Option<u8>,
     deregister: bool,
     delete: bool,
     has_source: bool,
@@ -3597,6 +3619,7 @@ impl ObservePlan {
         Self {
             register: false,
             registration_supported: false,
+            block2_max_szx: None,
             deregister: false,
             delete: false,
             has_source: false,
@@ -3614,6 +3637,11 @@ impl ObservePlan {
             // applies that behavior to FETCH as well.
             registration_supported: request.method() == Some(Method::Get)
                 && request.uri_query().next().is_none(),
+            block2_max_szx: request
+                .get_option(crate::message::OptionNumber::BLOCK2)
+                .and_then(|o| o.as_block().ok())
+                .filter(|b| b.num() == 0 && !b.more() && !b.is_bert())
+                .map(|b| b.szx()),
             deregister: request.is_observe_deregister(),
             delete: request.method() == Some(Method::Delete),
             has_source: site.has_observe_source(request.path()),
@@ -3664,7 +3692,8 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
         let interest = ObserveInterest::new(plan.token, peer)
             .with_seq(sequence)
             .with_resource(plan.resource)
-            .with_content_format(response.format());
+            .with_content_format(response.format())
+            .with_block2_max_szx(plan.block2_max_szx);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
         #[cfg(not(feature = "oscore"))]
@@ -3721,6 +3750,9 @@ where
         || !response.code().is_success()
         || response.format() != interest.content_format()
         || response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint())).is_some()
+        || interest
+            .block2_max_szx()
+            .is_some_and(|szx| response.payload().len() > (1usize << (szx + 4)))
     {
         return Err(Error::ObserveSupersessionUnsupported);
     }
@@ -4005,7 +4037,9 @@ where
         mid,
         token,
         no_response: NoResponse::DEFAULT,
-        block2: None,
+        block2: interest
+            .block2_max_szx()
+            .map(|szx| BlockValue::new(0, false, szx).expect("admitted SZX")),
         q_block2: None,
         q_request: None,
         block1: None,
@@ -4017,17 +4051,28 @@ where
         return Err(Error::Saturated);
     };
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
-    let outcome = match encode_notification(
-        engine,
-        tx,
-        ty,
-        mid,
-        token,
-        &notify,
-        notify.payload(),
-        oscore,
-        oscore_req,
-    ) {
+    let oversized = notify.code().is_success()
+        && interest
+            .block2_max_szx()
+            .is_some_and(|szx| notify.payload().len() > (1usize << (szx + 4)));
+    let encoded = if oversized {
+        Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::BufferTooSmall,
+        )))
+    } else {
+        encode_notification(
+            engine,
+            tx,
+            ty,
+            mid,
+            token,
+            &notify,
+            notify.payload(),
+            oscore,
+            oscore_req,
+        )
+    };
+    let outcome = match encoded {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             let _ = engine.release_tx(tx);
@@ -4067,7 +4112,11 @@ where
     T: DatagramIo,
 {
     let key = response_block_key(meta.token, meta.dest, response)?;
-    let id = match engine.start_block2(key, response.payload(), BlockValue::SZX_MAX) {
+    let id = match engine.start_block2(
+        key,
+        response.payload(),
+        meta.block2.map_or(BlockValue::SZX_MAX, |b| b.szx()),
+    ) {
         Ok(id) => id,
         Err(BlockTransferError::NoBodyPools) => {
             return Err(Error::Message(SlotMessageError::Encode(
@@ -4083,9 +4132,24 @@ where
             .set_tx_body_transfer(id, transfer)
             .map_err(Error::Slot)?;
     }
-    let outcome = issue_classic(
-        engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
-    );
+    let outcome = if let Some(preferred) = meta.block2 {
+        issue_observe_preferred(
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            id,
+            pending,
+            None,
+            oscore_ctx,
+            preferred.szx(),
+        )
+    } else {
+        issue_classic(
+            engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
+        )
+    };
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
     }
@@ -4180,6 +4244,21 @@ where
     }
 
     let mid = ids.next_for(engine, io, now_ms)?;
+    if meta.block2.is_some() && response.code().is_success() && response.observe_seq().is_some() {
+        return start_outgoing(
+            engine,
+            io,
+            ids,
+            now_ms,
+            SendResponse { mid, ..meta },
+            response,
+            ty,
+            key,
+            oscore_ctx,
+            dedup_closed,
+            false,
+        );
+    }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
 
     let Some(tx) = acquire_tx_or_evict(engine) else {
@@ -4497,6 +4576,19 @@ where
             oscore_ctx,
             dedup_closed,
         )
+    } else if response.observe_seq().is_some() && meta.block2.is_some_and(|b| b.num() == 0) {
+        issue_observe_preferred(
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            id,
+            (ty == Type::Confirmable).then_some((now_ms, meta.mid, ids.jitter())),
+            Some((now_ms, dedup_closed)),
+            oscore_ctx,
+            szx,
+        )
     } else {
         issue_classic(
             engine,
@@ -4760,6 +4852,50 @@ where
         }
         _ => Ok(()),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn issue_observe_preferred<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    meta: SendResponse,
+    response: &Response<'_>,
+    ty: Type,
+    id: SlotId,
+    pending: Option<(u64, MessageId, u32)>,
+    mut replay: Option<(u64, &mut Option<DedupClosed>)>,
+    oscore: &mut oscore::Field<REQUESTS>,
+    maximum: u8,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    for szx in (0..=maximum).rev() {
+        let selected = SendResponse {
+            block2: Some(BlockValue::new(0, false, szx).expect("bounded SZX")),
+            ..meta
+        };
+        let result = issue_classic(
+            engine,
+            io,
+            selected,
+            response,
+            ty,
+            meta.mid,
+            id,
+            pending,
+            true,
+            replay.as_mut().map(|(now, closed)| (*now, &mut **closed)),
+            oscore,
+        );
+        match result {
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if szx > 0 => {}
+            other => return other,
+        }
+    }
+    unreachable!("finite SZX search returns at zero")
 }
 
 #[allow(clippy::too_many_arguments)]

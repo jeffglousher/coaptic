@@ -290,9 +290,10 @@ these resources on an external server that supports them.
 
 Deferred queryless GET observations can deliver a large initial response using
 one retained body slot and an ETag. Later blocks use that immutable snapshot;
-notifications wait until delivery finishes or its deadline expires. Deferred
-Observe registration still excludes explicitly requested Block2/Q-Block2 and
-selected resources.
+notifications wait until delivery finishes or its deadline expires. A queryless
+GET registration can request classic Block2 number zero to set the maximum block
+size for its initial response and later notifications. Deferred registration
+still excludes nonzero initial blocks, Q-Block2 and selected resources.
 
 Duplicate-reply history is independently sized with `.dedup_entries::<N>()`
 on fixed resources or `.dedup_entries(n)` on allocated resources. Allocated
