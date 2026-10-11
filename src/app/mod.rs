@@ -5109,7 +5109,7 @@ pub enum Error<E> {
     ConditionalUploadUnsupported,
     /// The upload's No-Response mask is outside the supported App combinations.
     /// Classic Block1 permits zero and error-only masks 8, 16 and 24; Q-Block1
-    /// permits only zero. Nothing was sent. Other masks need a single datagram
+    /// permits zero and 16 (5.xx only). Nothing was sent. Other masks need a single datagram
     /// or a caller-managed Engine transfer.
     NoResponseUploadUnsupported,
     /// App requires a response when registering Observe. Deregistration is allowed.
