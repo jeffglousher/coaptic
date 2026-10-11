@@ -998,3 +998,84 @@ fn deferred_observe_latest_ambiguous_mid_rst_revokes_only_current_owner() {
         );
     }
 }
+
+#[test]
+fn deferred_observe_large_initial_never_uses_available_block_body_storage() {
+    static LARGE: [u8; 300] = [b'b'; 300];
+    let mut server = App::with_resources(
+        Resources::<Buffers>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<2>(),
+    )
+    .allow_plaintext()
+    .deterministic_for_tests()
+    .route("obs", coaptic::get(handler).observe(source))
+    .bind(Io::default())
+    .unwrap();
+    let mut peer = Peer::new(&mut fixed(), false);
+    server.transport_mut().incoming = Some(request(&mut peer, 140, Type::Confirmable, 0));
+    let mut handle = None;
+    server
+        .poll_with(0, |_, candidate| {
+            handle = candidate;
+            Response::deferred()
+        })
+        .unwrap();
+    server.transport_mut().take().unwrap();
+    assert!(
+        without_allocating(|| server.complete(
+            handle.unwrap(),
+            Response::content(&LARGE).content_format(ContentFormat::TEXT_PLAIN),
+            1
+        ))
+        .is_err()
+    );
+    assert!(server.transport_mut().take().is_none());
+    assert!(server.engine_mut().lookup_observe(key()).is_none());
+    assert_eq!(server.engine_mut().tx_occupied(), 0);
+    server
+        .complete(handle.unwrap(), response(b"initial"), 2)
+        .unwrap();
+    let frame = server.transport_mut().take().unwrap();
+    let parsed = decode(&frame.bytes[..frame.len]).unwrap();
+    assert_eq!(parsed.payload(), b"initial");
+    assert_eq!(parsed.observe(), Some(Ok(0)));
+    assert!(parsed.block2().is_none());
+}
+
+#[test]
+fn deferred_observe_ambiguous_rst_authority_expires_before_mid_reuse() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed_lifetime(1_000_000);
+        let mut peer = Peer::new(&mut server, protected);
+        let handle = begin(&mut server, &mut peer, Type::Confirmable, 150, 0);
+        server.transport_mut().fail_send = true;
+        assert!(server.complete(handle, response(b"initial"), 1).is_err());
+        let old = content(&mut server, &peer, b"initial", 0, Type::Confirmable);
+        server.transport_mut().fail_send = false;
+        let expires = 1 + u64::from(coaptic::message::Transmission::EXCHANGE_LIFETIME_MS);
+        server.transport_mut().incoming = Some(control(old, Type::Reset));
+        server.poll(expires).unwrap();
+        assert!(
+            relation(&mut server).is_some(),
+            "expired MID reset authority must not revoke a long-lived handle"
+        );
+        server.transport_mut().fail_send = true;
+        assert!(
+            server
+                .complete(handle, response(b"retried"), expires + 1)
+                .is_err()
+        );
+        let current = content(&mut server, &peer, b"retried", 1, Type::Confirmable);
+        server.transport_mut().fail_send = false;
+        server.transport_mut().incoming = Some(control(current, Type::Reset));
+        server.poll(expires + 2).unwrap();
+        assert!(relation(&mut server).is_none());
+        assert!(
+            server
+                .complete(handle, response(b"stale"), expires + 3)
+                .is_err()
+        );
+    }
+}
