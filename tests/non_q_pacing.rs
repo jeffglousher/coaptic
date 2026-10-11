@@ -728,7 +728,7 @@ fn non_q_pacing_old_window_hole_recovers_after_later_sets_without_ack() {
                 .q_block1()
                 .request_tag(BodyTag::new(b"old-hole").unwrap())
                 .no_response(coaptic::message::NoResponse::new(2))
-                .deadline(30000)
+                .deadline(60000)
                 .send(0)
                 .unwrap();
             let _lost = client.transport_mut().take().unwrap();
@@ -739,18 +739,32 @@ fn non_q_pacing_old_window_hole_recovers_after_later_sets_without_ack() {
                 while let Some(frame) = client.transport_mut().take() {
                     server.transport_mut().incoming = Some(frame);
                     server.poll(now).unwrap();
-                    // Keep the latest report, bound to the last received request.
+                    // Lose every early report as later sets continue without receipt credit.
                     while server.transport_mut().take().is_some() {}
                 }
             }
             assert_eq!(DISPATCHES.with(Cell::get), 0);
-            server.poll(20000).unwrap();
-            let report = server.transport_mut().take().expect("old window hole");
-            client.transport_mut().incoming = Some(report);
-            client.poll(20000).unwrap();
-            assert_eq!(client.transport_mut().len, 1);
-            server.transport_mut().incoming = client.transport_mut().take();
-            server.poll(20001).unwrap();
+            for (now, first, count) in [
+                (20000, 0, 1),
+                (24001, 10, 10),
+                (28002, 20, 10),
+                (32003, 30, 2),
+            ] {
+                server.poll(now).unwrap();
+                let report = server.transport_mut().take().expect("retained missing set");
+                client.transport_mut().incoming = Some(report);
+                client.poll(now).unwrap();
+                assert_eq!(client.transport_mut().len, count);
+                assert_eq!(
+                    deliver(&mut client, &mut server, now + 1, protected, 2, first),
+                    count
+                );
+                assert!(server.transport_mut().take().is_none());
+                if first != 30 {
+                    assert_eq!(DISPATCHES.with(Cell::get), 0);
+                }
+                assert!(client.take_response(call).is_none());
+            }
             assert_eq!(DISPATCHES.with(Cell::get), 1);
             assert_eq!(EFFECTS.with(Cell::get), 1);
             assert!(client.take_response(call).is_none());
