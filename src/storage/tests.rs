@@ -5374,3 +5374,106 @@ fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
     );
     assert_eq!(storage.untouched, 17);
 }
+
+#[test]
+fn classic_if_none_match_restart_replaces_only_the_untagged_new_owner() {
+    use crate::message::OptionsBuilder;
+    for initial_condition in [false, true] {
+        let mut engine = build_default_bodies();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut original = None;
+        for phase in 0..4 {
+            let condition = if phase == 0 {
+                initial_condition
+            } else {
+                !initial_condition
+            };
+            let token = sample_token(if phase < 2 { &[1] } else { &[2] });
+            let num = u32::from(phase == 3);
+            let block = BlockValue::from_size(num, phase != 3, 16).unwrap().encode();
+            let mut opts = OptionsBuilder::<3>::new();
+            if condition && num == 0 {
+                opts.push(Opt::if_none_match()).unwrap();
+            }
+            opts.push(Opt::uri_path("upload")).unwrap();
+            opts.push(Opt::block1(&block)).unwrap();
+            let payload = [phase as u8 + 1; 16];
+            let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(phase + 1))
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(&payload);
+            let mut bytes = [0; 128];
+            let len = encode(&message, &mut bytes).unwrap();
+            let rx = engine.acquire_rx().unwrap();
+            engine.write_rx(rx, &bytes[..len], peer).unwrap();
+            let result = engine.apply_block1_rx(rx);
+            engine.release_rx(rx).unwrap();
+            if phase == 1 {
+                assert_eq!(result, Err(BlockTransferError::IdentityMismatch));
+                let id = original.unwrap();
+                assert_eq!(engine.rx_body_payload(id), Some(&[1; 16][..]));
+                assert_eq!(
+                    engine.rx_body_transfer(id).unwrap().if_none_match(),
+                    initial_condition
+                );
+                continue;
+            }
+            let progress = result.unwrap();
+            original = Some(progress.id());
+            assert_eq!(
+                engine
+                    .rx_body_transfer(progress.id())
+                    .unwrap()
+                    .if_none_match(),
+                condition
+            );
+            if phase == 2 {
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&[3; 16][..]));
+            }
+            if phase == 3 {
+                assert!(progress.complete());
+                let mut expected = [3; 32];
+                expected[16..].fill(4);
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&expected[..]));
+            }
+        }
+    }
+}
+
+#[test]
+fn classic_if_none_match_invalid_encoding_refuses_before_body_admission() {
+    use crate::message::{OptionNumber, OptionsBuilder};
+    for duplicate in [false, true] {
+        let mut engine = build_default_bodies();
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<4>::new();
+        options
+            .push(Opt::new(
+                OptionNumber::IF_NONE_MATCH,
+                if duplicate { &[] } else { &[1] },
+            ))
+            .unwrap();
+        if duplicate {
+            options.push(Opt::if_none_match()).unwrap();
+        }
+        options.push(Opt::uri_path("upload")).unwrap();
+        options.push(Opt::block1(&block)).unwrap();
+        let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+            .with_options(options.as_slice())
+            .with_payload(&[1; 16]);
+        let mut bytes = [0; 128];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        engine.write_rx(rx, &bytes[..n], peer).unwrap();
+        assert_eq!(
+            engine.apply_block1_rx(rx),
+            Err(BlockTransferError::IdentityMismatch)
+        );
+        assert!(
+            engine
+                .lookup_rx_body(BlockKey::new(Token::EMPTY, peer))
+                .is_none()
+        );
+    }
+}
