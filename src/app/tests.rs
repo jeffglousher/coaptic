@@ -12994,3 +12994,246 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
     .unwrap();
     assert_eq!(app.oscore().unwrap().sender_seq(), 2);
 }
+
+fn explicit_con_app(now: u64) -> App<profiles::Default, WideLoopback> {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 100);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(now).unwrap();
+    app.transport_mut().send_n = 0;
+    app
+}
+
+fn inject_observe_control(
+    app: &mut App<profiles::Default, WideLoopback>,
+    peer: Endpoint,
+    mid: MessageId,
+    ty: Type,
+) {
+    let mut wire = [0; WIRE];
+    let n = encode(&Message::new(ty, Code::EMPTY, mid), &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+}
+
+#[test]
+fn explicit_con_notification_resets_adaptive_deadline_without_clock_wrap() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for now in [
+        0,
+        u64::MAX - ObserveTransmission::CONFIRM_INTERVAL_MS - 100,
+        u64::MAX - 100,
+    ] {
+        let mut app = explicit_con_app(now);
+        assert_eq!(
+            app.notify_confirmable(now, &["obs"], obs_snapshot())
+                .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+        let mid = last_wide(&app).message_id();
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+            .unwrap();
+        let due = now.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS);
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due)
+        );
+        inject_observe_control(&mut app, peer, mid, Type::Acknowledgement);
+        app.poll(now + 1).unwrap();
+        app.transport_mut().send_n = 0;
+        assert_eq!(app.notify(now + 2, &["obs"], obs_snapshot()).unwrap(), 1);
+        assert_eq!(last_wide(&app).ty(), Type::NonConfirmable);
+        assert_eq!(
+            app.notify_confirmable(now + 3, &["obs"], obs_snapshot())
+                .unwrap(),
+            0
+        );
+        assert_eq!(app.transport().send_n, 1, "explicit CON bypassed NON hold");
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due),
+            "refused send changed adaptive policy"
+        );
+    }
+}
+
+#[test]
+fn explicit_con_notification_send_failure_retries_as_con_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let id = app
+        .engine()
+        .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+        .unwrap();
+    app.transport_mut().send_n = 4;
+    assert!(matches!(
+        app.notify_confirmable(0, &["obs"], obs_snapshot()),
+        Err(Error::Io(_))
+    ));
+    let row = app.engine().observe_interest(id).unwrap();
+    assert!(row.must_confirm(0));
+    assert!(row.is_pending());
+    assert_eq!(row.seq(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.metrics().observe_notify, 0);
+    app.transport_mut().send_n = 0;
+    app.poll(1).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(last_wide(&app).payload(), b"obs-snap");
+    assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    let mid = last_wide(&app).message_id();
+    inject_observe_control(&mut app, peer, mid, Type::Reset);
+    app.poll(2).unwrap();
+    assert!(!observe_registered(&app, peer));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.notify_confirmable(3, &["obs"], obs_snapshot()).unwrap(),
+        0
+    );
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().send_n = 0;
+    app.poll(4).unwrap();
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+}
+
+#[test]
+fn explicit_con_notification_controls_require_matching_mid_and_endpoint() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((other, wire, n));
+    app.poll(0).unwrap();
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(1, &["obs"], obs_snapshot()).unwrap(),
+        2
+    );
+    let token = Token::new(&[0xa1]).unwrap();
+    let first = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, peer))
+        .unwrap();
+    let second = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, other))
+        .unwrap();
+    let first_mid = app
+        .engine()
+        .observe_interest(first)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    let second_mid = app
+        .engine()
+        .observe_interest(second)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    assert_ne!(first_mid, second_mid);
+    for ty in [Type::Acknowledgement, Type::Reset] {
+        for (endpoint, mid) in [(other, first_mid), (peer, second_mid)] {
+            inject_observe_control(&mut app, endpoint, mid, ty);
+            app.poll(2).unwrap();
+            assert_eq!(
+                app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+                0
+            );
+            assert_eq!(app.transport().send_n, 2);
+            assert!(
+                app.engine()
+                    .observe_interest(first)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+            assert!(
+                app.engine()
+                    .observe_interest(second)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+        }
+    }
+    inject_observe_control(&mut app, peer, first_mid, Type::Acknowledgement);
+    app.poll(3).unwrap();
+    assert!(
+        !app.engine()
+            .observe_interest(first)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    assert!(
+        app.engine()
+            .observe_interest(second)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    inject_observe_control(&mut app, other, second_mid, Type::Reset);
+    app.poll(4).unwrap();
+    assert!(app.engine().observe_interest(first).is_some());
+    assert!(app.engine().observe_interest(second).is_none());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn explicit_con_notification_preserves_per_endpoint_admission_and_validation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["obs"], &[Opt::observe_register()], 101, 0xa2);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    app.transport_mut().send_n = 0;
+    assert!(matches!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot().location_path("..")),
+        Err(Error::Response(_))
+    ));
+    for token in [0xa1, 0xa2] {
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[token]).unwrap(), peer))
+            .unwrap();
+        let row = app.engine().observe_interest(id).unwrap();
+        assert!(!row.must_confirm(2));
+        assert_eq!(row.seq(), 0);
+    }
+    assert_eq!(
+        app.notify_confirmable(2, &["missing"], obs_snapshot())
+            .unwrap(),
+        0
+    );
+    assert_eq!(app.transport().send_n, 0);
+    assert_eq!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(app.metrics().observe_notify, 1);
+    assert_eq!(app.metrics().nstart_reject, 1);
+}

@@ -963,7 +963,19 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Marks the row due, then [`ObserveInterest::take_due`]. `None` when
     /// the slot is free. Does not encode or send.
     pub fn next_observe_seq(&mut self, id: SlotId) -> Option<u32> {
+        self.next_observe_seq_with_confirmation(id, false)
+    }
+
+    /// Assign a sequence and optionally retain an explicit CON requirement.
+    pub(crate) fn next_observe_seq_with_confirmation(
+        &mut self,
+        id: SlotId,
+        confirmable: bool,
+    ) -> Option<u32> {
         let mut interest = self.storage.observe_interest(id)?;
+        if confirmable && !interest.key().is_client() {
+            interest.require_confirmation();
+        }
         interest.mark_due();
         let seq = interest.take_due()?;
         self.storage.set_observe_interest(id, interest).ok()?;
