@@ -45,7 +45,10 @@ use crate::message::{BlockValue, MessageId};
 /// [`Self::try_new`] to enforce an aggregate heap request budget.
 /// Q-Block assembly retains its total length across payloads. A changed size
 /// is refused before modifying bytes or progress, matching fixed body pools.
+/// Due-CON selection uses one inline `usize` cursor, with no additional heap
+/// array or change to [`Self::required_heap_bytes`].
 pub struct AllocMemory {
+    retransmit_cursor: usize,
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
     dedup: AllocDedupTable,
@@ -117,6 +120,7 @@ impl AllocMemory {
             (None, None)
         };
         Ok(Self {
+            retransmit_cursor: 0,
             rx: AllocDatagramPool::new(capacities.rx_datagram_slots, capacities.rx_datagram_bytes)?,
             tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes)?,
             dedup: AllocDedupTable::new(capacities.dedup_entries)?,
@@ -569,7 +573,9 @@ impl PendingCons for AllocMemory {
     }
 
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
-        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        let due = next_due_slot(self.tx.slot_count(), self.retransmit_cursor, now_ms, |id| {
+            self.pending_con(id)
+        })?;
         match due.mark {
             Some(mark) => {
                 self.tx
@@ -580,6 +586,7 @@ impl PendingCons for AllocMemory {
                 self.tx.clear_pending_mid(due.id).ok()?;
             }
         }
+        self.retransmit_cursor = due.id.index() + 1;
         Some(due.event)
     }
 }

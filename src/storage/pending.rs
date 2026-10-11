@@ -226,7 +226,9 @@ pub trait PendingCons {
 
     /// Next pending CON whose timeout is due at `now_ms`, if any.
     ///
-    /// Scans occupied pending TX slots in index order (O(n)). On
+    /// Owned fixed and allocated backends scan round-robin (O(n)), advancing
+    /// only after committing an event. A pinned payload does not pin its RTO.
+    /// Custom backends define their selection policy. On
     /// [`Retransmit::Due`], schedules the next timeout (exponential
     /// backoff). On [`Retransmit::GiveUp`], clears pending. Does not send.
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit>;
@@ -291,10 +293,14 @@ pub(crate) struct DueSlot {
 
 pub(crate) fn next_due_slot(
     slot_count: usize,
+    start: usize,
     now_ms: u64,
     mut pending_at: impl FnMut(SlotId) -> Option<PendingCon>,
 ) -> Option<DueSlot> {
-    for i in 0..slot_count {
+    // Normalize even stale/custom-backend cursors without modulo by zero or
+    // overflowing start + offset. Each slot is inspected at most once.
+    let start = start.checked_rem(slot_count)?;
+    for i in (start..slot_count).chain(0..start) {
         let id = SlotId::from_index(i);
         let Some(pending) = pending_at(id) else {
             continue;
@@ -326,6 +332,47 @@ pub(crate) fn outstanding_pending(
     (0..slot_count)
         .filter(|&i| pending_at(SlotId::from_index(i)).is_some_and(|p| p.endpoint() == endpoint))
         .count()
+}
+
+#[cfg(test)]
+mod fairness_tests {
+    use super::*;
+
+    #[test]
+    fn empty_and_out_of_range_cursor_are_bounded() {
+        assert!(next_due_slot(0, usize::MAX, u64::MAX, |_| panic!("empty scan")).is_none());
+        for start in [0, 1, 3, usize::MAX] {
+            let mut visited = [false; 3];
+            assert!(
+                next_due_slot(3, start, 0, |id| {
+                    assert!(!visited[id.index()]);
+                    visited[id.index()] = true;
+                    None
+                })
+                .is_none()
+            );
+            assert_eq!(visited, [true; 3]);
+        }
+    }
+
+    #[test]
+    fn skip_future_owner_and_wrap_without_mutation() {
+        let owner = Endpoint::v4([192, 0, 2, 1], 5683);
+        let ready = PendingCon::new(MessageId::new(1), owner, SlotId::from_index(0))
+            .with_rto(PendingRto::new(0, 0));
+        let future = PendingCon::new(MessageId::new(2), owner, SlotId::from_index(2))
+            .with_rto(PendingRto::new(10_000, 0));
+        let rows = [Some(ready), None, Some(future)];
+        let due = next_due_slot(3, 2, 2_000, |id| rows[id.index()]).unwrap();
+        assert_eq!(due.id, ready.tx_slot());
+        assert_eq!(rows, [Some(ready), None, Some(future)]);
+        assert_eq!(
+            next_due_slot(1, usize::MAX, 2_000, |_| Some(ready))
+                .unwrap()
+                .id,
+            ready.tx_slot()
+        );
+    }
 }
 
 /// Whether a new pending CON may be recorded on `id`.

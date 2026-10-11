@@ -563,7 +563,14 @@ impl<S: Storage + PendingCons> Engine<S> {
 
     /// Next pending CON whose timeout is due at caller `now_ms`, if any.
     ///
-    /// Scans pending TX slots in index order (O(n)). Skips the scan when
+    /// The owned fixed and allocated backends scan pending TX slots round-robin
+    /// (O(n)), independently of slot acquisition order. A continuously due owner
+    /// receives an event within TX-slot-count committed event opportunities.
+    /// Empty/not-yet-due scans leave the cursor unchanged; a committed event
+    /// advances it even if a later send fails. Pinned bytes do not prevent
+    /// pending-sidecar progress. This bounds event selection, not wire delivery
+    /// or progress without caller polling. Custom backends define their policy.
+    /// Skips the scan when
     /// the TX pool is empty. On [`Retransmit::Due`], doubles the timeout
     /// and increments attempts. On [`Retransmit::GiveUp`], clears pending.
     /// Does not send — [`crate::App::poll`] sends Due and releases GiveUp.
