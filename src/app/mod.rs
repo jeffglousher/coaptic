@@ -5112,7 +5112,8 @@ pub enum Error<E> {
     ConditionalUploadUnsupported,
     /// The upload's No-Response mask is outside the supported App combinations.
     /// Classic Block1 permits zero and error-only masks 8, 16 and 24; Q-Block1
-    /// permits zero and 16 (5.xx only). Nothing was sent. Other masks need a single datagram
+    /// permits zero and 16 (5.xx only), plus 2 and 18 for CON uploads. Nothing was
+    /// sent. Other masks need a single datagram
     /// or a caller-managed Engine transfer.
     NoResponseUploadUnsupported,
     /// App requires a response when registering Observe. Deregistration is allowed.
@@ -5212,7 +5213,7 @@ where
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
             Self::NoResponseUploadUnsupported => {
-                f.write_str("nonzero No-Response masks on uploads are unsupported")
+                f.write_str("No-Response mask is unsupported for this upload combination")
             }
             Self::NoResponseObserveUnsupported => {
                 f.write_str("No-Response Observe registration is unsupported")
