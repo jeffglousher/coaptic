@@ -38,6 +38,16 @@ pub trait DatagramIo {
 
     /// Send one complete datagram to `dest`; success must report `bytes.len()`.
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error>;
+
+    /// Optional platform entropy, used only by App's explicit stateful binding.
+    /// Fill every byte cryptographically securely in bounded time; return false
+    /// on failure. Never source these bytes from received network packets.
+    /// The default refuses. Transport decorators must forward this method when
+    /// wrapping an entropy-capable transport, or wrap the outermost adapter in
+    /// [`crate::platform::WithEntropy`]. Ordinary Engine I/O never calls it.
+    fn fill_random(&mut self, _bytes: &mut [u8]) -> bool {
+        false
+    }
 }
 
 /// Failure of [`Engine::recv_from`] / [`Engine::send_tx`].

@@ -7662,7 +7662,9 @@ fn mid_reuse_wait_also_requires_pending_transmissions_to_finish() {
     let mut app = record_client();
     let call = app.get("first").to(peer).send(0).unwrap();
     for _ in 1..65536 {
-        app.ids.next_for::<&'static str, _>(&app.engine, 0).unwrap();
+        app.ids
+            .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 0)
+            .unwrap();
     }
     assert_eq!(
         app.get("next").to(peer).non().send(247_000),

@@ -21,6 +21,8 @@ pub enum BuildError {
     SecurityRequired,
     /// App requires an explicit entropy source or test-only deterministic mode.
     RandomnessRequired,
+    /// Stateful binding cannot replace a previously selected entropy/test source.
+    RandomnessAlreadyConfigured,
     /// App's entropy source failed during initial Message ID selection.
     RandomnessUnavailable,
     /// Builder sizes do not match the [`Storage`](crate::storage::Storage) being moved in.
@@ -51,6 +53,7 @@ impl core::fmt::Display for BuildError {
             }
             Self::AllocationFailed => f.write_str("storage allocation failed"),
             Self::SecurityRequired => f.write_str("App security context must be configured"),
+            Self::RandomnessAlreadyConfigured => f.write_str("App randomness already configured"),
             Self::RandomnessRequired => f.write_str("App randomness must be configured"),
             Self::RandomnessUnavailable => f.write_str("App randomness unavailable"),
             Self::SizeMismatch => f.write_str("storage sizes do not match the builder"),

@@ -315,6 +315,19 @@ impl<
     const C: usize,
 > ConfiguredBuilder<P, N, B, D, C, Fixed>
 {
+    /// Bind fixed storage and a caller-owned stateful cryptographic RNG.
+    /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
+    // Preserve the existing App type parameters; only the transport is wrapped.
+    #[allow(clippy::type_complexity)]
+    pub fn bind_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+        self,
+        io: T,
+        random: R,
+    ) -> Result<App<P, crate::platform::WithEntropy<T, R>, N, B, AppStore<P, B>, D, C>, BuildError>
+    {
+        self.inner.bind_with_entropy(io, random)
+    }
+
     /// Bind fixed storage without allocating. The App owns its arrays and I/O.
     pub fn bind<T>(self, io: T) -> Result<App<P, T, N, B, AppStore<P, B>, D, C>, BuildError> {
         let Fixed = self.storage;
@@ -331,6 +344,24 @@ impl<
     const C: usize,
 > ConfiguredBuilder<P, N, B, D, C, Allocated>
 {
+    /// Bind bounded heap storage and a stateful cryptographic RNG, without `std`.
+    /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
+    pub fn bind_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+        self,
+        io: T,
+        random: R,
+    ) -> Result<
+        App<P, crate::platform::WithEntropy<T, R>, N, B, crate::storage::AllocMemory, D, C>,
+        BuildError,
+    > {
+        let (inner, io) = self.inner.prepare_entropy(io, random)?;
+        ConfiguredBuilder {
+            inner,
+            storage: self.storage,
+        }
+        .bind(io)
+    }
+
     /// Validate security, dimensions and budget, then allocate once and bind I/O.
     pub fn bind<T>(
         self,

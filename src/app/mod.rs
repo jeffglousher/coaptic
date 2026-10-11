@@ -318,14 +318,18 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             }
         }
     }
-    fn candidate(&mut self, ids: &mut AppIds) -> Result<Option<DeferredReply>, IdentityError> {
+    fn candidate<T: DatagramIo>(
+        &mut self,
+        ids: &mut AppIds,
+        io: &mut T,
+    ) -> Result<Option<DeferredReply>, IdentityError> {
         if self.rows.iter().all(Option::is_some) {
             return Ok(None);
         }
         let Some(generation) = self.generation.checked_add(1) else {
             return Ok(None);
         };
-        let nonce = ids.token()?;
+        let nonce = ids.token(&mut |bytes| io.fill_random(bytes))?;
         self.generation = generation;
         Ok(Some(DeferredReply { nonce, generation }))
     }
@@ -833,6 +837,95 @@ where
             .block_wise(BLOCK_WISE)
             .build_alloc(c)?;
         self.bind_built(io, engine)
+    }
+
+    /// Bind fixed storage with a caller-owned stateful cryptographic RNG.
+    ///
+    /// The callback may borrow a hardware RNG and must fill every byte securely
+    /// in bounded time or return false. No allocation or global callback state is
+    /// introduced. A prior `randomness` or `deterministic_for_tests` selection is
+    /// an error, even if it would select the same source. Security and source
+    /// ambiguity are checked before invoking entropy or touching the socket.
+    /// See [`crate::platform::WithEntropy`] for adapter composition and limits.
+    // Preserve the existing App type parameters; only the transport is wrapped.
+    #[allow(clippy::type_complexity)]
+    pub fn bind_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+        self,
+        io: T,
+        random: R,
+    ) -> Result<
+        App<
+            P,
+            crate::platform::WithEntropy<T, R>,
+            N,
+            BLOCK_WISE,
+            AppStore<P, BLOCK_WISE>,
+            DEFERRED,
+            CALLS,
+        >,
+        BuildError,
+    > {
+        let (builder, io) = self.prepare_entropy(io, random)?;
+        builder.bind(io)
+    }
+
+    /// Bind caller-selected storage and a stateful entropy callback.
+    /// See [`Self::bind_with_entropy`] for the callback and refusal contract.
+    pub fn bind_storage_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool, S: AppStorage>(
+        self,
+        io: T,
+        storage: S,
+        random: R,
+    ) -> Result<
+        App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS>,
+        BuildError,
+    > {
+        let (builder, io) = self.prepare_entropy(io, random)?;
+        builder.bind_storage(io, storage)
+    }
+
+    /// Allocate bounded pools once and bind a stateful entropy callback.
+    /// Requires `alloc` independently of `std`; see [`Self::bind_with_entropy`].
+    #[cfg(feature = "alloc")]
+    pub fn bind_alloc_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+        self,
+        io: T,
+        c: crate::storage::Capacities,
+        random: R,
+    ) -> Result<
+        App<
+            P,
+            crate::platform::WithEntropy<T, R>,
+            N,
+            BLOCK_WISE,
+            crate::storage::AllocMemory,
+            DEFERRED,
+            CALLS,
+        >,
+        BuildError,
+    > {
+        let (builder, io) = self.prepare_entropy(io, random)?;
+        builder.bind_alloc(io, c)
+    }
+
+    fn prepare_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+        mut self,
+        io: T,
+        random: R,
+    ) -> Result<(Self, crate::platform::WithEntropy<T, R>), BuildError> {
+        self.validate_security()?;
+        if self.identity.is_some() {
+            return Err(BuildError::RandomnessAlreadyConfigured);
+        }
+        let mut io = crate::platform::WithEntropy::new(io, random);
+        let mut seed = [0; 2];
+        if !io.fill_random(&mut seed) {
+            return Err(BuildError::RandomnessUnavailable);
+        }
+        self.identity = Some(IdentitySource::Io {
+            initial_mid: u16::from_be_bytes(seed),
+        });
+        Ok((self, io))
     }
 
     fn bind_built<T, S: AppStorage>(
@@ -1858,7 +1951,7 @@ where
     }
     match recover.role() {
         BlockRole::IncomingQBlock2 => {
-            let mid = ids.next_for(engine, now_ms)?;
+            let mid = ids.next_for(engine, io, now_ms)?;
             let Some(tx) = engine.acquire_tx() else {
                 return Err(Error::Saturated);
             };
@@ -1879,7 +1972,7 @@ where
             let meta = SendResponse {
                 dest: recover.key().endpoint(),
                 ty: Type::NonConfirmable,
-                mid: ids.next_for(engine, now_ms)?,
+                mid: ids.next_for(engine, io, now_ms)?,
                 token: recover.key().token(),
                 no_response: NoResponse::DEFAULT,
                 block2: None,
@@ -2383,7 +2476,7 @@ where
                 let mid = if ty == Type::Acknowledgement {
                     meta.mid
                 } else {
-                    ids.next_for(engine, now_ms)?
+                    ids.next_for(engine, io, now_ms)?
                 };
                 issue_classic(
                     engine,
@@ -2490,7 +2583,7 @@ where
         && parsed.observe().is_none()
         && meta.q_block2.is_none()
     {
-        match deferred.candidate(ids) {
+        match deferred.candidate(ids, io) {
             Ok(handle) => handle,
             Err(error) => {
                 if let InboundBody::Complete(id) = assembled {
@@ -2911,7 +3004,7 @@ where
     } else {
         Type::NonConfirmable
     };
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     if notify.code().is_success() {
         notify.set_observe(seq);
     } else {
@@ -3065,7 +3158,7 @@ where
             };
             let mut meta = meta;
             if ty != Type::Acknowledgement {
-                meta.mid = ids.next_for(engine, now_ms)?;
+                meta.mid = ids.next_for(engine, io, now_ms)?;
             }
             return continue_outgoing(
                 engine,
@@ -3105,7 +3198,7 @@ where
         return Ok(());
     }
 
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
 
     let Some(tx) = acquire_tx_or_evict(engine) else {
@@ -3194,7 +3287,7 @@ where
 
     let mut meta = meta;
     if ty == Type::NonConfirmable {
-        meta.mid = ids.next_for(engine, now_ms)?;
+        meta.mid = ids.next_for(engine, io, now_ms)?;
     }
 
     let key = BlockKey::new(meta.token, meta.dest);
@@ -3801,7 +3894,7 @@ where
             dedup_closed,
         );
         send_empty_ack(engine, io, meta.dest, meta.mid)?;
-        ids.next_for(engine, now_ms)
+        ids.next_for(engine, io, now_ms)
     } else {
         Ok(meta.mid)
     }
@@ -3849,7 +3942,7 @@ where
             let mid = if last_sent.is_none() {
                 q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
             } else {
-                ids.next_for(engine, now_ms)?
+                ids.next_for(engine, io, now_ms)?
             };
             let ty = Type::NonConfirmable;
             send_issued(
@@ -3891,7 +3984,7 @@ where
         let mid = if extra == 0 {
             q_response_mid(engine, io, ids, now_ms, meta, first_ty, dedup_closed)?
         } else {
-            ids.next_for(engine, now_ms)?
+            ids.next_for(engine, io, now_ms)?
         };
         let ty = Type::NonConfirmable;
         send_issued(

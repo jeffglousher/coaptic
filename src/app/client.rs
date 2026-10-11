@@ -1589,7 +1589,7 @@ where
 
 impl<
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-    T,
+    T: DatagramIo,
     const N: usize,
     const BLOCK_WISE: bool,
     S: super::AppStorage,
@@ -1599,7 +1599,10 @@ impl<
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
-            let token = self.ids.token().map_err(Error::Identity)?;
+            let token = self
+                .ids
+                .token(&mut |bytes| self.io.fill_random(bytes))
+                .map_err(Error::Identity)?;
             if !self
                 .lives
                 .rows
@@ -1737,7 +1740,7 @@ where
     if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
@@ -2654,7 +2657,7 @@ where
     if let Err(e) = filled {
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
@@ -3080,7 +3083,7 @@ where
         Some(tx) => tx,
         None => engine.acquire_tx().ok_or(Error::Saturated)?,
     };
-    let mid = match ids.next_for(engine, now_ms) {
+    let mid = match ids.next_for(engine, io, now_ms) {
         Ok(mid) => mid,
         Err(error) => {
             let _ = engine.release_tx(tx);
