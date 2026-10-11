@@ -120,6 +120,9 @@
 //! cryptographically secure entropy through [`app::AppBuilder::randomness`]
 //! for Tokens, the initial Message ID and retransmission jitter. The library
 //! itself does not call an OS RNG.
+//! [`platform::CheckedClock`] wraps a fallible, stateful platform timer and rejects
+//! backward readings. Use one clock epoch for all timed App operations and
+//! propagate clock errors before sending or polling.
 //!
 //! # Modules
 //!
@@ -186,6 +189,7 @@ pub mod error;
 pub mod message;
 #[cfg(feature = "oscore")]
 pub mod oscore;
+pub mod platform;
 #[cfg(feature = "edhoc")]
 pub mod provisioning;
 pub mod storage;

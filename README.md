@@ -110,6 +110,13 @@ four deduplication entries and two Observe entries. These are storage capacities
 not a whole-device RAM or task-stack ceiling. The firmware owns the `App` and
 calls `poll`; Coaptic supplies no background runtime.
 
+Wire a fallible timer once with `coaptic::platform::CheckedClock::new(read_ms)`.
+Use `clock.now_ms()?` for sends, polls and other timed operations. The guard
+refuses failed or backward readings before protocol work; repeated ticks are
+valid. Keep the same epoch while the App lives. Your adapter must extend wrapping
+hardware counters and qualify the timer; the guard cannot detect a stopped clock
+or an incorrect forward jump. The protected Linux example uses this same guard.
+
 Check the platform-independent service from this repository:
 
 ```sh
