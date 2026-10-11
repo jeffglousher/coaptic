@@ -511,123 +511,133 @@ fn if_match_qblock_missing_reissue_preserves_condition_and_protected_inner() {
     }
 }
 
+coaptic::memory_profile! {
+    TinyTx {
+        rx_datagram: (4, 1280), tx_datagram: (4, 64),
+        rx_body: (2, 4096), tx_body: (2, 4096),
+        dedup: 8, observe: 1,
+    }
+}
+
 #[test]
 fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
-    // Classic Block1 now selects a smaller initial fragment when the condition
-    // pushes the 1024-byte candidate beyond TX capacity; Q retains explicit refusal.
+    // Both upload modes fit a smaller first fragment when the condition pushes
+    // the 1024-byte candidate beyond the available datagram capacity.
     let long_path = core::str::from_utf8(&[b'x'; 255]).unwrap();
-    let mut client = fresh_client();
+    for qblock in [false, true] {
+        let mut client = fresh_client();
+        without_allocating(|| {
+            for now in 0..16 {
+                let request = client
+                    .put(long_path)
+                    .to(PEER)
+                    .payload(&BODY)
+                    .if_match(b"12345678")
+                    .request_tag(BodyTag::new(b"transfer").unwrap());
+                let request = if qblock { request.q_block1() } else { request };
+                let call = request.send(now).unwrap();
+                let frame = client.transport_mut().take().unwrap();
+                let parsed = decode(&frame.bytes[..frame.len]).unwrap();
+                let block = if qblock {
+                    parsed.q_block1()
+                } else {
+                    parsed.block1()
+                };
+                assert_eq!(block.unwrap().unwrap().szx(), 5);
+                assert_eq!(parsed.if_match().next(), Some(&b"12345678"[..]));
+                assert_eq!(parsed.payload(), &BODY[..512]);
+                assert!(client.cancel(call));
+                assert!(client.take_response(call).unwrap().is_err());
+                assert_eq!(client.transport_mut().len, 0);
+            }
+        });
+        exercise(client, qblock, false, Some(1), None, false);
+    }
+
+    // This smaller pool has a real minimum-fragment boundary: an unconditioned
+    // request fits, but adding an eight-byte If-Match cannot fit even 16 bytes.
+    let mut client = App::with_resources(
+        Resources::<TinyTx>::new()
+            .routes::<1>()
+            .block_wise::<true>(),
+    )
+    .allow_plaintext()
+    .deterministic_for_tests()
+    .bind(Io::default())
+    .unwrap();
     without_allocating(|| {
         for now in 0..16 {
             let call = client
-                .put(long_path)
+                .put("abcdefghijklmnopqrst")
                 .to(PEER)
                 .payload(&BODY)
-                .if_match(b"12345678")
                 .request_tag(BodyTag::new(b"transfer").unwrap())
+                .q_block1()
                 .send(now)
                 .unwrap();
             let frame = client.transport_mut().take().unwrap();
             let parsed = decode(&frame.bytes[..frame.len]).unwrap();
-            assert_eq!(parsed.block1().unwrap().unwrap().szx(), 5);
-            assert_eq!(parsed.if_match().next(), Some(&b"12345678"[..]));
-            assert_eq!(parsed.payload(), &BODY[..512]);
+            assert_eq!(parsed.q_block1().unwrap().unwrap().szx(), 0);
+            assert_eq!(parsed.payload(), &BODY[..16]);
             assert!(client.cancel(call));
-            assert!(client.take_response(call).unwrap().is_err());
-            assert_eq!(client.transport_mut().len, 0);
-        }
-    });
-    exercise(client, false, false, Some(1), None, false);
-    {
-        static PATH_BYTES: [u8; 255] = [b'x'; 255];
-        let mut found = false;
-        for length in 200..=255 {
-            let path = core::str::from_utf8(&PATH_BYTES[..length]).unwrap();
-            let mut client = fresh_client();
-            let plain = client
-                .put(path)
-                .to(PEER)
-                .payload(&BODY)
-                .request_tag(BodyTag::new(b"transfer").unwrap())
-                .q_block1();
-            let Ok(call) = plain.send(0) else {
-                continue;
-            };
-            assert!(client.cancel(call));
-            assert!(client.take_response(call).unwrap().is_err());
-            client.transport_mut().take().unwrap();
-            let conditioned = client
-                .put(path)
-                .to(PEER)
-                .payload(&BODY)
-                .if_match(b"12345678")
-                .request_tag(BodyTag::new(b"transfer").unwrap())
-                .q_block1();
-            let result = conditioned.send(1);
-            if let Ok(call) = result {
-                client.cancel(call);
-                client.take_response(call);
-                continue;
-            }
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap_err(),
+                coaptic::CallFailure::Cancelled
+            );
             assert!(matches!(
-                result,
+                client
+                    .put("abcdefghijklmnopqrst")
+                    .to(PEER)
+                    .payload(&BODY)
+                    .if_match(b"12345678")
+                    .request_tag(BodyTag::new(b"transfer").unwrap())
+                    .q_block1()
+                    .send(now),
                 Err(coaptic::app::Error::Message(
                     coaptic::error::SlotMessageError::Encode(
                         coaptic::error::EncodeError::BufferTooSmall
                     )
                 ))
             ));
-            found = true;
-            assert_eq!(
-                client.transport_mut().len,
-                0,
-                "added option must not escape truncated"
-            );
-            without_allocating(|| {
-                // More than the two body slots and default Call capacity: every failed encode
-                // and cancellation must return its ownership before the next admission.
-                for now in 2..18 {
-                    let request = client
-                        .put(path)
-                        .to(PEER)
-                        .payload(&BODY)
-                        .if_match(b"12345678")
-                        .request_tag(BodyTag::new(b"transfer").unwrap())
-                        .q_block1();
-                    assert!(matches!(
-                        request.send(now),
-                        Err(coaptic::app::Error::Message(
-                            coaptic::error::SlotMessageError::Encode(
-                                coaptic::error::EncodeError::BufferTooSmall
-                            )
-                        ))
-                    ));
-                    assert_eq!(client.transport_mut().len, 0);
-                    let request = client
-                        .put("upload")
-                        .to(PEER)
-                        .payload(&BODY)
-                        .if_match(&[1])
-                        .request_tag(BodyTag::new(b"transfer").unwrap())
-                        .q_block1();
-                    let call = request.send(now).unwrap();
-                    assert!(client.cancel(call));
-                    assert_eq!(
-                        client.take_response(call).unwrap().unwrap_err(),
-                        coaptic::app::CallFailure::Cancelled
-                    );
-                    assert!(client.transport_mut().take().is_some());
-                    assert_eq!(client.transport_mut().len, 0);
-                }
-            });
-            exercise(client, true, false, Some(1), None, false);
-            break;
+            assert_eq!(client.transport_mut().len, 0);
+            assert_eq!(client.engine_mut().tx_occupied(), 0);
+        }
+        // Complete fresh conditional work through the same tiny pool after
+        // more refusals/cancellations than the Call and body capacities.
+        let mut server = server();
+        REPRESENTATION.with(|v| v.set(Some(1)));
+        EMPTY_MATCH.with(|v| v.set(false));
+        DISPATCHES.with(|v| v.set(0));
+        EFFECTS.with(|v| v.set(0));
+        let call = client
+            .put("upload")
+            .to(PEER)
+            .payload(&BODY)
+            .if_match(&[1])
+            .request_tag(BodyTag::new(b"fresh").unwrap())
+            .q_block1()
+            .send(100)
+            .unwrap();
+        let mut complete = false;
+        for now in 101..301 {
+            server.transport_mut().incoming = client.transport_mut().take();
+            server.poll(now).unwrap();
+            client.transport_mut().incoming = server.transport_mut().take();
+            client.poll(now).unwrap();
+            if let Some(response) = client.take_response(call) {
+                assert_eq!(response.unwrap().code(), Code::CHANGED);
+                complete = true;
+                break;
+            }
         }
         assert!(
-            found,
-            "fixture must exercise an added-If-Match datagram capacity boundary"
+            complete,
+            "fresh complete body must recover after minimum-size refusal"
         );
-    }
+        assert_eq!(DISPATCHES.with(Cell::get), 1);
+        assert_eq!(EFFECTS.with(Cell::get), 1);
+        assert_eq!(client.engine_mut().tx_occupied(), 0);
+    });
 }
 
 #[test]
