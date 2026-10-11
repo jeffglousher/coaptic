@@ -460,7 +460,7 @@ where
     let message = Message::new(
         Type::NonConfirmable,
         Code::REQUEST_ENTITY_INCOMPLETE,
-        ids.next_for(engine, now_ms)?,
+        ids.next_for(engine, io, now_ms)?,
     )
     .with_token(token)
     .with_options(&options)

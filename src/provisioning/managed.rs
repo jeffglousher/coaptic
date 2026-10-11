@@ -317,6 +317,11 @@ impl<T: DatagramIo> ConnectionIo<T> {
 }
 
 impl<T: DatagramIo> DatagramIo for ConnectionIo<T> {
+    // Preserve optional platform entropy through this ownership decorator.
+    fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
+        self.raw.as_mut().is_some_and(|raw| raw.fill_random(bytes))
+    }
+
     type Error = ManagedIoError<T::Error>;
 
     fn recv(&mut self, output: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
