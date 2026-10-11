@@ -370,14 +370,25 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
                 continue;
             };
             let body = value.snapshot.map(|(body, _)| body);
-            let body_live = body.is_some_and(|body| {
-                engine.tx_body_transfer(body).is_some_and(|transfer| {
-                    transfer.key().token() == value.meta.token
-                        && transfer.key().endpoint() == value.meta.dest
-                })
-            });
+            let owns_observe = value
+                .observe
+                .is_none_or(|observe| observe.attempted.is_none())
+                || deferred_observe_owner(engine, value).is_some();
+            let body_live = owns_observe
+                && body.is_some_and(|body| {
+                    engine.tx_body_transfer(body).is_some_and(|transfer| {
+                        transfer.key().token() == value.meta.token
+                            && transfer.key().endpoint() == value.meta.dest
+                    })
+                });
             if now_ms >= value.deadline_ms || (value.completed && !body_live) {
-                if retire_deferred_observe(engine, value).is_err() {
+                if value.completed
+                    && body_live
+                    && engine.tx_body_is_pinned(body.expect("live body"))
+                {
+                    continue;
+                }
+                if !value.completed && retire_deferred_observe(engine, value).is_err() {
                     continue;
                 }
                 if body_live {
@@ -503,6 +514,17 @@ fn retire_deferred_observe<S: AppStorage>(
     row: DeferredRow,
 ) -> Result<(), crate::storage::SlotError> {
     let Some(interest) = deferred_observe_owner(engine, row) else {
+        // A prepared large response can fail before a relation is installed,
+        // including the ordinary-response fallback when the Observe table is full.
+        // This handle still owns its staged body, independently of any live observer.
+        if row
+            .observe
+            .is_some_and(|observe| observe.attempted.is_none())
+        {
+            if let Some((body, _)) = row.snapshot {
+                engine.release_tx_body(body)?;
+            }
+        }
         return Ok(());
     };
     if let Some(body) =
@@ -571,24 +593,9 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     } else {
         Type::NonConfirmable
     };
-    let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
-    // This path deliberately has no Block2 fallback: all bounds precede relation mutation/output.
-    if let Err(error) = encode_response(
-        engine,
-        tx,
-        ty,
-        mid,
-        row.meta.token,
-        &response,
-        response.payload(),
-        None,
-        None,
-        oscore,
-        row.meta.oscore,
-    ) {
-        let _ = engine.release_tx(tx);
-        return Err(error);
-    }
+    let tx = prepare_deferred_observe::<S, T, REQUESTS>(
+        engine, oscore, row, &response, ty, mid, now_ms,
+    )?;
     let mut installed = None;
     if register {
         let mut interest = ObserveInterest::new(row.meta.token, row.meta.dest)
@@ -629,7 +636,8 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
             return Err(Error::Saturated);
         }
     }
-    if let Some(body) = body {
+    if let Some(body) = body.filter(|body| row.snapshot.is_none_or(|(current, _)| current != *body))
+    {
         if let Err(error) = engine.release_tx_body(body) {
             if let Some((id, interest)) = installed {
                 let _ = engine.storage_mut().set_observe_interest(id, interest);
@@ -657,6 +665,7 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         return Err(error);
     }
     if register {
+        row.observe.as_mut().expect("registered Observe").failed_mid = None;
         if ty == Type::NonConfirmable {
             let _ = engine.refresh_observe_max_age(
                 key,
@@ -668,7 +677,94 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     } else if let Some(previous) = previous {
         engine.take_observe(previous.key());
     }
+    if !register {
+        row.observe = None;
+    }
     Ok(())
+}
+
+// Stage bytes and all bounded snapshot ownership before installing a relation or sending.
+#[allow(clippy::too_many_arguments)]
+fn prepare_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    oscore: &mut oscore::Field<REQUESTS>,
+    row: &mut DeferredRow,
+    response: &Response<'_>,
+    ty: Type,
+    mid: MessageId,
+    now_ms: u64,
+) -> Result<SlotId, Error<T::Error>> {
+    let metadata = deferred_reply_metadata(response, row.meta, now_ms).map_err(Error::Response)?;
+    if let Some((body, retained)) = row.snapshot {
+        if !retained.same_header(&metadata)
+            || !retained_body_matches(engine, body, response.payload())
+        {
+            return Err(Error::Block(BlockTransferError::IdentityMismatch));
+        }
+    } else {
+        let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
+        match encode_response(
+            engine,
+            tx,
+            ty,
+            mid,
+            row.meta.token,
+            response,
+            response.payload(),
+            None,
+            None,
+            oscore,
+            row.meta.oscore,
+        ) {
+            Ok(()) => return Ok(tx),
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if response.code().is_success() && response.code() != Code::VALID =>
+            {
+                let _ = engine.release_tx(tx);
+            }
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                return Err(error);
+            }
+        }
+    }
+    let existing = row.snapshot.map(|(body, _)| body);
+    let body = match existing {
+        Some(body) => body,
+        None => {
+            response
+                .etag_bytes()
+                .ok_or(Error::Block(BlockTransferError::MissingIdentity))?;
+            let key = response_block_key(row.meta.token, row.meta.dest, response)?;
+            engine
+                .start_block2(key, response.payload(), 6)
+                .map_err(Error::Block)?
+        }
+    };
+    let outcome = (|| {
+        for szx in (0..=6).rev() {
+            let block = BlockValue::new(0, false, szx).expect("bounded SZX");
+            let issued = engine.requested_block2(body, block).map_err(Error::Block)?;
+            match encode_issued::<S, T, REQUESTS>(
+                engine, row.meta, response, ty, mid, issued, false, oscore,
+            ) {
+                Ok(tx) => return Ok(tx),
+                Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                    if szx > 0 => {}
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("finite SZX search returns at zero")
+    })();
+    if outcome.is_ok() {
+        row.snapshot = Some((
+            body,
+            row.snapshot.map_or(metadata, |(_, retained)| retained),
+        ));
+    } else if existing.is_none() {
+        let _ = engine.release_tx_body(body);
+    }
+    outcome
 }
 
 /// Engine storage selected by [`AppBuilder::block_wise`].
@@ -1936,8 +2032,17 @@ where
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
     /// An observable queryless GET registration without Block2/Q-Block2 can defer
-    /// its initial response. Completion must fit the actual datagram capacity, including
-    /// OSCORE overhead; it never falls back to a block-wise Observe response.
+    /// its initial response. With body storage enabled, an oversized successful
+    /// completion requires an ETag and retains one immutable classic Block2
+    /// snapshot. The first block is sized against actual datagram capacity,
+    /// including OSCORE overhead, before registration or sending. Matching
+    /// follow-ups carry no Observe option and do not redispatch the handler.
+    /// A failed-send retry must preserve the body, ETag, code and response options.
+    /// Notifications stay coalesced while this initial snapshot is retained;
+    /// the final block or original deferred deadline releases that snapshot
+    /// without removing its established relation. An unfinished handle's expiry
+    /// still removes only its attempted relation. Body and datagram exhaustion
+    /// refuse without sending and do not rewind OSCORE sequences.
     /// If the bounded Observe table is full, success is an ordinary response
     /// without Observe. Registration is installed before sending. An ambiguous
     /// transport failure retains the handle and attempted relation; retry uses
@@ -1954,8 +2059,9 @@ where
     /// registration that has not attempted output does not own an earlier live
     /// relation. Direct mutation through `engine_mut` remains an advanced caller
     /// ownership boundary: do not replace App-owned relations while a deferred
-    /// handle is live. Deferred FETCH, query-bearing GET Observe and block-wise
-    /// Observe remain unsupported. Ordinary deferred queries without Observe remain available.
+    /// handle is live. Deferred FETCH and query-bearing GET Observe, explicitly
+    /// requested Block2 and Q-Block2 Observe remain unsupported. Ordinary
+    /// deferred queries without Observe remain available.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -1989,7 +2095,14 @@ where
                 self.deferred.rows[index].as_mut().expect("matched row"),
                 &response,
             )?;
-            self.deferred.rows[index] = None;
+            if self.deferred.rows[index].is_some_and(|row| row.snapshot.is_some()) {
+                self.deferred.rows[index]
+                    .as_mut()
+                    .expect("completed Observe snapshot")
+                    .completed = true;
+            } else {
+                self.deferred.rows[index] = None;
+            }
             return Ok(());
         }
         if row.meta.q_block2.is_some()
@@ -3103,7 +3216,10 @@ where
     if meta.block2.is_some() || meta.q_block2.is_some() {
         if let Some(index) = deferred.rows.iter().position(|row| {
             row.is_some_and(|row| {
-                row.completed && row.meta.token == meta.token && row.meta.dest == peer
+                row.completed
+                    && row.meta.token == meta.token
+                    && row.meta.dest == peer
+                    && (row.observe.is_none() || parsed.observe().is_none())
             })
         }) {
             let row = deferred.rows[index].expect("matched snapshot");
@@ -3112,6 +3228,10 @@ where
                 if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
                     || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
                     || row.meta.q_block2.is_some() != meta.q_block2.is_some()
+                    || (row.observe.is_some()
+                        && meta.block2.is_some_and(|requested| {
+                            engine.requested_block2(body, requested).is_err()
+                        }))
                 {
                     send_response(
                         engine,
