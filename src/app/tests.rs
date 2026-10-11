@@ -12367,7 +12367,7 @@ fn exercise_client_without_block_storage<S: super::AppStorage>(
             .unwrap()
         };
         if protected {
-            app.set_oscore(make(&[1], &[2]));
+            app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
             Some(make(&[2], &[1]))
         } else {
             None
@@ -12712,8 +12712,8 @@ fn canceled_oscore_deferred_response_resets_without_spending_other_call_state() 
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(make(&[1], &[2]));
-    server.set_oscore(make(&[2], &[1]));
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let old = client
         .post("durable")
         .to(peer)
@@ -12841,8 +12841,8 @@ fn deferred_oscore_completion_preserves_authenticated_request_binding() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(make(&[1], &[2]));
-    server.set_oscore(make(&[2], &[1]));
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let call = client
         .post("durable")
         .to(peer)
@@ -12940,8 +12940,8 @@ fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
                 })
                 .unwrap()
             };
-            client.set_oscore(make(&[1], &[2]));
-            server.set_oscore(make(&[2], &[1]));
+            client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
         }
         let mut domain_calls = 0;
         // Reuse the same four TX slots while more than eight dedup replies
@@ -13176,7 +13176,7 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
         .allow_plaintext()
         .bind(Failable::default())
         .unwrap();
-    app.set_oscore(make(&[2], &[1]));
+    app.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let request = Message::new(Type::Confirmable, Code::POST, MessageId::new(100))
         .with_token(Token::new(b"request").unwrap());
     let mut wire = [0; 256];

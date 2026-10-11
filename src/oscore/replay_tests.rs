@@ -792,7 +792,7 @@ fn context_access_and_replacement_require_checkpoint_before_receiving() {
             events.persist(checkpoint)
         })
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     let receives = events.receives.get();
     server
         .poll_with_oscore_checkpoint(2, |checkpoint| {

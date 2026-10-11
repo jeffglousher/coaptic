@@ -197,9 +197,9 @@ fn exercise<C: AppStorage, S: AppStorage>(
     #[cfg(feature = "oscore")]
     if protected {
         if client.oscore().is_none() {
-            client.set_oscore(context(&[1], &[2]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
         }
-        server.set_oscore(context(&[2], &[1]));
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     without_allocating(|| {
         for (case, (version, change)) in [(1, false), (2, false), (1, true), (1, false)]
@@ -418,8 +418,8 @@ fn fetch_etag_retry_retains_exact_protected_or_plaintext_bytes() {
         CURRENT.with(|v| v.set(1));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let call = client
@@ -576,7 +576,7 @@ fn fetch_etag_full_body_pool_refuses_without_eviction_then_recovers() {
 fn fetch_etag_protected_invalid_and_exhausted_sizing_refuse_without_io() {
     use coaptic::app::Error;
     let mut client = fixed();
-    client.set_oscore(context(&[1], &[2]));
+    client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
     without_allocating(|| {
         for now in 0..8 {
             for tag in [&[][..], &b"123456789"[..]] {
@@ -625,7 +625,7 @@ fn fetch_etag_protected_invalid_and_exhausted_sizing_refuse_without_io() {
     let mut exhausted = fixed();
     let mut ctx = context(&[3], &[4]);
     ctx.set_sender_seq((1 << 40) - 1).unwrap();
-    exhausted.set_oscore(ctx);
+    exhausted.set_oscore(&mut Some(ctx)).unwrap();
     assert!(matches!(
         exhausted
             .fetch("selection")
@@ -672,8 +672,8 @@ fn fetch_etag_later_piv_growth_refuses_and_releases_then_recovers() {
     .unwrap();
     let mut ctx = context(&[1], &[2]);
     ctx.set_sender_seq(250).unwrap();
-    client.set_oscore(ctx);
-    server.set_oscore(context(&[2], &[1]));
+    client.set_oscore(&mut Some(ctx)).unwrap();
+    server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     without_allocating(|| {
         CURRENT.with(|c| c.set(1));
         DISPATCHES.with(|c| c.set(0));
