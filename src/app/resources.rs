@@ -105,6 +105,31 @@ impl<
         }
     }
 
+    /// Set the duplicate-reply history capacity before binding.
+    ///
+    /// Other profile dimensions are unchanged. This does not reserve TX slots:
+    /// cached wire replies share TX storage and may become empty-ACK tombstones.
+    /// App retains its existing oldest-entry eviction policy when the table fills.
+    /// Zero disables table history; only one non-idempotent request fallback is
+    /// retained. Eviction or expiration can permit redispatch: this is not a
+    /// durable exactly-once application-effect guarantee.
+    ///
+    /// ```
+    /// use coaptic::resources::Device;
+    /// let resources = Device::new().dedup_entries::<12>().observe_entries::<6>();
+    /// assert_eq!(resources.pool_capacities().dedup_entries, 12);
+    /// assert_eq!(resources.pool_capacities().observe_entries, 6);
+    /// ```
+    #[must_use]
+    pub const fn dedup_entries<const M: usize>(
+        self,
+    ) -> Resources<crate::profiles::WithDedup<P, M>, N, B, D, C, Fixed, REQUESTS> {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
     /// Select whether complete-body pools are present. Configure before allocation.
     #[must_use]
     pub const fn block_wise<const ENABLED: bool>(
@@ -229,6 +254,18 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, const REQ
     #[must_use]
     pub fn observe_entries(mut self, entries: usize) -> Self {
         self.storage.capacities.observe_entries = entries;
+        self
+    }
+
+    /// Set duplicate-reply history capacity in allocated storage.
+    ///
+    /// Binding checks the existing heap limit including table metadata before
+    /// allocation or transport activity. No growth occurs while polling. Other
+    /// capacities and App's existing eviction/fallback policy are unchanged;
+    /// see the fixed configuration's `dedup_entries` documentation for limits.
+    #[must_use]
+    pub fn dedup_entries(mut self, entries: usize) -> Self {
+        self.storage.capacities.dedup_entries = entries;
         self
     }
 
