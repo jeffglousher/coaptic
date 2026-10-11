@@ -33,8 +33,9 @@
 //!    establish a fresh cryptographic context (RFC 8613 section 7.5 / Appendix B).
 //! 4. Keep the context for the lifetime of the pairwise association. App
 //!    holds it only if you call [`crate::App::set_oscore`].
-//! 5. At most [`LIVE_REQUESTS`] (4) in-flight Token→[`RequestRef`] rows.
-//!    A fifth distinct Token is [`Error::Saturated`] — no silent eviction.
+//! 5. [`SecurityContext`] defaults to [`LIVE_REQUESTS`] (4) live request bindings.
+//!    [`BoundedSecurityContext`] selects another fixed bound. Excess distinct
+//!    Tokens return [`Error::Saturated`] without eviction.
 //!
 //! App with a context attached is fail-closed: a non-empty datagram without
 //! an OSCORE option is rejected (unprotected 4.01 on a request; a plain
@@ -125,7 +126,9 @@ mod protect;
 #[cfg(test)]
 mod tests;
 
-pub use context::{DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext};
+pub use context::{
+    BoundedSecurityContext, DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext,
+};
 pub use error::{Error, SenderReservationError};
 pub use header::{OscoreHeader, PartialIv};
 pub use protect::{
@@ -150,13 +153,10 @@ pub const REPLAY_WINDOW: u64 = 32;
 pub const AEAD_AES_CCM_16_64_128: i32 = 10;
 /// OSCORE version in the AAD (this RFC).
 pub const OSCORE_VERSION: u8 = 1;
-/// In-flight Token→[`RequestRef`] bindings on [`SecurityContext`].
+/// Default request-binding capacity of the [`SecurityContext`] compatibility alias.
 ///
-/// Client-side: [`protect_request`] remembers so a later
-/// [`unprotect_response`] can look up the request Partial IV. Observe
-/// registrations keep the row for notifications. Same cap as the App
-/// client inbox. [`SecurityContext::remember`] returns
-/// [`Error::Saturated`] when a fifth distinct Token arrives. The server
-/// holds [`RequestRef`] on the inbound exchange / Observe interest, not
-/// in this table.
+/// [`BoundedSecurityContext`] and [`crate::resources::Resources::security_requests`]
+/// select an independent bound. Client requests retain Token bindings, including
+/// Observe registrations. Saturation refuses a new distinct Token without eviction.
+/// Server response bindings remain on the inbound exchange / Observe interest.
 pub const LIVE_REQUESTS: usize = 4;

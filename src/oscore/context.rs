@@ -142,7 +142,22 @@ impl Id {
 ///     let _duplicate = context.clone();
 /// }
 /// ```
-pub struct SecurityContext {
+pub type SecurityContext = BoundedSecurityContext<{ super::LIVE_REQUESTS }>;
+
+/// One pairwise context with a caller-selected inline request-binding table.
+///
+/// `REQUESTS` bounds distinct live outbound Tokens, independently of App Calls.
+/// Zero retains authentication and server response support but refuses outbound
+/// requests. No table growth or allocation occurs; operations scan at most
+/// `REQUESTS` entries. Keys, replay and sender state have the same ownership
+/// contract as [`SecurityContext`]. Layouts that exceed the address space are
+/// refused by Rust before execution:
+///
+/// ```compile_fail
+/// use coaptic::oscore::BoundedSecurityContext;
+/// const TOO_LARGE: usize = core::mem::size_of::<BoundedSecurityContext<{ usize::MAX }>>();
+/// ```
+pub struct BoundedSecurityContext<const REQUESTS: usize> {
     sender_id: Id,
     recipient_id: Id,
     id_context: [u8; MAX_ID_CONTEXT_LEN],
@@ -154,7 +169,7 @@ pub struct SecurityContext {
     sender_reserved_end: u64,
     replay_left: u64,
     replay_bits: u32,
-    live: [Option<LiveRequest>; super::LIVE_REQUESTS],
+    live: [Option<LiveRequest>; REQUESTS],
 }
 
 /// Token→[`RequestRef`] row. Observe registrations keep the row so
@@ -170,7 +185,7 @@ struct LiveRequest {
     notify_number: Option<u64>,
 }
 
-impl core::fmt::Debug for SecurityContext {
+impl<const REQUESTS: usize> core::fmt::Debug for BoundedSecurityContext<REQUESTS> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SecurityContext")
             .field("key_material", &"[REDACTED]")
@@ -179,7 +194,20 @@ impl core::fmt::Debug for SecurityContext {
     }
 }
 
-impl SecurityContext {
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+    /// Maximum distinct live request Tokens, including retained Observe registrations.
+    #[must_use]
+    pub const fn request_capacity(&self) -> usize {
+        REQUESTS
+    }
+
+    /// Inline request-table bytes, including metadata and padding, excluding key/replay
+    /// state, other App fields, temporary stack, and caller-owned platform memory.
+    #[must_use]
+    pub const fn request_metadata_bytes(&self) -> usize {
+        core::mem::size_of::<[Option<LiveRequest>; REQUESTS]>()
+    }
+
     /// Derive Sender Key, Recipient Key, and Common IV.
     pub fn derive(params: DeriveParams<'_>) -> Result<Self, Error> {
         if params.master_secret.is_empty() || params.master_secret.len() > 64 {
@@ -245,7 +273,7 @@ impl SecurityContext {
             sender_reserved_end: u64::MAX,
             replay_left: 0,
             replay_bits: 0,
-            live: [None; super::LIVE_REQUESTS],
+            live: [None; REQUESTS],
         })
     }
 
@@ -412,8 +440,8 @@ impl SecurityContext {
     /// Remember `(token, request)` for the matching response.
     ///
     /// Replaces an existing row for `token`. The table holds
-    /// [`crate::oscore::LIVE_REQUESTS`] (4) bindings, independently of the
-    /// configured App client capacity. A fifth distinct Token is [`Error::Saturated`].
+    /// `REQUESTS` bindings, independently of the configured App client capacity.
+    /// Another distinct Token returns [`Error::Saturated`] without eviction.
     pub fn remember(&mut self, token: Token, request: RequestRef) -> Result<(), Error> {
         self.remember_live(token, request, false)
     }

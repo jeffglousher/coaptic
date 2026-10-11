@@ -4607,7 +4607,7 @@ fn options_full_500_under_oscore_is_protected() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    super::encode_options_full_500::<_, &'static str>(
+    super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,
@@ -4657,7 +4657,7 @@ fn options_full_500_oscore_without_request_is_not_plaintext() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    let err = super::encode_options_full_500::<_, &'static str>(
+    let err = super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,

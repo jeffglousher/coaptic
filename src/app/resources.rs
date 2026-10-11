@@ -36,6 +36,7 @@ pub struct Resources<
     const DEFERRED: usize = 0,
     const CALLS: usize = 4,
     S = Fixed,
+    const REQUESTS: usize = 4,
 > {
     storage: S,
     _profile: PhantomData<P>,
@@ -49,12 +50,19 @@ pub type Device = Resources<crate::profiles::Default, 8, true, 2, 4>;
 pub type Gateway = Resources<crate::profiles::Gateway, 16, true, 4, 4>;
 /// Host service starting budget: larger pools, thirty-two routes, eight deferred jobs, four Calls.
 ///
-/// This retains the current single OSCORE context/four live request-binding limit.
+/// This defaults to one OSCORE context and four live request bindings.
+/// Customize the latter with [`Resources::security_requests`].
 /// More packet storage does not add security associations or establish throughput.
 pub type Service = Resources<crate::profiles::Service, 32, true, 8, 4>;
 
-impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: usize>
-    Resources<P, N, B, D, C>
+impl<
+    P: MemoryProfile,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+    const REQUESTS: usize,
+> Resources<P, N, B, D, C, Fixed, REQUESTS>
 {
     /// Create fixed resource bounds from a memory profile and the type's dimensions.
     #[must_use]
@@ -78,7 +86,9 @@ impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: u
 
     /// Select whether complete-body pools are present. Configure before allocation.
     #[must_use]
-    pub const fn block_wise<const ENABLED: bool>(self) -> Resources<P, N, ENABLED, D, C> {
+    pub const fn block_wise<const ENABLED: bool>(
+        self,
+    ) -> Resources<P, N, ENABLED, D, C, Fixed, REQUESTS> {
         Resources {
             storage: Fixed,
             _profile: PhantomData,
@@ -92,7 +102,7 @@ impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: u
     /// No growth occurs after binding. Requires `alloc`, independently of `std`.
     #[cfg(feature = "alloc")]
     #[must_use]
-    pub fn allocated(self, heap_limit: usize) -> Resources<P, N, B, D, C, Allocated> {
+    pub fn allocated(self, heap_limit: usize) -> Resources<P, N, B, D, C, Allocated, REQUESTS> {
         let capacities = self.pool_capacities();
         Resources {
             storage: Allocated {
@@ -104,17 +114,45 @@ impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: u
     }
 }
 
-impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: usize> Default
-    for Resources<P, N, B, D, C>
+impl<
+    P: MemoryProfile,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+    const REQUESTS: usize,
+> Default for Resources<P, N, B, D, C, Fixed, REQUESTS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S>
-    Resources<P, N, B, D, C, S>
+impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const REQUESTS: usize>
+    Resources<P, N, B, D, C, S, REQUESTS>
 {
+    /// Inline OSCORE request-binding capacity, independent of Calls and packet pools.
+    /// Without the `oscore` feature this table occupies no memory.
+    #[must_use]
+    pub const fn security_request_capacity(&self) -> usize {
+        REQUESTS
+    }
+
+    /// Select the inline Token-to-request binding count for one OSCORE context.
+    ///
+    /// Supply a matching `oscore::BoundedSecurityContext<N>` when OSCORE is
+    /// enabled. Zero refuses outbound protected requests while retaining authenticated
+    /// server responses. This does not add security associations or alter replay state.
+    /// Table memory remains inline for fixed and allocated Apps; it is outside the
+    /// allocated pool heap limit. No resizing occurs while polling.
+    #[must_use]
+    pub fn security_requests<const M: usize>(self) -> Resources<P, N, B, D, C, S, M> {
+        Resources {
+            storage: self.storage,
+            _profile: PhantomData,
+        }
+    }
+
     /// Configured inline client Call/completion capacity.
     #[must_use]
     pub const fn client_capacity(&self) -> usize {
@@ -134,7 +172,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S>
     }
     /// Set inline client Call/completion capacity, including retained Observe Calls.
     #[must_use]
-    pub fn client_calls<const M: usize>(self) -> Resources<P, N, B, D, M, S> {
+    pub fn client_calls<const M: usize>(self) -> Resources<P, N, B, D, M, S, REQUESTS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -142,7 +180,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S>
     }
     /// Set route capacity before routes are registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> Resources<P, M, B, D, C, S> {
+    pub fn routes<const M: usize>(self) -> Resources<P, M, B, D, C, S, REQUESTS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -150,7 +188,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S>
     }
     /// Set inline deferred server-work capacity.
     #[must_use]
-    pub fn deferred<const M: usize>(self) -> Resources<P, N, B, M, C, S> {
+    pub fn deferred<const M: usize>(self) -> Resources<P, N, B, M, C, S, REQUESTS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -159,8 +197,8 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S>
 }
 
 #[cfg(feature = "alloc")]
-impl<P, const N: usize, const B: bool, const D: usize, const C: usize>
-    Resources<P, N, B, D, C, Allocated>
+impl<P, const N: usize, const B: bool, const D: usize, const C: usize, const REQUESTS: usize>
+    Resources<P, N, B, D, C, Allocated, REQUESTS>
 {
     /// Effective packet/body/table capacities, including runtime customization.
     #[must_use]
@@ -203,8 +241,9 @@ pub struct ConfiguredBuilder<
     const D: usize,
     const C: usize,
     S,
+    const REQUESTS: usize = 4,
 > {
-    inner: AppBuilder<P, Present, N, B, D, C>,
+    inner: AppBuilder<P, Present, N, B, D, C, REQUESTS>,
     storage: S,
 }
 
@@ -225,11 +264,12 @@ impl App {
         const D: usize,
         const C: usize,
         S,
+        const REQUESTS: usize,
     >(
-        resources: Resources<P, N, B, D, C, S>,
-    ) -> ConfiguredBuilder<P, N, B, D, C, S> {
+        resources: Resources<P, N, B, D, C, S, REQUESTS>,
+    ) -> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS> {
         ConfiguredBuilder {
-            inner: Self::profile::<P>()
+            inner: Self::profile_requests::<P, REQUESTS>()
                 .block_wise::<B>()
                 .routes::<N>()
                 .deferred::<D>()
@@ -240,8 +280,15 @@ impl App {
     }
 }
 
-impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: usize, S>
-    ConfiguredBuilder<P, N, B, D, C, S>
+impl<
+    P: MemoryProfile,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+    S,
+    const REQUESTS: usize,
+> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS>
 {
     /// Register a handler within the selected route capacity.
     #[must_use]
@@ -282,7 +329,7 @@ impl<P: MemoryProfile, const N: usize, const B: bool, const D: usize, const C: u
     /// Supply a provisioned OSCORE context; protection is required by default.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub fn oscore(mut self, context: crate::oscore::SecurityContext) -> Self {
+    pub fn oscore(mut self, context: crate::oscore::BoundedSecurityContext<REQUESTS>) -> Self {
         self.inner = self.inner.oscore(context);
         self
     }
@@ -313,7 +360,8 @@ impl<
     const B: bool,
     const D: usize,
     const C: usize,
-> ConfiguredBuilder<P, N, B, D, C, Fixed>
+    const REQUESTS: usize,
+> ConfiguredBuilder<P, N, B, D, C, Fixed, REQUESTS>
 {
     /// Bind fixed storage and a caller-owned stateful cryptographic RNG.
     /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
@@ -323,13 +371,18 @@ impl<
         self,
         io: T,
         random: R,
-    ) -> Result<App<P, crate::platform::WithEntropy<T, R>, N, B, AppStore<P, B>, D, C>, BuildError>
-    {
+    ) -> Result<
+        App<P, crate::platform::WithEntropy<T, R>, N, B, AppStore<P, B>, D, C, REQUESTS>,
+        BuildError,
+    > {
         self.inner.bind_with_entropy(io, random)
     }
 
     /// Bind fixed storage without allocating. The App owns its arrays and I/O.
-    pub fn bind<T>(self, io: T) -> Result<App<P, T, N, B, AppStore<P, B>, D, C>, BuildError> {
+    pub fn bind<T>(
+        self,
+        io: T,
+    ) -> Result<App<P, T, N, B, AppStore<P, B>, D, C, REQUESTS>, BuildError> {
         let Fixed = self.storage;
         self.inner.bind(io)
     }
@@ -342,7 +395,8 @@ impl<
     const B: bool,
     const D: usize,
     const C: usize,
-> ConfiguredBuilder<P, N, B, D, C, Allocated>
+    const REQUESTS: usize,
+> ConfiguredBuilder<P, N, B, D, C, Allocated, REQUESTS>
 {
     /// Bind bounded heap storage and a stateful cryptographic RNG, without `std`.
     /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
@@ -351,7 +405,16 @@ impl<
         io: T,
         random: R,
     ) -> Result<
-        App<P, crate::platform::WithEntropy<T, R>, N, B, crate::storage::AllocMemory, D, C>,
+        App<
+            P,
+            crate::platform::WithEntropy<T, R>,
+            N,
+            B,
+            crate::storage::AllocMemory,
+            D,
+            C,
+            REQUESTS,
+        >,
         BuildError,
     > {
         let (inner, io) = self.inner.prepare_entropy(io, random)?;
@@ -366,7 +429,7 @@ impl<
     pub fn bind<T>(
         self,
         io: T,
-    ) -> Result<App<P, T, N, B, crate::storage::AllocMemory, D, C>, BuildError> {
+    ) -> Result<App<P, T, N, B, crate::storage::AllocMemory, D, C, REQUESTS>, BuildError> {
         self.inner.validate_security()?;
         self.storage.capacities.validate_for_build(B)?;
         let c = self.storage.capacities;

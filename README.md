@@ -264,8 +264,10 @@ the 1472-byte scratch ceiling; incompatible dimensions refuse at binding.
 
 Complete responses are retained on this construction path; collect them using
 `take_response_into` and your own output buffer. Untaken replies and Observe
-subscriptions retain Call slots. OSCORE still has four live request bindings in
-one attached context; more pools or Calls do not add security associations.
+subscriptions retain Call slots. OSCORE defaults to four live request bindings;
+select a different inline bound with `.security_requests::<N>()` and a matching
+`BoundedSecurityContext<N>`. Fixed and allocated Apps keep the same explicit bound.
+There is still one attached context; more bindings do not add security associations.
 Independent resource/fairness qualification remains in
 [#340](https://github.com/jeffglousher/coaptic/issues/340).
 
