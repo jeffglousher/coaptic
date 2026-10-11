@@ -2,7 +2,12 @@ extern crate std;
 
 use super::*;
 use crate::message::{Code, Message, Opt, Token};
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, vec::Vec};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+    vec::Vec,
+};
 
 const CLIENT: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
 const SERVER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -66,8 +71,41 @@ fn identity(value: u8, kid: u8) -> Identity {
     Identity::from_private_key(scalar, kid).unwrap()
 }
 
+const BOOTSTRAP_MID_START: u16 = 0x1000;
+const APP_MID_START: u16 = 0x8000;
+const MID_STRIDE: u16 = 0x100;
+std::thread_local! {
+    static MID_SEEDS: Cell<(u16, u16)> = const { Cell::new((BOOTSTRAP_MID_START, APP_MID_START)) };
+}
+
+fn reset_mid_seeds() {
+    MID_SEEDS.with(|seeds| seeds.set((BOOTSTRAP_MID_START, APP_MID_START)));
+}
+
 fn entropy(bytes: &mut [u8]) -> bool {
-    getrandom::fill(bytes).is_ok()
+    if getrandom::fill(bytes).is_err() {
+        return false;
+    }
+    // Success fixtures must not randomly collide with retained bootstrap or
+    // prior-epoch MIDs. Only MID seed bytes are controlled: EDHOC key material,
+    // Tokens and jitter retain system entropy. Each test owns its thread state.
+    if matches!(bytes.len(), 2 | 22) {
+        MID_SEEDS.with(|seeds| {
+            let (mut bootstrap, mut app) = seeds.get();
+            let seed = if bytes.len() == 22 {
+                &mut bootstrap
+            } else {
+                &mut app
+            };
+            bytes[..2].copy_from_slice(&seed.to_be_bytes());
+            *seed = seed
+                .checked_add(MID_STRIDE)
+                .expect("test MID seeds exhausted");
+            assert!(bootstrap < APP_MID_START, "test MID ranges overlap");
+            seeds.set((bootstrap, app));
+        });
+    }
+    true
 }
 
 fn trust(identity: &Identity, peer: &Identity, store: u8) -> PeerTrust {
@@ -137,6 +175,7 @@ fn snapshot() -> Response<'static> {
 
 #[test]
 fn manages_a_fresh_exchange_and_collects_complete_protected_payload_and_metadata() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -218,6 +257,7 @@ fn manages_a_fresh_exchange_and_collects_complete_protected_payload_and_metadata
 
 #[test]
 fn revocation_cancels_queued_bootstrap_and_application_retries_before_any_io() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -261,6 +301,7 @@ fn revocation_cancels_queued_bootstrap_and_application_retries_before_any_io() {
 
 #[test]
 fn revocation_blocks_cached_replies_and_deferred_effects_and_completion() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -308,7 +349,57 @@ fn revocation_blocks_cached_replies_and_deferred_effects_and_completion() {
 }
 
 #[test]
+fn managed_observe_mid_collision_refuses_before_io_and_recovers_capacity() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    server.observable("temperature", snapshot).unwrap();
+    let now = connect(&mut client, &mut server, 0) + 1;
+    let refusals = client.app_mut().unwrap().client_capacity() + 1;
+    // Either endpoint can install first. Reserve both deterministic App seed
+    // ranges as live bootstrap MIDs, forcing more refusals than Call capacity.
+    let io = state_io(client.state.as_mut().unwrap());
+    for first in [APP_MID_START, APP_MID_START + MID_STRIDE] {
+        for offset in 0..refusals {
+            let slot = io.bootstrap.iter_mut().find(|slot| slot.is_none()).unwrap();
+            *slot = Some((MessageId::new(first + offset as u16), now + LIFETIME));
+        }
+    }
+    let sends = network.borrow().sent.len();
+    let receives = network.borrow().receives;
+    for _ in 0..refusals {
+        assert!(matches!(
+            client.observe("temperature", now),
+            Err(ManagedError::Application(crate::app::Error::Io(
+                crate::storage::DatagramIoError::Io(ManagedIoError::MessageIdReserved)
+            )))
+        ));
+        assert_eq!(network.borrow().sent.len(), sends);
+        assert_eq!(network.borrow().receives, receives);
+        assert_eq!(client.app_mut().unwrap().engine_mut().tx_occupied(), 0);
+        assert_eq!(client.app_mut().unwrap().engine_mut().rx_occupied(), 0);
+    }
+    let call = client.observe("temperature", now).unwrap();
+    assert_eq!(network.borrow().sent.len(), sends + 1);
+    server.poll_with(now, |_, _, _| snapshot()).unwrap();
+    client.poll_with(now, idle).unwrap();
+    let mut output = [0; 32];
+    let response = client
+        .take_response_into(call, &mut output, now)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.observe_seq(), Some(0));
+    assert_eq!(response.payload(), b"snapshot");
+    assert!(client.cancel(call, now).unwrap());
+    assert_eq!(client.app_mut().unwrap().engine_mut().tx_occupied(), 0);
+    assert_eq!(client.app_mut().unwrap().engine_mut().rx_occupied(), 0);
+}
+
+#[test]
 fn observer_notifications_cross_the_same_gate_and_do_not_survive_regrant() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -358,6 +449,7 @@ fn observer_notifications_cross_the_same_gate_and_do_not_survive_regrant() {
 
 #[test]
 fn ambiguous_policy_commit_and_failed_authority_refresh_fail_closed() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -406,6 +498,7 @@ fn ambiguous_policy_commit_and_failed_authority_refresh_fail_closed() {
 
 #[test]
 fn authenticated_fresh_handoff_invalidates_old_call_and_deferred_handle_epochs() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -448,6 +541,7 @@ fn authenticated_fresh_handoff_invalidates_old_call_and_deferred_handle_epochs()
 
 #[test]
 fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let attacker = identity(3, 1);
@@ -538,6 +632,7 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
 
 #[test]
 fn transport_failures_and_wrong_endpoint_do_not_create_an_authenticated_owner() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -566,6 +661,7 @@ fn transport_failures_and_wrong_endpoint_do_not_create_an_authenticated_owner() 
 
 #[test]
 fn bounded_mid_ownership_refuses_bootstrap_app_and_retired_session_collisions() {
+    reset_mid_seeds();
     let network = Rc::new(RefCell::new(Network::default()));
     let mut io = ConnectionIo::new(
         Some(Io {
@@ -608,6 +704,7 @@ fn bounded_mid_ownership_refuses_bootstrap_app_and_retired_session_collisions() 
 
 #[test]
 fn transport_reservation_capacity_refuses_before_send_and_recovers_after_expiry() {
+    reset_mid_seeds();
     let network = Rc::new(RefCell::new(Network::default()));
     let mut io = ConnectionIo::new(
         Some(Io {
@@ -659,6 +756,7 @@ fn transport_reservation_capacity_refuses_before_send_and_recovers_after_expiry(
 
 #[test]
 fn revoked_owner_never_reads_an_already_queued_datagram() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -684,6 +782,7 @@ fn revoked_owner_never_reads_an_already_queued_datagram() {
 
 #[test]
 fn online_lease_expires_before_any_request_poll_notification_or_deferred_effect() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -746,6 +845,7 @@ fn online_lease_expires_before_any_request_poll_notification_or_deferred_effect(
 
 #[test]
 fn clock_rollback_and_expired_refresh_cannot_resurrect_a_connection() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -815,6 +915,7 @@ fn clock_rollback_and_expired_refresh_cannot_resurrect_a_connection() {
 
 #[test]
 fn deferred_effect_invocation_is_consumed_before_failure_and_rejects_expiry_or_cancel() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, _) = pair(&a, &b);
@@ -871,6 +972,7 @@ fn deferred_effect_invocation_is_consumed_before_failure_and_rejects_expiry_or_c
 
 #[test]
 fn externally_admitted_sessions_cannot_start_an_independent_bootstrap() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (initiator, first) = super::super::Initiator::start(&a, b.peer().clone(), entropy).unwrap();
@@ -953,6 +1055,7 @@ fn externally_admitted_sessions_cannot_start_an_independent_bootstrap() {
 
 #[test]
 fn fresh_policy_revocation_is_installed_as_a_tombstone_and_blocks_all_io() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
@@ -995,6 +1098,7 @@ fn fresh_policy_revocation_is_installed_as_a_tombstone_and_blocks_all_io() {
 
 #[test]
 fn online_validity_rejects_acceptance_clock_rollback_and_queued_bootstrap_expiry() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let network = Rc::new(RefCell::new(Network::default()));
@@ -1045,6 +1149,7 @@ fn online_validity_rejects_acceptance_clock_rollback_and_queued_bootstrap_expiry
 
 #[test]
 fn unconfigured_observe_paths_cannot_share_an_unknown_resource_identity() {
+    reset_mid_seeds();
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, _) = pair(&a, &b);
