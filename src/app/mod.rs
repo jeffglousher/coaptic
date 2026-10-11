@@ -1334,6 +1334,11 @@ where
     /// error therefore does not mean that no datagrams were sent or retained
     /// work was dispatched. Bound transport calls and callbacks separately
     /// when budgeting wall-clock polling latency.
+    /// At most one eligible RX datagram is dispatched per poll. Queued unpinned
+    /// datagrams take precedence over fresh ingress; retained full responses
+    /// are excluded during selection. With successful dispatch opportunities,
+    /// queued work progresses within the RX slot count. Pinned buffers, failing
+    /// I/O and caller callback duration remain outside that selection bound.
     /// Advanced slots / [`Access`](crate::storage::Access) / remaining RST
     /// policy or BERT codecs: [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
@@ -1728,7 +1733,7 @@ where
         Ok(id) => (id, None),
         Err(e) => (None, Some(e)),
     };
-    let progress = engine.progress_before_dispatch(now_ms);
+    let progress = engine.progress_before_dispatch(now_ms, |rx| !inbox.holds_datagram(rx));
     let mut replacement_error = None;
     if let Some(retransmit) = progress.retransmit() {
         match retransmit {
@@ -1761,8 +1766,13 @@ where
         }
     }
 
-    if let Some(rx) =
-        received.or_else(|| progress.rx_ready().filter(|rx| !inbox.holds_datagram(*rx)))
+    // A fresh receive must not bypass queued work left by an earlier failure.
+    // Held replies were excluded inside the rotating scan, not just here:
+    // otherwise one held row can repeatedly hide the next eligible owner.
+    if let Some(rx) = progress
+        .rx_ready()
+        .filter(|rx| !inbox.holds_datagram(*rx))
+        .or(received)
     {
         dispatch_rx(
             engine,
