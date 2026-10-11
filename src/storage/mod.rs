@@ -157,14 +157,14 @@ pub trait Storage {
 
 /// Filled datagram bytes for occupied RX/TX slots.
 ///
-/// [`Memory`] and [`AllocMemory`] implement this so [`Engine`] can decode
+/// [`Memory`] and `AllocMemory` (with `alloc`) implement this so [`Engine`] can decode
 /// and encode without inventing protocol responses.
 pub trait DatagramSlots {
     /// Compile-time RX slot bytes for stack scratch (inbound copy, OSCORE
     /// unprotect, Block IO). [`Memory`] uses [`MemoryProfile::RX_DATAGRAM_BYTES`]
     /// so Constrained does not reserve Default 1472.
     ///
-    /// [`AllocMemory`] keeps the Default ceiling; a smaller runtime slot
+    /// `AllocMemory` (with `alloc`) keeps the Default ceiling; a smaller runtime slot
     /// fails loud on oversize copy.
     const RX_DATAGRAM_BYTES: usize = 1472;
 
@@ -248,7 +248,7 @@ pub trait DatagramSlots {
 ///
 /// Insert, lookup, and remove scan the configured entry count (O(n) in
 /// capacity). Capacity is fixed at construction. [`Memory`] and
-/// [`AllocMemory`] implement this so [`Engine`] can store [`DedupEntry`]
+/// `AllocMemory` (with `alloc`) implement this so [`Engine`] can store [`DedupEntry`]
 /// values in the existing table slots. [`crate::App::poll`] uses
 /// [`DedupEntry::due_ms`], [`DedupEntry::replay`], and
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
@@ -273,7 +273,7 @@ pub trait DedupSlots {
 ///
 /// Insert, lookup, remove, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the profile observe-entry count. [`Memory`] and
-/// [`AllocMemory`] implement this so [`Engine`] can store
+/// `AllocMemory` (with `alloc`) implement this so [`Engine`] can store
 /// [`ObserveInterest`] values in the existing table slots. Pending notify,
 /// the 24-bit sequence, optional Max-Age / CON-wait lifetime, and RFC 7641
 /// §4.5 / §4.5.1 confirm / NSTART hold stay on the row; bodies are not

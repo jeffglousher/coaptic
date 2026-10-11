@@ -102,7 +102,8 @@
 //! The configured path retains complete responses by default. Collect them
 //! with [`App::take_response_into`] and caller-owned output. Short buffers refuse
 //! without consuming or partially copying the reply. Observe shares the client
-//! Call budget; the single OSCORE context still has four live request bindings.
+//! Call budget. The single OSCORE context defaults to four live request bindings;
+//! [`resources::Resources::security_requests`] configures that independent bound.
 //! Larger storage is not a security-association or throughput guarantee.
 //!
 //! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],

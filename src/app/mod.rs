@@ -80,7 +80,7 @@
 //!
 //! [`App::builder`] starts with fixed default datagram storage. Adjust the
 //! same builder with [`AppBuilder::block_wise`], [`AppBuilder::bind_storage`]
-//! or [`AppBuilder::bind_alloc`] (`alloc` independently of `std`). No separate
+//! or `AppBuilder::bind_alloc` (`alloc` independently of `std`). No separate
 //! advanced reactor is needed for custom storage. [`AppBuilder::full_responses`]
 //! and [`App::take_response_into`] collect exact bytes into caller storage;
 //! insufficient capacity leaves the complete reply available for retry.
@@ -173,8 +173,8 @@ use response::AssembledField;
 
 /// Storage capabilities used by the single [`App`] interface.
 ///
-/// Fixed [`crate::storage::Memory`] and allocator-backed [`crate::storage::AllocMemory`] use
-/// the same routing, request builders and protocol reactor.
+/// Fixed [`crate::storage::Memory`] and allocator-backed `AllocMemory` (with
+/// `alloc`) use the same routing, request builders and protocol reactor.
 pub trait AppStorage:
     Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots
 {
@@ -381,6 +381,7 @@ pub struct App<
     S: AppStorage = AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
     const CALLS: usize = { DEFAULT_CLIENT_CALLS },
+    const REQUESTS: usize = 4,
 > where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -398,7 +399,7 @@ pub struct App<
     /// `due_ms` (fail-closed, not Miss). Not a seventh memory area.
     dedup_closed: Option<DedupClosed>,
     /// Caller-owned OSCORE context (`()` without the `oscore` feature).
-    oscore: oscore::Field,
+    oscore: oscore::Field<REQUESTS>,
     oscore_checkpoint: oscore::CheckpointState,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
@@ -421,13 +422,14 @@ pub struct AppBuilder<
     const BLOCK_WISE: bool = false,
     const DEFERRED: usize = 0,
     const CALLS: usize = { DEFAULT_CLIENT_CALLS },
+    const REQUESTS: usize = 4,
 > {
     site: Site<N>,
     echo_policy: Option<EchoPolicy>,
     full_responses: bool,
     deferred_lifetime_ms: u64,
     identity: Option<IdentitySource>,
-    oscore: oscore::Field,
+    oscore: oscore::Field<REQUESTS>,
     oscore_checkpoint: oscore::CheckpointState,
     allow_plaintext: bool,
     _p: PhantomData<P>,
@@ -448,6 +450,11 @@ impl App {
     /// Start from a memory profile. Next: [`AppBuilder::block_wise`].
     #[must_use]
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
+        Self::profile_requests::<P, 4>()
+    }
+
+    const fn profile_requests<P: MemoryProfile, const REQUESTS: usize>()
+    -> AppBuilder<P, Missing, DEFAULT_ROUTES, false, 0, DEFAULT_CLIENT_CALLS, REQUESTS> {
         AppBuilder {
             site: Site::new(),
             echo_policy: None,
@@ -470,7 +477,8 @@ impl<
     const BLOCK_WISE: bool,
     const DEFERRED: usize,
     const CALLS: usize,
-> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS>
 {
     /// Size the live client Call and completion tables independently of pools.
     ///
@@ -483,7 +491,7 @@ impl<
     /// storage. Each Call reserves request/Observe and response-header metadata;
     /// expiry also uses bounded scratch proportional to this count. This does
     /// not resize packet/body pools, server observers, routes or security state.
-    /// Pairwise OSCORE still has four live request bindings per context. A
+    /// Pairwise OSCORE defaults to four live request bindings per context. A
     /// larger Call table does not increase that independent protected limit.
     /// Counts are fixed-array lengths checked by Rust's type layout; there is
     /// no runtime multiplication or allocator growth for these tables.
@@ -495,7 +503,7 @@ impl<
     #[must_use]
     pub fn client_calls<const SLOTS: usize>(
         self,
-    ) -> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, SLOTS> {
+    ) -> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, SLOTS, REQUESTS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -517,7 +525,9 @@ impl<
     ///
     /// If a route is already registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED, CALLS> {
+    pub fn routes<const M: usize>(
+        self,
+    ) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED, CALLS, REQUESTS> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -555,7 +565,9 @@ impl<
     /// smaller pool, App reclaims a dedup wire pin into an empty-ACK tombstone:
     /// the original request is acknowledged without repeating its handler.
     #[must_use]
-    pub fn deferred<const SLOTS: usize>(self) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS, CALLS> {
+    pub fn deferred<const SLOTS: usize>(
+        self,
+    ) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS, CALLS, REQUESTS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -660,7 +672,7 @@ impl<
     /// The `oscore` feature is enabled by default and works without an allocator.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub fn oscore(mut self, context: crate::oscore::SecurityContext) -> Self {
+    pub fn oscore(mut self, context: crate::oscore::BoundedSecurityContext<REQUESTS>) -> Self {
         self.oscore = Some(context);
         self.oscore_checkpoint.invalidate();
         self
@@ -731,7 +743,8 @@ impl<
     const PREV: bool,
     const DEFERRED: usize,
     const CALLS: usize,
-> AppBuilder<P, Block, N, PREV, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> AppBuilder<P, Block, N, PREV, DEFERRED, CALLS, REQUESTS>
 {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
@@ -753,7 +766,7 @@ impl<
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(
         self,
-    ) -> AppBuilder<P, Present, N, ENABLED, DEFERRED, CALLS> {
+    ) -> AppBuilder<P, Present, N, ENABLED, DEFERRED, CALLS, REQUESTS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -769,21 +782,29 @@ impl<
     }
 }
 
-impl<P, const N: usize, const BLOCK_WISE: bool, const DEFERRED: usize, const CALLS: usize>
-    AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED, CALLS>
+impl<
+    P,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Bind the profile's fixed memory, with or without body pools.
     ///
-    /// Deep configuration uses [`Self::bind_storage`] / [`Self::bind_alloc`]
+    /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.
     /// Missing security configuration is rejected before storage construction.
     pub fn bind<T>(
         self,
         io: T,
-    ) -> Result<App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED, CALLS>, BuildError>
-    {
+    ) -> Result<
+        App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED, CALLS, REQUESTS>,
+        BuildError,
+    > {
         self.validate_security()?;
         let engine = EngineBuilder::new()
             .profile::<P>()
@@ -797,12 +818,12 @@ where
     /// Storage sizes, scratch and body presence are validated by the same
     /// Engine builder as fixed profiles. `P` remains the default-memory marker;
     /// the selected `S` supplies actual datagram/body dimensions and scratch.
-    /// With `alloc`, use [`Self::bind_alloc`] for one-time bounded allocation.
+    /// With `alloc`, use `Self::bind_alloc` for one-time bounded allocation.
     pub fn bind_storage<T, S: AppStorage>(
         self,
         io: T,
         storage: S,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
         self.validate_security()?;
         let c = storage.capacities();
         let engine = EngineBuilder::new()
@@ -826,8 +847,10 @@ where
         self,
         io: T,
         c: crate::storage::Capacities,
-    ) -> Result<App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED, CALLS>, BuildError>
-    {
+    ) -> Result<
+        App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED, CALLS, REQUESTS>,
+        BuildError,
+    > {
         self.validate_security()?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
@@ -862,6 +885,7 @@ where
             AppStore<P, BLOCK_WISE>,
             DEFERRED,
             CALLS,
+            REQUESTS,
         >,
         BuildError,
     > {
@@ -877,7 +901,7 @@ where
         storage: S,
         random: R,
     ) -> Result<
-        App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS>,
+        App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
         BuildError,
     > {
         let (builder, io) = self.prepare_entropy(io, random)?;
@@ -901,6 +925,7 @@ where
             crate::storage::AllocMemory,
             DEFERRED,
             CALLS,
+            REQUESTS,
         >,
         BuildError,
     > {
@@ -932,7 +957,7 @@ where
         self,
         io: T,
         engine: Engine<S>,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
         Ok(App {
             engine,
             io,
@@ -960,8 +985,22 @@ impl<
     S: AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 {
+    /// Selected OSCORE request-binding capacity, independent of Calls.
+    /// The table is absent when the `oscore` feature is disabled.
+    pub const fn security_request_capacity(&self) -> usize {
+        REQUESTS
+    }
+
+    /// Inline OSCORE field bytes, including keys, replay state, request bindings
+    /// and alignment. Zero without `oscore`. Excludes temporary stack and caller
+    /// persistence/runtime storage; allocated packet pools do not move this field.
+    pub const fn security_metadata_bytes(&self) -> usize {
+        core::mem::size_of::<oscore::Field<REQUESTS>>()
+    }
+
     /// Number of live client Calls/completions selected at build time.
     pub const fn client_capacity(&self) -> usize {
         CALLS
@@ -1035,7 +1074,7 @@ impl<
     /// requires a context. This setter retains explicit replacement support
     /// and never removes protection or enables plaintext fallback.
     ///
-    /// There is exactly one context per App, with four live request bindings
+    /// There is exactly one context per App, with `REQUESTS` live request bindings
     /// shared by in-flight requests and Observe registrations. Replacing it
     /// does not migrate live exchanges, tokens, replay state, or subscriptions;
     /// drain them first or use separate Apps for separate peers/key epochs.
@@ -1088,7 +1127,10 @@ impl<
     /// Empty ACK/RST stay unprotected (RFC 7252 reliability). AEAD
     /// failure is a silent drop.
     #[cfg(feature = "oscore")]
-    pub fn set_oscore(&mut self, ctx: crate::oscore::SecurityContext) -> &mut Self {
+    pub fn set_oscore(
+        &mut self,
+        ctx: crate::oscore::BoundedSecurityContext<REQUESTS>,
+    ) -> &mut Self {
         self.oscore = Some(ctx);
         self.oscore_checkpoint.invalidate();
         self
@@ -1097,13 +1139,15 @@ impl<
     /// Borrow the attached OSCORE context, if any.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub const fn oscore(&self) -> Option<&crate::oscore::SecurityContext> {
+    pub const fn oscore(&self) -> Option<&crate::oscore::BoundedSecurityContext<REQUESTS>> {
         self.oscore.as_ref()
     }
 
     /// Mutably borrow the attached OSCORE context.
     #[cfg(feature = "oscore")]
-    pub const fn oscore_mut(&mut self) -> Option<&mut crate::oscore::SecurityContext> {
+    pub const fn oscore_mut(
+        &mut self,
+    ) -> Option<&mut crate::oscore::BoundedSecurityContext<REQUESTS>> {
         self.oscore_checkpoint.invalidate();
         self.oscore.as_mut()
     }
@@ -1185,7 +1229,8 @@ impl<
     S: AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1627,14 +1672,21 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn poll_engine<Mem, T, const N: usize, const DEFERRED: usize, const CALLS: usize>(
+fn poll_engine<
+    Mem,
+    T,
+    const N: usize,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
     ids: &mut AppIds,
     inbox: &mut client::ClientInbox<CALLS>,
     lives: &mut client::ClientLives<CALLS>,
-    oscore: &mut oscore::Field,
+    oscore: &mut oscore::Field<REQUESTS>,
     oscore_checkpoint: &mut oscore::CheckpointState,
     mut checkpoint_commit: Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
@@ -1923,13 +1975,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_qblock_recover<Mem, T, const CALLS: usize>(
+fn send_qblock_recover<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     inbox: &mut client::ClientInbox<CALLS>,
     lives: &mut client::ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field,
+    oscore: &mut oscore::Field<REQUESTS>,
     now_ms: u64,
     recover: QBlockRecover,
     dedup_closed: &mut Option<DedupClosed>,
@@ -1999,7 +2051,10 @@ where
 
 /// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
 /// attached context, or a malformed Block / Q-Block2 value.
-fn bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field) -> bool {
+fn bad_option_request<const REQUESTS: usize>(
+    parsed: &ParsedMessage<'_>,
+    oscore: &oscore::Field<REQUESTS>,
+) -> bool {
     let mut tags = parsed.request_tag();
     let first = tags.next();
     let bad_tag = first.is_some_and(|tag| tag.len() > 8) || tags.next().is_some();
@@ -2054,14 +2109,21 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dispatch_rx<Mem, T, const N: usize, const DEFERRED: usize, const CALLS: usize>(
+fn dispatch_rx<
+    Mem,
+    T,
+    const N: usize,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     site: &Site<N>,
     inbox: &mut client::ClientInbox<CALLS>,
     lives: &mut client::ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field,
+    oscore: &mut oscore::Field<REQUESTS>,
     oscore_checkpoint: &mut oscore::CheckpointState,
     checkpoint_commit: &mut Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
@@ -2796,11 +2858,11 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn notify_engine<S, T>(
+fn notify_engine<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field,
+    oscore: &mut oscore::Field<REQUESTS>,
     now_ms: u64,
     resource: ObserveResource,
     response: &Response<'_>,
@@ -2976,11 +3038,11 @@ fn pending_has_observe_hold<S: Storage + ObserveSlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_notification<S, T>(
+fn send_notification<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field,
+    oscore: &mut oscore::Field<REQUESTS>,
     now_ms: u64,
     interest: ObserveInterest,
     response: &Response<'_>,
@@ -3072,14 +3134,14 @@ where
     Ok(())
 }
 
-fn start_notify_block2<S, T>(
+fn start_notify_block2<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
     response: &Response<'_>,
     ty: Type,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -3112,14 +3174,14 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_separate<S, T>(
+fn send_separate<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
     meta: SendResponse,
     response: &Response<'_>,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
     acknowledged: bool,
 ) -> Result<(), Error<T::Error>>
@@ -3246,14 +3308,14 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_response<S, T>(
+fn send_response<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     meta: SendResponse,
     response: &Response<'_>,
     now_ms: u64,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3428,7 +3490,7 @@ fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn start_outgoing<S, T>(
+fn start_outgoing<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
@@ -3437,7 +3499,7 @@ fn start_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     key: BlockKey,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
     allow_borrowed: bool,
 ) -> Result<(), Error<T::Error>>
@@ -3547,7 +3609,7 @@ where
 /// borrow ends during this call; only encoded TX bytes survive for replay.
 /// Observe, deferred replies and Q-Block continue to own complete snapshots.
 #[allow(clippy::too_many_arguments)]
-fn issue_borrowed_classic<S, T>(
+fn issue_borrowed_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
@@ -3555,7 +3617,7 @@ fn issue_borrowed_classic<S, T>(
     ty: Type,
     key: BlockKey,
     now_ms: u64,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3662,7 +3724,7 @@ fn retained_body_matches<S: Storage + BodySlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn continue_outgoing<S, T>(
+fn continue_outgoing<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
@@ -3671,7 +3733,7 @@ fn continue_outgoing<S, T>(
     response: &Response<'_>,
     ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3782,7 +3844,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_classic<S, T>(
+fn issue_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
@@ -3793,7 +3855,7 @@ fn issue_classic<S, T>(
     pending: Option<(u64, MessageId, u32)>,
     retain_incomplete: bool,
     replay: Option<(u64, &mut Option<DedupClosed>)>,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -3829,7 +3891,9 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    let tx = encode_issued::<S, T>(engine, meta, response, ty, mid, issued, false, oscore_ctx)?;
+    let tx = encode_issued::<S, T, REQUESTS>(
+        engine, meta, response, ty, mid, issued, false, oscore_ctx,
+    )?;
     let keep = if let Some((now_ms, closed)) = replay.filter(|_| ty == Type::Acknowledgement) {
         remember_tx_reply(
             engine,
@@ -3901,7 +3965,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_q_selection<S, T>(
+fn issue_q_selection<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
@@ -3910,7 +3974,7 @@ fn issue_q_selection<S, T>(
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3958,7 +4022,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_q_window<S, T>(
+fn issue_q_window<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
@@ -3967,7 +4031,7 @@ fn issue_q_window<S, T>(
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3999,7 +4063,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_issued<S, T>(
+fn send_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     meta: SendResponse,
@@ -4009,18 +4073,20 @@ fn send_issued<S, T>(
     issued: OutgoingBlock,
     q_block: bool,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let tx = encode_issued::<S, T>(engine, meta, response, ty, mid, issued, q_block, oscore_ctx)?;
+    let tx = encode_issued::<S, T, REQUESTS>(
+        engine, meta, response, ty, mid, issued, q_block, oscore_ctx,
+    )?;
     finish_send(engine, io, tx, meta.dest, pending)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_issued<S, T>(
+fn encode_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     meta: SendResponse,
     response: &Response<'_>,
@@ -4028,7 +4094,7 @@ fn encode_issued<S, T>(
     mid: MessageId,
     issued: OutgoingBlock,
     q_block: bool,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
 ) -> Result<SlotId, Error<T::Error>>
 where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
@@ -4093,7 +4159,7 @@ fn copy_issued<S: Storage + BodySlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_response<S: Storage + DatagramSlots, E>(
+fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
@@ -4103,7 +4169,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
     payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockOpt>,
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
@@ -4186,7 +4252,7 @@ fn encode_response<S: Storage + DatagramSlots, E>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_notification<S: Storage + DatagramSlots, E>(
+fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
@@ -4194,7 +4260,7 @@ fn encode_notification<S: Storage + DatagramSlots, E>(
     token: crate::message::Token,
     response: &Response<'_>,
     payload: &[u8],
-    oscore_ctx: &mut oscore::Field,
+    oscore_ctx: &mut oscore::Field<REQUESTS>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
@@ -4247,13 +4313,13 @@ pub(crate) fn push_opt<'a, const N: usize>(
 ///
 /// Under attached OSCORE this is OSCORE-protected. It must not fall back
 /// to plaintext.
-pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E>(
+pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     tx: SlotId,
     ty: Type,
     mid: MessageId,
     token: crate::message::Token,
-    oscore_ctx: &oscore::Field,
+    oscore_ctx: &oscore::Field<REQUESTS>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     let response = Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
@@ -4731,7 +4797,7 @@ where
                 .title("Unauthorized")
                 .max_age(0),
             now_ms,
-            &mut oscore::empty_field(),
+            &mut oscore::empty_field::<4>(),
             dedup_closed,
         )
     }

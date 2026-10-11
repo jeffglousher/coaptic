@@ -766,10 +766,11 @@ pub struct Outgoing<
     S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
     const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
+    const REQUESTS: usize = 4,
 > where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -802,7 +803,8 @@ impl<
     S: super::AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -814,7 +816,7 @@ where
     pub fn get(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Get, path)
     }
 
@@ -823,7 +825,7 @@ where
     pub fn put(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Put, path)
     }
 
@@ -832,7 +834,7 @@ where
     pub fn post(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Post, path)
     }
 
@@ -841,7 +843,7 @@ where
     pub fn delete(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Delete, path)
     }
 
@@ -851,7 +853,7 @@ where
     pub fn fetch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Fetch, path)
     }
 
@@ -860,7 +862,7 @@ where
     pub fn patch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Patch, path)
     }
 
@@ -869,7 +871,7 @@ where
     pub fn ipatch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::IPatch, path)
     }
 
@@ -879,7 +881,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -916,7 +918,8 @@ impl<
     S: super::AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1098,7 +1101,8 @@ impl<
     S: super::AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1107,7 +1111,7 @@ where
     pub fn to(
         self,
         peer: Endpoint,
-    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS> {
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -1357,7 +1361,8 @@ impl<
     S: super::AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1595,7 +1600,8 @@ impl<
     S: super::AppStorage,
     const DEFERRED: usize,
     const CALLS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS>
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
@@ -1725,11 +1731,11 @@ fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, En
     })?
 }
 
-fn send_client<Mem, T>(
+fn send_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     spec: ClientSend<'_>,
 ) -> Result<Call, Error<T::Error>>
@@ -1816,11 +1822,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_client_block1<Mem, T>(
+fn send_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1911,13 +1917,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn complete_client<Mem, T, const CALLS: usize>(
+pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     response_state: super::oscore::ResponseState,
     full_responses: bool,
     now_ms: u64,
@@ -2295,11 +2301,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_assembled<Mem, const CALLS: usize>(
+fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     rx: SlotId,
@@ -2427,12 +2433,12 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block2_continue<Mem, T, const CALLS: usize>(
+fn send_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2464,12 +2470,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_q_block2_continue<Mem, T, const CALLS: usize>(
+fn send_q_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2501,13 +2507,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize>(
+pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     recover: crate::storage::QBlockRecover,
 ) -> Result<bool, Error<T::Error>>
@@ -2557,12 +2563,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_followup<Mem, T, const CALLS: usize>(
+fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     token: Token,
     peer: Endpoint,
@@ -2691,12 +2697,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reissue_qblock1_missing<Mem, T, const CALLS: usize>(
+fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2756,13 +2762,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize>(
+pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     mid: MessageId,
     peer: Endpoint,
@@ -2830,12 +2836,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn continue_block1_tx<Mem, T, const CALLS: usize>(
+fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     token: Token,
     block1: Option<BlockValue>,
@@ -2931,11 +2937,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_block1<Mem, T>(
+fn issue_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -2978,11 +2984,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_q_block1_window<Mem, T>(
+fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     first_ty: Type,
@@ -3045,11 +3051,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block1_issued<Mem, T>(
+fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -3182,9 +3188,9 @@ where
 // A send can fail after earlier Q-Block datagrams went out. No Call is
 // returned, so retire all local state owned by this request. Never rewind
 // OSCORE sequence numbers: a transport error does not prove non-delivery.
-fn abandon_send<Mem>(
+fn abandon_send<Mem, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     token: Token,
     peer: Endpoint,
 ) where
@@ -3305,11 +3311,11 @@ fn accept_client_observe<Mem, const CALLS: usize>(
 }
 
 /// Retransmission give-up completes the call rather than silently losing it.
-pub(crate) fn give_up_client<Mem, const CALLS: usize>(
+pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     tx: SlotId,
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
@@ -3352,11 +3358,11 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
 
 // Retire a timed-out Q download in the same poll that reclaims its body.
 // The inbox must not keep a partial SlotId that another transfer can reuse.
-pub(crate) fn qblock_give_up<Mem, const CALLS: usize>(
+pub(crate) fn qblock_give_up<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     key: ExchangeKey,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -3376,11 +3382,11 @@ pub(crate) fn qblock_give_up<Mem, const CALLS: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fail_call<Mem, const CALLS: usize>(
+fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     call: Call,
     failure: CallFailure,
     release_pending: bool,
@@ -3440,11 +3446,11 @@ fn fail_call<Mem, const CALLS: usize>(
     }
 }
 
-pub(crate) fn complete_client_rst<Mem, const CALLS: usize>(
+pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     message_id: MessageId,
     peer: Endpoint,
 ) where
@@ -3467,11 +3473,11 @@ pub(crate) fn complete_client_rst<Mem, const CALLS: usize>(
     }
 }
 
-pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize>(
+pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS>,
     lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
