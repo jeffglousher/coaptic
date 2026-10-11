@@ -109,6 +109,56 @@ impl<C> CheckedClock<C> {
     }
 }
 
+/// Own a datagram adapter and a stateful cryptographic entropy callback.
+///
+/// Construct through `bind_with_entropy` on an App builder. The callback may
+/// borrow a hardware RNG; it and the transport remain caller-selected values,
+/// without allocation, global state or a platform SDK. Fill every requested byte
+/// securely or return false. Calls must finish in bounded time and not re-enter
+/// App. App's existing token and jitter sampling limits still apply.
+///
+/// Place this wrapper outside transport decorators: a decorator which does not
+/// forward [`crate::storage::DatagramIo::fill_random`] refuses entropy by default.
+/// This source supplies App identities and jitter, not EDHOC or key generation.
+pub struct WithEntropy<T, R> {
+    io: T,
+    random: R,
+}
+
+impl<T, R> WithEntropy<T, R> {
+    /// Pair caller-owned values. This alone does not select App's entropy source.
+    pub const fn new(io: T, random: R) -> Self {
+        Self { io, random }
+    }
+    /// Borrow the wrapped transport.
+    pub const fn transport(&self) -> &T {
+        &self.io
+    }
+    /// Borrow the wrapped transport mutably.
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.io
+    }
+    /// Recover both caller-owned values after consuming the wrapper.
+    pub fn into_parts(self) -> (T, R) {
+        (self.io, self.random)
+    }
+}
+
+impl<T: crate::storage::DatagramIo, R: FnMut(&mut [u8]) -> bool> crate::storage::DatagramIo
+    for WithEntropy<T, R>
+{
+    type Error = T::Error;
+    fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, crate::Endpoint)>, Self::Error> {
+        self.io.recv(bytes)
+    }
+    fn send(&mut self, to: crate::Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.io.send(to, bytes)
+    }
+    fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
+        (self.random)(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,55 +217,5 @@ mod tests {
             })
         );
         assert_eq!(clock.now_ms(), Ok(u64::MAX));
-    }
-}
-
-/// Own a datagram adapter and a stateful cryptographic entropy callback.
-///
-/// Construct through `bind_with_entropy` on an App builder. The callback may
-/// borrow a hardware RNG; it and the transport remain caller-selected values,
-/// without allocation, global state or a platform SDK. Fill every requested byte
-/// securely or return false. Calls must finish in bounded time and not re-enter
-/// App. App's existing token and jitter sampling limits still apply.
-///
-/// Place this wrapper outside transport decorators: a decorator which does not
-/// forward [`crate::storage::DatagramIo::fill_random`] refuses entropy by default.
-/// This source supplies App identities and jitter, not EDHOC or key generation.
-pub struct WithEntropy<T, R> {
-    io: T,
-    random: R,
-}
-
-impl<T, R> WithEntropy<T, R> {
-    /// Pair caller-owned values. This alone does not select App's entropy source.
-    pub const fn new(io: T, random: R) -> Self {
-        Self { io, random }
-    }
-    /// Borrow the wrapped transport.
-    pub const fn transport(&self) -> &T {
-        &self.io
-    }
-    /// Borrow the wrapped transport mutably.
-    pub fn transport_mut(&mut self) -> &mut T {
-        &mut self.io
-    }
-    /// Recover both caller-owned values after consuming the wrapper.
-    pub fn into_parts(self) -> (T, R) {
-        (self.io, self.random)
-    }
-}
-
-impl<T: crate::storage::DatagramIo, R: FnMut(&mut [u8]) -> bool> crate::storage::DatagramIo
-    for WithEntropy<T, R>
-{
-    type Error = T::Error;
-    fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, crate::Endpoint)>, Self::Error> {
-        self.io.recv(bytes)
-    }
-    fn send(&mut self, to: crate::Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        self.io.send(to, bytes)
-    }
-    fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
-        (self.random)(bytes)
     }
 }
