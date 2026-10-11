@@ -8,6 +8,19 @@ use super::endpoint::Endpoint;
 use super::slot::SlotId;
 use crate::message::{MessageId, Transmission};
 
+/// Refusal to atomically replace one retained pending CON.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingReplaceError {
+    /// Slot, endpoint, MID or retry state no longer matches the expected view.
+    Stale,
+    /// Replacement is not a valid nonempty CON with a new MID and the same Token.
+    InvalidMessage,
+    /// The occupied slot is pinned or the replacement exceeds its capacity.
+    Slot(super::SlotError),
+    /// A custom storage backend has not implemented atomic replacement.
+    Unsupported,
+}
+
 /// Occupied TX slot waiting for an empty ACK or RST.
 ///
 /// Stored as sidecar on the outgoing datagram slot. Capacity is the TX
@@ -161,6 +174,30 @@ pub enum Retransmit {
 /// capacity). Capacity is the TX Datagram Pool: a slot must already be
 /// occupied. [`super::Memory`] and `AllocMemory` (with `alloc`) implement this.
 pub trait PendingCons {
+    /// Replace the encoded CON in its existing TX slot, preserving its RTO.
+    ///
+    /// `expected` must equal the complete current pending view, including retry
+    /// state. Pass the view returned by [`Retransmit::Due`] immediately after a
+    /// timeout. This is an exact snapshot, not a generation handle: caller-owned
+    /// slot/MID reuse must not recreate an old matching snapshot.
+    /// The staged datagram must be a nonempty CON with a different MID and the
+    /// original Token. Refusal preserves all bytes, length and sidecars.
+    /// No slot is acquired: full TX occupancy does not prevent replacement.
+    ///
+    /// This does not send, encrypt, update Observe/body ownership, or reserve
+    /// MIDs. The caller must select a safe new MID and finish staging before
+    /// calling. The old MID stops matching ACK/RST here; bounded superseded-ACK
+    /// interest policy belongs to the caller. This alone does not implement
+    /// RFC 7641 notification supersession. Custom backends default to refusal.
+    fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, PendingReplaceError> {
+        let _ = (expected, bytes);
+        Err(PendingReplaceError::Unsupported)
+    }
+
     /// Mark occupied TX `id` as pending and start RTO.
     ///
     /// `now_ms` is the caller clock (no OS time in the core). `jitter_ms`
@@ -193,6 +230,44 @@ pub trait PendingCons {
     /// [`Retransmit::Due`], schedules the next timeout (exponential
     /// backoff). On [`Retransmit::GiveUp`], clears pending. Does not send.
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit>;
+}
+
+pub(crate) fn validate_replacement(
+    expected: PendingCon,
+    current: Option<PendingCon>,
+    original: Option<&[u8]>,
+    bytes: &[u8],
+    capacity: usize,
+    pinned: bool,
+) -> Result<PendingCon, PendingReplaceError> {
+    if current != Some(expected) {
+        return Err(PendingReplaceError::Stale);
+    }
+    if pinned {
+        return Err(PendingReplaceError::Slot(super::SlotError::Pinned));
+    }
+    if bytes.len() > capacity {
+        return Err(PendingReplaceError::Slot(
+            super::SlotError::LengthExceedsSlot,
+        ));
+    }
+    let old = crate::message::decode(original.ok_or(PendingReplaceError::Stale)?)
+        .map_err(|_| PendingReplaceError::InvalidMessage)?;
+    let new = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    if old.ty() != crate::message::Type::Confirmable
+        || old.code().is_empty()
+        || old.message_id() != expected.message_id()
+        || new.ty() != crate::message::Type::Confirmable
+        || new.code().is_empty()
+        || new.message_id() == expected.message_id()
+        || new.token() != old.token()
+    {
+        return Err(PendingReplaceError::InvalidMessage);
+    }
+    Ok(
+        PendingCon::new(new.message_id(), expected.endpoint(), expected.tx_slot())
+            .with_rto(expected.rto()),
+    )
 }
 
 /// MID + RTO stored on one TX slot. Endpoint stays on the existing sidecar.

@@ -333,6 +333,11 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
 
 /// Byte and sidecar access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
 pub(crate) trait DatagramBytes {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError>;
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
@@ -354,6 +359,35 @@ pub(crate) trait DatagramBytes {
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError> {
+        let id = expected.tx_slot();
+        let current = self
+            .pending_mid(id)
+            .zip(self.endpoint(id))
+            .zip(self.pending_rto(id))
+            .map(|((mid, endpoint), rto)| super::PendingCon::new(mid, endpoint, id).with_rto(rto));
+        let replacement = super::pending::validate_replacement(
+            expected,
+            current,
+            self.payload(id),
+            bytes,
+            BYTES,
+            self.occ.is_pinned(id),
+        )?;
+        // All refusal checks precede this infallible commit under exclusive access.
+        self.bytes[id.index()][..bytes.len()].copy_from_slice(bytes);
+        self.lens[id.index()] = bytes.len();
+        self.pending[id.index()] = Some(PendingMark::new(
+            replacement.message_id(),
+            replacement.rto(),
+        ));
+        Ok(replacement)
+    }
+
     fn payload(&self, id: SlotId) -> Option<&[u8]> {
         DatagramPool::payload(self, id)
     }

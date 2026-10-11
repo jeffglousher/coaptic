@@ -67,7 +67,7 @@ pub use io::UdpSocketIo;
 pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use metrics::Metrics;
-pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
+pub use pending::{PendingCon, PendingCons, PendingReplaceError, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool, DatagramScratch};
 pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
