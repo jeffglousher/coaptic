@@ -469,6 +469,8 @@ pub struct ObserveInterest {
     lifetime: Option<ObserveLifetime>,
     confirm_due_ms: Option<u64>,
     notify_hold: Option<ObserveNotifyHold>,
+    superseded: [MessageId; crate::message::Transmission::MAX_RETRANSMIT as usize],
+    superseded_len: u8,
     #[cfg(feature = "oscore")]
     oscore: Option<crate::oscore::RequestRef>,
 }
@@ -489,6 +491,8 @@ impl ObserveInterest {
             lifetime: None,
             confirm_due_ms: None,
             notify_hold: None,
+            superseded: [MessageId::new(0); crate::message::Transmission::MAX_RETRANSMIT as usize],
+            superseded_len: 0,
             #[cfg(feature = "oscore")]
             oscore: None,
         }
@@ -682,6 +686,7 @@ impl ObserveInterest {
         if self.key.is_client() {
             return;
         }
+        self.superseded_len = 0;
         if confirmable {
             // A previous representation's Max-Age must not end CON delivery.
             self.lifetime = None;
@@ -700,6 +705,35 @@ impl ObserveInterest {
     /// Clear the NSTART / NON-rate hold. Does not drop the row.
     pub fn clear_notify_hold(&mut self) {
         self.notify_hold = None;
+        self.superseded_len = 0;
+    }
+
+    /// Prior CON MIDs retained only during the current supersession chain.
+    /// Old ACKs do not complete or extend the current delivery. Exact-endpoint
+    /// RSTs can cancel it until current ACK, cancellation, or give-up.
+    #[must_use]
+    pub fn superseded_con_mids(&self) -> &[MessageId] {
+        &self.superseded[..usize::from(self.superseded_len)]
+    }
+
+    pub(crate) fn supersede_con(mut self, now_ms: u64, mid: MessageId) -> Option<Self> {
+        let old = self.notify_hold?.con_mid()?;
+        if !self.pending
+            || self.deleted
+            || self.key.is_client()
+            || usize::from(self.superseded_len) == self.superseded.len()
+            || mid == old
+            || self.superseded_con_mids().contains(&mid)
+        {
+            return None;
+        }
+        self.take_due()?;
+        self.superseded[usize::from(self.superseded_len)] = old;
+        self.superseded_len += 1;
+        self.notify_hold = Some(ObserveNotifyHold::con(mid));
+        self.lifetime = None;
+        self.confirm_due_ms = Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
+        Some(self)
     }
 
     /// Surface and clear a due lifetime. Only CON-wait expiry clears pending
@@ -717,6 +751,7 @@ impl ObserveInterest {
         if matches!(life, ObserveLifetime::Unacked { .. }) {
             self.pending = false;
             self.notify_hold = None;
+            self.superseded_len = 0;
         }
         Some(life)
     }
@@ -764,6 +799,33 @@ impl From<ObserveKey> for ObserveInterest {
             ..Self::new(key.token(), key.endpoint())
         }
     }
+}
+
+pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
+    storage: &S,
+    pending: super::PendingCon,
+    original: ObserveInterest,
+    replacement: ObserveInterest,
+    bytes: &[u8],
+) -> Result<SlotId, super::PendingReplaceError> {
+    use super::PendingReplaceError;
+    let id = storage
+        .lookup_observe(original.key())
+        .ok_or(PendingReplaceError::Stale)?;
+    if storage.observe_interest(id) != Some(original)
+        || original.endpoint() != pending.endpoint()
+        || original.notify_hold().and_then(|h| h.con_mid()) != Some(pending.message_id())
+        || replacement.key() != original.key()
+    {
+        return Err(PendingReplaceError::Stale);
+    }
+    let parsed = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    if replacement.notify_hold().and_then(|h| h.con_mid()) != Some(parsed.message_id())
+        || parsed.token() != original.token()
+    {
+        return Err(PendingReplaceError::InvalidMessage);
+    }
+    Ok(id)
 }
 
 /// Typed insert / lookup / remove / take on an Observe Interest Table.

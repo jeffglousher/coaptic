@@ -5284,3 +5284,93 @@ fn seeded_body_backends_match_results_state_and_reclamation() {
         "successful admissions: {successes:?}"
     );
 }
+
+#[test]
+fn supersession_history_refuses_overflow_without_mutating_the_original() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut row = ObserveInterest::new(crate::message::Token::from_checked(&[1]), peer);
+    row.record_notify(0, crate::message::MessageId::new(1), true);
+    for n in 0..crate::message::Transmission::MAX_RETRANSMIT {
+        row.mark_due();
+        row = row
+            .supersede_con(
+                u64::from(n),
+                crate::message::MessageId::new(u16::from(n) + 2),
+            )
+            .unwrap();
+    }
+    row.mark_due();
+    let before = row;
+    assert!(
+        row.supersede_con(10, crate::message::MessageId::new(20))
+            .is_none()
+    );
+    assert_eq!(row, before);
+    assert_eq!(row.superseded_con_mids().len(), 4);
+    row.clear_notify_hold();
+    assert!(row.superseded_con_mids().is_empty());
+}
+
+#[test]
+fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
+    use super::{ObserveSlots, PendingCons, PendingReplaceError};
+    use crate::message::{MessageId, Token};
+    struct Custom {
+        untouched: u8,
+    }
+    impl ObserveSlots for Custom {
+        fn insert_observe(&mut self, _: ObserveInterest) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_observe(&self, _: ObserveKey) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn remove_observe(&mut self, _: ObserveKey) -> bool {
+            panic!("unexpected mutation")
+        }
+        fn take_observe(&mut self, _: ObserveKey) -> Option<ObserveInterest> {
+            panic!("unexpected mutation")
+        }
+        fn observe_interest(&self, _: SlotId) -> Option<ObserveInterest> {
+            panic!("unexpected access")
+        }
+        fn set_observe_interest(&mut self, _: SlotId, _: ObserveInterest) -> Result<(), SlotError> {
+            panic!("unexpected mutation")
+        }
+    }
+    impl PendingCons for Custom {
+        fn record_pending_con(
+            &mut self,
+            _: SlotId,
+            _: Endpoint,
+            _: MessageId,
+            _: u64,
+            _: u32,
+        ) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_pending_con(&self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn take_pending_con(&mut self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn pending_con(&self, _: SlotId) -> Option<PendingCon> {
+            panic!("unexpected access")
+        }
+        fn poll_retransmit(&mut self, _: u64) -> Option<Retransmit> {
+            panic!("unexpected mutation")
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut pool = DatagramPool::<1, 16>::new();
+    let slot = pool.acquire().unwrap();
+    let pending = PendingCon::new(MessageId::new(1), peer, slot);
+    let row = ObserveInterest::new(Token::from_checked(&[1]), peer);
+    let mut storage = Custom { untouched: 17 };
+    assert_eq!(
+        storage.replace_observe_con(pending, row, row, &[0x40, 69, 0, 2]),
+        Err(PendingReplaceError::Unsupported)
+    );
+    assert_eq!(storage.untouched, 17);
+}
