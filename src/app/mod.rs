@@ -2211,17 +2211,22 @@ where
         if parsed.is_empty_ack() {
             let _ = engine.ack_observe_con(parsed.message_id(), peer);
         } else {
+            // Delayed RST: retire the exact current packet before detaching its
+            // relation. A pinned packet refuses with both owners intact.
+            if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer) {
+                if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
+                    if let Some(tx) = engine.lookup_pending_con(mid, peer) {
+                        if let Err(error) = engine.release_tx(tx) {
+                            let _ = engine.release_rx(rx);
+                            return Err(error.into());
+                        }
+                    }
+                }
+            }
             // RST identifies a server notification by MID and endpoint. Its
             // request reference belongs to the removed server interest;
             // outgoing client bindings may independently use the same Token.
             if let Some(interest) = engine.reject_observe_notify(parsed.message_id(), peer) {
-                // A delayed RST can identify a superseded CON while a newer one
-                // is still pending. Cancel that exact current chain as well.
-                if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
-                    if let Some(tx) = engine.take_pending_con(mid, peer) {
-                        engine.release_tx(tx)?;
-                    }
-                }
                 release_observe_response_body(engine, interest);
             }
         }

@@ -888,17 +888,25 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         endpoint: Endpoint,
     ) -> Option<ObserveInterest> {
         let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint).or_else(|| {
-            (0..self.storage.capacities().observe_entries).find_map(|index| {
-                let id = SlotId::from_index(index);
-                let row = self.storage.observe_interest(id)?;
-                (!row.key().is_client()
-                    && row.endpoint() == endpoint
-                    && row.superseded_con_mids().contains(&message_id))
-                .then_some(id)
-            })
+            self.superseded_observe_notify(message_id, endpoint)
+                .and_then(|row| self.lookup_observe(row.key()))
         })?;
         let interest = self.storage.observe_interest(id)?;
         self.take_observe(interest.key())
+    }
+
+    pub(crate) fn superseded_observe_notify(
+        &self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        (0..self.storage.capacities().observe_entries).find_map(|index| {
+            let row = self.storage.observe_interest(SlotId::from_index(index))?;
+            (!row.key().is_client()
+                && row.endpoint() == endpoint
+                && row.superseded_con_mids().contains(&message_id))
+            .then_some(row)
+        })
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.

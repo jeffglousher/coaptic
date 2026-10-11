@@ -890,3 +890,65 @@ fn protected_pinned_replacement_and_cancel_refuse_atomically() {
 fn allocated_protected_pinned_replacement_and_cancel_refuse_atomically() {
     pinned_retains_row(allocated(true), true);
 }
+
+fn pinned_delayed_reset<S: AppStorage>(mut server: Server<S>, protected: bool) {
+    let mut client = client(protected);
+    no_alloc(|| {
+        let (_, key) = registered(&mut server, &mut client);
+        let first = pending(&server, key);
+        VERSION.with(|v| v.set(2));
+        server.signal(&["value"]);
+        let due = first.rto().next_timeout_ms();
+        server.poll(due).unwrap();
+        let current = pending(&server, key);
+        let row_id = server.engine().lookup_observe(key).unwrap();
+        let row = server.engine().observe_interest(row_id).unwrap();
+        assert_eq!(row.superseded_con_mids(), &[first.message_id()]);
+        let bytes = server.transport().last;
+        core::mem::forget(server.engine_mut().access_tx(current.tx_slot()).unwrap());
+        control(&mut server, first.message_id(), true, OTHER, due + 1);
+        assert_eq!(server.engine().observe_interest(row_id), Some(row));
+        assert_eq!(pending(&server, key), current);
+        server.transport_mut().incoming = Some(control_frame(first.message_id(), true, OWNER));
+        assert_eq!(
+            server.poll(due + 2),
+            Err(coaptic::Error::Slot(coaptic::storage::SlotError::Pinned))
+        );
+        assert_eq!(server.engine().observe_interest(row_id), Some(row));
+        assert_eq!(pending(&server, key), current);
+        assert_eq!(
+            coaptic::storage::DatagramSlots::tx_payload(
+                server.engine().storage(),
+                current.tx_slot()
+            ),
+            Some(&bytes.bytes[..bytes.len])
+        );
+        let mut slots = [None; 4];
+        for slot in &mut slots {
+            *slot = Some(server.engine_mut().acquire_rx().unwrap());
+        }
+        assert!(server.engine_mut().acquire_rx().is_none());
+        for slot in slots.into_iter().flatten() {
+            server.engine_mut().release_rx(slot).unwrap();
+        }
+    });
+}
+#[test]
+fn fixed_pinned_delayed_reset_preserves_chain_and_releases_rx() {
+    pinned_delayed_reset(fixed(false), false);
+}
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_pinned_delayed_reset_preserves_chain_and_releases_rx() {
+    pinned_delayed_reset(allocated(false), false);
+}
+#[cfg(feature = "oscore")]
+#[test]
+fn protected_pinned_delayed_reset_preserves_chain_and_releases_rx() {
+    pinned_delayed_reset(fixed(true), true);
+}
+#[cfg(all(feature = "alloc", feature = "oscore"))]
+#[test]
+fn allocated_protected_pinned_delayed_reset_preserves_chain_and_releases_rx() {
+    pinned_delayed_reset(allocated(true), true);
+}
