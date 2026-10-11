@@ -3157,7 +3157,13 @@ where
                 && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
             if paced {
                 if let Some(q) = q_ack {
-                    if q.num() < transfer.window_base() || q.szx() != transfer.szx() || !q.more() {
+                    if transfer
+                        .window_base()
+                        .checked_add(u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) - 1)
+                        != Some(q.num())
+                        || q.szx() != transfer.szx()
+                        || !q.more()
+                    {
                         return Ok(());
                     }
                 } else if transfer.window_mask() != 0 {

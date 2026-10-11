@@ -336,10 +336,23 @@ fn non_q_pacing_allocated_both_peers_exact_budget() {
 }
 
 fn response_to(frame: Frame, protected: bool, code: Code, qnum: Option<u32>) -> Frame {
-    use coaptic::message::{BlockValue, Message, MessageId, Opt, OptionsBuilder, Type, encode};
+    response_with_q(
+        frame,
+        protected,
+        code,
+        qnum.map(|num| coaptic::message::BlockValue::new(num, true, 6).unwrap()),
+    )
+}
+fn response_with_q(
+    frame: Frame,
+    protected: bool,
+    code: Code,
+    q: Option<coaptic::message::BlockValue>,
+) -> Frame {
+    use coaptic::message::{Message, MessageId, Opt, OptionsBuilder, Type, encode};
     let outer = decode(&frame.bytes[..frame.len]).unwrap();
     let mut opts = OptionsBuilder::<1>::new();
-    let q = qnum.map(|num| BlockValue::new(num, true, 6).unwrap().encode());
+    let q = q.map(|value| value.encode());
     if let Some(q) = q.as_ref() {
         opts.push(Opt::q_block1(q)).unwrap();
     }
@@ -812,4 +825,47 @@ fn non_q_pacing_clock_saturation_never_grants_same_tick_send_credit() {
             assert_eq!(client.transport_mut().len, 0);
         }
     });
+}
+
+#[test]
+fn non_q_pacing_invalid_continue_cannot_retire_or_credit_current_set() {
+    use coaptic::message::BlockValue;
+    for protected in [false, cfg!(feature = "oscore")] {
+        for q in [
+            Some(BlockValue::new(19, true, 6).unwrap()),
+            Some(BlockValue::new(8, true, 6).unwrap()),
+            None,
+            Some(BlockValue::new(9, true, 5).unwrap()),
+            Some(BlockValue::new(9, false, 6).unwrap()),
+        ] {
+            let mut client = fixed();
+            let mut server = fixed();
+            protect(&mut client, &mut server, protected);
+            without_allocating(|| {
+                let call = begin(&mut client, 0);
+                let mut last = Frame::default();
+                for _ in 0..10 {
+                    last = client.transport_mut().take().unwrap();
+                }
+                client.transport_mut().incoming =
+                    Some(response_with_q(last, protected, Code::CONTINUE, q));
+                client.poll(1000).unwrap();
+                assert_eq!(client.transport_mut().len, 0);
+                assert!(client.take_response(call).is_none());
+                client.poll(1999).unwrap();
+                assert_eq!(client.transport_mut().len, 0);
+                client.poll(2000).unwrap();
+                assert_eq!(client.transport_mut().len, 10);
+                for _ in 0..10 {
+                    last = client.transport_mut().take().unwrap();
+                }
+                client.transport_mut().incoming =
+                    Some(response_to(last, protected, Code::CONTINUE, Some(19)));
+                client.poll(2001).unwrap();
+                assert_eq!(client.transport_mut().len, 10);
+                assert!(client.take_response(call).is_none());
+                assert!(client.cancel(call));
+            });
+        }
+    }
 }
