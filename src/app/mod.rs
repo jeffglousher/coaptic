@@ -1450,7 +1450,8 @@ where
     /// are separate, even when the peer and Token match an incoming observer.
     ///
     /// Honors notification NSTART. CON when the row
-    /// [`ObserveInterest::must_confirm`]; otherwise NON. Returns how many
+    /// [`ObserveInterest::must_confirm`]; otherwise NON. Use
+    /// [`Self::notify_confirmable`] to request CON explicitly. Returns how many
     /// notifications were sent. Domain data stays in `response` — `App`
     /// does not hold it. Successful notifications must keep the initial
     /// Content-Format, including its absence. A mismatch sends 4.06 without
@@ -1483,6 +1484,41 @@ where
             now_ms,
             resource,
             &response,
+            false,
+        )
+    }
+
+    /// Send the current representation using Confirmable notifications.
+    ///
+    /// Selects CON for this call without changing [`Self::notify`]'s adaptive
+    /// default or bypassing per-endpoint NSTART. Returns the number sent;
+    /// observers blocked by an outstanding notification are skipped, with no
+    /// representation queued. Retry those observers after their hold clears.
+    ///
+    /// An admitted notification that fails to send retains its CON requirement
+    /// when retried through [`Self::poll`] and the route's [`ObserveSource`].
+    /// As with [`Self::notify`], the response itself is not retained; a retry
+    /// samples the source's current representation. A successful CON send
+    /// starts the normal 24-hour confirmation interval for later adaptive
+    /// notifications. Matching ACK/RST and retransmission rules are unchanged.
+    /// All other payload, Content-Format and terminal-response rules are those
+    /// of [`Self::notify`].
+    pub fn notify_confirmable(
+        &mut self,
+        now_ms: u64,
+        path: &[&str],
+        response: Response<'static>,
+    ) -> Result<usize, Error<T::Error>> {
+        let resource = self.site.observe_resource(path);
+        notify_engine(
+            &mut self.engine,
+            &mut self.io,
+            &mut self.ids,
+            &mut self.oscore,
+            now_ms,
+            resource,
+            &response,
+            true,
         )
     }
 
@@ -2666,6 +2702,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots>(
     response
 }
 
+#[allow(clippy::too_many_arguments)]
 fn notify_engine<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -2674,6 +2711,7 @@ fn notify_engine<S, T>(
     now_ms: u64,
     resource: ObserveResource,
     response: &Response<'_>,
+    confirmable: bool,
 ) -> Result<usize, Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
@@ -2700,7 +2738,7 @@ where
             Metrics::inc(&mut engine.metrics_mut().nstart_reject);
             continue;
         }
-        let Some(seq) = engine.next_observe_seq(id) else {
+        let Some(seq) = engine.next_observe_seq_with_confirmation(id, confirmable) else {
             continue;
         };
         let Some(interest) = engine.observe_interest(id) else {

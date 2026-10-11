@@ -627,20 +627,27 @@ impl ObserveInterest {
 
     /// Absolute millisecond time when a CON notify becomes mandatory, if any.
     ///
-    /// Set when the first NON is recorded, or reset by each CON. See
+    /// Set when the first NON is recorded, reset by each CON, or zero when
+    /// the caller explicitly requires the next notification to use CON. See
     /// `knowledge/rfcs/rfc7641.txt` §4.5.
     #[must_use]
     pub const fn confirm_due_ms(self) -> Option<u64> {
         self.confirm_due_ms
     }
 
-    /// Whether `now_ms` is at or past the 24-hour NON-confirm deadline.
+    /// Whether confirmation is due by time or explicitly required by the caller.
     #[must_use]
     pub const fn must_confirm(self, now_ms: u64) -> bool {
         match self.confirm_due_ms {
             Some(due) => now_ms >= due,
             None => false,
         }
+    }
+
+    /// Keep an explicit CON choice until a successful CON resets its deadline.
+    /// Zero is due even at the first caller clock tick; no arithmetic can wrap.
+    pub(crate) fn require_confirmation(&mut self) {
+        self.confirm_due_ms = Some(0);
     }
 
     /// Colocated NSTART / NON-rate hold, if set.
