@@ -288,6 +288,14 @@ GET replies contain the selected response without Observe registration because
 notification callbacks do not retain those selections. Clients can still observe
 these resources on an external server that supports them.
 
+To explicitly cancel a client observation, repeat its method, path, options and
+payload with `.deregister_call(call)`. This sends Observe=1 using the subscription's
+Token. `app.cancel(call)` only releases local state and sends no cancellation.
+A failed cancellation leaves remote state uncertain. The companion
+[protected cancellation campaign](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/oscore_observe_cancel.py)
+checks authenticated cancellation, an update/readback during a bounded quiet
+interval, and fresh registration against the independent libcoap peer on loopback.
+
 Deferred queryless GET observations can deliver a large initial response using
 one retained body slot and an ETag. Later blocks use that immutable snapshot;
 notifications wait until delivery finishes or its deadline expires. A queryless

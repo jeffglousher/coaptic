@@ -121,8 +121,8 @@ jobs:
 
   validation:
     name: Companion validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@16cfbe61cb455ea589529a924798ce8fcac3ee6e
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@cd95763e136298c0d3ebc2ef3f136139a5078dc3
     with:
-      suite_revision: 16cfbe61cb455ea589529a924798ce8fcac3ee6e
+      suite_revision: cd95763e136298c0d3ebc2ef3f136139a5078dc3
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
