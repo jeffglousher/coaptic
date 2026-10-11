@@ -2704,6 +2704,13 @@ where
         };
         match Request::from_decoded(parsed, peer, body) {
             Ok(request) => {
+                let retained = match assembled {
+                    InboundBody::Complete(id) => engine
+                        .rx_body_transfer(id)
+                        .is_some_and(|t| t.if_none_match()),
+                    _ => false,
+                };
+                let request = request.with_retained_if_none_match(retained);
                 let plan = ObservePlan::from_request(site, &request);
                 let response = match dispatch {
                     Some(dispatch) => dispatch(request, deferred_handle),
@@ -5087,7 +5094,7 @@ pub enum Error<E> {
     /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
     Path,
     /// The payload requires fragmentation, but App cannot retain its ETag
-    /// or If-None-Match semantics. Nothing has been sent. Use a payload
+    /// or Q-Block1 If-None-Match semantics. Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,
     /// A nonzero No-Response mask is unsupported by App's upload handshake.

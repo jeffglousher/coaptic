@@ -128,6 +128,7 @@ pub struct Request<'a> {
     peer: Endpoint,
     method: Option<Method>,
     body: Option<&'a [u8]>,
+    retained_if_none_match: bool,
 }
 
 impl<'a> Request<'a> {
@@ -144,7 +145,13 @@ impl<'a> Request<'a> {
             peer,
             method,
             body,
+            retained_if_none_match: false,
         })
+    }
+
+    pub(crate) fn with_retained_if_none_match(mut self, retained: bool) -> Self {
+        self.retained_if_none_match = retained;
+        self
     }
 
     /// Request method, if `code` is a known class-0 method.
@@ -285,16 +292,25 @@ impl<'a> Request<'a> {
         self.message.if_match()
     }
 
-    /// Whether If-None-Match is present.
+    /// Effective If-None-Match, including NUM0 metadata on a complete classic
+    /// Block1 body. [`Self::message`] still exposes only the current datagram.
     #[must_use]
     pub fn if_none_match(&self) -> bool {
-        self.message.if_none_match()
+        self.retained_if_none_match || self.message.if_none_match()
     }
 
-    /// Classify If-Match / If-None-Match. The library does not invent 4.12.
+    /// Classify effective If-Match / If-None-Match against the current state.
+    /// The handler checks this atomically with its effect; the library does not
+    /// invent 4.12. Complete classic Block1 includes the retained NUM0 condition.
     #[must_use]
     pub fn precondition(&self, exists: bool, etag: Option<&[u8]>) -> Precondition {
-        self.message.precondition(exists, etag)
+        if self.retained_if_none_match && exists {
+            return Precondition::FailedIfNoneMatch;
+        }
+        match self.message.precondition(exists, etag) {
+            Precondition::Unconditional if self.retained_if_none_match => Precondition::Satisfied,
+            result => result,
+        }
     }
 
     /// Block1, if present.
@@ -339,7 +355,7 @@ impl<'a> Request<'a> {
         self.message.no_response()
     }
 
-    /// Full decoded datagram. Advanced: remaining options, Block2, …
+    /// Current decoded datagram, without retained NUM0 conditions. Advanced: remaining options, Block2, …
     #[must_use]
     pub const fn message(&self) -> ParsedMessage<'a> {
         self.message
