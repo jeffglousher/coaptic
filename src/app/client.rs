@@ -227,6 +227,14 @@ pub(super) struct ReplyMeta {
 }
 
 impl ReplyMeta {
+    // Canonically encoded code, Token, MID and selected options. Capture time
+    // and copied payload bookkeeping are not representation-header identity.
+    pub(super) fn same_header(&self, other: &Self) -> bool {
+        self.peer == other.peer
+            && self.header[..usize::from(self.header_len)]
+                == other.header[..usize::from(other.header_len)]
+    }
+
     pub(super) fn from_parsed(
         parsed: &ParsedMessage<'_>,
         peer: Endpoint,
