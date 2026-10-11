@@ -5086,8 +5086,8 @@ pub enum Error<E> {
     Block(BlockTransferError),
     /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
     Path,
-    /// The payload requires fragmentation, but App cannot retain its ETag,
-    /// If-Match or If-None-Match semantics. Nothing has been sent. Use a payload
+    /// The payload requires fragmentation, but App cannot retain its ETag
+    /// or If-None-Match semantics. Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,
     /// A nonzero No-Response mask is unsupported by App's upload handshake.
