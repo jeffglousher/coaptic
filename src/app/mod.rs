@@ -4244,7 +4244,7 @@ where
     }
 
     let mid = ids.next_for(engine, io, now_ms)?;
-    if meta.block2.is_some() && response.code().is_success() {
+    if meta.block2.is_some() && response.code().is_success() && response.observe_seq().is_some() {
         return start_outgoing(
             engine,
             io,

@@ -1174,3 +1174,34 @@ fn deferred_observe_requested_block2_invalid_selectors_refuse_then_recover() {
         assert_eq!(b.szx(), 0);
     }
 }
+
+#[test]
+fn ordinary_separate_block2_without_body_storage_preserves_small_response() {
+    let mut s = App::with_resources(Resources::<Buffers>::new().routes::<1>())
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .route("obs", coaptic::get(handler))
+        .bind(Io::default())
+        .unwrap();
+    let block = BlockValue::new(0, false, 0).unwrap().encode();
+    let mut incoming = Frame::default();
+    incoming.len = encode(
+        &Message::new(Type::Confirmable, Code::GET, MessageId::new(10))
+            .with_token(key().token())
+            .with_options(&[Opt::uri_path("obs"), Opt::block2(&block)]),
+        &mut incoming.bytes,
+    )
+    .unwrap();
+    s.transport_mut().incoming = Some(incoming);
+    without_allocating(|| s.poll_with(0, |_, _| response(b"ordinary").separate())).unwrap();
+    let ack = s.transport_mut().take().unwrap();
+    assert!(decode(&ack.bytes[..ack.len]).unwrap().is_empty_ack());
+    let f = s.transport_mut().take().unwrap();
+    let m = decode(&f.bytes[..f.len]).unwrap();
+    assert_eq!(m.ty(), Type::Confirmable);
+    assert_eq!(m.code(), Code::CONTENT);
+    assert_eq!(m.payload(), b"ordinary");
+    assert!(m.observe().is_none());
+    assert!(m.block2().is_none());
+    assert!(s.transport_mut().take().is_none());
+}
