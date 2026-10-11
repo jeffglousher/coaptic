@@ -6584,6 +6584,9 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
                 .no_response(NoResponse::new(mask));
             if qblock {
                 request = request.q_block1();
+                if mask == 2 {
+                    request = request.non();
+                }
             }
             assert_eq!(request.send(0), Err(Error::NoResponseUploadUnsupported));
             assert_eq!(app.transport().len, 0);
@@ -6630,6 +6633,7 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
             .to(peer)
             .payload(b"small")
             .q_block1()
+            .non()
             .no_response(NoResponse::new(2))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)

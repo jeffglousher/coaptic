@@ -1179,7 +1179,9 @@ where
     /// Continue responses still advance the upload. Suppressed errors leave the
     /// outcome unknown; deadline or cancellation bounds the local wait without
     /// proving success. A peer may still return a selected error response.
-    /// Q-Block1 also permits mask 16 (5.xx only), preserving Continue and 4.08
+    /// Q-Block1 permits mask 16 (5.xx only) for CON and NON. CON also permits
+    /// masks 2 and 18: transport ACKs preserve upload progress while final 2.xx
+    /// responses may be suppressed. NON keeps Continue; all modes keep 4.08
     /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
     /// Observe registration remain explicit App boundaries.
     #[must_use]
@@ -1419,10 +1421,10 @@ where
         if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
             return Err(Error::ObserveMethodUnsupported);
         }
-        if self
-            .no_response
-            .is_some_and(|value| !matches!(value.get(), 0 | 16))
-            && self.q_block1
+        if self.no_response.is_some_and(|value| {
+            !matches!(value.get(), 0 | 16)
+                && !(self.ty == Type::Confirmable && matches!(value.get(), 2 | 18))
+        }) && self.q_block1
         {
             return Err(Error::NoResponseUploadUnsupported);
         }
@@ -1808,13 +1810,16 @@ where
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             // Classic Block1 requires 2.xx Continue. This bounded App combination
             // supports only the defined error-class bits; undefined bits are an
-            // API boundary, not a wire-validity judgment. Q permits only 0/16 earlier.
-            if spec.no_response.is_some_and(|value| {
-                value.get()
-                    & !(crate::message::NoResponse::SUPPRESS_4
-                        | crate::message::NoResponse::SUPPRESS_5)
-                    != 0
-            }) {
+            // API boundary, not a wire-validity judgment. CON Q uploads use
+            // transport ACKs, so their admitted 2/18 masks do not hide progress.
+            if !spec.q_block1
+                && spec.no_response.is_some_and(|value| {
+                    value.get()
+                        & !(crate::message::NoResponse::SUPPRESS_4
+                            | crate::message::NoResponse::SUPPRESS_5)
+                        != 0
+                })
+            {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
