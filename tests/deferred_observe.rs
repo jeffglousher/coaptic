@@ -580,7 +580,7 @@ fn deferred_observe_capacity_fallback_and_unsupported_registration_recover() {
             (2, Code::GET, false, true, "obs"),
             (3, Code::GET, false, false, "missing"),
         ] {
-            let b = BlockValue::new(0, false, 0).unwrap().encode();
+            let b = BlockValue::new(1, false, 0).unwrap().encode();
             let zero = coaptic::message::EncodedUint::new(0);
             let mut opts = coaptic::message::OptionsBuilder::<4>::new();
             opts.push(Opt::observe(&zero)).unwrap();

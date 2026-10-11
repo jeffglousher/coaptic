@@ -724,7 +724,7 @@ fn deferred_observe_block2_exact_con_retry_and_smaller_followup_preserve_body() 
     }
 }
 #[test]
-fn deferred_observe_block2_explicit_block_requests_stay_refused_then_recover() {
+fn deferred_observe_block2_nonzero_and_q_requests_stay_refused_then_recover() {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut s = fixed();
         let mut p = Peer::new(&mut s, protected);
@@ -738,7 +738,7 @@ fn deferred_observe_block2_explicit_block_requests_stay_refused_then_recover() {
             let options = [
                 Opt::new(coaptic::message::OptionNumber::OBSERVE, &[]),
                 Opt::uri_path("obs"),
-                Opt::new(number, &[]),
+                Opt::new(number, &[0x10]),
             ];
             s.transport_mut().incoming = Some(
                 p.encode(
@@ -805,5 +805,372 @@ fn deferred_observe_block2_unregistered_staged_body_cancel_replace_and_pin() {
             assert!(s.engine_mut().lookup_observe(other).is_some());
             assert!(s.engine_mut().lookup_observe(key()).is_none());
         }
+    }
+}
+
+fn preferred_request(p: &mut Peer, mid: u16, szx: u8) -> Frame {
+    let block = BlockValue::new(0, false, szx).unwrap().encode();
+    p.encode(
+        &Message::new(Type::Confirmable, Code::GET, MessageId::new(mid))
+            .with_token(key().token())
+            .with_options(&[
+                Opt::new(coaptic::message::OptionNumber::OBSERVE, &[]),
+                Opt::uri_path("obs"),
+                Opt::block2(&block),
+            ]),
+    )
+}
+
+fn preferred_begin<S: AppStorage>(
+    s: &mut Server<S>,
+    p: &mut Peer,
+    mid: u16,
+    szx: u8,
+    now: u64,
+) -> coaptic::app::DeferredReply {
+    s.transport_mut().incoming = Some(preferred_request(p, mid, szx));
+    let mut handle = None;
+    without_allocating(|| {
+        s.poll_with(now, |_, h| {
+            handle = h;
+            Response::deferred()
+        })
+    })
+    .unwrap();
+    let f = s.transport_mut().take().unwrap();
+    assert!(decode(&f.bytes[..f.len]).unwrap().is_empty_ack());
+    handle.expect("NUM0 Block2 Observe admits bounded work")
+}
+fn preferred_cycle<S: AppStorage>(mut s: Server<S>, protected: bool) {
+    let mut p = Peer::new(&mut s, protected);
+    let h = preferred_begin(&mut s, &mut p, 90, 1, 0);
+    without_allocating(|| s.complete(h, large(), 1)).unwrap();
+    let (mid, b) = first(&mut s, &p);
+    assert_eq!(b.szx(), 1);
+    s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+    s.poll(2).unwrap();
+    finish(&mut s, &mut p, 1, 10);
+    without_allocating(|| s.notify(100, &["obs"], large())).unwrap();
+    let (_, b) = first(&mut s, &p);
+    assert_eq!(b.szx(), 1);
+    // Later blocks retain the complete original representation.
+    finish_notification(&mut s, &mut p, 1, 110);
+}
+#[test]
+fn deferred_observe_requested_block2_preserves_preference() {
+    preferred_cycle(fixed(), false);
+}
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_observe_requested_block2_protected_preserves_preference() {
+    preferred_cycle(fixed(), true);
+}
+#[cfg(feature = "alloc")]
+#[test]
+fn deferred_observe_requested_block2_allocated_preserves_preference() {
+    let resources = Resources::<Buffers>::new()
+        .routes::<1>()
+        .block_wise::<true>()
+        .deferred::<2>();
+    let bytes = resources
+        .allocated(usize::MAX)
+        .required_heap_bytes()
+        .unwrap();
+    let resources = Resources::<Buffers>::new()
+        .routes::<1>()
+        .block_wise::<true>()
+        .deferred::<2>();
+    let s = App::with_resources(resources.allocated(bytes))
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .route("obs", coaptic::get(handler).observe(source))
+        .bind(Io::default())
+        .unwrap();
+    preferred_cycle(s, false);
+}
+#[test]
+fn observe_requested_block2_tiny_initial_retains_later_limit() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for deferred in [false, true] {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            let mid = if deferred {
+                let h = preferred_begin(&mut s, &mut p, 10, 0, 0);
+                s.complete(h, response(b"tiny"), 1).unwrap();
+                let f = p.open(s.transport_mut().take().unwrap());
+                let m = decode(&f.bytes[..f.len]).unwrap();
+                assert_eq!(m.payload(), b"tiny");
+                assert_eq!(m.block2().unwrap().unwrap().szx(), 0);
+                m.message_id()
+            } else {
+                s.transport_mut().incoming = Some(preferred_request(&mut p, 10, 0));
+                s.poll(0).unwrap();
+                let f = p.open(s.transport_mut().take().unwrap());
+                let m = decode(&f.bytes[..f.len]).unwrap();
+                assert_eq!(m.payload(), b"sync");
+                assert_eq!(m.block2().unwrap().unwrap().szx(), 0);
+                m.message_id()
+            };
+            if deferred {
+                s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                s.poll(2).unwrap();
+            }
+            s.notify(3, &["obs"], large()).unwrap();
+            let (_, b) = first(&mut s, &p);
+            assert_eq!(b.szx(), 0);
+            finish_notification(&mut s, &mut p, 0, 10);
+        }
+    }
+}
+#[test]
+fn observe_requested_block2_separate_initial_respects_limit() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut s = fixed();
+        let mut p = Peer::new(&mut s, protected);
+        s.transport_mut().incoming = Some(preferred_request(&mut p, 10, 0));
+        s.poll_with(0, |_, _| response(&LARGE[..100]).etag(b"v1").separate())
+            .unwrap();
+        let ack = s.transport_mut().take().unwrap();
+        assert!(decode(&ack.bytes[..ack.len]).unwrap().is_empty_ack());
+        let f = p.open(s.transport_mut().take().unwrap());
+        let m = decode(&f.bytes[..f.len]).unwrap();
+        assert_eq!(m.ty(), Type::Confirmable);
+        assert!(m.observe().is_some());
+        assert_eq!(m.payload(), &LARGE[..16]);
+        assert_eq!(m.block2().unwrap().unwrap().szx(), 0);
+    }
+}
+
+fn finish_notification<S: AppStorage>(s: &mut Server<S>, p: &mut Peer, szx: u8, start: u64) {
+    let size = 1usize << (szx + 4);
+    let count = LARGE.len().div_ceil(size);
+    let observing = s.engine_mut().lookup_observe(key()).is_some();
+    for num in 1..count {
+        s.transport_mut().incoming = Some(follow(
+            p,
+            (start + 200 + num as u64) as u16,
+            BlockValue::new(num as u32, false, szx).unwrap(),
+            "obs",
+        ));
+        without_allocating(|| s.poll_with(start + num as u64, |_, _| large())).unwrap();
+        let f = p.open(s.transport_mut().take().unwrap());
+        let m = decode(&f.bytes[..f.len]).unwrap();
+        assert_eq!(m.code(), Code::CONTENT);
+        assert!(m.observe().is_none());
+        let b = m.block2().unwrap().unwrap();
+        assert_eq!(b.num(), num as u32);
+        assert_eq!(b.szx(), szx);
+        let end = ((num + 1) * size).min(LARGE.len());
+        assert_eq!(m.payload(), &LARGE[num * size..end]);
+        assert_eq!(b.more(), end < LARGE.len());
+        assert_eq!(m.etag().next(), Some(&b"v1"[..]));
+        assert_eq!(m.content_format(), Some(Ok(ContentFormat::TEXT_PLAIN)));
+        assert_eq!(m.max_age(), Some(Ok(17)));
+        assert_eq!(
+            s.engine_mut().lookup_observe(key()).is_some(),
+            observing,
+            "ordinary follow-up preserves observation"
+        );
+    }
+    assert!(body(s).is_none());
+}
+
+#[test]
+fn observe_requested_block2_actual_encoding_shrinks_without_losing_limit() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for separate in [false, true] {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            s.transport_mut().incoming = Some(preferred_request(&mut p, 30, 6));
+            s.poll_with(0, |_, _| {
+                if separate {
+                    large().separate()
+                } else {
+                    large()
+                }
+            })
+            .unwrap();
+            if separate {
+                s.transport_mut().take().unwrap();
+            }
+            let (mid, b) = first(&mut s, &p);
+            assert!(b.szx() < 6);
+            if separate {
+                s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                s.poll(1).unwrap();
+            }
+            finish_notification(&mut s, &mut p, b.szx(), 10);
+            s.notify(100, &["obs"], large()).unwrap();
+            let (_, b) = first(&mut s, &p);
+            assert!(b.szx() < 6);
+            finish_notification(&mut s, &mut p, b.szx(), 110);
+        }
+    }
+}
+#[test]
+fn deferred_observe_requested_block2_refusal_retry_keeps_immutable_snapshot() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut s = fixed();
+        let mut p = Peer::new(&mut s, protected);
+        let h = preferred_begin(&mut s, &mut p, 30, 0, 0);
+        assert!(s.complete(h, response(&LARGE), 1).is_err());
+        assert!(s.transport_mut().take().is_none());
+        assert!(s.engine_mut().lookup_observe(key()).is_none());
+        let a = s.engine_mut().acquire_tx_body().unwrap();
+        let b = s.engine_mut().acquire_tx_body().unwrap();
+        assert!(s.complete(h, large(), 2).is_err());
+        assert!(s.transport_mut().take().is_none());
+        s.engine_mut().release_tx_body(a).unwrap();
+        s.engine_mut().release_tx_body(b).unwrap();
+        s.transport_mut().fail_send = true;
+        assert!(s.complete(h, large(), 3).is_err());
+        let (old, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 0);
+        s.transport_mut().fail_send = false;
+        for (i, response) in [
+            large().etag(b"wrong"),
+            large().max_age(99),
+            response(b"changed").etag(b"v1"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(s.complete(h, response, 4 + i as u64).is_err());
+            assert!(s.transport_mut().take().is_none());
+        }
+        s.complete(h, large(), 8).unwrap();
+        let (mid, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 0);
+        assert_ne!(mid, old);
+        s.transport_mut().incoming = Some(control(old, Type::Reset));
+        s.poll(9).unwrap();
+        assert!(s.engine_mut().lookup_observe(key()).is_some());
+        s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+        s.poll(10).unwrap();
+        finish(&mut s, &mut p, 0, 20);
+        s.notify(100, &["obs"], large()).unwrap();
+        let (_, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 0);
+    }
+}
+#[test]
+fn observe_requested_block2_source_updates_and_exact_retry_preserve_cap() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut s = App::with_resources(
+            Resources::<Buffers>::new()
+                .routes::<1>()
+                .block_wise::<true>()
+                .deferred::<2>(),
+        )
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .route("obs", coaptic::get(handler).observe(large))
+        .bind(Io::default())
+        .unwrap();
+        let mut p = Peer::new(&mut s, protected);
+        let h = preferred_begin(&mut s, &mut p, 30, 0, 0);
+        s.complete(h, response(b"tiny"), 1).unwrap();
+        let f = p.open(s.transport_mut().take().unwrap());
+        let m = decode(&f.bytes[..f.len]).unwrap();
+        s.transport_mut().incoming = Some(control(m.message_id(), Type::Acknowledgement));
+        s.poll(2).unwrap();
+        s.notify_confirmable(3, &["obs"], response(b"prior"))
+            .unwrap();
+        let wire = s.transport_mut().take().unwrap();
+        let opened = p.open(wire);
+        let mid = decode(&opened.bytes[..opened.len]).unwrap().message_id();
+        s.signal(&["obs"]);
+        assert!(matches!(
+            s.poll(3004),
+            Err(coaptic::app::Error::ObserveSupersessionUnsupported)
+        ));
+        let retry = s.transport_mut().take().unwrap();
+        assert_eq!(&retry.bytes[..retry.len], &wire.bytes[..wire.len]);
+        assert!(s.transport_mut().take().is_none());
+        s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+        s.poll(3005).unwrap();
+        s.poll(3006).unwrap();
+        let (_, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 0);
+        finish_notification(&mut s, &mut p, 0, 3010);
+    }
+}
+#[test]
+fn observe_requested_block2_replacement_updates_only_current_owner_limit() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut s = fixed_lifetime(100);
+        let mut p = Peer::new(&mut s, protected);
+        let h = preferred_begin(&mut s, &mut p, 20, 0, 0);
+        s.complete(h, large(), 1).unwrap();
+        let (mid, _) = first(&mut s, &p);
+        s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+        s.poll(2).unwrap();
+        let fresh = preferred_begin(&mut s, &mut p, 21, 2, 50);
+        assert!(s.complete(h, large(), 51).is_err());
+        s.complete(fresh, large(), 52).unwrap();
+        let (mid, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 2);
+        s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+        s.poll(53).unwrap();
+        s.poll(101).unwrap();
+        assert!(body(&mut s).is_some());
+        finish(&mut s, &mut p, 2, 110);
+        s.notify(130, &["obs"], large()).unwrap();
+        let (_, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 2);
+        finish_notification(&mut s, &mut p, 2, 131);
+        let h = begin(&mut s, &mut p, Type::Confirmable, 80, 5000);
+        s.complete(h, response(b"tiny"), 5001).unwrap();
+        let f = p.open(s.transport_mut().take().unwrap());
+        let m = decode(&f.bytes[..f.len]).unwrap();
+        s.transport_mut().incoming = Some(control(m.message_id(), Type::Acknowledgement));
+        s.poll(5002).unwrap();
+        s.notify(5003, &["obs"], response(&LARGE[..100])).unwrap();
+        let f = p.open(s.transport_mut().take().unwrap());
+        let m = decode(&f.bytes[..f.len]).unwrap();
+        assert_eq!(m.payload(), &LARGE[..100]);
+        assert!(
+            m.block2().is_none(),
+            "renewal without preference clears prior maximum"
+        );
+    }
+}
+
+#[test]
+fn deferred_observe_requested_block2_invalid_selectors_refuse_then_recover() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut s = fixed();
+        let mut p = Peer::new(&mut s, protected);
+        for (i, value) in [&[0x10][..], &[0x08][..], &[0x07][..], &[0, 0, 0, 0][..]]
+            .into_iter()
+            .enumerate()
+        {
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::Confirmable, Code::GET, MessageId::new(200 + i as u16))
+                        .with_token(key().token())
+                        .with_options(&[
+                            Opt::new(coaptic::message::OptionNumber::OBSERVE, &[]),
+                            Opt::uri_path("obs"),
+                            Opt::new(coaptic::message::OptionNumber::BLOCK2, value),
+                        ]),
+                ),
+            );
+            s.poll_with(i as u64, |_, h| {
+                assert!(h.is_none(), "invalid selector index {i}");
+                Response::deferred()
+            })
+            .unwrap();
+            let f = p.open(s.transport_mut().take().unwrap());
+            let m = decode(&f.bytes[..f.len]).unwrap();
+            assert!(!m.code().is_success());
+            assert!(m.observe().is_none());
+            assert!(s.engine_mut().lookup_observe(key()).is_none());
+            assert!(body(&mut s).is_none());
+        }
+        let h = preferred_begin(&mut s, &mut p, 220, 0, 10);
+        s.complete(h, large(), 11).unwrap();
+        let (_, b) = first(&mut s, &p);
+        assert_eq!(b.szx(), 0);
     }
 }
