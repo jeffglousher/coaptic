@@ -1542,6 +1542,33 @@ impl BlockTransfer {
         self.outgoing_range(num)
     }
 
+    /// Open the next NON Q-Block1 payload set after caller-enforced pacing.
+    ///
+    /// This records no peer acknowledgement. The complete outgoing body stays
+    /// available for missing-block reissues. The caller enforces RFC 9177
+    /// section 7.2's delay; only a fully issued, non-final set can advance.
+    pub fn pace_q_block1(&mut self) -> Result<(), BlockTransferError> {
+        if self.role != BlockRole::OutgoingQBlock1 {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        if self.complete {
+            return Err(BlockTransferError::AlreadyComplete);
+        }
+        let q = self
+            .q
+            .as_mut()
+            .ok_or(BlockTransferError::IdentityMismatch)?;
+        if q.mask != (1u16 << Self::MAX_PAYLOADS) - 1 {
+            return Err(BlockTransferError::Gap);
+        }
+        q.base = q
+            .base
+            .checked_add(u32::from(Self::MAX_PAYLOADS))
+            .ok_or(BlockTransferError::Overflow)?;
+        q.mask = 0;
+        Ok(())
+    }
+
     /// Advance the outgoing Q-Block window after a peer window ACK.
     ///
     /// An individual empty ACK (code 0.00) is not a window ACK. A caller
@@ -1786,6 +1813,14 @@ pub(crate) trait BodyOps {
         role: BlockRole,
         max_payload: usize,
     ) -> Result<OutgoingBlock, BlockTransferError>;
+    /// Open a fully issued NON Q1 set without acknowledging it.
+    fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        let mut transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+        transfer.pace_q_block1()?;
+        self.set_transfer(id, transfer)?;
+        Ok(())
+    }
+
     fn ack_outgoing(
         &mut self,
         id: SlotId,
@@ -2293,6 +2328,29 @@ mod tests {
         .expect("gap fill");
         assert!(t.is_complete());
         assert_eq!(t.filled(), expected);
+    }
+
+    #[test]
+    fn outgoing_q_block1_pacing_preserves_unacknowledged_reissues() {
+        let mut t = BlockTransfer::outgoing_q_block1(key(), 168, 0, 4096).unwrap();
+        assert_eq!(t.pace_q_block1(), Err(BlockTransferError::Gap));
+        for _ in 0..BlockTransfer::MAX_PAYLOADS {
+            t.issue_q_outgoing().unwrap();
+        }
+        let before = t;
+        t.pace_q_block1().unwrap();
+        assert_eq!(t.window_base(), 10);
+        assert_eq!(t.next_num(), before.next_num());
+        assert_eq!(t.filled(), before.filled());
+        assert!(!t.is_complete());
+        assert_eq!(
+            t.reissue_q_outgoing(0).unwrap(),
+            before.reissue_q_outgoing(0).unwrap()
+        );
+        assert_eq!(t.pace_q_block1(), Err(BlockTransferError::Gap));
+        assert_eq!(t.issue_q_outgoing().unwrap().0.num(), 10);
+        assert_eq!(t.pace_q_block1(), Err(BlockTransferError::AlreadyComplete));
+        assert!(t.reissue_q_outgoing(0).is_ok());
     }
 
     #[test]

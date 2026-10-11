@@ -1863,6 +1863,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.next_q_block1(id)
     }
 
+    /// Open a fully issued NON Q-Block1 set after caller-enforced pacing.
+    /// This is not an acknowledgement; body bytes remain available for recovery.
+    #[inline]
+    pub fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.storage.pace_q_block1(id)
+    }
+
     /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
     ///
     /// `num` is the Q-Block1 NUM from the peer (RFC 9177 §4.3: all blocks

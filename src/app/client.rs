@@ -565,6 +565,8 @@ struct LiveCall {
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
+    /// Next NON Q1 set may start at this instant; zero means disarmed.
+    q_pace_ms: u64,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
@@ -1197,9 +1199,10 @@ where
     /// Continue responses still advance the upload. Suppressed errors leave the
     /// outcome unknown; deadline or cancellation bounds the local wait without
     /// proving success. A peer may still return a selected error response.
-    /// Q-Block1 permits mask 16 (5.xx only) for CON and NON. CON also permits
-    /// masks 2 and 18: transport ACKs preserve upload progress while final 2.xx
-    /// responses may be suppressed. NON keeps Continue; all modes keep 4.08
+    /// Q-Block1 permits masks 2, 16 and 18 for CON and NON. CON uses transport
+    /// ACKs; NON masks 2/18 pace each new ten-payload set after a sampled 2..=3s
+    /// delay unless Continue arrives first. Poll sends at most one timed set,
+    /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
     /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
     /// Observe registration remain explicit App boundaries.
     #[must_use]
@@ -1439,10 +1442,10 @@ where
         if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
             return Err(Error::ObserveMethodUnsupported);
         }
-        if self.no_response.is_some_and(|value| {
-            !matches!(value.get(), 0 | 16)
-                && !(self.ty == Type::Confirmable && matches!(value.get(), 2 | 18))
-        }) && self.q_block1
+        if self
+            .no_response
+            .is_some_and(|value| !matches!(value.get(), 0 | 2 | 16 | 18))
+            && self.q_block1
         {
             return Err(Error::NoResponseUploadUnsupported);
         }
@@ -1631,12 +1634,20 @@ where
             observed_format: prior.and_then(|live| live.observed_format),
             request_identity,
             deadline_ms,
+            q_pace_ms: 0,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
                 Transmission::EXCHANGE_LIFETIME_MS
             })),
         });
+        arm_q_pacing(
+            &self.app.engine,
+            &mut self.app.lives,
+            &self.app.ids,
+            now_ms,
+            call,
+        );
         Ok(call)
     }
 }
@@ -2812,7 +2823,7 @@ where
 fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
@@ -2873,7 +2884,121 @@ where
             None,
         )?;
     }
+    if count != 0 {
+        arm_q_pacing(engine, lives, ids, now_ms, live.call);
+    }
     Ok(())
+}
+
+// Only success-suppressed NON uploads use timer progression. The last packet's
+// bounded unbiased 0..=1000ms jitter sample also schedules its next payload set.
+fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
+    engine: &Engine<Mem>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &AppIds,
+    now_ms: u64,
+    call: Call,
+) {
+    let body = upload_body(engine, lives.upload_key(call));
+    let ready = body
+        .and_then(|body| engine.tx_body_transfer(body))
+        .is_some_and(|t| {
+            t.role() == BlockRole::OutgoingQBlock1
+                && !t.is_complete()
+                && t.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1
+        });
+    if let Some(live) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|live| live.call == call)
+    {
+        live.q_pace_ms = if ready
+            && live.ty == Type::NonConfirmable
+            && live
+                .no_response
+                .is_some_and(|mask| matches!(mask.get(), 2 | 18))
+        {
+            now_ms
+                .checked_add(u64::from(
+                    crate::message::QBlockTransmission::NON_TIMEOUT_MS + ids.jitter(),
+                ))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+    }
+}
+
+/// At most one due payload set per poll, oldest deadline first. Missed time does
+/// not accumulate send credit. Ingress runs first so valid Continue/recovery can
+/// disarm or rearm this opportunity before selection.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pace_qblock1<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    let Some(live) = lives
+        .rows
+        .iter()
+        .flatten()
+        .filter(|live| live.q_pace_ms != 0 && live.q_pace_ms <= now_ms)
+        .min_by_key(|live| live.q_pace_ms)
+        .copied()
+    else {
+        return Ok(());
+    };
+    // Clear before attempting: every success rearms from now, every failure
+    // retires the Call without changing the uncertainty of remote effects.
+    if let Some(row) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|row| row.call == live.call)
+    {
+        row.q_pace_ms = 0;
+    }
+    let Some(body) = upload_body(engine, lives.upload_key(live.call)) else {
+        return Ok(());
+    };
+    let result = (|| {
+        engine.pace_q_block1(body).map_err(Error::Block)?;
+        continue_block1_tx(
+            engine,
+            io,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            live.call.token(),
+            None,
+            None,
+            live.call.peer(),
+            body,
+        )
+    })();
+    if result.is_err() {
+        abandon_send(engine, oscore, live.call.token(), live.call.peer());
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            live.call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2954,7 +3079,7 @@ where
 fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
@@ -3028,6 +3153,19 @@ where
             )
         }
         BlockRole::OutgoingQBlock1 => {
+            let paced = ty == Type::NonConfirmable
+                && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
+            if paced {
+                if let Some(q) = q_ack {
+                    if q.num() < transfer.window_base() || q.szx() != transfer.szx() || !q.more() {
+                        return Ok(());
+                    }
+                } else if transfer.window_mask() != 0 {
+                    // A response without the current set's valid Continue must
+                    // neither grant send credit nor postpone its pacing timer.
+                    return Ok(());
+                }
+            }
             if let Some(q) = q_ack {
                 engine.ack_q_block1(body, q.num()).map_err(Error::Block)?;
             }
@@ -3054,7 +3192,9 @@ where
                 None,
                 Some((token, peer)),
             )
-            .map(|_| ())
+            .map(|_| ())?;
+            arm_q_pacing(engine, lives, ids, now_ms, Call::new(token, peer));
+            Ok(())
         }
         _ => Ok(()),
     }
