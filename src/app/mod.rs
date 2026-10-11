@@ -1781,8 +1781,8 @@ where
     /// Deferred rows selected by [`AppBuilder::deferred`] are bounded
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
-    /// zero, or initial Q-Block2 has more than ten selectors. An observable queryless GET
-    /// registration without Block2/Q-Block2 may defer one datagram; other Observe
+    /// zero, or initial Q-Block2 has more than ten selectors. An observable
+    /// queryless GET registration without Block2/Q-Block2 may defer one datagram; other Observe
     /// requests need synchronous dispatch. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
@@ -1935,8 +1935,8 @@ where
     /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
-    /// An observable queryless GET registration without Block2/Q-Block2 can defer its initial
-    /// response. Completion must fit the actual datagram capacity, including
+    /// An observable queryless GET registration without Block2/Q-Block2 can defer
+    /// its initial response. Completion must fit the actual datagram capacity, including
     /// OSCORE overhead; it never falls back to a block-wise Observe response.
     /// If the bounded Observe table is full, success is an ordinary response
     /// without Observe. Registration is installed before sending. An ambiguous
@@ -1954,8 +1954,8 @@ where
     /// registration that has not attempted output does not own an earlier live
     /// relation. Direct mutation through `engine_mut` remains an advanced caller
     /// ownership boundary: do not replace App-owned relations while a deferred
-    /// handle is live. Deferred FETCH, query-bearing GET Observe and block-wise Observe
-    /// remain unsupported. Ordinary deferred queries without Observe remain available.
+    /// handle is live. Deferred FETCH, query-bearing GET Observe and block-wise
+    /// Observe remain unsupported. Ordinary deferred queries without Observe remain available.
     pub fn complete(
         &mut self,
         handle: DeferredReply,

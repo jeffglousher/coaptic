@@ -1,4 +1,4 @@
-//! App FETCH responses preserve selection while declining unsupported Observe ownership.
+//! App declines observations whose request selection is not retained.
 use coaptic::app::AppStorage;
 use coaptic::message::ContentFormat;
 use coaptic::message::decode;
