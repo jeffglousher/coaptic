@@ -232,6 +232,16 @@ struct DeferredRow {
     q_selectors: DeferredQSelectors,
     snapshot: Option<(SlotId, client::ReplyMeta)>,
     completed: bool,
+    observe: Option<DeferredObserve>,
+}
+
+#[derive(Clone, Copy)]
+struct DeferredObserve {
+    resource: ObserveResource,
+    // Sequence and format of this handle's transport-ambiguous attempt.
+    attempted: Option<(u32, Option<ContentFormat>)>,
+    // Only the latest send that reached the transport grants empty-RST authority.
+    failed_mid: Option<(MessageId, u64)>,
 }
 // Owned wire values only; the representation key retains its separate 512-byte bound.
 #[derive(Clone, Copy)]
@@ -365,12 +375,61 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
                 })
             });
             if now_ms >= value.deadline_ms || (value.completed && !body_live) {
+                if retire_deferred_observe(engine, value).is_err() {
+                    continue;
+                }
                 if body_live {
                     let _ = engine.release_tx_body(body.expect("live body"));
                 }
                 *row = None;
             }
         }
+    }
+    fn blocks_observe(&self, key: ObserveKey) -> bool {
+        self.rows.iter().flatten().any(|row| {
+            row.observe.is_some() && ObserveKey::new(row.meta.token, row.meta.dest) == key
+        })
+    }
+    fn supersede_observe<S: AppStorage>(
+        &mut self,
+        engine: &mut Engine<S>,
+        key: ObserveKey,
+    ) -> Result<(), crate::storage::SlotError> {
+        for row in &mut self.rows {
+            if let Some(value) = *row {
+                if value.observe.is_some()
+                    && ObserveKey::new(value.meta.token, value.meta.dest) == key
+                {
+                    retire_deferred_observe(engine, value)?;
+                    *row = None;
+                }
+            }
+        }
+        Ok(())
+    }
+    fn reject_observe_attempt<S: AppStorage>(
+        &mut self,
+        engine: &mut Engine<S>,
+        mid: MessageId,
+        endpoint: Endpoint,
+        now_ms: u64,
+    ) -> Result<(), SlotError> {
+        for row in &mut self.rows {
+            if let Some(value) = *row {
+                if value.meta.dest == endpoint
+                    && value.observe.is_some_and(|observe| {
+                        observe
+                            .failed_mid
+                            .is_some_and(|(sent, expires)| sent == mid && now_ms < expires)
+                    })
+                    && deferred_observe_owner(engine, value).is_some()
+                {
+                    retire_deferred_observe(engine, value)?;
+                    *row = None;
+                }
+            }
+        }
+        Ok(())
     }
     fn candidate<T: DatagramIo>(
         &mut self,
@@ -394,6 +453,7 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         deadline_ms: u64,
         selection: DeferredSelection,
         q_selectors: DeferredQSelectors,
+        observe: Option<DeferredObserve>,
     ) {
         let row = self
             .rows
@@ -408,8 +468,205 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             q_selectors,
             snapshot: None,
             completed: false,
+            observe,
         });
     }
+}
+
+// Deferred authority is matched to its attempted relation, not a reused slot.
+// Raw Engine replacement remains the advanced caller's ownership boundary.
+fn deferred_observe_owner<S: AppStorage>(
+    engine: &Engine<S>,
+    row: DeferredRow,
+) -> Option<ObserveInterest> {
+    let observe = row.observe?;
+    let (seq, format) = observe.attempted?;
+    let interest = engine
+        .lookup_observe(ObserveKey::new(row.meta.token, row.meta.dest))
+        .and_then(|id| engine.observe_interest(id))?;
+    if interest.resource() != observe.resource
+        || interest.seq() != seq
+        || interest.content_format() != format
+    {
+        return None;
+    }
+    #[cfg(feature = "oscore")]
+    if oscore::request_from_interest(interest) != row.meta.oscore {
+        return None;
+    }
+    Some(interest)
+}
+fn retire_deferred_observe<S: AppStorage>(
+    engine: &mut Engine<S>,
+    row: DeferredRow,
+) -> Result<(), crate::storage::SlotError> {
+    let Some(interest) = deferred_observe_owner(engine, row) else {
+        return Ok(());
+    };
+    if let Some(body) =
+        response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
+    {
+        if engine.tx_body_is_pinned(body) {
+            return Err(crate::storage::SlotError::Pinned);
+        }
+    }
+    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
+        if let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint()) {
+            engine.release_tx(tx)?;
+        }
+    }
+    engine.take_observe(interest.key());
+    release_observe_response_body(engine, interest);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS>,
+    now_ms: u64,
+    row: &mut DeferredRow,
+    response: &Response<'_>,
+) -> Result<(), Error<T::Error>> {
+    let observe = row.observe.expect("Observe completion");
+    if observe.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
+        return Err(Error::DeferredUnknown);
+    }
+    if response.code().is_success()
+        && observe
+            .attempted
+            .is_some_and(|(_, format)| format != response.format())
+    {
+        return Err(Error::Response(ResponseError::DeferredObserveFormat));
+    }
+    if observe_endpoint_held(engine, row.meta.dest, now_ms) >= usize::from(Transmission::NSTART) {
+        return Err(Error::Saturated);
+    }
+    let key = ObserveKey::new(row.meta.token, row.meta.dest);
+    let previous_id = engine.lookup_observe(key);
+    let previous = previous_id.and_then(|id| engine.observe_interest(id));
+    let body = response_body_for(engine, BlockKey::new(row.meta.token, row.meta.dest));
+    if body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
+        return Err(Error::Slot(crate::storage::SlotError::Pinned));
+    }
+    let room = previous_id.is_some()
+        || (0..engine.capacities().observe_entries)
+            .any(|index| engine.observe_interest(SlotId::from_index(index)).is_none());
+    let register = response.code().is_success() && room;
+    let sequence = previous
+        .filter(|old| old.resource() == observe.resource)
+        .map_or(0, |old| old.seq().wrapping_add(1) & 0x00ff_ffff);
+    let response = if register {
+        response.without_observe().observe(sequence)
+    } else {
+        response.without_observe()
+    };
+    let mid = ids.next_for(engine, io, now_ms)?;
+    let ty = if row.meta.ty == Type::Confirmable {
+        Type::Confirmable
+    } else {
+        Type::NonConfirmable
+    };
+    let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
+    // This path deliberately has no Block2 fallback: all bounds precede relation mutation/output.
+    if let Err(error) = encode_response(
+        engine,
+        tx,
+        ty,
+        mid,
+        row.meta.token,
+        &response,
+        response.payload(),
+        None,
+        None,
+        oscore,
+        row.meta.oscore,
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+    let mut installed = None;
+    if register {
+        let mut interest = ObserveInterest::new(row.meta.token, row.meta.dest)
+            .with_resource(observe.resource)
+            .with_seq(sequence)
+            .with_content_format(response.format());
+        #[cfg(feature = "oscore")]
+        {
+            interest = interest.with_oscore(row.meta.oscore);
+        }
+        if previous.is_some_and(|old| old.is_pending()) {
+            interest.mark_due();
+        }
+        let result = match previous_id {
+            Some(id) => engine
+                .storage_mut()
+                .set_observe_interest(id, interest)
+                .map(|()| id),
+            None => engine
+                .insert_observe(interest)
+                .ok_or(crate::storage::SlotError::NotOccupied),
+        };
+        let id = match result {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                return Err(error.into());
+            }
+        };
+        row.observe.as_mut().expect("Observe completion").attempted =
+            Some((sequence, response.format()));
+        installed = Some((id, interest));
+        if engine
+            .record_observe_notify(key, now_ms, mid, ty == Type::Confirmable)
+            .is_none()
+        {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Saturated);
+        }
+    }
+    if let Some(body) = body {
+        if let Err(error) = engine.release_tx_body(body) {
+            if let Some((id, interest)) = installed {
+                let _ = engine.storage_mut().set_observe_interest(id, interest);
+            }
+            let _ = engine.release_tx(tx);
+            return Err(error.into());
+        }
+    }
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
+    if let Err(error) = finish_send(engine, io, tx, row.meta.dest, pending) {
+        // Bytes may have reached the peer. Keep this sequence/format owner and
+        // handle, but do not retain a hold for a TX that finish_send released.
+        if let Some((id, interest)) = installed {
+            let _ = engine.storage_mut().set_observe_interest(id, interest);
+            if matches!(
+                &error,
+                Error::Io(DatagramIoError::Io(_) | DatagramIoError::SendLength { .. })
+            ) {
+                row.observe.as_mut().expect("Observe completion").failed_mid = Some((
+                    mid,
+                    now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+                ));
+            }
+        }
+        return Err(error);
+    }
+    if register {
+        if ty == Type::NonConfirmable {
+            let _ = engine.refresh_observe_max_age(
+                key,
+                now_ms,
+                response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS),
+                None,
+            );
+        }
+    } else if let Some(previous) = previous {
+        engine.take_observe(previous.key());
+    }
+    Ok(())
 }
 
 /// Engine storage selected by [`AppBuilder::block_wise`].
@@ -1476,8 +1733,9 @@ where
     /// Deferred rows selected by [`AppBuilder::deferred`] are bounded
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
-    /// zero, initial Q-Block2 has more than ten selectors, or Observe needs
-    /// synchronous dispatch. Returning deferred without a handle produces 5.03.
+    /// zero, or initial Q-Block2 has more than ten selectors. An observable GET
+    /// registration without Block2/Q-Block2 may defer one datagram; other Observe
+    /// requests need synchronous dispatch. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
         &mut self,
@@ -1629,7 +1887,26 @@ where
     /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
-    /// Initial Observe registration deferral remains unsupported.
+    /// An observable GET registration without Block2/Q-Block2 can defer its initial
+    /// response. Completion must fit the actual datagram capacity, including
+    /// OSCORE overhead; it never falls back to a block-wise Observe response.
+    /// If the bounded Observe table is full, success is an ordinary response
+    /// without Observe. Registration is installed before sending. An ambiguous
+    /// transport failure retains the handle and attempted relation; retry uses
+    /// a new Observe sequence and, when protected, a fresh Partial IV. Successful
+    /// retries must preserve the initial Content-Format. An exact-peer empty RST
+    /// for the latest transport-ambiguous attempt revokes that handle and relation;
+    /// earlier failed-attempt MIDs are not retained. This reset authority expires
+    /// after EXCHANGE_LIFETIME even if the deferred deadline is longer, so MID reuse
+    /// cannot revoke an old handle. Preflight failures grant no new
+    /// RST authority. Pending notifications
+    /// remain coalesced but blocked until completion succeeds. Cancellation,
+    /// expiry, or a newer same-peer/token registration or deregistration revokes
+    /// the pending handle and removes only its attempted relation. A deferred
+    /// registration that has not attempted output does not own an earlier live
+    /// relation. Direct mutation through `engine_mut` remains an advanced caller
+    /// ownership boundary: do not replace App-owned relations while a deferred
+    /// handle is live. Deferred FETCH Observe and block-wise Observe remain unsupported.
     pub fn complete(
         &mut self,
         handle: DeferredReply,
@@ -1641,7 +1918,11 @@ where
             .deferred
             .rows
             .iter()
-            .position(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
+            .position(|row| {
+                row.is_some_and(|row| {
+                    row.handle == handle && !row.completed && now_ms < row.deadline_ms
+                })
+            })
             .ok_or(Error::DeferredUnknown)?;
         response.validate().map_err(Error::Response)?;
         if response.is_deferred() {
@@ -1649,6 +1930,19 @@ where
         }
         let response = response.with_fresh_piv();
         let row = self.deferred.rows[index].expect("matched row");
+        if row.observe.is_some() {
+            complete_deferred_observe(
+                &mut self.engine,
+                &mut self.io,
+                &mut self.ids,
+                &mut self.oscore,
+                now_ms,
+                self.deferred.rows[index].as_mut().expect("matched row"),
+                &response,
+            )?;
+            self.deferred.rows[index] = None;
+            return Ok(());
+        }
         if row.meta.q_block2.is_some()
             && row.snapshot.is_some()
             && (!response.code().is_success() || response.code() == Code::VALID)
@@ -1736,6 +2030,9 @@ where
         else {
             return false;
         };
+        if retire_deferred_observe(&mut self.engine, row.expect("matched row")).is_err() {
+            return false;
+        }
         if let Some(body) = row.and_then(|row| row.snapshot.map(|(body, _)| body)) {
             let _ = self.engine.release_tx_body(body);
         }
@@ -1792,6 +2089,7 @@ where
             resource,
             &response,
             false,
+            &self.deferred,
         )
     }
 
@@ -1826,6 +2124,7 @@ where
             resource,
             &response,
             true,
+            &self.deferred,
         )
     }
 
@@ -1902,8 +2201,9 @@ where
     if let Some(retransmit) = progress.retransmit() {
         match retransmit {
             Retransmit::Due(pending) => {
-                let replacement =
-                    supersede_notification(engine, io, site, ids, oscore, now_ms, pending);
+                let replacement = supersede_notification(
+                    engine, io, site, ids, oscore, deferred, now_ms, pending,
+                );
                 // Staging refusal still makes the due attempt with retained bytes;
                 // no plaintext fallback and no retry-budget reset.
                 engine.send_tx(io, pending.tx_slot())?;
@@ -1965,6 +2265,11 @@ where
     // signal, so a reused slot cannot inherit the old relation's opportunity.
     if let Some(id) = progress
         .observe_notify()
+        .filter(|id| {
+            engine
+                .observe_interest(*id)
+                .is_some_and(|interest| !deferred.blocks_observe(interest.key()))
+        })
         .and_then(|id| engine.claim_observe_notification(id, now_ms))
     {
         if let Some(interest) = engine.observe_interest(id) {
@@ -2385,6 +2690,12 @@ where
 
     if parsed.is_empty_ack_or_rst() {
         if parsed.is_empty_rst() {
+            if let Err(error) =
+                deferred.reject_observe_attempt(engine, parsed.message_id(), peer, now_ms)
+            {
+                let _ = engine.release_rx(rx);
+                return Err(error.into());
+            }
             client::complete_client_rst(engine, inbox, lives, oscore, parsed.message_id(), peer);
         }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
@@ -2914,12 +3225,43 @@ where
         InboundBody::None | InboundBody::Complete(_) => {}
     }
 
+    let request_plan = Request::from_decoded(parsed, peer, None)
+        .ok()
+        .map(|request| ObservePlan::from_request(site, &request));
+    if request_plan.is_some_and(|plan| plan.register || plan.deregister) {
+        if let Err(error) =
+            deferred.supersede_observe(engine, ObserveKey::new(parsed.token(), peer))
+        {
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
+            }
+            let _ = engine.release_rx(rx);
+            return Err(error.into());
+        }
+    }
+    let deferred_observe = request_plan
+        .filter(|plan| {
+            plan.register
+                && plan.has_source
+                && !plan.resource.is_none()
+                && parsed.code() == Code::GET
+                && parsed.block2().is_none()
+                && parsed.q_block2().next().is_none()
+                && parsed.block1().is_none()
+                && parsed.q_block1().is_none()
+                && no_response == NoResponse::DEFAULT
+        })
+        .map(|plan| DeferredObserve {
+            resource: plan.resource,
+            attempted: None,
+            failed_mid: None,
+        });
     let selection = DeferredSelection::from_request(&parsed).ok();
     let q_selectors = DeferredQSelectors::from_request(&parsed);
     let deferred_handle = if selection.is_some()
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
-        && parsed.observe().is_none()
+        && (parsed.observe().is_none() || deferred_observe.is_some())
         && q_selectors.is_some()
     {
         match deferred.candidate(ids, io) {
@@ -2992,6 +3334,7 @@ where
                 now_ms.saturating_add(deferred_lifetime_ms),
                 selection.expect("admitted selection"),
                 q_selectors.expect("admitted selectors"),
+                deferred_observe,
             );
             if meta.ty == Type::Confirmable {
                 let outcome = send_empty_ack(engine, io, peer, meta.mid);
@@ -3163,12 +3506,14 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     Ok(response)
 }
 
-fn supersede_notification<S, T, const N: usize, const REQUESTS: usize>(
+#[allow(clippy::too_many_arguments)]
+fn supersede_notification<S, T, const N: usize, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     site: &Site<N>,
     ids: &mut AppIds,
     oscore: &mut oscore::Field<REQUESTS>,
+    deferred: &DeferredTable<DEFERRED>,
     now_ms: u64,
     pending: crate::storage::PendingCon,
 ) -> Result<(), Error<T::Error>>
@@ -3187,6 +3532,9 @@ where
     let Some(interest) = interest else {
         return Ok(());
     };
+    if deferred.blocks_observe(interest.key()) {
+        return Ok(());
+    }
     let Some(source) = site.observe_source(interest.resource()) else {
         return Ok(());
     };
@@ -3248,7 +3596,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn notify_engine<S, T, const REQUESTS: usize>(
+fn notify_engine<S, T, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
@@ -3257,6 +3605,7 @@ fn notify_engine<S, T, const REQUESTS: usize>(
     resource: ObserveResource,
     response: &Response<'_>,
     confirmable: bool,
+    deferred: &DeferredTable<DEFERRED>,
 ) -> Result<usize, Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
@@ -3274,7 +3623,10 @@ where
         let Some(interest) = engine.observe_interest(id) else {
             continue;
         };
-        if interest.key().is_client() || interest.resource() != resource {
+        if interest.key().is_client()
+            || interest.resource() != resource
+            || deferred.blocks_observe(interest.key())
+        {
             continue;
         }
         if held.count(engine, interest.endpoint(), now_ms)
