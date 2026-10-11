@@ -171,7 +171,7 @@ impl Peer {
                 .unwrap()
             };
             if protected {
-                server.set_oscore(make(&[2], &[1]));
+                server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
             }
             Self {
                 context: protected.then(|| make(&[1], &[2])),

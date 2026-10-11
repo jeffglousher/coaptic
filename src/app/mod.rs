@@ -130,6 +130,9 @@ mod tests;
 #[cfg(test)]
 mod capacity_tests;
 
+#[cfg(all(test, feature = "oscore"))]
+mod oscore_install_tests;
+
 use core::marker::PhantomData;
 
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
@@ -170,6 +173,29 @@ pub use site::{
 };
 
 use response::AssembledField;
+
+/// Refusal to install a staged OSCORE context. No key material is retained here.
+#[cfg(feature = "oscore")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OscoreInstallError {
+    /// The caller did not stage a replacement context.
+    MissingCandidate,
+    /// App-owned protocol state has not drained under the current context.
+    Busy,
+}
+
+#[cfg(feature = "oscore")]
+impl core::fmt::Display for OscoreInstallError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::MissingCandidate => "no OSCORE context was staged",
+            Self::Busy => "OSCORE context replacement requires drained protocol state",
+        })
+    }
+}
+
+#[cfg(all(feature = "oscore", feature = "std"))]
+impl std::error::Error for OscoreInstallError {}
 
 /// Storage capabilities used by the single [`App`] interface.
 ///
@@ -1074,8 +1100,24 @@ impl<
     ///
     /// There is exactly one context per App, with `REQUESTS` live request bindings
     /// shared by in-flight requests and Observe registrations. Replacing it
-    /// does not migrate live exchanges, tokens, replay state, or subscriptions;
-    /// drain them first or use separate Apps for separate peers/key epochs.
+    /// does not migrate live exchanges, tokens, replay state, or subscriptions.
+    /// Drain, collect, cancel or expire work under the current context first,
+    /// including cached replies and fail-closed dedup history. Busy refusal
+    /// leaves both the App and the caller's staged candidate unchanged, performs
+    /// no I/O, and preserves checkpoint status. Success takes the candidate and
+    /// invalidates the durable checkpoint; protection is never removed.
+    ///
+    /// Stage rare replacements in a caller-owned `Option`, then call
+    /// `app.set_oscore(&mut candidate)?`. An empty option returns
+    /// [`OscoreInstallError::MissingCandidate`]; live App state returns
+    /// [`OscoreInstallError::Busy`]. The compact error does not move or expose
+    /// context secrets and requires no allocation. Already-collected reply
+    /// backing is cleared on success and does not keep the App busy forever.
+    ///
+    /// This checks App-owned lifecycle state, not key freshness, safe same-key
+    /// rollback, external adapter queues or revocation policy. `oscore_mut` and
+    /// `engine_mut` remain advanced escape hatches, not context-rotation APIs.
+    /// Use separate Apps for separate peers or simultaneous key epochs.
     /// Timed Q-Block2 recovery for a live client GET uses a fresh protected
     /// request and retains its path, queries and selection options. Only the
     /// latest request binding is retained; late responses to earlier requests
@@ -1127,11 +1169,40 @@ impl<
     #[cfg(feature = "oscore")]
     pub fn set_oscore(
         &mut self,
-        ctx: crate::oscore::BoundedSecurityContext<REQUESTS>,
-    ) -> &mut Self {
-        self.oscore = Some(ctx);
+        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS>>,
+    ) -> Result<&mut Self, OscoreInstallError> {
+        if candidate.is_none() {
+            return Err(OscoreInstallError::MissingCandidate);
+        }
+        if self.inbox.has_protocol_state()
+            || self.lives.has_protocol_state()
+            || self.deferred.rows.iter().any(Option::is_some)
+            || self.dedup_closed.is_some()
+            || self
+                .oscore
+                .as_ref()
+                .is_some_and(|ctx| ctx.has_live_requests())
+        {
+            return Err(OscoreInstallError::Busy);
+        }
+        let storage = self.engine.storage_mut();
+        if !storage.rx_datagram().is_empty()
+            || !storage.tx_datagram().is_empty()
+            || !storage.dedup().is_empty()
+            || !storage.observe().is_empty()
+            || storage.rx_body().is_some_and(|pool| !pool.is_empty())
+            || storage.tx_body().is_some_and(|pool| !pool.is_empty())
+            || (0..storage.capacities().tx_datagram_slots)
+                .any(|index| storage.exchange_entry(SlotId::from_index(index)).is_some())
+        {
+            return Err(OscoreInstallError::Busy);
+        }
+        // Collected replies are only borrow backing, not outstanding work.
+        self.inbox = client::ClientInbox::new();
+        P::store(&mut self.assembled, &[]);
+        self.oscore = candidate.take();
         self.oscore_checkpoint.invalidate();
-        self
+        Ok(self)
     }
 
     /// Borrow the attached OSCORE context, if any.
@@ -1142,6 +1213,10 @@ impl<
     }
 
     /// Mutably borrow the attached OSCORE context.
+    ///
+    /// Advanced escape hatch: this bypasses the lifecycle checks in
+    /// [`Self::set_oscore`]. Do not replace keys or reset sender/replay state
+    /// while App-owned protocol work remains live.
     #[cfg(feature = "oscore")]
     pub const fn oscore_mut(
         &mut self,

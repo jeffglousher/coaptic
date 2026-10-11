@@ -437,6 +437,10 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
         }
     }
 
+    pub(crate) fn has_live_requests(&self) -> bool {
+        self.live.iter().any(Option::is_some)
+    }
+
     /// Remember `(token, request)` for the matching response.
     ///
     /// Replaces an existing row for `token`. The table holds

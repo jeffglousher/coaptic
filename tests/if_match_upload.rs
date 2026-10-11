@@ -178,8 +178,8 @@ fn exercise<S: AppStorage>(
     let mut server = server();
     #[cfg(feature = "oscore")]
     if protected {
-        client.set_oscore(context(&[1], &[2]));
-        server.set_oscore(context(&[2], &[1]));
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
     }
     without_allocating(|| {
         for phase in 0..2 {
@@ -451,8 +451,8 @@ fn if_match_qblock_missing_reissue_preserves_condition_and_protected_inner() {
         DISPATCHES.with(|v| v.set(0));
         #[cfg(feature = "oscore")]
         if protected {
-            client.set_oscore(context(&[1], &[2]));
-            server.set_oscore(context(&[2], &[1]));
+            client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
         }
         without_allocating(|| {
             let call = client
@@ -652,8 +652,8 @@ fn if_match_con_retry_is_exact_and_completes_after_loss() {
             DISPATCHES.with(|v| v.set(0));
             #[cfg(feature = "oscore")]
             if protected {
-                client.set_oscore(context(&[1], &[2]));
-                server.set_oscore(context(&[2], &[1]));
+                client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+                server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
             }
             without_allocating(|| {
                 let mut request = client
