@@ -5106,7 +5106,7 @@ pub enum Error<E> {
     Block(BlockTransferError),
     /// Uri-Path has more than [`MAX_PATH_SEGMENTS`] segments.
     Path,
-    /// The payload requires fragmentation with ETag outside classic Block1 FETCH.
+    /// The payload requires fragmentation with ETag outside classic/Q-Block1 FETCH.
     /// Nothing has been sent. Use a payload
     /// fitting one datagram or construct a conditional transfer with [`Engine`].
     ConditionalUploadUnsupported,

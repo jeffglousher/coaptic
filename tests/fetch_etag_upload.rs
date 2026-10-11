@@ -489,18 +489,6 @@ fn fetch_etag_invalid_unsupported_overflow_and_minimum_size_refuse_then_recover(
                     .send(now),
                 Err(Error::FetchRequestTooLarge)
             );
-            assert_eq!(
-                client
-                    .fetch("selection")
-                    .to(PEER)
-                    .content_format(ContentFormat::OCTET_STREAM)
-                    .payload(&SELECTION)
-                    .etag(b"v1")
-                    .request_tag(BodyTag::new(b"owner").unwrap())
-                    .q_block1()
-                    .send(now),
-                Err(Error::ConditionalUploadUnsupported)
-            );
             for method in [
                 coaptic::Method::Put,
                 coaptic::Method::Post,

@@ -7604,9 +7604,9 @@ fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
             .bind(RecordIo::default())
             .unwrap();
         for _ in 0..12 {
-            // Classic retains the first MID/jitter when fitting its first block.
-            // Q-Block still obtains a second identity after body admission.
-            DRAWS.store(usize::from(!qblock), Ordering::SeqCst);
+            // Both modes retain the first encoded block and its MID/jitter.
+            // Refuse that initial draw before emitting any fragment.
+            DRAWS.store(1, Ordering::SeqCst);
             let request = app.put("value").to(peer).payload(&[7; 3000]);
             let result = if qblock {
                 request
@@ -7733,6 +7733,104 @@ fn entropy_failure_during_classic_upload_continuation_reclaims_and_recovers() {
         )
         .with_token(fresh.token())
         .with_options(&options);
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+}
+
+#[test]
+fn entropy_failure_during_q_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .randomness(fill)
+        .block_wise::<true>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.q_block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let reply = Message::new(Type::Acknowledgement, Code::EMPTY, first.message_id());
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.q_block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let reply = if index < 2 {
+            Message::new(Type::Acknowledgement, Code::EMPTY, sent.message_id())
+        } else {
+            Message::new(Type::Acknowledgement, Code::CHANGED, sent.message_id())
+                .with_token(sent.token())
+        };
         let mut bytes = [0; WIRE];
         let n = encode(&reply, &mut bytes).unwrap();
         app.transport_mut().inbox = Some((peer, bytes, n));
