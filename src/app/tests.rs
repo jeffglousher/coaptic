@@ -1692,6 +1692,99 @@ fn route_rejects_empty_segments() {
 }
 
 #[test]
+fn checked_routes_refuse_without_mutation_and_replace_when_full() {
+    use super::{PathError, RouteError};
+    let mut site = Site::<1>::new();
+    site.try_route_path("/leds/0", get(get_led)).unwrap();
+    let identity = site.observe_resource(&["leds", "0"]);
+    assert_eq!(
+        site.try_route("new", get(get_temp)).err(),
+        Some(RouteError::Full)
+    );
+    assert_eq!(
+        site.try_route("leds//0", post(post_led)).err(),
+        Some(RouteError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(
+        site.try_route("a/b/c/d/e/f/g/h/i", get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route(&["leds", "0"], post(post_led)).unwrap();
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["leds", "0"]), identity);
+    assert_eq!(
+        site.dispatch(req, &mut [0; 1]).code(),
+        Code::METHOD_NOT_ALLOWED
+    );
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).code(), Code::CHANGED);
+}
+
+#[test]
+fn checked_routes_support_root_and_zero_capacity() {
+    use super::RouteError;
+    let mut empty = Site::<0>::new();
+    assert_eq!(
+        empty.try_route(&[], get(get_led)).err(),
+        Some(RouteError::Full)
+    );
+    assert!(empty.is_empty());
+    let mut site = Site::<1>::new();
+    site.try_route(&[], get(get_led)).unwrap();
+    let (wire, n) = encode_req(Code::GET, &[], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+}
+
+#[test]
+fn checked_routes_refuse_invalid_adapter_count_without_mutation() {
+    use super::{IntoPath, MAX_PATH_SEGMENTS, PathError, RouteError};
+    struct Overreported;
+    impl IntoPath for Overreported {
+        fn fill_path(self, _: &mut [&'static str]) -> Result<usize, PathError> {
+            Ok(MAX_PATH_SEGMENTS + 1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("leds/0", get(get_led)).unwrap();
+    assert_eq!(
+        site.try_route(Overreported, get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route("new", get(get_temp)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
 fn replacing_route_changes_handler() {
     let mut site = Site::<2>::new();
     site.route(&["leds", "0"], get(get_led));

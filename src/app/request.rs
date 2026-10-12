@@ -100,7 +100,8 @@ fn path_from_segments(
 pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathError> {
     let mut segs = [""; MAX_PATH_SEGMENTS];
     let n = path.fill_path(&mut segs)?;
-    Path::from_segments(&segs[..n])
+    let segments = segs.get(..n).ok_or(PathError::TooLong)?;
+    Path::from_segments(segments)
 }
 
 /// Borrowed view of one inbound request.

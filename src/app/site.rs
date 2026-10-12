@@ -10,6 +10,15 @@ use super::routing::{Method, MethodRouter, ObserveSource};
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
 
+/// Refusal to register a route. Existing routes are unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteError {
+    /// The supplied path is invalid.
+    Path(PathError),
+    /// No slot remains for a new path. Existing paths may still be replaced.
+    Full,
+}
+
 /// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
 ///
 /// The `/.well-known/core` scratch buffer is [`LinkFormatScratch`] /
@@ -112,6 +121,7 @@ struct Entry {
 /// on the happy path. This is a routing table, not an Engine memory area
 /// and not a shared application bag. `/.well-known/core` uses
 /// [`LinkFormatScratch`] ([`link_format_capacity`]).
+/// Use [`Self::try_route`] for recoverable registration at a resource boundary.
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],
     len: usize,
@@ -173,6 +183,7 @@ impl<const N: usize> Site<N> {
     ///
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`
     /// (leading `/` ignored). Empty segments are rejected.
+    /// Use [`Self::try_route`] to handle refusal without panicking.
     ///
     /// # Panics
     ///
@@ -180,19 +191,50 @@ impl<const N: usize> Site<N> {
     /// [`MAX_PATH_SEGMENTS`] segments, or if a segment is empty.
     pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
         let path = expect_path(path);
+        self.insert_route(path, methods).unwrap_or_else(|_| {
+            panic!("site is full ({N} routes); bind with .routes::<M>() for a larger M")
+        })
+    }
+
+    /// Register or replace a route without panicking on invalid paths or capacity.
+    ///
+    /// Refusal leaves all routes unchanged. Replacing an existing path succeeds
+    /// even when full and retains its local route identity. No allocation occurs.
+    pub fn try_route(
+        &mut self,
+        path: impl IntoPath,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        let path = path_from_into(path).map_err(RouteError::Path)?;
+        self.insert_route(path, methods)
+    }
+
+    /// Checked registration of a static slash-separated path.
+    pub fn try_route_path(
+        &mut self,
+        path: &'static str,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.try_route(path, methods)
+    }
+
+    fn insert_route(
+        &mut self,
+        path: Path<'static>,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
                 entry.methods = methods;
-                return self;
+                return Ok(self);
             }
         }
-        assert!(
-            self.len < N,
-            "site is full ({N} routes); bind with .routes::<M>() for a larger M"
-        );
+        if self.len >= N {
+            return Err(RouteError::Full);
+        }
         self.entries[self.len] = Some(Entry { path, methods });
         self.len += 1;
-        self
+        Ok(self)
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
