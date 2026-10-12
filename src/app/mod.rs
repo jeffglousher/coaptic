@@ -171,7 +171,8 @@ pub use routing::{
     HandlerFn, Method, MethodRouter, ObserveSource, delete, fetch, get, ipatch, patch, post, put,
 };
 pub use site::{
-    DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, LinkFormatScratch, Site, link_format_capacity,
+    DEFAULT_ROUTES, LINK_FORMAT_PER_ROUTE, LinkFormatScratch, RouteError, Site,
+    link_format_capacity,
 };
 
 use response::AssembledField;
@@ -1041,6 +1042,8 @@ impl<
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     /// `methods` is a site router ([`get`], [`put`], …), not an outbound
     /// [`App::get`] builder.
+    /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
+    /// for recoverable refusal.
     #[must_use]
     pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
         self.site.route(path, methods);
@@ -1052,6 +1055,28 @@ impl<
     pub fn route_path(mut self, path: &'static str, methods: MethodRouter) -> Self {
         self.site.route_path(path, methods);
         self
+    }
+
+    /// Checked route registration; refusal preserves this builder and its routes.
+    ///
+    /// Borrow the builder to recover from refusal, then consume it with `bind`.
+    /// See [`Site::try_route`] for path and capacity rules.
+    pub fn try_route(
+        &mut self,
+        path: impl IntoPath,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.site.try_route(path, methods)?;
+        Ok(self)
+    }
+
+    /// Checked registration of a static slash-separated path.
+    pub fn try_route_path(
+        &mut self,
+        path: &'static str,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.try_route(path, methods)
     }
 
     /// Serve `/.well-known/core` from registered paths.
@@ -1494,6 +1519,8 @@ impl<
     /// Bind `methods` on Uri-Path `path`.
     ///
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
+    /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
+    /// for recoverable refusal.
     pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
         self.site.route(path, methods);
         self
@@ -1503,6 +1530,28 @@ impl<
     pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
         self.site.route_path(path, methods);
         self
+    }
+
+    /// Checked route registration; refusal preserves all existing routes.
+    ///
+    /// See [`Site::try_route`] for path and capacity rules. Replacement has the
+    /// same semantics as [`Self::route`]; it does not cancel live observations.
+    pub fn try_route(
+        &mut self,
+        path: impl IntoPath,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.site.try_route(path, methods)?;
+        Ok(self)
+    }
+
+    /// Checked registration of a static slash-separated path.
+    pub fn try_route_path(
+        &mut self,
+        path: &'static str,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.try_route(path, methods)
     }
 
     /// Serve `/.well-known/core` from registered paths.

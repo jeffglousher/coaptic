@@ -3,6 +3,70 @@ use coaptic::storage::{Capacities, DatagramIo};
 use coaptic::{App, BuildError, resources};
 
 struct Idle;
+
+fn route_status(_: coaptic::Request<'_>) -> coaptic::Response<'static> {
+    coaptic::Response::content(b"ready")
+}
+
+#[test]
+fn checked_routes_preserve_fixed_builders_and_apps_after_refusal() {
+    use coaptic::app::{RouteError, get};
+    let mut legacy = App::profile::<coaptic::profiles::Constrained>()
+        .block_wise::<false>()
+        .routes::<1>()
+        .deterministic_for_tests()
+        .allow_plaintext();
+    legacy.try_route("status", get(route_status)).unwrap();
+    assert_eq!(
+        legacy.try_route_path("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    let mut legacy = legacy.bind(Idle).unwrap();
+    assert_eq!(legacy.site().len(), 1);
+    legacy.try_route_path("status", get(route_status)).unwrap();
+
+    let mut configured = App::with_resources(resources::SmallDevice::new().routes::<1>())
+        .deterministic_for_tests()
+        .allow_plaintext();
+    configured
+        .try_route_path("status", get(route_status))
+        .unwrap();
+    assert_eq!(
+        configured.try_route("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    let mut app = configured.bind(Idle).unwrap();
+    assert_eq!(
+        app.try_route_path("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    app.try_route("status", get(route_status)).unwrap();
+    assert_eq!(app.site().len(), 1);
+    app.poll(0).unwrap();
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn checked_routes_preserve_allocated_builder_and_app_after_refusal() {
+    use coaptic::app::{RouteError, get};
+    let config = resources::SmallDevice::new().routes::<1>();
+    let mut builder = App::with_resources(config.allocated(64 * 1024))
+        .deterministic_for_tests()
+        .allow_plaintext();
+    builder.try_route("status", get(route_status)).unwrap();
+    assert_eq!(
+        builder.try_route("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    let mut app = builder.bind(Idle).unwrap();
+    assert_eq!(
+        app.try_route("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    app.try_route_path("status", get(route_status)).unwrap();
+    assert_eq!(app.site().len(), 1);
+    app.poll(0).unwrap();
+}
 impl DatagramIo for Idle {
     type Error = core::convert::Infallible;
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {

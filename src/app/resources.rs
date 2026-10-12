@@ -360,6 +360,8 @@ impl<
 > ConfiguredBuilder<P, N, B, D, C, S, REQUESTS>
 {
     /// Register a handler within the selected route capacity.
+    /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
+    /// for recoverable refusal.
     #[must_use]
     pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
         self.inner = self.inner.route(path, methods);
@@ -370,6 +372,34 @@ impl<
     pub fn route_path(mut self, path: &'static str, methods: MethodRouter) -> Self {
         self.inner = self.inner.route_path(path, methods);
         self
+    }
+    /// Checked registration within the selected capacity, preserving the builder
+    /// on refusal. After registration, consume the builder with `bind`.
+    ///
+    /// ```
+    /// use coaptic::{App, Request, Response, resources::SmallDevice};
+    /// use coaptic::app::{get, RouteError};
+    /// fn status(_: Request<'_>) -> Response<'static> { Response::content(b"ready") }
+    /// let mut builder = App::with_resources(SmallDevice::new().routes::<1>());
+    /// assert!(builder.try_route("status", get(status)).is_ok());
+    /// assert_eq!(builder.try_route("extra", get(status)).err(), Some(RouteError::Full));
+    /// assert!(builder.try_route("status", get(status)).is_ok());
+    /// ```
+    pub fn try_route(
+        &mut self,
+        path: impl IntoPath,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.inner.try_route(path, methods)?;
+        Ok(self)
+    }
+    /// Checked registration of a static slash-separated path.
+    pub fn try_route_path(
+        &mut self,
+        path: &'static str,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.try_route(path, methods)
     }
     /// Serve discovery from the registered routes.
     #[must_use]
