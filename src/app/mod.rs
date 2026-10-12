@@ -175,6 +175,15 @@ pub use site::{
     link_format_capacity,
 };
 
+/// Refusal to remove a route. No routes or protocol state are changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteRemovalError {
+    /// The supplied path is invalid.
+    Path(PathError),
+    /// App-owned protocol work must drain before a route slot can be reused.
+    Busy,
+}
+
 use response::AssembledField;
 
 /// Refusal to install a staged OSCORE context. No key material is retained here.
@@ -1079,6 +1088,12 @@ impl<
         self.try_route(path, methods)
     }
 
+    /// Remove a route before binding, preserving this builder on path refusal.
+    /// Returns whether the path was registered. See [`Site::remove_route`].
+    pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, PathError> {
+        self.site.remove_route(path)
+    }
+
     /// Serve `/.well-known/core` from registered paths.
     ///
     /// Catalog scratch is [`LinkFormatScratch`] (compile-time
@@ -1554,6 +1569,52 @@ impl<
         self.try_route(path, methods)
     }
 
+    /// Remove a route only after all App-owned protocol work has drained.
+    ///
+    /// Returns `false` for an unknown path, even while busy. Invalid paths and
+    /// busy refusal preserve routes, keys, checkpoints and protocol state and
+    /// perform no I/O. Remaining route identities stay stable; freed capacity
+    /// can be reused with [`Self::try_route`].
+    ///
+    /// Drain or cancel Calls, deferred work, Observe interests, packet/body
+    /// slots, exchanges and cached/duplicate history first. This conservative
+    /// check covers the whole App, including work for other paths. Collected
+    /// response backing alone does not keep the App busy.
+    ///
+    /// This is local handler configuration, not policy revocation. External
+    /// adapter queues, caller-held advanced resource identities and current
+    /// policy are caller-owned; discard old identities before slot reuse.
+    pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, RouteRemovalError> {
+        let path = request::path_from_into(path).map_err(RouteRemovalError::Path)?;
+        if !self.site.contains_path(path) {
+            return Ok(false);
+        }
+        if self.has_protocol_state() {
+            return Err(RouteRemovalError::Busy);
+        }
+        Ok(self.site.remove_path(path))
+    }
+
+    fn has_protocol_state(&mut self) -> bool {
+        if self.inbox.has_protocol_state()
+            || self.lives.has_protocol_state()
+            || self.deferred.rows.iter().any(Option::is_some)
+            || self.dedup_closed.is_some()
+            || oscore::has_live_requests(&self.oscore)
+        {
+            return true;
+        }
+        let storage = self.engine.storage_mut();
+        !storage.rx_datagram().is_empty()
+            || !storage.tx_datagram().is_empty()
+            || !storage.dedup().is_empty()
+            || !storage.observe().is_empty()
+            || storage.rx_body().is_some_and(|pool| !pool.is_empty())
+            || storage.tx_body().is_some_and(|pool| !pool.is_empty())
+            || (0..storage.capacities().tx_datagram_slots)
+                .any(|index| storage.exchange_entry(SlotId::from_index(index)).is_some())
+    }
+
     /// Serve `/.well-known/core` from registered paths.
     ///
     /// See [`AppBuilder::well_known_core`].
@@ -1568,7 +1629,11 @@ impl<
         self
     }
 
-    /// The site table.
+    /// Advanced mutable access to the site table.
+    ///
+    /// Direct Site mutation bypasses App lifecycle checks. Prefer
+    /// [`Self::remove_route`] for removal and discard caller-held identities
+    /// of removed routes before any slot reuse.
     pub fn site(&mut self) -> &mut Site<N> {
         &mut self.site
     }
@@ -1674,27 +1739,7 @@ impl<
         if candidate.is_none() {
             return Err(OscoreInstallError::MissingCandidate);
         }
-        if self.inbox.has_protocol_state()
-            || self.lives.has_protocol_state()
-            || self.deferred.rows.iter().any(Option::is_some)
-            || self.dedup_closed.is_some()
-            || self
-                .oscore
-                .as_ref()
-                .is_some_and(|ctx| ctx.has_live_requests())
-        {
-            return Err(OscoreInstallError::Busy);
-        }
-        let storage = self.engine.storage_mut();
-        if !storage.rx_datagram().is_empty()
-            || !storage.tx_datagram().is_empty()
-            || !storage.dedup().is_empty()
-            || !storage.observe().is_empty()
-            || storage.rx_body().is_some_and(|pool| !pool.is_empty())
-            || storage.tx_body().is_some_and(|pool| !pool.is_empty())
-            || (0..storage.capacities().tx_datagram_slots)
-                .any(|index| storage.exchange_entry(SlotId::from_index(index)).is_some())
-        {
+        if self.has_protocol_state() {
             return Err(OscoreInstallError::Busy);
         }
         // Collected replies are only borrow backing, not outstanding work.

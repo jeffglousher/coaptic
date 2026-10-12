@@ -232,9 +232,48 @@ impl<const N: usize> Site<N> {
         if self.len >= N {
             return Err(RouteError::Full);
         }
-        self.entries[self.len] = Some(Entry { path, methods });
+        let index = self
+            .entries
+            .iter()
+            .position(Option::is_none)
+            .ok_or(RouteError::Full)?;
+        self.entries[index] = Some(Entry { path, methods });
         self.len += 1;
         Ok(self)
+    }
+
+    /// Remove a path and reclaim its slot, returning whether it was registered.
+    ///
+    /// Invalid paths leave the table unchanged. Remaining route identities are
+    /// stable; entries are never compacted. Copies of a removed route's advanced
+    /// resource identity become invalid and must not be reused.
+    ///
+    /// A standalone Site owns no protocol state. When borrowing a Site from an
+    /// App, use [`App::remove_route`](super::App::remove_route) instead: it checks
+    /// that App-owned work has drained before an identity can be reused.
+    pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, PathError> {
+        let path = path_from_into(path)?;
+        Ok(self.remove_path(path))
+    }
+
+    pub(crate) fn contains_path(&self, path: Path<'static>) -> bool {
+        self.entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.path.matches(path.segments()))
+    }
+
+    pub(crate) fn remove_path(&mut self, path: Path<'static>) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| {
+            entry
+                .as_ref()
+                .is_some_and(|entry| entry.path.matches(path.segments()))
+        }) else {
+            return false;
+        };
+        self.entries[index] = None;
+        self.len -= 1;
+        true
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).

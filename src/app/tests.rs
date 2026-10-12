@@ -1785,6 +1785,228 @@ fn checked_routes_refuse_invalid_adapter_count_without_mutation() {
 }
 
 #[test]
+fn route_removal_preserves_other_identity_dispatch_and_catalog_with_holes() {
+    let mut site = Site::<2>::new();
+    site.route("first", get(get_led))
+        .route("second", get(get_temp))
+        .well_known_core();
+    let second = site.observe_resource(&["second"]);
+    assert!(site.remove_route("first").unwrap());
+    assert!(!site.remove_route("first").unwrap());
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["second"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"</second>");
+    site.try_route("third", get(get_led)).unwrap();
+    assert!(site.is_full());
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &["first"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).code(), Code::NOT_FOUND);
+    assert!(site.remove_route("third").unwrap());
+    // The original convenience API also inserts into the vacant slot.
+    site.route("fourth", get(get_led));
+    assert_eq!(site.len(), 2);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(
+        site.dispatch(req, &mut [0; 128]).payload(),
+        b"</fourth>,</second>"
+    );
+}
+
+#[test]
+fn route_removal_handles_zero_capacity_root_and_exact_segments() {
+    let mut zero = Site::<0>::new();
+    assert_eq!(zero.remove_route(&[]), Ok(false));
+    assert!(zero.is_empty());
+    let mut site = Site::<2>::new();
+    site.route(&["a/b"], get(get_led))
+        .route("a/b", get(get_temp));
+    assert_eq!(site.remove_route("/a/b"), Ok(true));
+    assert_eq!(site.len(), 1);
+    assert!(!site.observe_resource(&["a/b"]).is_none());
+    assert_eq!(site.remove_route(&["a/b"]), Ok(true));
+    assert!(site.is_empty());
+    site.route(&[], get(get_led));
+    assert_eq!(site.remove_route(&[]), Ok(true));
+    assert!(site.is_empty());
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+}
+
+#[test]
+fn route_removal_waits_for_call_cancellation_and_collection_without_io() {
+    use super::{PathError, RouteRemovalError};
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let call = app.get("remote").to(peer).send(0).unwrap();
+    let sent = app.transport().sent_n;
+    let metrics = app.metrics();
+    assert_eq!(app.remove_route("missing"), Ok(false));
+    assert_eq!(
+        app.remove_route("bad//path"),
+        Err(RouteRemovalError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().sent_n, sent);
+    assert_eq!(app.metrics(), metrics);
+    assert!(
+        app.site
+            .contains_path(super::request::path_from_into("target").unwrap())
+    );
+    assert!(app.cancel(call));
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("replacement", get(get_temp)).unwrap();
+    assert!(app.get("fresh").to(peer).send(1).is_ok());
+}
+
+#[test]
+fn route_removal_waits_for_deferred_and_duplicate_history_expiry() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deferred::<1>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["target"], b"work");
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert!(app.cancel_deferred(handle.unwrap()));
+    // Cancellation must not erase duplicate history to reclaim configuration early.
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let sent = app.transport().sent_n;
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(app.site.len(), 1);
+}
+
+#[test]
+fn route_removal_waits_for_observe_terminal_response_and_history() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[3]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["target"],
+        &[Opt::observe_register()],
+        100,
+        token,
+    );
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_some()
+    );
+    let sends = app.transport().send_n;
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().send_n, sends);
+    assert_eq!(
+        app.notify(1, &["target"], Response::not_found()).unwrap(),
+        1
+    );
+    let terminal = last_wide(&app);
+    assert_eq!(terminal.code(), Code::NOT_FOUND);
+    assert_eq!(terminal.ty(), Type::Confirmable);
+    let terminal_mid = terminal.message_id();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let ack = Message::empty_ack(terminal_mid);
+    let mut wire = [0; WIRE];
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_none()
+    );
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS) + 1)
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(
+        app.signal(&["fresh"]),
+        0,
+        "freed slot must not inherit observers"
+    );
+}
+
+#[test]
+fn route_removal_waits_for_retained_transfer_body_and_recovers_after_release() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let key = BlockKey::new(Token::new(&[8]).unwrap(), peer);
+    let block = BlockValue::new(0, true, 0).unwrap();
+    app.engine
+        .apply_block1(key, block, &[7; 16], Some(32))
+        .unwrap();
+    let body = app.engine.lookup_rx_body(key).unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.engine.lookup_rx_body(key), Some(body));
+    assert_eq!(app.transport().sent_n, 0);
+    app.engine.release_rx_body(body).unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    app.engine
+        .apply_block1(key, block, &[9; 16], Some(32))
+        .unwrap();
+    assert!(app.engine.lookup_rx_body(key).is_some());
+}
+
+#[test]
 fn replacing_route_changes_handler() {
     let mut site = Site::<2>::new();
     site.route(&["leds", "0"], get(get_led));
