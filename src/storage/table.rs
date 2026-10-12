@@ -241,7 +241,9 @@ impl ObserveKey {
 /// Advanced Engine path helpers use a non-cryptographic hash. It is not an
 /// exact or adversarial resource identity. App instead assigns opaque route
 /// identities after exact path-segment comparison; those identities are local
-/// to its immutable site. Do not construct an Engine path hash to address an
+/// to its site slots. Remaining identities survive route removal; copies of a
+/// removed route identity become invalid and must be discarded before slot reuse.
+/// Do not construct an Engine path hash to address an
 /// App route. [`Self::NONE`] means no resource was recorded.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ObserveResource {

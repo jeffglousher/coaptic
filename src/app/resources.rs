@@ -401,6 +401,22 @@ impl<
     ) -> Result<&mut Self, RouteError> {
         self.try_route(path, methods)
     }
+    /// Remove a route before binding and reclaim the selected capacity.
+    /// Invalid paths preserve the builder. Returns whether the path existed.
+    ///
+    /// ```
+    /// use coaptic::{App, Request, Response, get, resources::SmallDevice};
+    /// fn status(_: Request<'_>) -> Response<'static> { Response::content(b"ready") }
+    /// let mut builder = App::with_resources(SmallDevice::new().routes::<1>())
+    ///     .route("old", get(status));
+    /// assert_eq!(builder.remove_route("old"), Ok(true));
+    /// assert_eq!(builder.remove_route("missing"), Ok(false));
+    /// assert!(builder.try_route("new", get(status)).is_ok());
+    /// ```
+    pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, PathError> {
+        self.inner.remove_route(path)
+    }
+
     /// Serve discovery from the registered routes.
     #[must_use]
     pub fn well_known_core(mut self) -> Self {

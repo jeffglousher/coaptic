@@ -9,6 +9,78 @@ fn route_status(_: coaptic::Request<'_>) -> coaptic::Response<'static> {
 }
 
 #[test]
+fn route_removal_reclaims_fixed_builder_and_app_capacity() {
+    use coaptic::app::{PathError, RouteError, get};
+    let mut legacy = App::profile::<coaptic::profiles::Constrained>()
+        .block_wise::<false>()
+        .routes::<1>()
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .route("old", get(route_status));
+    assert!(legacy.remove_route("old").unwrap());
+    legacy.try_route("new", get(route_status)).unwrap();
+    let mut legacy = legacy.bind(Idle).unwrap();
+    assert_eq!(legacy.remove_route("new"), Ok(true));
+
+    let mut configured = App::with_resources(resources::SmallDevice::new().routes::<1>())
+        .allow_plaintext()
+        .deterministic_for_tests()
+        .route("old", get(route_status));
+    assert_eq!(
+        configured.remove_route("bad//path"),
+        Err(PathError::EmptySegment)
+    );
+    assert_eq!(
+        configured.try_route("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    assert!(configured.remove_route("old").unwrap());
+    configured.try_route("new", get(route_status)).unwrap();
+    let mut app = configured.bind(Idle).unwrap();
+    assert_eq!(app.remove_route("missing"), Ok(false));
+    assert_eq!(app.remove_route("new"), Ok(true));
+    app.try_route("replacement", get(route_status)).unwrap();
+    assert_eq!(app.site().len(), 1);
+    app.poll(0).unwrap();
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn route_removal_reclaims_allocated_capacity_after_call_recovery() {
+    use coaptic::app::{RouteError, RouteRemovalError, get};
+    let mut builder = App::with_resources(
+        resources::SmallDevice::new()
+            .routes::<1>()
+            .allocated(64 * 1024),
+    )
+    .allow_plaintext()
+    .deterministic_for_tests()
+    .route("old", get(route_status));
+    assert_eq!(builder.remove_route("old"), Ok(true));
+    builder.try_route("target", get(route_status)).unwrap();
+    let mut app = builder.bind(Idle).unwrap();
+    let call = app
+        .get("remote")
+        .to(Endpoint::v4([127, 0, 0, 1], 5683))
+        .send(0)
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(
+        app.try_route("extra", get(route_status)).err(),
+        Some(RouteError::Full)
+    );
+    assert!(app.cancel(call));
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        coaptic::CallFailure::Cancelled
+    );
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(route_status)).unwrap();
+    app.poll(1).unwrap();
+}
+
+#[test]
 fn checked_routes_preserve_fixed_builders_and_apps_after_refusal() {
     use coaptic::app::{RouteError, get};
     let mut legacy = App::profile::<coaptic::profiles::Constrained>()

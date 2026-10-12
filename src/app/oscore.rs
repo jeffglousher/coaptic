@@ -15,6 +15,18 @@ use crate::oscore::{BoundedSecurityContext, Error as OscoreError, RequestRef};
 /// [`App`](super::App) field: a caller-owned context, or an empty marker.
 #[cfg(feature = "oscore")]
 pub(crate) type Field<const REQUESTS: usize> = Option<BoundedSecurityContext<REQUESTS>>;
+
+pub(crate) fn has_live_requests<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
+    #[cfg(feature = "oscore")]
+    {
+        ctx.as_ref().is_some_and(|ctx| ctx.has_live_requests())
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = ctx;
+        false
+    }
+}
 #[cfg(not(feature = "oscore"))]
 #[derive(Clone, Copy)]
 pub(crate) struct Field<const REQUESTS: usize>;
