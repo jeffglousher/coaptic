@@ -295,6 +295,9 @@ A failed cancellation leaves remote state uncertain. The companion
 [protected cancellation campaign](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/oscore_observe_cancel.py)
 checks authenticated cancellation, an update/readback during a bounded quiet
 interval, and fresh registration against the independent libcoap peer on loopback.
+It runs separately over IPv4 and IPv6; the IPv6 report requires `::1`, IPv6-only
+relay sockets and exact endpoint ownership. Routed networks and nonzero IPv6
+zones require separate qualification.
 
 Deferred queryless GET observations can deliver a large initial response using
 one retained body slot and an ETag. Later blocks use that immutable snapshot;
