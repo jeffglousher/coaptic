@@ -298,6 +298,9 @@ interval, and fresh registration against the independent libcoap peer on loopbac
 It runs separately over IPv4 and IPv6; the IPv6 report requires `::1`, IPv6-only
 relay sockets and exact endpoint ownership. Routed networks and nonzero IPv6
 zones require separate qualification.
+The companion also checks intact stale-notification refusal and fresh recovery
+over both loopback families, with authenticated update/readback ownership and
+response-nonce uniqueness across the campaign.
 
 Deferred queryless GET observations can deliver a large initial response using
 one retained body slot and an ETag. Later blocks use that immutable snapshot;
