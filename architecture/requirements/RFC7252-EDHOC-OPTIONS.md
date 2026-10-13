@@ -3,7 +3,8 @@
 ## Implementation boundary
 
 This assessment covers `CoapProvisioner`'s sequential, fixed-storage unicast
-bootstrap profile: Confirmable POST requests, piggybacked or separate responses,
+bootstrap profile and `CoapRecovery`'s initial admission: Confirmable POST
+requests, piggybacked or separate responses,
 and the supported initial Echo challenge. RFC 9668 supplies the EDHOC transport
 mapping; this ledger assesses its base CoAP option handling, not complete EDHOC
 or CoAP compliance. The parent [IETF RFC plan](../IETF-RFC-PLAN.md) retains the
@@ -30,6 +31,15 @@ is reserved. Replays do not renew expiry or handshake deadlines. Completed
 controllers serve retained owners only. Recovery completion and retirement
 caches preserve refusal ownership without retaining handshake cryptographic
 state; cache residency covers the later of its original and refusal deadlines.
+Initial recovery admission has a separate identifier-only control slot. Critical
+option refusal precedes EDHOC payload parsing and creates no candidate or
+completion cache. It retains the original MID/token/expiry across candidate
+termination and application handoff. Existing completion caches take precedence;
+a pending initial control is drained before more candidate input. The initial
+slot, candidate slot and each completion cache's transferred slot are independently
+bounded; refusing initial input cannot evict a completed owner or reserve a
+connection ID. Saturation silently declines additional refusal owners until the
+slot expires; this remains a finite-capacity availability limit.
 
 ## Requirement assessment
 
@@ -45,6 +55,7 @@ state; cache residency covers the later of its original and refusal deadlines.
 | RFC7252-5.4.5-repeat | Supernumerary non-repeatable occurrences are treated as unrecognized. | Iterator remembers the preceding option number, including invalid first occurrences; repeatable Uri-Path remains intact. Role/repetition and Echo tests above retain the first recognized value, ignore extras and preserve authentication/deadlines. | Direct proof established for recognized profile fields. |
 | PROFILE-control-bound | One control slot has finite lifetime and cannot renew handshake work. | `bootstrap_options_control_expiry_and_clock_overflow_preserve_bounds` proves unsent expiry without output/handshake mutation, fresh authentication and checked deadline-overflow refusal before crypto. | Direct bounded failure/recovery proof established; sustained hostile-traffic fairness remains unqualified. |
 | RFC7252-4.5-refusal-owner | Refused exchanges preserve peer MID ownership and original duplicate controls during their lifetime. | Request-control test proves changed token/body refusal, same original response and fresh-MID recovery. `bootstrap_options_recovery_handoff_preserves_refusal_mid_and_failed_send` proves handoff replay, exact failed/short-send retention and original expiry without renewal. `bootstrap_options_recovery_retirement_keeps_later_refusal_expiry` proves quarantine beyond an earlier handshake-cache deadline, no replacement candidate and exact expiry release. | Direct ownership/recovery proof established for the selected controller and transferred cache. |
+| PROFILE-initial-recovery-admission | The initial dispatcher applies the selected critical-option refusal boundary before handshake work, while preserving its retained owners. | `initial_admission_critical_refusal_is_bounded_and_recovers_through_handoff` checks exact endpoint/ACK/code/MID/token, failed/short-send retention, no candidate/cache consumption, fixed-slot saturation, changed-token replay, handoff barrier and authenticated directional keys/IV. `initial_admission_refusal_rejects_unrelated_and_opposite_role_traffic` checks endpoint/resource/type/size/parse isolation and refusal before payload parsing. `initial_admission_refusal_expiry_and_clock_overflow_release_no_crypto_work` checks unsent expiry and deadline overflow before crypto. `initial_admission_refusal_survives_candidate_retirement_without_renewal` and `initial_admission_critical_mutation_cannot_cross_completed_cache_owner` prove cancellation/original expiry, full-cache refusal and completed-owner precedence. | Direct initial-dispatcher proof established; independent option-extension peers and general availability remain pending. |
 
 The section 5.4.1 SHOULD diagnostic payload is omitted for this bounded bootstrap
 profile: the fixed 4.02 header/token identifies refusal without reflecting
@@ -56,7 +67,8 @@ retirement policy: termination stops reply work while preventing a stale MID
 from becoming a replacement handshake. Successful completion caches retain
 their original replies and refusal controls normally.
 
-Named tests are in [coap_tests.rs](../../src/provisioning/coap_tests.rs). Their
+Named tests are in [coap_tests.rs](../../src/provisioning/coap_tests.rs) and
+[recovery_tests.rs](../../src/provisioning/recovery_tests.rs). Their
 references and implementation resolve in the same Git revision as this ledger.
 The reviewed PR retains executed candidate/toolchain identities and results.
 Both no-default `edhoc` and `alloc,edhoc` configurations are tested; this
@@ -75,10 +87,6 @@ senders are prohibited from including it.
   independently bounded multi-association runtime.
 - Qualify independent EDHOC peers carrying elective extensions, including
   separate responses, exact duplicate ownership and fresh recovery.
-- Assess `CoapRecovery`'s initial admission dispatcher before a candidate exists.
-  It currently routes only supported message-1 metadata; this ledger's 4.02
-  processing proof applies to `CoapProvisioner` and active recovery candidates,
-  not that initial dispatcher or every application adapter.
 - Complete the RFC 9528/9668 requirement inventory and remaining error/profile,
   suite, EAD and installed-policy work owned by
   [#365](https://github.com/jeffglousher/coaptic/issues/365). This option increment
