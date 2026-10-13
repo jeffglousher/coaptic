@@ -4,9 +4,9 @@ use core::{convert::Infallible, fmt};
 
 use super::super::{ConnectionId, Identity, PinnedPeer, Principal, Session};
 use super::{
-    ClientState, CoapProvisioner, CompletedCacheMatch, DATAGRAM_CAPACITY, EXCHANGE_LIFETIME_MS,
-    Exchange, Operation, PollError, ResponseAck, Role, Status, request_metadata,
-    same_mid_namespace, send,
+    ClientState, CoapProvisioner, CompletedCacheMatch, Control, DATAGRAM_CAPACITY,
+    EXCHANGE_LIFETIME_MS, Exchange, Operation, PollError, ResponseAck, Role, Status, flush_control,
+    request_metadata, same_mid_namespace, send,
 };
 use crate::message::{Message as CoapMessage, MessageId, decode};
 use crate::storage::{DatagramIo, Endpoint};
@@ -40,10 +40,20 @@ struct Cache {
     expires: u64,
     replies: bool,
     role: CachedRole,
+    control: Option<Control>,
 }
 
 impl Cache {
     fn from_controller(controller: CoapProvisioner<'_>, expires: u64, replies: bool) -> Self {
+        let mut control = controller.control;
+        if !replies {
+            if let Some(control) = &mut control {
+                control.pending = false;
+            }
+        }
+        let expires = control
+            .as_ref()
+            .map_or(expires, |control| expires.max(control.expires));
         let role = match controller.role {
             Role::Client(client) => CachedRole::Client {
                 operations: [client.ids.first, client.ids.second, client.ids.echo],
@@ -60,6 +70,7 @@ impl Cache {
             expires,
             replies,
             role,
+            control,
         }
     }
 
@@ -68,6 +79,13 @@ impl Cache {
             return CompletedCacheMatch::NoMatch;
         }
         let mid = MessageId::new(u16::from_be_bytes([bytes[2], bytes[3]]));
+        if bytes.len() <= DATAGRAM_CAPACITY
+            && self.control.as_ref().is_some_and(|control| {
+                decode(bytes).is_ok_and(|message| control.owns(message, now))
+            })
+        {
+            return CompletedCacheMatch::RefusedMid;
+        }
         match &self.role {
             CachedRole::Client {
                 operations, acks, ..
@@ -110,6 +128,14 @@ impl Cache {
         if !self.replies {
             return false;
         }
+        if let Some(control) = &mut self.control {
+            if decode(bytes)
+                .is_ok_and(|message| control.owns(message, now) && control.can_replay(message))
+            {
+                control.pending = true;
+                return true;
+            }
+        }
         match &mut self.role {
             CachedRole::Client { acks, pending, .. } => {
                 for (index, ack) in acks.iter().enumerate() {
@@ -140,11 +166,12 @@ impl Cache {
     }
 
     fn pending(&self) -> bool {
-        match &self.role {
-            CachedRole::Client { pending, .. } | CachedRole::Server { pending, .. } => {
-                *pending != 0
+        self.control.as_ref().is_some_and(|c| c.pending)
+            || match &self.role {
+                CachedRole::Client { pending, .. } | CachedRole::Server { pending, .. } => {
+                    *pending != 0
+                }
             }
-        }
     }
 
     fn flush<T: DatagramIo>(
@@ -154,6 +181,7 @@ impl Cache {
         now: u64,
     ) -> Result<bool, PollError<T::Error>> {
         let mut progress = false;
+        progress |= flush_control(&mut self.control, io, endpoint, now)?;
         match &mut self.role {
             CachedRole::Client { acks, pending, .. } => {
                 for (index, ack) in acks.iter().enumerate() {
@@ -317,7 +345,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         }
         for cache in self.caches.iter_mut().flatten() {
             match cache.classify(bytes, now_ms) {
-                CompletedCacheMatch::ExactDuplicate => {
+                CompletedCacheMatch::ExactDuplicate | CompletedCacheMatch::RefusedMid => {
                     return Ok(if cache.queue(bytes, now_ms) {
                         Status::Progress
                     } else {
@@ -588,6 +616,9 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             .expect("candidate reservation");
         if let Some(deadline) = candidate.expires {
             expires = expires.max(deadline);
+        }
+        if let Some(control) = &candidate.control {
+            expires = expires.max(control.expires);
         }
         match &candidate.role {
             Role::Client(client) => {

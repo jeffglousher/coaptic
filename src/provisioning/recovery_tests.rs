@@ -146,6 +146,193 @@ fn packet(bytes: &[u8], ty: Type, mid: MessageId, token: Token, payload: &[u8]) 
     output[..len].to_vec()
 }
 
+fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
+    let p = decode(bytes).unwrap();
+    let mut options: Vec<_> = p.options().collect();
+    options.push(Opt::new(OptionNumber::new(99), &[]));
+    options.sort_by_key(|o| o.number());
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::con(Code::POST, MessageId::new(mid), p.token())
+        .with_options(&options)
+        .with_payload(p.payload())
+        .encode(&mut out)
+        .unwrap();
+    out[..len].to_vec()
+}
+
+#[test]
+fn bootstrap_options_recovery_handoff_preserves_refusal_mid_and_failed_send() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<2>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<2>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let m2 = si.last();
+    let bad = critical_request(&m1, 900);
+    server
+        .ingest(&bad, CLIENT, 100, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 100).unwrap();
+    let saved = si.last();
+    client
+        .ingest(&m2, SERVER, 101, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 101).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 101, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 101).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 101, no_entropy, |_| true)
+        .unwrap();
+    assert!(server.take_session().is_some());
+    assert!(server.confirm_handoff());
+    assert!(client.take_session().is_some());
+    assert!(client.confirm_handoff());
+    let mut opposite_role = bad.clone();
+    opposite_role[1] = 68;
+    let count = si.sent.len();
+    let cache = server.caches.iter().flatten().next().unwrap();
+    assert_eq!(
+        cache.classify(&opposite_role, 102),
+        CompletedCacheMatch::RefusedMid
+    );
+    assert_eq!(
+        server
+            .ingest(&opposite_role, CLIENT, 102, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    server.flush(&mut si, 102).unwrap();
+    assert_eq!(si.sent.len(), count);
+    let p = decode(&m1).unwrap();
+    let changed = packet(
+        &m1,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        p.payload(),
+    );
+    assert_eq!(
+        server
+            .ingest(&changed, CLIENT, 102, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    assert!(!server.has_candidate());
+    si.fail = true;
+    assert_eq!(
+        server.flush(&mut si, 102),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    assert_eq!(si.last(), saved);
+    si.fail = false;
+    si.short = true;
+    assert_eq!(
+        server.flush(&mut si, 103),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    server.flush(&mut si, 104).unwrap();
+    assert_eq!(si.last(), saved);
+    let own_expiry = 100 + EXCHANGE_LIFETIME_MS;
+    server
+        .ingest(
+            &changed,
+            CLIENT,
+            own_expiry - 1,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    server.flush(&mut si, own_expiry - 1).unwrap();
+    assert_eq!(si.last(), saved);
+    let count = si.sent.len();
+    server.flush(&mut si, own_expiry).unwrap();
+    assert_eq!(si.sent.len(), count);
+    let cache = server.caches.iter().flatten().next().unwrap();
+    assert_eq!(
+        cache.classify(&changed, own_expiry),
+        CompletedCacheMatch::NoMatch
+    );
+}
+
+#[test]
+fn bootstrap_options_recovery_retirement_keeps_later_refusal_expiry() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<2>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<2>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    server
+        .ingest(
+            &critical_request(&m1, 900),
+            CLIENT,
+            100,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    server.flush(&mut si, 100).unwrap();
+    assert!(server.discard_candidate(EXCHANGE_LIFETIME_MS + 1).unwrap());
+    assert!(!server.has_candidate());
+    assert_eq!(server.next_deadline(), Some(EXCHANGE_LIFETIME_MS + 100));
+    let p = decode(&m1).unwrap();
+    let changed = packet(
+        &m1,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        p.payload(),
+    );
+    let count = si.sent.len();
+    assert_eq!(
+        server
+            .ingest(
+                &changed,
+                CLIENT,
+                EXCHANGE_LIFETIME_MS + 99,
+                no_entropy,
+                no_authorization
+            )
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(!server.has_candidate());
+    server.flush(&mut si, EXCHANGE_LIFETIME_MS + 99).unwrap();
+    assert_eq!(si.sent.len(), count); // retired owners quarantine without replies
+    assert_eq!(
+        server
+            .ingest(
+                &changed,
+                CLIENT,
+                EXCHANGE_LIFETIME_MS + 100,
+                entropy(5),
+                no_authorization
+            )
+            .unwrap(),
+        Status::Progress
+    );
+    assert!(server.has_candidate());
+}
+
 #[test]
 fn either_peer_alone_can_restart_with_distinct_active_local_ids_and_fresh_keys() {
     for restarted_client in [false, true] {
@@ -665,6 +852,7 @@ fn all_compact_ids_reserved_refuses_admission_even_with_a_free_cache_slot() {
             token: Token::from_checked(&[raw]),
         };
         controller.caches[usize::from(raw)] = Some(Cache {
+            control: None,
             local_id: ConnectionId::new(raw).unwrap(),
             expires: EXCHANGE_LIFETIME_MS,
             replies: false,
