@@ -1746,14 +1746,24 @@ fn discovery_uri_inbound_dot_refuses_before_dispatch_and_recovers() {
         .bind(Loopback::default())
         .unwrap();
     for (i, segment) in [".", ".."].into_iter().enumerate() {
-        let (wire, n) = encode_req_mid(Code::GET, &["ok", segment], &[], 0x2010 + i as u16);
+        let raw_mid = 0x2010 + i as u16;
+        let mid = MessageId::new(raw_mid);
+        let (wire, n) = encode_req_mid(Code::GET, &["ok", segment], &[], raw_mid);
         app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().last_send = None;
         app.poll_with(i as u64, |_, _| panic!("invalid path dispatched"))
             .unwrap();
-        assert_eq!(last_reply(&app).code, Code::BAD_REQUEST);
+        let (destination, bytes, sent) = app.transport().last_send.expect("fresh refusal");
+        let reply = decode(&bytes[..sent]).unwrap();
+        assert_eq!(destination, peer);
+        assert_eq!(reply.message_id(), mid);
+        assert_eq!(reply.ty(), Type::Acknowledgement);
+        assert_eq!(reply.token(), Token::new(&[0xA1]).unwrap());
+        assert_eq!(reply.code(), Code::BAD_REQUEST);
     }
     let (wire, n) = encode_req_mid(Code::GET, &["ok"], &[], 0x2012);
     app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
     app.poll(2).unwrap();
     let reply = last_reply(&app);
     assert_eq!(reply.code, Code::CONTENT);
