@@ -521,6 +521,13 @@ where
         &self.trust
     }
 
+    /// Retained unauthenticated bootstrap diagnostics, without changing live
+    /// trust or connection state. The caller chooses its logging policy.
+    #[must_use]
+    pub fn peer_error(&self) -> Option<super::PeerError<'_>> {
+        self.recovery.as_ref().and_then(CoapRecovery::peer_error)
+    }
+
     /// Current explicit authority freshness contract, evaluated on each action.
     #[must_use]
     pub const fn policy_validity(&self) -> PolicyValidity {
@@ -685,7 +692,10 @@ where
                         .filter(|option| option.number() == OptionNumber::URI_PATH)
                         .map(|option| option.value())
                         .eq([b".well-known".as_slice(), b"edhoc".as_slice()]))
-                    || (message.code().is_success() && format == Some(64))
+                    || ((message.code().is_success()
+                        || message.code().is_client_error()
+                        || message.code().is_server_error())
+                        && format == Some(64))
                     || echo_challenge
                     || (message.code().is_empty()
                         && recovery.as_ref().is_some_and(CoapRecovery::has_candidate))
@@ -699,7 +709,9 @@ where
                         && !recovery
                             .as_ref()
                             .expect("prepared recovery")
-                            .has_candidate())
+                            .has_candidate()
+                        && decode(&io.bytes[..len])
+                            .is_ok_and(|message| message.code().is_request()))
                 {
                     Ok(super::Status::Ignored)
                 } else {
@@ -1258,6 +1270,7 @@ fn widen<E>(error: RecoveryError) -> RecoveryError<ManagedIoError<E>> {
             super::PollError::ShortSend => super::PollError::ShortSend,
             super::PollError::Clock => super::PollError::Clock,
             super::PollError::Rejected => super::PollError::Rejected,
+            super::PollError::PeerAbort(code) => super::PollError::PeerAbort(code),
         }),
     }
 }

@@ -169,6 +169,101 @@ fn connect(client: &mut Owner<'_>, server: &mut Owner<'_>, now: u64) -> u64 {
     panic!("paired managed handshake did not complete")
 }
 
+#[test]
+fn peer_error_managed_routing_preserves_authorized_app_and_allows_explicit_recovery() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    let now = connect(&mut client, &mut server, 0) + 1;
+    let generation = client.trust().checkpoint().anchor();
+    client.connect(now).unwrap();
+    client.poll_with(now, idle).unwrap();
+    let (m1, _) = network.borrow_mut().b.pop_front().unwrap();
+    let p = decode(&m1).unwrap();
+    let options = [Opt::new(OptionNumber::CONTENT_FORMAT, &[64])];
+    let mut bytes = [0; DATAGRAM_BYTES];
+    let len = Message::new(Type::Confirmable, Code::BAD_REQUEST, MessageId::new(30_000))
+        .with_token(p.token())
+        .with_options(&options)
+        .with_payload(&[1, 0x63, b'b', b'a', b'd'])
+        .encode(&mut bytes)
+        .unwrap();
+    network
+        .borrow_mut()
+        .a
+        .push_back((bytes[..len].to_vec(), SERVER));
+    assert!(matches!(
+        client.poll_with(now + 1, idle),
+        Err(ManagedError::Recovery(RecoveryError::Bootstrap(
+            super::super::PollError::PeerAbort(super::super::PeerErrorCode::Unspecified)
+        )))
+    ));
+    assert!(client.is_connected());
+    assert_eq!(client.trust().checkpoint().anchor(), generation);
+    assert!(!client.recovery.as_ref().unwrap().has_candidate());
+    assert_eq!(client.peer_error().unwrap().diagnostic(), Some("bad"));
+    assert_eq!(
+        network.borrow_mut().b.pop_front().unwrap().0,
+        [0x60, 0, 0x75, 0x30]
+    );
+    let call = client
+        .request(Method::Get, "alive", &[], None, now + 2)
+        .unwrap();
+    // Retained error ACKs are transport work, not a second outgoing CON.
+    let ack_count = network
+        .borrow()
+        .sent
+        .iter()
+        .filter(|(from, to, packet)| {
+            *from == CLIENT && *to == SERVER && packet == &[0x60, 0, 0x75, 0x30]
+        })
+        .count();
+    network
+        .borrow_mut()
+        .a
+        .push_back((bytes[..len].to_vec(), SERVER));
+    client.poll_with(now + 2, idle).unwrap();
+    assert_eq!(
+        network
+            .borrow()
+            .sent
+            .iter()
+            .filter(|(from, to, packet)| {
+                *from == CLIENT && *to == SERVER && packet == &[0x60, 0, 0x75, 0x30]
+            })
+            .count(),
+        ack_count + 1
+    );
+    server
+        .poll_with(now + 2, |principal, _, _| {
+            assert_eq!(principal, &a.peer().principal());
+            Response::content(b"authorized")
+        })
+        .unwrap();
+    client.poll_with(now + 2, idle).unwrap();
+    let mut body = [0; 32];
+    assert_eq!(
+        client
+            .take_response_into(call, &mut body, now + 2)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"authorized"
+    );
+    assert!(matches!(
+        client.connect(now + 4),
+        Err(ManagedError::Recovery(RecoveryError::Capacity))
+    ));
+    connect(
+        &mut client,
+        &mut server,
+        now + 2 + super::super::CoapProvisioner::EXCHANGE_LIFETIME_MS,
+    );
+    assert!(client.is_connected());
+}
+
 fn snapshot() -> Response<'static> {
     Response::content(b"snapshot").max_age(10)
 }

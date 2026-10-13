@@ -12,6 +12,9 @@
 //! The initiator accepts at most one initial piggybacked Echo challenge, saving
 //! its exact response and retrying the same message 1 under a separately reserved
 //! Message ID. This neither renews entropy nor extends the original wait limit.
+//! Recognized peer errors terminate the candidate after required transport ACKs
+//! are drained. Diagnostics are borrowed, unauthenticated and never authorize
+//! recovery or select a suite. Outbound EDHOC error generation is not implemented.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -35,8 +38,8 @@ use crate::message::{
 use crate::storage::{DatagramIo, Endpoint};
 
 use super::{
-    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PinnedPeer, Principal,
-    Responder, Session,
+    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PeerError, PeerErrorCode,
+    PinnedPeer, Principal, Responder, Session,
 };
 
 const DATAGRAM_CAPACITY: usize = 384;
@@ -75,6 +78,10 @@ pub enum PollError<E = Infallible> {
     Clock,
     /// The matching Confirmable operation received a Reset.
     Rejected,
+    /// An unauthenticated matching EDHOC error terminated this candidate.
+    /// Any required transport ACK has been sent; inspect [`CoapProvisioner::peer_error`].
+    /// It does not revoke trust, authorize recovery or select another cipher suite.
+    PeerAbort(PeerErrorCode),
 }
 
 #[derive(Clone, Copy)]
@@ -255,6 +262,11 @@ enum ClientState {
     Message2(Initiator),
     Message4(InitiatorConfirm),
     Complete,
+    Aborted {
+        code: PeerErrorCode,
+        slot: usize,
+        reported: bool,
+    },
     Failed,
 }
 
@@ -536,7 +548,15 @@ impl<'a> CoapProvisioner<'a> {
         } else {
             match &self.role {
                 Role::Client(client) => {
-                    if client.pending_acks != 0 {
+                    if client.pending_acks != 0
+                        || matches!(
+                            client.state,
+                            ClientState::Aborted {
+                                reported: false,
+                                ..
+                            }
+                        )
+                    {
                         Some(self.last_now)
                     } else if matches!(
                         client.state,
@@ -568,6 +588,23 @@ impl<'a> CoapProvisioner<'a> {
             return None;
         }
         self.session.take()
+    }
+
+    /// The retained unauthenticated error, available after ingest and termination
+    /// until its response cache expires. No diagnostic bytes are copied or logged.
+    #[must_use]
+    pub fn peer_error(&self) -> Option<PeerError<'_>> {
+        let Role::Client(client) = &self.role else {
+            return None;
+        };
+        let ClientState::Aborted { slot, .. } = client.state else {
+            return None;
+        };
+        PeerError::parse(
+            decode(client.acks[slot].as_ref()?.response.as_slice())
+                .ok()?
+                .payload(),
+        )
     }
 
     /// Sends pending cached bytes, receives at most one datagram, then sends any
@@ -615,7 +652,9 @@ impl<'a> CoapProvisioner<'a> {
 
     /// Processes one complete datagram routed to bootstrap by the caller.
     /// Unrelated endpoints or invalid CoAP metadata leave the handshake intact.
-    /// A matching wire-valid malformed EDHOC message consumes its state.
+    /// A matching wire-valid malformed successful EDHOC message consumes its state.
+    /// Recognized error responses drop handshake state and return Progress;
+    /// call flush to drain any transport ACK and receive [`PollError::PeerAbort`].
     /// Responses remain queued for [`Self::flush`], without receiving App traffic.
     /// Unsupported critical options at this resource queue 4.02; matching
     /// separate Confirmable responses queue Reset before cryptographic work.
@@ -746,6 +785,12 @@ impl<'a> CoapProvisioner<'a> {
                 }
             }
         }
+        if let Role::Client(client) = &mut self.role {
+            if let ClientState::Aborted { code, reported, .. } = &mut client.state {
+                *reported = true;
+                return Err(PollError::PeerAbort(*code));
+            }
+        }
         Ok(self.status(progress, false))
     }
 
@@ -802,7 +847,7 @@ impl<'a> CoapProvisioner<'a> {
             self.control = None;
         }
         if self.expires.is_some_and(|expires| now >= expires) {
-            if self.complete() {
+            if self.complete() || self.peer_error().is_some() {
                 self.expired = true;
                 self.session = None;
                 self.control = None;
@@ -947,8 +992,40 @@ impl Client {
         }
         if parsed.token() != self.operation.token
             || (parsed.ty() == Type::Acknowledgement && parsed.message_id() != self.operation.mid)
-            || !response_metadata(parsed)
         {
+            return Ok(false);
+        }
+        if error_response_metadata(parsed) {
+            let Some(error) = PeerError::parse(parsed.payload()) else {
+                return Ok(false);
+            };
+            let waiting_message_2 = matches!(self.state, ClientState::Message2(_));
+            if (error.code() == PeerErrorCode::WrongCipherSuite && !waiting_message_2)
+                || (error.code() == PeerErrorCode::UnknownCredential && waiting_message_2)
+            {
+                return Ok(false);
+            }
+            let until = now
+                .checked_add(EXCHANGE_LIFETIME_MS)
+                .ok_or(Failure::Clock)?;
+            let slot = if waiting_message_2 { 0 } else { 1 };
+            self.acks[slot] = Some(ResponseAck {
+                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                mid: parsed.message_id(),
+                expires: until,
+            });
+            if parsed.ty() == Type::Confirmable {
+                self.pending_acks |= 1 << slot;
+            }
+            self.state = ClientState::Aborted {
+                code: error.code(),
+                slot,
+                reported: false,
+            };
+            *input.expires = Some(until);
+            return Ok(true);
+        }
+        if !response_metadata(parsed) {
             return Ok(false);
         }
         let until = now
@@ -1164,6 +1241,19 @@ fn response_metadata(message: ParsedMessage<'_>) -> bool {
         && options.next().is_none()
 }
 
+fn error_response_metadata(message: ParsedMessage<'_>) -> bool {
+    if !matches!(
+        message.ty(),
+        Type::Acknowledgement | Type::Confirmable | Type::NonConfirmable
+    ) || !matches!(message.code().class(), 4 | 5)
+    {
+        return false;
+    }
+    let mut options = profile_options(message, OptionRole::Response);
+    matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(RESPONSE_FORMAT))
+        && options.next().is_none()
+}
+
 #[derive(Clone, Copy)]
 enum OptionRole {
     Request,
@@ -1284,6 +1374,7 @@ fn widen<E>(error: PollError) -> PollError<E> {
         PollError::ShortSend => PollError::ShortSend,
         PollError::Clock => PollError::Clock,
         PollError::Rejected => PollError::Rejected,
+        PollError::PeerAbort(code) => PollError::PeerAbort(code),
     }
 }
 
