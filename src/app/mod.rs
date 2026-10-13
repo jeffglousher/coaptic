@@ -3586,7 +3586,11 @@ where
                 };
                 (response, plan)
             }
-            Err(request::PathError::BadUtf8 | request::PathError::EmptySegment) => (
+            Err(
+                request::PathError::BadUtf8
+                | request::PathError::EmptySegment
+                | request::PathError::DotSegment,
+            ) => (
                 Response::problem(Code::BAD_REQUEST).title("Bad Request"),
                 ObservePlan::idle(),
             ),

@@ -25,6 +25,8 @@ pub enum RouteError {
 /// [`link_format_capacity`]: `N ×` this, floored at [`super::INLINE_PAYLOAD`]
 /// and capped at [`super::RESPONSE_BODY`]. A catalog that still does not
 /// fit is 5.00, never a silently truncated list.
+/// URI percent-encoding can expand each segment byte to three bytes; this
+/// estimate is not a guarantee that every registered path fits discovery.
 pub const LINK_FORMAT_PER_ROUTE: usize = 24;
 
 /// Compile-time `/.well-known/core` payload bytes for a [`Site`] of `N` routes.
@@ -294,6 +296,9 @@ impl<const N: usize> Site<N> {
     /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Pass
     /// [`LinkFormatScratch`] (or any slice of
     /// [`link_format_capacity`], capped at [`RESPONSE_BODY`]).
+    /// Links encode decoded path segments as URI references without changing
+    /// their boundaries (RFC 6690 section 2 and RFC 7252 section 6.5).
+    /// Unsupported unicast discovery query filters are ignored.
     #[must_use]
     pub fn dispatch<'a>(&self, request: Request<'_>, catalog: &'a mut [u8]) -> Response<'a> {
         for entry in self.entries.iter().flatten() {
@@ -359,6 +364,7 @@ fn expect_path(path: impl IntoPath) -> Path<'static> {
         Err(PathError::EmptySegment) => {
             panic!("URI-Path has an empty segment; omit extra slashes")
         }
+        Err(PathError::DotSegment) => panic!("URI-Path has a forbidden dot segment"),
         Err(PathError::BadUtf8) => unreachable!("static &str is UTF-8"),
     }
 }
@@ -369,9 +375,6 @@ fn path_is_well_known(path: &[&str]) -> bool {
 
 fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Response<'a> {
     let cap = link_format_capacity::<N>().min(storage.len());
-    if cap == 0 {
-        return Response::internal_error();
-    }
     let buf = &mut storage[..cap];
     let mut n = 0usize;
     let mut first = true;
@@ -404,17 +407,48 @@ fn catalog_etag(body: &[u8]) -> [u8; 4] {
     hash.to_be_bytes()
 }
 
-fn link_bytes(segments: &[&str]) -> usize {
+fn link_bytes(segments: &[&str], limit: usize) -> Option<usize> {
     if segments.is_empty() {
-        3
+        (limit >= 3).then_some(3)
     } else {
-        2 + segments.iter().map(|s| 1 + s.len()).sum::<usize>()
+        segments.iter().try_fold(2usize, |total, segment| {
+            let total = total.checked_add(1)?;
+            if total > limit {
+                return None;
+            }
+            segment.as_bytes().iter().try_fold(total, |n, &byte| {
+                let n = n.checked_add(if uri_path_byte_is_literal(byte) { 1 } else { 3 })?;
+                (n <= limit).then_some(n)
+            })
+        })
     }
 }
 
+fn uri_path_byte_is_literal(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'@'
+        )
+}
+
 fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
-    let need = link_bytes(segments);
-    if buf.len().saturating_sub(*n) < need {
+    if link_bytes(segments, buf.len().saturating_sub(*n)).is_none() {
         return false;
     }
     buf[*n] = b'<';
@@ -426,8 +460,18 @@ fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
         for segment in segments {
             buf[*n] = b'/';
             *n += 1;
-            buf[*n..*n + segment.len()].copy_from_slice(segment.as_bytes());
-            *n += segment.len();
+            for &byte in segment.as_bytes() {
+                if uri_path_byte_is_literal(byte) {
+                    buf[*n] = byte;
+                    *n += 1;
+                } else {
+                    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                    buf[*n] = b'%';
+                    buf[*n + 1] = HEX[usize::from(byte >> 4)];
+                    buf[*n + 2] = HEX[usize::from(byte & 15)];
+                    *n += 3;
+                }
+            }
         }
     }
     buf[*n] = b'>';

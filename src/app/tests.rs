@@ -1582,6 +1582,208 @@ fn well_known_core_small_n_keeps_inline_floor() {
     assert_eq!(body, "</sensors/temperature/celsius>");
 }
 
+#[test]
+fn discovery_uri_preserves_decoded_segment_identity() {
+    const SEGMENTS: [&str; 2] = ["AZaz09-._~!$&'()*+,;=:@", "a/b %2E?#<>\"\0é☃"];
+    let mut site = Site::<1>::new();
+    site.route(&SEGMENTS, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(response.payload()).unwrap();
+    assert_eq!(
+        body,
+        "</AZaz09-._~!$&'()*+,;=:@/a%2Fb%20%252E%3F%23%3C%3E%22%00%C3%A9%E2%98%83>"
+    );
+    // Resolve the advertised path into decoded CoAP options, independently
+    // checking that URI delimiters do not change the segment sequence.
+    let target = body.strip_prefix("</").unwrap().strip_suffix('>').unwrap();
+    for (encoded, original) in target.split('/').zip(SEGMENTS) {
+        let mut decoded = [0u8; 128];
+        let mut n = 0;
+        let mut bytes = encoded.as_bytes();
+        while let Some((&byte, rest)) = bytes.split_first() {
+            if byte == b'%' {
+                decoded[n] =
+                    u8::from_str_radix(core::str::from_utf8(&rest[..2]).unwrap(), 16).unwrap();
+                bytes = &rest[2..];
+            } else {
+                decoded[n] = byte;
+                bytes = rest;
+            }
+            n += 1;
+        }
+        assert_eq!(&decoded[..n], original.as_bytes());
+    }
+    assert_eq!(target.split('/').count(), SEGMENTS.len());
+}
+
+#[test]
+fn discovery_uri_distinguishes_literal_slash_and_percent_text() {
+    let mut site = Site::<3>::new();
+    site.route(&["a/b"], get(get_temp))
+        .route("a/b", get(get_led))
+        .route(&["%2F"], get(get_temp))
+        .well_known_core();
+    let mut scratch = LinkFormatScratch::<3>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.payload(), b"</a%2Fb>,</a/b>,</%252F>");
+}
+
+#[test]
+fn discovery_uri_empty_catalog_needs_no_scratch() {
+    let mut site = Site::<0>::new();
+    site.well_known_core();
+    let response = dispatch_well_known(&site, &mut []);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    assert!(response.payload().is_empty());
+}
+
+#[test]
+fn discovery_uri_wire_reply_ignores_unsupported_unicast_filter() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let query = [Opt::uri_query("rt=missing")];
+    let (wire, n) = encode_req_extra(Code::GET, &[".well-known", "core"], &query, &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["a/b"], get(get_temp))
+        .route(&[], get(get_led))
+        .well_known_core()
+        .allow_plaintext()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(parsed.content_format, Some(ContentFormat::LINK_FORMAT));
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"</a%2Fb>,</>");
+}
+
+#[test]
+fn discovery_uri_encoded_capacity_refuses_then_recovers() {
+    let mut site = Site::<1>::new();
+    site.route("é", get(get_temp)).well_known_core();
+    let identity = site.observe_resource(&["é"]);
+    let mut short = [0xA5; 8];
+    let refused = dispatch_well_known(&site, &mut short);
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert_eq!(refused.format(), None);
+    assert_eq!(short, [0xA5; 8]);
+    assert_eq!(site.observe_resource(&["é"]), identity);
+    let mut exact = [0; 9];
+    let recovered = dispatch_well_known(&site, &mut exact);
+    assert_eq!(recovered.code(), Code::CONTENT);
+    assert_eq!(recovered.payload(), b"</%C3%A9>");
+}
+
+#[test]
+fn discovery_uri_expansion_respects_existing_scratch_bound() {
+    const PATH: &str = "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%";
+    assert!(PATH.len() + 3 <= INLINE_PAYLOAD);
+    assert!(PATH.len() * 3 + 3 > INLINE_PAYLOAD);
+    let mut site = Site::<1>::new();
+    site.route(PATH, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let refused = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert!(site.remove_route(PATH).unwrap());
+    site.try_route("ok", get(get_temp)).unwrap();
+    assert_eq!(
+        dispatch_well_known(&site, scratch.as_mut()).payload(),
+        b"</ok>"
+    );
+}
+
+#[test]
+fn discovery_uri_dot_routes_refuse_without_mutation() {
+    use super::{IntoPath, PathError, RouteError};
+    struct DotAdapter;
+    impl IntoPath for DotAdapter {
+        fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+            out[0] = "..";
+            Ok(1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("ok", get(get_temp)).unwrap();
+    let identity = site.observe_resource(&["ok"]);
+    for path in [".", "..", "a/../b", "x/./y"] {
+        assert_eq!(
+            site.try_route(path, get(get_led)).err(),
+            Some(RouteError::Path(PathError::DotSegment))
+        );
+    }
+    assert_eq!(
+        site.try_route(&[".."], get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(
+        site.try_route(DotAdapter, get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["ok"]), identity);
+    site.try_route(&["%2E"], get(get_led)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
+fn discovery_uri_inbound_dot_refuses_before_dispatch_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("ok", get(get_temp))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    for (i, segment) in [".", ".."].into_iter().enumerate() {
+        let (wire, n) = encode_req_mid(Code::GET, &["ok", segment], &[], 0x2010 + i as u16);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll_with(i as u64, |_, _| panic!("invalid path dispatched"))
+            .unwrap();
+        assert_eq!(last_reply(&app).code, Code::BAD_REQUEST);
+    }
+    let (wire, n) = encode_req_mid(Code::GET, &["ok"], &[], 0x2012);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CONTENT);
+    assert_eq!(&reply.payload[..reply.payload_len], b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[""], &[]);
+    let request = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(request.path(), &[""]);
+}
+
+#[test]
+fn discovery_uri_outgoing_dot_refuses_before_io_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    assert!(matches!(
+        app.get("a/../b").to(peer).send(0),
+        Err(Error::Path)
+    ));
+    assert!(matches!(app.get(&["."]).to(peer).send(0), Err(Error::Path)));
+    assert!(app.transport().last_send.is_none());
+    app.get(&["%2E"]).to(peer).send(0).unwrap();
+    let (_, bytes, n) = app.transport().last_send.unwrap();
+    let parsed = decode(&bytes[..n]).unwrap();
+    assert_eq!(parsed.uri_path().next().unwrap().unwrap(), "%2E");
+}
+
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
 /// critical options (e.g. 65001) are 4.02 before the handler, so this
 /// number is safe to carry through decode and App dispatch.
