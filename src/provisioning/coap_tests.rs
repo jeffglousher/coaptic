@@ -100,6 +100,235 @@ fn echo_response(request: &[u8], echo: &[u8]) -> Vec<u8> {
     out[..len].to_vec()
 }
 
+fn peer_error_response(request: &[u8], ty: Type, payload: &[u8]) -> Vec<u8> {
+    let p = decode(request).unwrap();
+    let options = [Opt::new(
+        OptionNumber::CONTENT_FORMAT,
+        &[RESPONSE_FORMAT as u8],
+    )];
+    let mut bytes = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::new(ty, Code::BAD_REQUEST, p.message_id())
+        .with_token(p.token())
+        .with_options(&options)
+        .with_payload(payload)
+        .encode(&mut bytes)
+        .unwrap();
+    bytes[..len].to_vec()
+}
+
+#[test]
+fn peer_error_responses_abort_each_stage_after_exact_ack_and_retain_diagnostics() {
+    for stage in [0, 1] {
+        for ty in [
+            Type::Acknowledgement,
+            Type::Confirmable,
+            Type::NonConfirmable,
+        ] {
+            let cases: &[(&[u8], PeerErrorCode)] = if stage == 0 {
+                &[
+                    (&[0, 0x19, 1, 0], PeerErrorCode::ReservedSuccess),
+                    (&[1, 0x63, b'b', b'a', b'd'], PeerErrorCode::Unspecified),
+                    (&[2, 0x82, 2, 3], PeerErrorCode::WrongCipherSuite),
+                ]
+            } else {
+                &[
+                    (&[0, 0x19, 1, 0], PeerErrorCode::ReservedSuccess),
+                    (&[1, 0x63, b'b', b'a', b'd'], PeerErrorCode::Unspecified),
+                    (&[3, 0xf5], PeerErrorCode::UnknownCredential),
+                ]
+            };
+            for &(payload, code) in cases {
+                let a = identity(1, 0);
+                let b = identity(2, 1);
+                let mut client =
+                    CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+                let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+                let mut ci = Io::default();
+                let mut si = Io::default();
+                client.flush(&mut ci, 0).unwrap();
+                if stage == 1 {
+                    server
+                        .ingest(&ci.last(), CLIENT, 0, entropy(4), no_authorization)
+                        .unwrap();
+                    server.flush(&mut si, 0).unwrap();
+                    client
+                        .ingest(&si.last(), SERVER, 0, no_entropy, |_| true)
+                        .unwrap();
+                    client.flush(&mut ci, 0).unwrap();
+                    assert_eq!(
+                        client.ingest(
+                            &peer_error_response(&ci.last(), ty, &[2, 2]),
+                            SERVER,
+                            1,
+                            no_entropy,
+                            no_authorization
+                        ),
+                        Ok(Status::Ignored)
+                    );
+                }
+                let error = peer_error_response(&ci.last(), ty, payload);
+                let request_count = ci.attempts.len();
+                assert_eq!(
+                    client.ingest(&error, SERVER, 1, no_entropy, no_authorization),
+                    Ok(Status::Progress)
+                );
+                assert!(client.take_session().is_none());
+                assert_eq!(client.next_deadline(), Some(1));
+                assert_eq!(client.peer_error().unwrap().code(), code);
+                if code == PeerErrorCode::Unspecified {
+                    assert_eq!(client.peer_error().unwrap().diagnostic(), Some("bad"));
+                }
+                if code == PeerErrorCode::WrongCipherSuite {
+                    assert_eq!(
+                        client
+                            .peer_error()
+                            .unwrap()
+                            .cipher_suites()
+                            .collect::<Vec<_>>(),
+                        [2, 3]
+                    );
+                }
+                if ty == Type::Confirmable {
+                    ci.fail = true;
+                    assert_eq!(client.flush(&mut ci, 1), Err(PollError::Io(9)));
+                    let ack = ci.last();
+                    assert_eq!(ack, [0x60, 0, error[2], error[3]]);
+                    assert_eq!(ci.attempts.last().unwrap().0, SERVER);
+                    ci.fail = false;
+                    ci.short = true;
+                    assert_eq!(client.flush(&mut ci, 2), Err(PollError::ShortSend));
+                    assert_eq!(ci.last(), ack);
+                    ci.short = false;
+                }
+                assert_eq!(client.flush(&mut ci, 3), Err(PollError::PeerAbort(code)));
+                let after = ci.attempts.len();
+                assert_eq!(
+                    client.flush(&mut ci, 100_000),
+                    Err(PollError::PeerAbort(code))
+                );
+                assert_eq!(ci.attempts.len(), after); // no handshake retransmission after abort
+                assert_eq!(
+                    after,
+                    request_count + if ty == Type::Confirmable { 3 } else { 0 }
+                );
+                assert_eq!(client.next_deadline(), Some(1 + EXCHANGE_LIFETIME_MS));
+                assert_eq!(
+                    client.ingest(&error, SERVER, 100_001, no_entropy, no_authorization),
+                    Ok(Status::Progress)
+                );
+                assert_eq!(
+                    client.flush(&mut ci, 100_001),
+                    Err(PollError::PeerAbort(code))
+                );
+                assert_eq!(
+                    ci.attempts.len(),
+                    after + usize::from(ty == Type::Confirmable)
+                );
+                assert_eq!(client.next_deadline(), Some(1 + EXCHANGE_LIFETIME_MS));
+                assert_eq!(
+                    client.flush(&mut ci, 1 + EXCHANGE_LIFETIME_MS),
+                    Ok(Status::Expired)
+                );
+                assert!(client.peer_error().is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn peer_error_invalid_or_unrelated_response_keeps_valid_handshake_and_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let deadline = client.next_deadline();
+    for payload in [
+        &[1][..],
+        &[1, 0x61, 0xff],
+        &[2, 0x80],
+        &[3, 0xf5],
+        &[23, 0xf6],
+    ] {
+        assert_eq!(
+            client.ingest(
+                &peer_error_response(&m1, Type::Acknowledgement, payload),
+                SERVER,
+                1,
+                no_entropy,
+                no_authorization
+            ),
+            Ok(Status::Ignored)
+        );
+    }
+    let valid_error = peer_error_response(&m1, Type::Acknowledgement, &[1, 0x60]);
+    assert_eq!(
+        client.ingest(&valid_error, OTHER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let mut wrong_mid = valid_error.clone();
+    wrong_mid[3] ^= 1;
+    assert_eq!(
+        client.ingest(&wrong_mid, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let p = decode(&valid_error).unwrap();
+    let options: Vec<_> = p.options().collect();
+    let wrong_token = recode(
+        &valid_error,
+        p.ty(),
+        p.message_id(),
+        Token::from_checked(b"wrong"),
+        &options,
+        p.payload(),
+    );
+    assert_eq!(
+        client.ingest(&wrong_token, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let mut wrong_code = valid_error.clone();
+    wrong_code[1] = Code::CHANGED.as_raw();
+    assert!(matches!(
+        client.ingest(&wrong_code, SERVER, 1, no_entropy, no_authorization),
+        Err(PollError::Provisioning(_))
+    ));
+    // Matching malformed successful EDHOC messages consume state, unlike malformed error metadata.
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let wrong_format = recode(
+        &valid_error,
+        p.ty(),
+        p.message_id(),
+        p.token(),
+        &[Opt::new(OptionNumber::CONTENT_FORMAT, &[65])],
+        p.payload(),
+    );
+    assert_eq!(
+        client.ingest(&wrong_format, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let critical = extra_options(
+        &peer_error_response(&m1, Type::Confirmable, &[1, 0x60]),
+        &[Opt::new(OptionNumber::new(99), &[])],
+    );
+    assert_eq!(
+        client.ingest(&critical, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    client.flush(&mut ci, 1).unwrap();
+    assert_eq!(ci.last(), [0x70, 0, m1[2], m1[3]]);
+    assert!(client.peer_error().is_none());
+    assert_eq!(client.next_deadline(), deadline);
+    server
+        .ingest(&m1, CLIENT, 1, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 1).unwrap();
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 1);
+}
+
 #[test]
 fn echo_retry_uses_reserved_mid_exact_message1_and_original_wait_deadline() {
     let a = identity(1, 0);

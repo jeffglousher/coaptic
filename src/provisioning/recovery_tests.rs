@@ -163,6 +163,88 @@ fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
 }
 
 #[test]
+fn peer_error_recovery_preserves_live_owner_ack_cache_and_fresh_authentication() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<3>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<3>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let (_, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+    let old_principal = *old_client.principal();
+    let active = client.active_connection_id();
+    let mut ci = Io::default();
+    client.start(10, entropy(5)).unwrap();
+    client.flush(&mut ci, 10).unwrap();
+    let m1 = ci.last();
+    let p = decode(&m1).unwrap();
+    let options = [Opt::new(OptionNumber::CONTENT_FORMAT, &[64])];
+    let mut bytes = [0; DATAGRAM_CAPACITY];
+    let mid = MessageId::new(900);
+    let len = CoapMessage::new(Type::Confirmable, Code::INTERNAL_SERVER_ERROR, mid)
+        .with_token(p.token())
+        .with_options(&options)
+        .with_payload(&[1, 0x63, b'b', b'a', b'd'])
+        .encode(&mut bytes)
+        .unwrap();
+    let error = bytes[..len].to_vec();
+    assert_eq!(
+        client.ingest(&error, SERVER, 11, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    ci.fail = true;
+    assert_eq!(
+        client.flush(&mut ci, 11),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    assert!(client.has_candidate());
+    ci.fail = false;
+    assert_eq!(
+        client.flush(&mut ci, 12),
+        Err(RecoveryError::Bootstrap(PollError::PeerAbort(
+            super::super::super::PeerErrorCode::Unspecified
+        )))
+    );
+    assert!(!client.has_candidate());
+    assert_eq!(client.active_connection_id(), active);
+    assert_eq!(*old_client.principal(), old_principal);
+    assert!(client.take_session().is_none());
+    assert_eq!(client.peer_error().unwrap().diagnostic(), Some("bad"));
+    let ack = ci.last();
+    assert_eq!(ack, [0x60, 0, 3, 0x84]);
+    assert_eq!(*ci.destinations.last().unwrap(), SERVER);
+    let mut changed = error.clone();
+    *changed.last_mut().unwrap() = b'x';
+    assert_eq!(
+        client.ingest(&changed, SERVER, 13, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&error, SERVER, 13, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    ci.short = true;
+    assert_eq!(
+        client.flush(&mut ci, 13),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    assert_eq!(ci.last(), ack);
+    ci.short = false;
+    client.flush(&mut ci, 14).unwrap();
+    assert_eq!(ci.last(), ack);
+    // Recovery is an explicit caller decision; a forged error never starts it.
+    let (_, fresh_client, fresh_server) = exchange(&mut client, &mut server, 15, 7);
+    let (old_client, _) = old_client.into_parts();
+    let (old_server, _) = old_server.into_parts();
+    let (fresh_client, _) = fresh_client.into_parts();
+    let (fresh_server, _) = fresh_server.into_parts();
+    assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+    assert_ne!(old_server.sender_key(), fresh_server.sender_key());
+    assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+    assert_eq!(fresh_client.recipient_key(), fresh_server.sender_key());
+    client.flush(&mut ci, 11 + EXCHANGE_LIFETIME_MS).unwrap();
+    assert!(client.peer_error().is_none());
+}
+
+#[test]
 fn initial_admission_critical_refusal_is_bounded_and_recovers_through_handoff() {
     let a = identity(1, 0);
     let b = identity(2, 1);
@@ -1195,6 +1277,7 @@ fn all_compact_ids_reserved_refuses_admission_even_with_a_free_cache_slot() {
             expires: EXCHANGE_LIFETIME_MS,
             replies: false,
             role: CachedRole::Client {
+                peer_error_slot: None,
                 operations: [operation; 3],
                 acks: [None, None, None],
                 pending: 0,

@@ -2,7 +2,7 @@
 
 use core::{convert::Infallible, fmt};
 
-use super::super::{ConnectionId, Identity, PinnedPeer, Principal, Session};
+use super::super::{ConnectionId, Identity, PeerError, PinnedPeer, Principal, Session};
 use super::{
     ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
     EXCHANGE_LIFETIME_MS, Exchange, Operation, OptionRole, PollError, ResponseAck, Role, Status,
@@ -29,6 +29,7 @@ enum CachedRole {
         operations: [Operation; 3],
         acks: [Option<ResponseAck>; 3],
         pending: u8,
+        peer_error_slot: Option<usize>,
     },
     Server {
         exchanges: [Option<Exchange>; 2],
@@ -60,6 +61,10 @@ impl Cache {
                 operations: [client.ids.first, client.ids.second, client.ids.echo],
                 acks: client.acks,
                 pending: if replies { client.pending_acks } else { 0 },
+                peer_error_slot: match client.state {
+                    ClientState::Aborted { slot, .. } => Some(slot),
+                    _ => None,
+                },
             },
             Role::Server(server) => CachedRole::Server {
                 exchanges: server.exchanges,
@@ -164,6 +169,22 @@ impl Cache {
             }
         }
         false
+    }
+
+    fn peer_error(&self) -> Option<PeerError<'_>> {
+        let CachedRole::Client {
+            acks,
+            peer_error_slot: Some(slot),
+            ..
+        } = &self.role
+        else {
+            return None;
+        };
+        PeerError::parse(
+            decode(acks[*slot].as_ref()?.response.as_slice())
+                .ok()?
+                .payload(),
+        )
     }
 
     fn pending(&self) -> bool {
@@ -547,6 +568,8 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     /// Cancels a candidate without changing the live App or evicting any cache.
     /// An attempt exposed to the transport retains its ID and duplicate metadata
     /// until its original lifetime; a never-transmitted attempt needs no quarantine.
+    /// A recognized peer abort retains ACK/diagnostic ownership even if cancelled
+    /// before its first successful ACK send; flush continues that bounded work.
     pub fn discard_candidate(&mut self, now_ms: u64) -> Result<bool, RecoveryError> {
         self.check_time(now_ms)?;
         let present = self.candidate.is_some();
@@ -570,6 +593,24 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     #[must_use]
     pub const fn awaiting_handoff(&self) -> bool {
         self.handoff.is_some()
+    }
+
+    /// The current candidate's error or most recently retained peer abort.
+    /// This unauthenticated diagnostic survives candidate retirement until its
+    /// cache expires. It does not replace or revoke the caller's active App.
+    #[must_use]
+    pub fn peer_error(&self) -> Option<PeerError<'_>> {
+        self.candidate
+            .as_ref()
+            .and_then(CoapProvisioner::peer_error)
+            .or_else(|| {
+                self.caches
+                    .iter()
+                    .flatten()
+                    .filter(|cache| cache.peer_error().is_some())
+                    .max_by_key(|cache| cache.expires)
+                    .and_then(Cache::peer_error)
+            })
     }
 
     /// The earliest exact send, candidate wait, or completion-cache deadline.
@@ -701,13 +742,14 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                 }
             }
         }
-        if self.candidate_exposed && now < expires {
+        let peer_aborted = candidate.peer_error().is_some();
+        if (self.candidate_exposed || peer_aborted) && now < expires {
             let slot = self
                 .caches
                 .iter()
                 .position(Option::is_none)
                 .expect("reserved cache slot");
-            self.caches[slot] = Some(Cache::from_controller(candidate, expires, false));
+            self.caches[slot] = Some(Cache::from_controller(candidate, expires, peer_aborted));
         }
         self.candidate_exposed = false;
     }
