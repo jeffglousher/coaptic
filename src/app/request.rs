@@ -23,6 +23,8 @@ pub enum PathError {
     TooLong,
     /// An empty segment (`""`, `"sensors//temp"`, or a trailing `/`).
     EmptySegment,
+    /// A decoded Uri-Path segment is `"."` or `".."` (RFC 7252 section 5.10.1).
+    DotSegment,
 }
 
 /// Convert a bind or client path into Uri-Path segments without allocating.
@@ -32,6 +34,8 @@ pub enum PathError {
 /// Empty segments (`""`, `"sensors//temp"`, trailing `/`) are
 /// [`PathError::EmptySegment`]. Used by [`super::AppBuilder::route`] and
 /// [`crate::App::get`] / [`crate::App::put`].
+/// Decoded `"."` and `".."` segments are [`PathError::DotSegment`]. Inputs
+/// are decoded segment values, not URI references: literal `%2E` stays `%2E`.
 pub trait IntoPath {
     /// Fill `out` with Uri-Path segments. Returns the count.
     fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError>;
@@ -62,6 +66,7 @@ impl IntoPath for &'static str {
 /// segments). Empty segments (`"sensors//temp"`, trailing `/`) are
 /// [`PathError::EmptySegment`]. More segments than `out.len()` is
 /// [`PathError::TooLong`].
+/// Decoded `"."` and `".."` segments are [`PathError::DotSegment`].
 pub fn split_path(path: &'static str, out: &mut [&'static str]) -> Result<usize, PathError> {
     let rest = path.trim_start_matches('/');
     if rest.is_empty() {
@@ -72,6 +77,7 @@ pub fn split_path(path: &'static str, out: &mut [&'static str]) -> Result<usize,
         if segment.is_empty() {
             return Err(PathError::EmptySegment);
         }
+        reject_dot_segment(segment)?;
         if n >= out.len() {
             return Err(PathError::TooLong);
         }
@@ -92,9 +98,18 @@ fn path_from_segments(
         if segment.is_empty() {
             return Err(PathError::EmptySegment);
         }
+        reject_dot_segment(segment)?;
         out[i] = *segment;
     }
     Ok(segments.len())
+}
+
+fn reject_dot_segment(segment: &str) -> Result<(), PathError> {
+    if matches!(segment, "." | "..") {
+        Err(PathError::DotSegment)
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathError> {
@@ -387,6 +402,7 @@ impl<'a> Path<'a> {
             if segment.is_empty() {
                 return Err(PathError::EmptySegment);
             }
+            reject_dot_segment(segment)?;
             path.segs[i] = segment;
         }
         path.len = segments.len() as u8;
@@ -397,6 +413,7 @@ impl<'a> Path<'a> {
         let mut path = Self::empty();
         for segment in parsed.uri_path() {
             let segment = segment.map_err(|_| PathError::BadUtf8)?;
+            reject_dot_segment(segment)?;
             let i = usize::from(path.len);
             if i >= MAX_PATH_SEGMENTS {
                 return Err(PathError::TooLong);

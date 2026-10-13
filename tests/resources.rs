@@ -4,6 +4,69 @@ use coaptic::{App, BuildError, resources};
 
 struct Idle;
 
+#[derive(Default)]
+struct CountingIo {
+    sent: usize,
+}
+
+impl DatagramIo for CountingIo {
+    type Error = core::convert::Infallible;
+
+    fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        Ok(None)
+    }
+
+    fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.sent += 1;
+        Ok(bytes.len())
+    }
+}
+
+macro_rules! check_discovery_uri_path_refusal {
+    ($config:expr) => {{
+        use coaptic::app::{PathError, RouteError, get};
+        let mut builder = App::with_resources($config)
+            .allow_plaintext()
+            .deterministic_for_tests()
+            .route("ok", get(route_status));
+        assert_eq!(
+            builder.try_route(".", get(route_status)).err(),
+            Some(RouteError::Path(PathError::DotSegment))
+        );
+        let mut app = builder.bind(CountingIo::default()).unwrap();
+        assert_eq!(app.site().len(), 1);
+        assert_eq!(
+            app.try_route(&[".."], get(route_status)).err(),
+            Some(RouteError::Path(PathError::DotSegment))
+        );
+        let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+        assert!(matches!(
+            app.get("a/../b").to(peer).send(0),
+            Err(coaptic::app::Error::Path)
+        ));
+        assert_eq!(app.transport().sent, 0);
+        let call = app.get("%2E").to(peer).send(0).unwrap();
+        assert_eq!(app.transport().sent, 1);
+        assert!(app.cancel(call));
+        assert_eq!(app.site().len(), 1);
+    }};
+}
+
+#[test]
+fn discovery_uri_fixed_path_refusal_preserves_builder_app_and_io() {
+    check_discovery_uri_path_refusal!(resources::SmallDevice::new().routes::<1>());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn discovery_uri_allocated_path_refusal_preserves_builder_app_and_io() {
+    check_discovery_uri_path_refusal!(
+        resources::SmallDevice::new()
+            .routes::<1>()
+            .allocated(64 * 1024)
+    );
+}
+
 fn route_status(_: coaptic::Request<'_>) -> coaptic::Response<'static> {
     coaptic::Response::content(b"ready")
 }
