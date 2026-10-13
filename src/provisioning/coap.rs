@@ -891,7 +891,11 @@ impl Client {
             && has_unsupported_critical(parsed, OptionRole::Response)
         {
             return if parsed.ty() == Type::Confirmable {
-                queue_control(input, ControlKind::Reset(parsed.message_id()))
+                queue_control(
+                    input.control,
+                    input.now,
+                    ControlKind::Reset(parsed.message_id()),
+                )
             } else {
                 Ok(false)
             };
@@ -1025,7 +1029,8 @@ impl Server {
             && request_path(parsed)
         {
             return queue_control(
-                input,
+                input.control,
+                input.now,
                 ControlKind::BadOption(Operation {
                     mid: parsed.message_id(),
                     token: parsed.token(),
@@ -1212,15 +1217,18 @@ fn request_path(message: ParsedMessage<'_>) -> bool {
         && path.next().is_none()
 }
 
-fn queue_control(input: &mut Input<'_>, kind: ControlKind) -> Result<bool, Failure> {
-    if input.control.is_some() {
+fn queue_control(
+    control: &mut Option<Control>,
+    now: u64,
+    kind: ControlKind,
+) -> Result<bool, Failure> {
+    if control.is_some() {
         return Ok(false);
     }
-    let expires = input
-        .now
+    let expires = now
         .checked_add(EXCHANGE_LIFETIME_MS)
         .ok_or(Failure::Clock)?;
-    *input.control = Some(Control {
+    *control = Some(Control {
         kind,
         expires,
         pending: true,
