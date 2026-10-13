@@ -233,6 +233,301 @@ fn recode(
     output[..len].to_vec()
 }
 
+fn elective_wire(bytes: &[u8]) -> Vec<u8> {
+    let parsed = decode(bytes).unwrap();
+    let mut options: Vec<_> = parsed.options().collect();
+    // Before, between and after profile options, including repeated empty
+    // values and a two-byte option number. Option zero is reserved and must
+    // also be treated as unrecognized (RFC7252 section5.4).
+    options.extend([
+        Opt::new(OptionNumber::new(0), &[]),
+        Opt::new(OptionNumber::new(2), b"before"),
+        Opt::new(OptionNumber::new(10), &[0xff]),
+        Opt::new(OptionNumber::new(18), &[]),
+        Opt::new(OptionNumber::new(18), b"repeat"),
+        Opt::new(OptionNumber::new(65000), b"after"),
+    ]);
+    options.sort_by_key(|option| option.number());
+    recode(
+        bytes,
+        parsed.ty(),
+        parsed.message_id(),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    )
+}
+
+#[test]
+fn elective_options_complete_authenticated_sequential_bootstrap() {
+    for ty in [
+        Type::Acknowledgement,
+        Type::Confirmable,
+        Type::NonConfirmable,
+    ] {
+        elective_handshake(ty);
+    }
+}
+
+fn elective_handshake(response_type: Type) {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    for step in 0..2 {
+        let request = elective_wire(&ci.last());
+        assert_eq!(
+            server
+                .ingest(&request, CLIENT, 0, entropy(4), |_| true)
+                .unwrap(),
+            Status::Progress
+        );
+        server.flush(&mut si, 0).unwrap();
+        let saved = si.last();
+        let parsed = decode(&saved).unwrap();
+        let mid = if response_type == Type::Acknowledgement {
+            parsed.message_id()
+        } else {
+            MessageId::new(900 + step)
+        };
+        let response = recode(
+            &saved,
+            response_type,
+            mid,
+            parsed.token(),
+            &parsed.options().collect::<Vec<_>>(),
+            parsed.payload(),
+        );
+        let response = elective_wire(&response);
+        let expected = if step == 0 || response_type == Type::Confirmable {
+            Status::Progress
+        } else {
+            Status::Complete
+        };
+        assert_eq!(
+            client
+                .ingest(&response, SERVER, 0, no_entropy, |_| true)
+                .unwrap(),
+            expected
+        );
+        let before = ci.attempts.len();
+        let flushed = client.flush(&mut ci, 0).unwrap();
+        if step == 1 {
+            assert_eq!(flushed, Status::Complete);
+        }
+        if response_type == Type::Confirmable {
+            let (endpoint, ack) = &ci.attempts[before];
+            let ack = decode(ack).unwrap();
+            assert_eq!(*endpoint, SERVER);
+            assert!(ack.is_empty_ack());
+            assert_eq!(ack.message_id(), mid);
+        }
+    }
+    let cs = client.take_session().unwrap();
+    let ss = server.take_session().unwrap();
+    assert_eq!(*cs.principal(), b.peer().principal());
+    assert_eq!(*ss.principal(), a.peer().principal());
+    let (cc, _) = cs.into_parts();
+    let (sc, _) = ss.into_parts();
+    assert_eq!(cc.sender_key(), sc.recipient_key());
+    assert_eq!(cc.recipient_key(), sc.sender_key());
+    assert_eq!(cc.common_iv(), sc.common_iv());
+}
+
+#[test]
+fn elective_options_echo_preserves_entropy_payload_and_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let deadline = match &client.role {
+        Role::Client(c) => c.retry.wait_until,
+        _ => unreachable!(),
+    };
+    let challenge = elective_wire(&echo_response(&original, b"challenge"));
+    assert_eq!(
+        client
+            .ingest(&challenge, SERVER, 1, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut io, 1).unwrap();
+    let retry = io.last();
+    let parsed = decode(&retry).unwrap();
+    assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
+    assert_eq!(parsed.payload(), decode(&original).unwrap().payload());
+    assert_eq!(
+        parsed.message_id(),
+        decode(&original).unwrap().message_id().wrapping_add(2)
+    );
+    assert_eq!(parsed.token(), decode(&original).unwrap().token());
+    assert_eq!(
+        match &client.role {
+            Role::Client(c) => c.retry.wait_until,
+            _ => unreachable!(),
+        },
+        deadline
+    );
+    let count = io.attempts.len();
+    assert_eq!(
+        client
+            .ingest(&challenge, SERVER, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut io, 2).unwrap();
+    assert_eq!(io.attempts.len(), count);
+}
+
+#[test]
+fn elective_options_preserve_exact_duplicate_ownership_and_send_recovery() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let raw = ci.last();
+    let request = elective_wire(&raw);
+    server
+        .ingest(&request, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    si.fail = true;
+    assert_eq!(server.flush(&mut si, 0), Err(PollError::Io(9)));
+    let saved = si.last();
+    si.fail = false;
+    si.short = true;
+    assert_eq!(server.flush(&mut si, 1), Err(PollError::ShortSend));
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    let count = si.attempts.len();
+    // Semantically ignored bytes still belong to the original MID owner.
+    assert_eq!(
+        server
+            .ingest(&raw, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    let mut changed = request.clone();
+    let offset = changed
+        .windows(5)
+        .position(|bytes| bytes == b"after")
+        .unwrap();
+    changed[offset] ^= 1;
+    assert_eq!(
+        server
+            .ingest(&changed, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.flush(&mut si, 2).unwrap(), Status::Idle);
+    assert_eq!(si.attempts.len(), count);
+    assert_eq!(
+        server
+            .ingest(&request, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    client
+        .ingest(&saved, SERVER, 2, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 2).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 2, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 2, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+}
+
+#[test]
+fn elective_options_do_not_hide_critical_or_known_unsupported_options() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let request = elective_wire(&ci.last());
+    let add = |wire: &[u8], number| {
+        let parsed = decode(wire).unwrap();
+        let mut options: Vec<_> = parsed.options().collect();
+        options.push(Opt::new(number, &[]));
+        options.sort_by_key(|o| o.number());
+        recode(
+            wire,
+            parsed.ty(),
+            parsed.message_id(),
+            parsed.token(),
+            &options,
+            parsed.payload(),
+        )
+    };
+    for number in [
+        OptionNumber::new(99),
+        OptionNumber::OSCORE,
+        OptionNumber::OBSERVE,
+    ] {
+        let bad = add(&request, number);
+        assert_eq!(
+            server
+                .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+                .unwrap(),
+            Status::Ignored
+        );
+        assert_eq!(server.next_deadline(), None);
+    }
+    server
+        .ingest(&request, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let response = elective_wire(&si.last());
+    for number in [
+        OptionNumber::new(99),
+        OptionNumber::OSCORE,
+        OptionNumber::OBSERVE,
+    ] {
+        let bad = add(&response, number);
+        assert_eq!(
+            client
+                .ingest(&bad, SERVER, 0, no_entropy, no_authorization)
+                .unwrap(),
+            Status::Ignored
+        );
+        assert!(client.take_session().is_none());
+    }
+    assert_eq!(
+        client
+            .ingest(&response, SERVER, 0, no_entropy, |_| true)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut ci, 0).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 0, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+}
+
 #[test]
 fn sequential_wire_profile_validates_payload_metadata_and_session_identity() {
     let a = identity(1, 0);

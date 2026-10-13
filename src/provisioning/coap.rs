@@ -5,6 +5,9 @@
 //! Confirmable or Non-confirmable replies. Block-wise transfer, discovery,
 //! proxies, EAD and combined EDHOC/OSCORE requests are outside this profile.
 //! No application plaintext policy is changed by bootstrap.
+//! Unrecognized elective CoAP options are ignored for profile matching. Known
+//! unsupported options and unrecognized critical options remain refused; cached
+//! duplicate matching still compares the complete original datagram.
 //! The initiator accepts at most one initial piggybacked Echo challenge, saving
 //! its exact response and retrying the same message 1 under a separately reserved
 //! Message ID. This neither renews entropy nor extends the original wait limit.
@@ -803,7 +806,7 @@ impl Client {
             && parsed.token() == self.operation.token
             && parsed.payload().is_empty()
         {
-            let mut options = parsed.options();
+            let mut options = profile_options(parsed);
             let Some(echo) = options.next() else {
                 return Ok(false);
             };
@@ -1021,7 +1024,7 @@ fn request_metadata(message: ParsedMessage<'_>) -> bool {
     if message.ty() != Type::Confirmable || message.code() != Code::POST {
         return false;
     }
-    let mut options = message.options();
+    let mut options = profile_options(message);
     matches!(options.next(), Some(option) if option.number() == OptionNumber::URI_PATH && option.value() == b".well-known")
         && matches!(options.next(), Some(option) if option.number() == OptionNumber::URI_PATH && option.value() == b"edhoc")
         && matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(REQUEST_FORMAT))
@@ -1037,9 +1040,19 @@ fn response_metadata(message: ParsedMessage<'_>) -> bool {
     {
         return false;
     }
-    let mut options = message.options();
+    let mut options = profile_options(message);
     matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(RESPONSE_FORMAT))
         && options.next().is_none()
+}
+
+// Ignore only options the implemented stack does not recognize and that the
+// sender marked elective. Retain known options for the profile's strict checks.
+// This iterator never allocates or changes the bytes retained for duplicates.
+fn profile_options(message: ParsedMessage<'_>) -> impl Iterator<Item = Opt<'_>> {
+    message.options().filter(|option| {
+        let number = option.number();
+        number.is_known() || number.is_critical()
+    })
 }
 
 fn send<T: DatagramIo>(
