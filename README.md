@@ -396,6 +396,7 @@ These demonstrations use manually staged pairwise credentials.
 Flash power-loss recovery, hostile rollback, production key custody and the full
 end-user flow remain open. Production readiness has not been established.
 
+- [IETF RFC implementation and compliance plan](https://github.com/jeffglousher/coaptic/blob/main/architecture/IETF-RFC-PLAN.md)
 - [Ordered roadmap and to-do list](https://github.com/jeffglousher/coaptic/issues/130)
 - [Project board](https://github.com/users/jeffglousher/projects/2)
 - [Qualification tooling](https://github.com/jeffglousher/coaptic-validation)
