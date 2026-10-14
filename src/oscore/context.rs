@@ -44,6 +44,29 @@ impl ReplayCheckpoint {
     pub const fn parts(self) -> (u64, u32) {
         (self.left, self.received)
     }
+
+    /// Check that `next` preserves every sequence rejected by this checkpoint.
+    ///
+    /// This key-independent comparison lets durable adapters validate an update
+    /// without deriving another security context. It neither authenticates the
+    /// checkpoint's context identity nor detects a valid old storage snapshot;
+    /// the caller must establish those separately. Equal checkpoints are valid.
+    /// Neither checkpoint is changed on success or refusal.
+    pub fn validate_successor(self, next: Self) -> Result<(), Error> {
+        if next.left < self.left {
+            return Err(Error::ReplayRollback);
+        }
+        let shift = next.left - self.left;
+        let retained = if shift >= REPLAY_WINDOW {
+            0
+        } else {
+            self.received >> shift as u32
+        };
+        if retained & !next.received != 0 {
+            return Err(Error::ReplayRollback);
+        }
+        Ok(())
+    }
 }
 
 /// Inputs for [`SecurityContext::derive`].
@@ -661,18 +684,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// effects require a caller-owned transaction joining replay and application
     /// state, or durable operation receipts across fresh security sessions.
     pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
-        if checkpoint.left < self.replay_left {
-            return Err(Error::ReplayRollback);
-        }
-        let shift = checkpoint.left - self.replay_left;
-        let retained = if shift >= REPLAY_WINDOW {
-            0
-        } else {
-            self.replay_bits >> shift as u32
-        };
-        if retained & !checkpoint.received != 0 {
-            return Err(Error::ReplayRollback);
-        }
+        self.replay_checkpoint().validate_successor(checkpoint)?;
         self.replay_left = checkpoint.left;
         self.replay_bits = checkpoint.received;
         Ok(())
