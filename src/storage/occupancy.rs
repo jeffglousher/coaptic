@@ -20,18 +20,43 @@ pub(crate) fn acquire(
     if n == 0 {
         return None;
     }
-    for offset in 0..n {
-        let idx = (*cursor + offset) % n;
-        if !occupied[idx] {
-            occupied[idx] = true;
-            if let Some(pin) = pinned.get_mut(idx) {
-                *pin = false;
-            }
-            *cursor = (idx + 1) % n;
-            return Some(SlotId::from_index(idx));
+    // Search two contiguous ranges in cursor order. In particular, a runtime
+    // capacity must not require an integer division for each occupied slot.
+    let start = *cursor;
+    let idx = if !occupied[start] {
+        start
+    } else {
+        first_free(&occupied[start..])
+            .map(|offset| start + offset)
+            .or_else(|| first_free(&occupied[..start]))?
+    };
+    occupied[idx] = true;
+    if let Some(pin) = pinned.get_mut(idx) {
+        *pin = false;
+    }
+    *cursor = if idx + 1 == n { 0 } else { idx + 1 };
+    Some(SlotId::from_index(idx))
+}
+
+#[inline]
+fn first_free(occupied: &[bool]) -> Option<usize> {
+    const CHUNK: usize = 32;
+    if occupied.len() < CHUNK {
+        return occupied.iter().position(|&used| !used);
+    }
+    let mut chunks = occupied.chunks_exact(CHUNK);
+    for (index, chunk) in chunks.by_ref().enumerate() {
+        if chunk != [true; CHUNK] {
+            return chunk
+                .iter()
+                .position(|&used| !used)
+                .map(|i| index * CHUNK + i);
         }
     }
-    None
+    let tail = chunks.remainder();
+    tail.iter()
+        .position(|&used| !used)
+        .map(|i| occupied.len() - tail.len() + i)
 }
 
 pub(crate) fn release(occupied: &mut [bool], pinned: &[bool], id: SlotId) -> Result<(), SlotError> {
@@ -253,6 +278,83 @@ mod tests {
     use super::Occupancy;
     use crate::storage::SlotError;
     use crate::storage::SlotId;
+
+    #[test]
+    fn acquire_matches_rotating_search_for_every_small_state() {
+        // Exhaust the free/full and wrap cases, including stale pin flags.
+        for n in 1..=8 {
+            for mask in 0..(1usize << n) {
+                for start in 0..n {
+                    let mut occupied = [false; 8];
+                    for (i, flag) in occupied[..n].iter_mut().enumerate() {
+                        *flag = mask & (1 << i) != 0;
+                    }
+                    let before = occupied;
+                    let mut pinned = [true; 8];
+                    let mut cursor = start;
+                    let expected = (0..n)
+                        .map(|offset| (start + offset) % n)
+                        .find(|&idx| !before[idx]);
+                    let actual = super::acquire(&mut occupied[..n], &mut pinned[..n], &mut cursor);
+                    assert_eq!(actual.map(SlotId::index), expected);
+                    for i in 0..n {
+                        assert_eq!(occupied[i], before[i] || expected == Some(i));
+                        assert_eq!(pinned[i], expected != Some(i));
+                    }
+                    assert_eq!(cursor, expected.map_or(start, |idx| (idx + 1) % n));
+                }
+            }
+        }
+        let mut cursor = 0;
+        assert_eq!(super::acquire(&mut [], &mut [], &mut cursor), None);
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn chunk_search_preserves_order_at_every_boundary() {
+        let mut flags = [true; 131];
+        for n in 0..=flags.len() {
+            assert_eq!(super::first_free(&flags[..n]), None);
+            for hole in 0..n {
+                flags[hole] = false;
+                assert_eq!(super::first_free(&flags[..n]), Some(hole));
+                if hole + 1 < n {
+                    flags[hole + 1] = false;
+                    assert_eq!(super::first_free(&flags[..n]), Some(hole));
+                    flags[hole + 1] = true;
+                }
+                flags[hole] = true;
+            }
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_churn_wraps_and_preserves_pinned_refusal() {
+        let mut occ = super::HeapOccupancy::new(131).expect("bounded occupancy");
+        for i in 0..131 {
+            assert_eq!(occ.acquire().map(SlotId::index), Some(i));
+        }
+        assert_eq!(occ.acquire(), None);
+        let pinned = SlotId::from_index(64);
+        occ.try_pin(pinned).expect("pin");
+        assert_eq!(occ.release(pinned), Err(SlotError::Pinned));
+        assert_eq!(occ.occupied_count(), 131);
+        for i in [0, 31, 32, 63, 65, 127, 130] {
+            occ.release(SlotId::from_index(i)).expect("release");
+        }
+        occ.advance(128);
+        for i in [130, 0, 31, 32, 63, 65, 127] {
+            assert_eq!(occ.acquire().map(SlotId::index), Some(i));
+        }
+        assert_eq!(occ.acquire(), None);
+        assert!(occ.is_pinned(pinned));
+        *occ.pin_flag_mut(pinned).expect("pin flag") = false;
+        occ.release(pinned).expect("unpin then release");
+        assert_eq!(occ.acquire(), Some(pinned));
+        assert_eq!(occ.occupied_count(), 131);
+        assert!(!occ.is_pinned(pinned));
+    }
 
     #[test]
     fn pin_refuses_release() {
