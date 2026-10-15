@@ -4,6 +4,9 @@ use std::{collections::VecDeque, vec::Vec};
 
 use super::*;
 
+#[path = "coap_error_tests.rs"]
+mod errors;
+
 const CLIENT: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
 const SERVER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
 const OTHER: Endpoint = Endpoint::v4([192, 0, 2, 3], 5683);

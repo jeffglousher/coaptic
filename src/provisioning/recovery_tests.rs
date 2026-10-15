@@ -327,6 +327,90 @@ fn outbound_suite_error_recovery_capacity_preserves_the_only_reply_until_expiry(
 }
 
 #[test]
+fn incoming_error_request_retires_with_exact_ack_and_preserves_active_ownership() {
+    use crate::provisioning::PeerErrorCode;
+    for cancel in [false, true] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let mut client = CoapRecovery::<3>::new(&a, b.peer(), SERVER, 0).unwrap();
+        let mut server = CoapRecovery::<3>::new(&b, a.peer(), CLIENT, 0).unwrap();
+        let (_, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+        let active = server.active_connection_id();
+        let old_owner = *old_server.principal();
+        let mut ci = Io::default();
+        let mut si = Io::default();
+        client.start(10, entropy(5)).unwrap();
+        client.flush(&mut ci, 10).unwrap();
+        server
+            .ingest(&ci.last(), CLIENT, 10, entropy(6), no_authorization)
+            .unwrap();
+        server.flush(&mut si, 10).unwrap();
+        client
+            .ingest(&si.last(), SERVER, 10, no_entropy, |_| true)
+            .unwrap();
+        client.flush(&mut ci, 10).unwrap();
+        let third = ci.last();
+        let p = decode(&third).unwrap();
+        let (_, prefix_len) = ConnectionId::decode_prefix(p.payload()).unwrap();
+        let mut payload = p.payload()[..prefix_len].to_vec();
+        payload.extend_from_slice(&[1, 0x64, b's', b't', b'o', b'p']);
+        let error = packet(&third, p.ty(), p.message_id(), p.token(), &payload);
+        assert_eq!(
+            server.ingest(&error, CLIENT, 11, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        if cancel {
+            assert_eq!(server.discard_candidate(11), Ok(true));
+        }
+        si.fail = true;
+        assert_eq!(
+            server.flush(&mut si, 11),
+            Err(RecoveryError::Bootstrap(PollError::Io(9)))
+        );
+        let saved = si.last();
+        assert!(decode(&saved).unwrap().payload().is_empty());
+        assert_eq!(server.peer_error().unwrap().diagnostic(), Some("stop"));
+        si.fail = false;
+        if cancel {
+            server.flush(&mut si, 12).unwrap();
+        } else {
+            assert_eq!(
+                server.flush(&mut si, 12),
+                Err(RecoveryError::Bootstrap(PollError::PeerAbort(
+                    PeerErrorCode::Unspecified
+                )))
+            );
+        }
+        assert!(!server.has_candidate());
+        assert_eq!(server.active_connection_id(), active);
+        assert_eq!(*old_server.principal(), old_owner);
+        let mut collision = error.clone();
+        *collision.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            server.ingest(&collision, CLIENT, 13, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        server
+            .ingest(&error, CLIENT, 13, no_entropy, no_authorization)
+            .unwrap();
+        server.flush(&mut si, 13).unwrap();
+        assert_eq!(si.last(), saved);
+        assert_eq!(server.peer_error().unwrap().diagnostic(), Some("stop"));
+        assert_eq!(client.discard_candidate(14), Ok(true));
+        let (_, fresh_client, fresh_server) = exchange(&mut client, &mut server, 15, 7);
+        let (old_client, _) = old_client.into_parts();
+        let (old_server, _) = old_server.into_parts();
+        let (fresh_client, _) = fresh_client.into_parts();
+        let (fresh_server, _) = fresh_server.into_parts();
+        assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+        assert_ne!(old_server.sender_key(), fresh_server.sender_key());
+        assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+        server.flush(&mut si, 11 + EXCHANGE_LIFETIME_MS).unwrap();
+        assert!(server.peer_error().is_none());
+    }
+}
+
+#[test]
 fn peer_error_recovery_preserves_live_owner_ack_cache_and_fresh_authentication() {
     let a = identity(1, 0);
     let b = identity(2, 1);
@@ -993,8 +1077,12 @@ fn original_message4_cache_survives_candidate_traffic_and_failed_sends() {
     restarted.flush(&mut a_io, 101).unwrap();
     let mut corrupt = a_io.last();
     *corrupt.last_mut().unwrap() ^= 1;
-    assert!(matches!(
+    assert_eq!(
         server.ingest(&corrupt, CLIENT, 102, no_entropy, |_| true),
+        Ok(Status::Progress)
+    );
+    assert!(matches!(
+        server.flush(&mut b_io, 102),
         Err(RecoveryError::Bootstrap(PollError::Provisioning(_)))
     ));
     assert!(!server.has_candidate());
@@ -1102,7 +1190,11 @@ fn revocation_and_wrong_pin_leave_the_confirmed_session_identity_reserved() {
             .ingest(&b_io.last(), SERVER, 100, no_entropy, |_| true)
             .unwrap();
         restarted.flush(&mut a_io, 100).unwrap();
-        let error = server.ingest(&a_io.last(), CLIENT, 100, no_entropy, |_| authorized);
+        assert_eq!(
+            server.ingest(&a_io.last(), CLIENT, 100, no_entropy, |_| authorized),
+            Ok(Status::Progress)
+        );
+        let error = server.flush(&mut b_io, 100);
         assert_eq!(
             error,
             Err(RecoveryError::Bootstrap(PollError::Provisioning(

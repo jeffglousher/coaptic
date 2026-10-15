@@ -15,8 +15,11 @@
 //! Recognized peer errors terminate the candidate after required transport ACKs
 //! are drained. Diagnostics are borrowed, unauthenticated and never authorize
 //! recovery or select a suite. The responder sends error 2 for a parsed message 1
-//! selecting an unsupported suite, advertising its configured suite 2.
-//! Other outbound errors and error requests remain outside this profile.
+//! selecting an unsupported suite, advertising its configured suite 2. Other
+//! responder failures use error 1 with fixed diagnostic text, or error 3 for an
+//! unknown referenced credential. Matching peer error requests abort the
+//! candidate after a payload-free CoAP acknowledgement; errors never elicit
+//! another EDHOC error. Initiator error requests remain outside this profile.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -40,8 +43,8 @@ use crate::message::{
 use crate::storage::{DatagramIo, Endpoint};
 
 use super::{
-    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PeerError, PeerErrorCode,
-    PinnedPeer, Principal, Responder, Session,
+    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, MessageFailure, PeerError,
+    PeerErrorCode, PinnedPeer, Principal, Responder, Session,
 };
 
 const DATAGRAM_CAPACITY: usize = 384;
@@ -294,7 +297,15 @@ enum ServerState {
     Message1,
     Message3(Responder),
     Complete,
-    Aborted { reported: bool },
+    Aborted {
+        error: Error,
+        reported: bool,
+    },
+    PeerAborted {
+        code: PeerErrorCode,
+        slot: usize,
+        reported: bool,
+    },
     Failed,
 }
 
@@ -571,7 +582,16 @@ impl<'a> CoapProvisioner<'a> {
                     }
                 }
                 Role::Server(server) => (server.pending != 0
-                    || matches!(server.state, ServerState::Aborted { reported: false }))
+                    || matches!(
+                        server.state,
+                        ServerState::Aborted {
+                            reported: false,
+                            ..
+                        } | ServerState::PeerAborted {
+                            reported: false,
+                            ..
+                        }
+                    ))
                 .then_some(self.last_now),
             }
         };
@@ -596,20 +616,27 @@ impl<'a> CoapProvisioner<'a> {
     }
 
     /// The retained unauthenticated error, available after ingest and termination
-    /// until its response cache expires. No diagnostic bytes are copied or logged.
+    /// until its exchange cache expires. No diagnostic bytes are copied or logged.
     #[must_use]
     pub fn peer_error(&self) -> Option<PeerError<'_>> {
-        let Role::Client(client) = &self.role else {
-            return None;
-        };
-        let ClientState::Aborted { slot, .. } = client.state else {
-            return None;
-        };
-        PeerError::parse(
-            decode(client.acks[slot].as_ref()?.response.as_slice())
-                .ok()?
-                .payload(),
-        )
+        match &self.role {
+            Role::Client(client) => {
+                let ClientState::Aborted { slot, .. } = client.state else {
+                    return None;
+                };
+                PeerError::parse(
+                    decode(client.acks[slot].as_ref()?.response.as_slice())
+                        .ok()?
+                        .payload(),
+                )
+            }
+            Role::Server(server) => {
+                let ServerState::PeerAborted { slot, .. } = server.state else {
+                    return None;
+                };
+                request_peer_error(server.exchanges[slot].as_ref()?.request.as_slice())
+            }
+        }
     }
 
     fn local_abort(&self) -> bool {
@@ -667,10 +694,10 @@ impl<'a> CoapProvisioner<'a> {
     /// Responses remain queued for [`Self::flush`], without receiving App traffic.
     /// Unsupported critical options at this resource queue 4.02; matching
     /// separate Confirmable responses queue Reset before cryptographic work.
-    /// A recognized wrong selected cipher suite queues EDHOC error 2 and
-    /// consumes the candidate without requesting entropy. Flush sends the
-    /// cached 4.00 response before returning [`PollError::Provisioning`] with
-    /// [`Error::Profile`]; exact duplicates remain answerable until expiry.
+    /// Responder failures queue a bounded EDHOC error before flush reports the
+    /// original [`PollError::Provisioning`]. Error requests terminate the
+    /// candidate and queue a payload-free 2.04 acknowledgement before
+    /// [`PollError::PeerAbort`]. Exact duplicates remain answerable until expiry.
     /// One pending control blocks further ingest until sent. Its MID remains
     /// reserved for [`Self::EXCHANGE_LIFETIME_MS`], without starting/renewing
     /// the handshake. Fresh valid traffic may proceed after the send; another
@@ -796,9 +823,13 @@ impl<'a> CoapProvisioner<'a> {
                         server.pending &= !bit;
                     }
                 }
-                if let ServerState::Aborted { reported } = &mut server.state {
+                if let ServerState::Aborted { error, reported } = &mut server.state {
                     *reported = true;
-                    return Err(PollError::Provisioning(Error::Profile));
+                    return Err(PollError::Provisioning(*error));
+                }
+                if let ServerState::PeerAborted { code, reported, .. } = &mut server.state {
+                    *reported = true;
+                    return Err(PollError::PeerAbort(*code));
                 }
             }
         }
@@ -1153,46 +1184,103 @@ impl Server {
         let until = now
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(Failure::Clock)?;
-        let message =
-            Message::from_slice(&parsed.payload()[prefix_len..]).map_err(Failure::Provisioning)?;
+        let index = if matches!(self.state, ServerState::Message1) {
+            0
+        } else {
+            1
+        };
         let operation = Operation {
             mid: parsed.message_id(),
             token: parsed.token(),
         };
+        if index == 1 {
+            if let Some(error) = PeerError::parse(&parsed.payload()[prefix_len..]) {
+                if error.code() == PeerErrorCode::WrongCipherSuite {
+                    return Ok(false);
+                }
+                let mut response = Wire::empty();
+                response.len =
+                    CoapMessage::new(Type::Acknowledgement, Code::CHANGED, operation.mid)
+                        .with_token(operation.token)
+                        .encode(&mut response.bytes)
+                        .map_err(|_| Failure::Provisioning(Error::Parsing))?;
+                self.exchanges[index] = Some(Exchange {
+                    operation,
+                    request: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                    response,
+                    expires: until,
+                });
+                self.state = ServerState::PeerAborted {
+                    code: error.code(),
+                    slot: index,
+                    reported: false,
+                };
+                self.pending |= 1 << index;
+                *input.session = None;
+                *input.expires = Some(until);
+                return Ok(true);
+            }
+            // Error-shaped but unsupported/malformed input cannot cause an error loop.
+            if parsed.payload()[prefix_len] >> 5 != 2 {
+                return Ok(false);
+            }
+        }
+        let message = match Message::from_slice(&parsed.payload()[prefix_len..]) {
+            Ok(message) => message,
+            Err(error) => {
+                self.abort_request(index, bytes, operation, until, error.into())?;
+                *input.expires = Some(until);
+                return Ok(true);
+            }
+        };
         if matches!(self.state, ServerState::Message1)
             && super::wrong_selected_suite_peer_id(&message).is_some()
         {
-            self.exchanges[0] = Some(Exchange {
+            self.abort_request(
+                0,
+                bytes,
                 operation,
-                request: Wire::copy(bytes).map_err(Failure::Provisioning)?,
-                response: encode_response(operation, Code::BAD_REQUEST, &[2, 2])
-                    .map_err(Failure::Provisioning)?,
-                expires: until,
-            });
-            self.state = ServerState::Aborted { reported: false };
-            self.pending |= 1;
+                until,
+                MessageFailure {
+                    error: Error::Profile,
+                    code: PeerErrorCode::WrongCipherSuite,
+                },
+            )?;
             *input.expires = Some(until);
             return Ok(true);
         }
         let state = core::mem::replace(&mut self.state, ServerState::Failed);
         let (index, message) = match state {
             ServerState::Message1 => {
-                let (state, message) = Responder::receive_message_1_with_id(
+                let result = Responder::receive_message_1_with_id(
                     input.identity,
                     input.peer.clone(),
                     input.local_id,
                     &message,
                     &mut input.entropy,
-                )
-                .map_err(Failure::Provisioning)?;
+                );
+                let (state, message) = match result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.abort_request(0, bytes, operation, until, error.into())?;
+                        *input.expires = Some(until);
+                        return Ok(true);
+                    }
+                };
                 self.state = ServerState::Message3(state);
                 *input.expires = Some(until);
                 (0, message)
             }
             ServerState::Message3(state) => {
-                let (ready, message) = state
-                    .receive_message_3(&message, &mut input.authorize)
-                    .map_err(Failure::Provisioning)?;
+                let (ready, message) =
+                    match state.receive_message_3_with_error(&message, &mut input.authorize) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            self.abort_request(1, bytes, operation, until, error)?;
+                            *input.expires = Some(until);
+                            return Ok(true);
+                        }
+                    };
                 *input.session = Some(ready);
                 self.state = ServerState::Complete;
                 *input.expires = Some(until);
@@ -1209,6 +1297,47 @@ impl Server {
         self.pending |= 1 << index;
         Ok(true)
     }
+
+    fn abort_request(
+        &mut self,
+        index: usize,
+        bytes: &[u8],
+        operation: Operation,
+        until: u64,
+        failure: MessageFailure,
+    ) -> Result<(), Failure> {
+        let payload: &[u8] = match failure.code {
+            PeerErrorCode::WrongCipherSuite => &[2, 2],
+            PeerErrorCode::UnknownCredential => &[3, 0xf5],
+            _ => b"\x01\x6cEDHOC failed",
+        };
+        let code = if matches!(
+            failure.error,
+            Error::Entropy | Error::SelfPeer | Error::Derivation
+        ) {
+            Code::INTERNAL_SERVER_ERROR
+        } else {
+            Code::BAD_REQUEST
+        };
+        self.exchanges[index] = Some(Exchange {
+            operation,
+            request: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+            response: encode_response(operation, code, payload).map_err(Failure::Provisioning)?,
+            expires: until,
+        });
+        self.state = ServerState::Aborted {
+            error: failure.error,
+            reported: false,
+        };
+        self.pending |= 1 << index;
+        Ok(())
+    }
+}
+
+fn request_peer_error(bytes: &[u8]) -> Option<PeerError<'_>> {
+    let parsed = decode(bytes).ok()?;
+    let (_, prefix_len) = ConnectionId::decode_prefix(parsed.payload()).ok()?;
+    PeerError::parse(&parsed.payload()[prefix_len..])
 }
 
 fn request(operation: Operation, prefix: &[u8], message: &Message) -> Result<Wire, Error> {

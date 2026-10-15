@@ -14,7 +14,7 @@ pub enum PeerErrorCode {
     UnknownCredential,
 }
 
-/// A borrowed view of an error retained in a fixed bootstrap response buffer.
+/// A borrowed view of an error retained in a fixed bootstrap exchange buffer.
 ///
 /// Diagnostics are untrusted input. The caller chooses whether and how to log
 /// them; this view does not allocate, reflect them on the wire, select a cipher
