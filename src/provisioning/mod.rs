@@ -169,6 +169,17 @@ fn message_1_peer_id(message: &Message) -> Result<ConnectionId, Error> {
     Ok(peer_id)
 }
 
+// Recognize only a fully parsed message 1 in the selected method/EAD profile.
+// A suite refusal does not need ephemeral entropy or an authenticated peer.
+fn wrong_selected_suite_peer_id(message: &Message) -> Option<ConnectionId> {
+    let (method, suites, _, cid, ead) = lakers::parse_message_1(&message.buffer().ok()?).ok()?;
+    let selected = suites.as_slice().last()?;
+    if method != 3 || ead.is_some() || *selected == 2 {
+        return None;
+    }
+    ConnectionId::from_lakers(cid).ok()
+}
+
 /// An unauthenticated credential lookup hint decoded from EDHOC message 3.
 ///
 /// A trusted registry must resolve it to one unambiguous installed credential.

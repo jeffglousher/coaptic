@@ -117,6 +117,201 @@ fn peer_error_response(request: &[u8], ty: Type, payload: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn outbound_suite_error_is_cached_terminal_and_consumed_by_the_initiator() {
+    for suites in [&[3][..], &[0x82, 2, 3], &[0x83, 2, 3, 4], &[0x82, 3, 4]] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+        let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+        let mut ci = Io::default();
+        let mut si = Io::default();
+        client.flush(&mut ci, 0).unwrap();
+        let original = ci.last();
+        let p = decode(&original).unwrap();
+        let mut payload = p.payload()[..2].to_vec(); // true, method 3
+        payload.extend_from_slice(suites);
+        payload.extend_from_slice(&p.payload()[3..]);
+        let options: Vec<_> = p.options().collect();
+        let wrong = recode(
+            &original,
+            p.ty(),
+            p.message_id(),
+            p.token(),
+            &options,
+            &payload,
+        );
+        assert_eq!(
+            server.ingest(&wrong, OTHER, 9, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        assert_eq!(
+            server.ingest(&wrong, CLIENT, 10, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        assert!(server.take_session().is_none());
+        assert_eq!(server.next_deadline(), Some(10));
+        // Refusal consumes this candidate; even a corrected fresh MID cannot restart it.
+        let fresh = recode(
+            &original,
+            p.ty(),
+            p.message_id().wrapping_add(50),
+            p.token(),
+            &options,
+            p.payload(),
+        );
+        assert_eq!(
+            server.ingest(&fresh, CLIENT, 11, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        si.fail = true;
+        assert_eq!(server.flush(&mut si, 11), Err(PollError::Io(9)));
+        let saved = si.last();
+        let response = decode(&saved).unwrap();
+        assert_eq!(response.ty(), Type::Acknowledgement);
+        assert_eq!(response.code(), Code::BAD_REQUEST);
+        assert_eq!(response.message_id(), p.message_id());
+        assert_eq!(response.token(), p.token());
+        assert_eq!(response.payload(), [2, 2]);
+        assert!(error_response_metadata(response));
+        si.fail = false;
+        si.short = true;
+        assert_eq!(server.flush(&mut si, 12), Err(PollError::ShortSend));
+        assert_eq!(si.last(), saved);
+        si.short = false;
+        assert_eq!(
+            server.flush(&mut si, 13),
+            Err(PollError::Provisioning(Error::Profile))
+        );
+        assert_eq!(si.last(), saved);
+        assert_eq!(server.next_deadline(), Some(10 + EXCHANGE_LIFETIME_MS));
+        // A real initiator consumes the generated error, without authorization or retries.
+        assert_eq!(
+            client.ingest(&saved, SERVER, 13, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        assert_eq!(
+            client.flush(&mut ci, 13),
+            Err(PollError::PeerAbort(PeerErrorCode::WrongCipherSuite))
+        );
+        assert!(client.take_session().is_none());
+        let mut collision = wrong.clone();
+        *collision.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            server.ingest(&collision, CLIENT, 14, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        assert_eq!(
+            server.ingest(&wrong, CLIENT, 15, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        assert_eq!(
+            server.flush(&mut si, 15),
+            Err(PollError::Provisioning(Error::Profile))
+        );
+        assert_eq!(si.last(), saved);
+        assert_eq!(server.next_deadline(), Some(10 + EXCHANGE_LIFETIME_MS));
+        let sends = si.attempts.len();
+        assert_eq!(
+            server.flush(&mut si, 10 + EXCHANGE_LIFETIME_MS),
+            Ok(Status::Expired)
+        );
+        assert_eq!(si.attempts.len(), sends);
+        assert!(server.take_session().is_none());
+    }
+}
+
+#[test]
+fn outbound_suite_error_classifier_does_not_relabel_other_profile_failures() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let bytes = &decode(&original).unwrap().payload()[1..];
+    for suites in [&[2][..], &[0x82, 3, 2], &[0x82, 4, 2]] {
+        let mut message = bytes[..1].to_vec();
+        message.extend_from_slice(suites);
+        message.extend_from_slice(&bytes[2..]);
+        assert!(
+            super::super::wrong_selected_suite_peer_id(&Message::from_slice(&message).unwrap())
+                .is_none()
+        );
+    }
+    let mut wrong = bytes.to_vec();
+    wrong[1] = 3;
+    for len in 1..wrong.len() {
+        assert!(
+            super::super::wrong_selected_suite_peer_id(
+                &Message::from_slice(&wrong[..len]).unwrap()
+            )
+            .is_none()
+        );
+    }
+    wrong[0] = 0; // unsupported method, not a recognized suite-refusal profile
+    assert!(
+        super::super::wrong_selected_suite_peer_id(&Message::from_slice(&wrong).unwrap()).is_none()
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn outbound_suite_error_udp_loopback_delivers_refusal_then_fresh_authentication() {
+    use crate::storage::UdpSocketIo;
+    use std::{net::UdpSocket, time::Duration};
+
+    let socket = || {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        UdpSocketIo::new(socket, [0; DATAGRAM_CAPACITY + 1]).unwrap()
+    };
+    let mut ci = socket();
+    let mut si = socket();
+    let client_endpoint = ci.socket().local_addr().unwrap().into();
+    let server_endpoint = si.socket().local_addr().unwrap().into();
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), server_endpoint, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), client_endpoint, 0);
+    let mut saved = Io::default();
+    client.flush(&mut saved, 0).unwrap();
+    let m1 = saved.last();
+    let p = decode(&m1).unwrap();
+    let mut payload = p.payload().to_vec();
+    payload[2] = 3;
+    let options: Vec<_> = p.options().collect();
+    let wrong = recode(&m1, p.ty(), p.message_id(), p.token(), &options, &payload);
+    assert_eq!(ci.send(server_endpoint, &wrong).unwrap(), wrong.len());
+    assert!(matches!(
+        server.poll(&mut si, 1, no_entropy, no_authorization),
+        Err(PollError::Provisioning(Error::Profile))
+    ));
+    assert!(matches!(
+        client.poll(&mut ci, 1, no_entropy, no_authorization),
+        Err(PollError::PeerAbort(PeerErrorCode::WrongCipherSuite))
+    ));
+    assert!(client.take_session().is_none());
+    assert!(server.take_session().is_none());
+    // Explicit new controllers use fresh ephemeral material on the same sockets.
+    let mut client =
+        CoapProvisioner::start(&a, b.peer(), server_endpoint, 2, fresh_operations(5, 50)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), client_endpoint, 2);
+    client.flush(&mut ci, 2).unwrap();
+    server
+        .poll(&mut si, 2, entropy(6), no_authorization)
+        .unwrap();
+    client.poll(&mut ci, 2, no_entropy, |_| true).unwrap();
+    server.poll(&mut si, 2, no_entropy, |_| true).unwrap();
+    client.poll(&mut ci, 2, no_entropy, |_| true).unwrap();
+    let (client_context, _) = client.take_session().unwrap().into_parts();
+    let (server_context, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(client_context.sender_key(), server_context.recipient_key());
+    assert_eq!(client_context.recipient_key(), server_context.sender_key());
+}
+
+#[test]
 fn peer_error_responses_abort_each_stage_after_exact_ack_and_retain_diagnostics() {
     for stage in [0, 1] {
         for ty in [

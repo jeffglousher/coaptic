@@ -14,7 +14,9 @@
 //! Message ID. This neither renews entropy nor extends the original wait limit.
 //! Recognized peer errors terminate the candidate after required transport ACKs
 //! are drained. Diagnostics are borrowed, unauthenticated and never authorize
-//! recovery or select a suite. Outbound EDHOC error generation is not implemented.
+//! recovery or select a suite. The responder sends error 2 for a parsed message 1
+//! selecting an unsupported suite, advertising its configured suite 2.
+//! Other outbound errors and error requests remain outside this profile.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -292,6 +294,7 @@ enum ServerState {
     Message1,
     Message3(Responder),
     Complete,
+    Aborted { reported: bool },
     Failed,
 }
 
@@ -567,7 +570,9 @@ impl<'a> CoapProvisioner<'a> {
                         None
                     }
                 }
-                Role::Server(server) => (server.pending != 0).then_some(self.last_now),
+                Role::Server(server) => (server.pending != 0
+                    || matches!(server.state, ServerState::Aborted { reported: false }))
+                .then_some(self.last_now),
             }
         };
         let expiry = match (self.expires, self.control.as_ref().map(|c| c.expires)) {
@@ -605,6 +610,10 @@ impl<'a> CoapProvisioner<'a> {
                 .ok()?
                 .payload(),
         )
+    }
+
+    fn local_abort(&self) -> bool {
+        matches!(&self.role, Role::Server(server) if matches!(server.state, ServerState::Aborted { .. }))
     }
 
     /// Sends pending cached bytes, receives at most one datagram, then sends any
@@ -658,6 +667,10 @@ impl<'a> CoapProvisioner<'a> {
     /// Responses remain queued for [`Self::flush`], without receiving App traffic.
     /// Unsupported critical options at this resource queue 4.02; matching
     /// separate Confirmable responses queue Reset before cryptographic work.
+    /// A recognized wrong selected cipher suite queues EDHOC error 2 and
+    /// consumes the candidate without requesting entropy. Flush sends the
+    /// cached 4.00 response before returning [`PollError::Provisioning`] with
+    /// [`Error::Profile`]; exact duplicates remain answerable until expiry.
     /// One pending control blocks further ingest until sent. Its MID remains
     /// reserved for [`Self::EXCHANGE_LIFETIME_MS`], without starting/renewing
     /// the handshake. Fresh valid traffic may proceed after the send; another
@@ -783,6 +796,10 @@ impl<'a> CoapProvisioner<'a> {
                         server.pending &= !bit;
                     }
                 }
+                if let ServerState::Aborted { reported } = &mut server.state {
+                    *reported = true;
+                    return Err(PollError::Provisioning(Error::Profile));
+                }
             }
         }
         if let Role::Client(client) = &mut self.role {
@@ -847,7 +864,7 @@ impl<'a> CoapProvisioner<'a> {
             self.control = None;
         }
         if self.expires.is_some_and(|expires| now >= expires) {
-            if self.complete() || self.peer_error().is_some() {
+            if self.complete() || self.peer_error().is_some() || self.local_abort() {
                 self.expired = true;
                 self.session = None;
                 self.control = None;
@@ -1142,6 +1159,21 @@ impl Server {
             mid: parsed.message_id(),
             token: parsed.token(),
         };
+        if matches!(self.state, ServerState::Message1)
+            && super::wrong_selected_suite_peer_id(&message).is_some()
+        {
+            self.exchanges[0] = Some(Exchange {
+                operation,
+                request: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                response: encode_response(operation, Code::BAD_REQUEST, &[2, 2])
+                    .map_err(Failure::Provisioning)?,
+                expires: until,
+            });
+            self.state = ServerState::Aborted { reported: false };
+            self.pending |= 1;
+            *input.expires = Some(until);
+            return Ok(true);
+        }
         let state = core::mem::replace(&mut self.state, ServerState::Failed);
         let (index, message) = match state {
             ServerState::Message1 => {
@@ -1202,15 +1234,19 @@ fn request(operation: Operation, prefix: &[u8], message: &Message) -> Result<Wir
 }
 
 fn response(operation: Operation, message: &Message) -> Result<Wire, Error> {
+    encode_response(operation, Code::CHANGED, message.as_bytes())
+}
+
+fn encode_response(operation: Operation, code: Code, payload: &[u8]) -> Result<Wire, Error> {
     let options = [Opt::new(
         OptionNumber::CONTENT_FORMAT,
         &[RESPONSE_FORMAT as u8],
     )];
     let mut wire = Wire::empty();
-    wire.len = CoapMessage::new(Type::Acknowledgement, Code::CHANGED, operation.mid)
+    wire.len = CoapMessage::new(Type::Acknowledgement, code, operation.mid)
         .with_token(operation.token)
         .with_options(&options)
-        .with_payload(message.as_bytes())
+        .with_payload(payload)
         .encode(&mut wire.bytes)
         .map_err(|_| Error::Parsing)?;
     Ok(wire)

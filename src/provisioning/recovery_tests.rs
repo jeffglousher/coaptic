@@ -163,6 +163,170 @@ fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
 }
 
 #[test]
+fn outbound_suite_error_recovery_retains_pending_reply_and_recovers_with_fresh_keys() {
+    for cancel in [false, true] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let mut client = CoapRecovery::<4>::new(&a, b.peer(), SERVER, 0).unwrap();
+        let mut server = CoapRecovery::<4>::new(&b, a.peer(), CLIENT, 0).unwrap();
+        let (_, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+        let active = server.active_connection_id();
+        let mut ci = Io::default();
+        let mut si = Io::default();
+        client.start(10, entropy(5)).unwrap();
+        client.flush(&mut ci, 10).unwrap();
+        let m1 = ci.last();
+        let p = decode(&m1).unwrap();
+        let mut payload = p.payload().to_vec();
+        payload[2] = 3;
+        let wrong = packet(&m1, p.ty(), p.message_id(), p.token(), &payload);
+        assert_eq!(
+            server.ingest(&wrong, CLIENT, 11, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        assert!(server.has_candidate());
+        assert_eq!(server.active_connection_id(), active);
+        assert!(server.take_session().is_none());
+        if cancel {
+            assert_eq!(server.discard_candidate(12), Ok(true));
+            assert!(!server.has_candidate());
+        }
+        si.fail = true;
+        assert_eq!(
+            server.flush(&mut si, 12),
+            Err(RecoveryError::Bootstrap(PollError::Io(9)))
+        );
+        let saved = si.last();
+        assert_eq!(decode(&saved).unwrap().payload(), [2, 2]);
+        si.fail = false;
+        si.short = true;
+        assert_eq!(
+            server.flush(&mut si, 13),
+            Err(RecoveryError::Bootstrap(PollError::ShortSend))
+        );
+        si.short = false;
+        let result = server.flush(&mut si, 14);
+        if cancel {
+            assert_eq!(result, Ok(Status::Progress));
+        } else {
+            assert_eq!(
+                result,
+                Err(RecoveryError::Bootstrap(PollError::Provisioning(
+                    Error::Profile
+                )))
+            );
+        }
+        assert!(!server.has_candidate());
+        assert_eq!(si.last(), saved);
+        assert_eq!(server.active_connection_id(), active);
+        assert_eq!(
+            client.ingest(&saved, SERVER, 14, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        assert!(matches!(
+            client.flush(&mut ci, 14),
+            Err(RecoveryError::Bootstrap(PollError::PeerAbort(_)))
+        ));
+        let mut changed = wrong.clone();
+        *changed.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            server.ingest(&changed, CLIENT, 15, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        assert_eq!(
+            server.ingest(&wrong, CLIENT, 15, no_entropy, no_authorization),
+            Ok(Status::Progress)
+        );
+        server.flush(&mut si, 15).unwrap();
+        assert_eq!(si.last(), saved);
+        let (_, fresh_client, fresh_server) = exchange(&mut client, &mut server, 16, 7);
+        let (old_client, _) = old_client.into_parts();
+        let (old_server, _) = old_server.into_parts();
+        let (fresh_client, _) = fresh_client.into_parts();
+        let (fresh_server, _) = fresh_server.into_parts();
+        assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+        assert_ne!(old_server.sender_key(), fresh_server.sender_key());
+        assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+        assert_eq!(fresh_client.recipient_key(), fresh_server.sender_key());
+        // Neither duplicate traffic nor the later handshake renews the refusal cache.
+        // At its original expiry, this datagram may be admitted as a new attempt.
+        let sends = si.sent.len();
+        assert_eq!(
+            server.ingest(
+                &wrong,
+                CLIENT,
+                11 + EXCHANGE_LIFETIME_MS,
+                no_entropy,
+                no_authorization
+            ),
+            Ok(Status::Progress)
+        );
+        assert_eq!(
+            server.flush(&mut si, 11 + EXCHANGE_LIFETIME_MS),
+            Err(RecoveryError::Bootstrap(PollError::Provisioning(
+                Error::Profile
+            )))
+        );
+        assert_eq!(si.sent.len(), sends + 1);
+    }
+}
+
+#[test]
+fn outbound_suite_error_recovery_capacity_preserves_the_only_reply_until_expiry() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let p = decode(&m1).unwrap();
+    let mut payload = p.payload().to_vec();
+    payload[2] = 3;
+    let wrong = packet(&m1, p.ty(), p.message_id(), p.token(), &payload);
+    server
+        .ingest(&wrong, CLIENT, 1, no_entropy, no_authorization)
+        .unwrap();
+    // Cancellation before transport exposure must not discard the queued error.
+    assert_eq!(server.discard_candidate(1), Ok(true));
+    server.flush(&mut si, 1).unwrap();
+    let saved = si.last();
+    let fresh = packet(
+        &m1,
+        p.ty(),
+        p.message_id().wrapping_add(50),
+        p.token(),
+        p.payload(),
+    );
+    assert_eq!(
+        server.ingest(&fresh, CLIENT, 2, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert!(!server.has_candidate());
+    server
+        .ingest(&wrong, CLIENT, 3, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 3).unwrap();
+    assert_eq!(si.last(), saved);
+    assert_eq!(server.next_deadline(), Some(1 + EXCHANGE_LIFETIME_MS));
+    assert_eq!(
+        server.ingest(
+            &fresh,
+            CLIENT,
+            1 + EXCHANGE_LIFETIME_MS,
+            entropy(4),
+            no_authorization
+        ),
+        Ok(Status::Progress)
+    );
+    assert!(server.has_candidate());
+    server.flush(&mut si, 1 + EXCHANGE_LIFETIME_MS).unwrap();
+    assert_eq!(decode(&si.last()).unwrap().code(), Code::CHANGED);
+}
+
+#[test]
 fn peer_error_recovery_preserves_live_owner_ack_cache_and_fresh_authentication() {
     let a = identity(1, 0);
     let b = identity(2, 1);
