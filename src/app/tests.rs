@@ -324,6 +324,7 @@ fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
+        .allow_plaintext()
         .bind(io)
         .expect("bind")
 }
@@ -389,6 +390,7 @@ fn constrained_plain_get_is_content() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -459,6 +461,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_post() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -487,6 +490,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], fetch(fetch_query))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -522,6 +526,7 @@ fn proxy_uri_is_505_not_404() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -554,6 +559,7 @@ fn proxy_scheme_is_505_before_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -579,6 +585,7 @@ fn created_response_carries_location_path_and_query() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -616,6 +623,7 @@ fn duplicate_con_get_replays_without_second_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -656,6 +664,7 @@ fn duplicate_con_post_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -692,6 +701,7 @@ fn duplicate_con_patch_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["delta"], patch(counting_patch))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -721,6 +731,7 @@ fn duplicate_con_fetch_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["query"], fetch(counting_fetch))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -757,6 +768,7 @@ fn duplicate_con_separate_replays_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(counting_separate))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -793,6 +805,7 @@ fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -828,6 +841,7 @@ fn duplicate_con_post_empty_dedup_row_acks_without_rerun() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -896,6 +910,7 @@ fn duplicate_con_post_insert_failure_does_not_rerun() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -970,6 +985,7 @@ fn created_metadata_on_wire_excludes_unsolicited_observe() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1012,6 +1028,7 @@ fn separate_response_is_empty_ack_then_con() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(get_separate))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -1107,6 +1124,7 @@ fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
+        .allow_plaintext()
         .bind(io)
         .expect("bind")
 }
@@ -1284,6 +1302,7 @@ fn echo_freshness_builder_missing_is_401_problem() {
         .echo_policy(test_echo_policy)
         .block_wise::<false>()
         .route(&["leds", "0"], get(get_led).put(put_led))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1360,6 +1379,7 @@ fn no_response_con_sends_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
+        .allow_plaintext()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -1385,6 +1405,7 @@ fn well_known_core_lists_registered_paths() {
         .route(&["a"], get(get_temp))
         .route(&["b"], get(get_led))
         .well_known_core()
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1416,6 +1437,7 @@ fn well_known_q_block2_probe_returns_the_first_block() {
         .block_wise::<true>()
         .route(&["sensors", "temperature"], get(get_temp))
         .well_known_core()
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -1506,6 +1528,7 @@ fn well_known_core_poll_lists_every_upfront_route() {
     }
     let mut app = builder
         .well_known_core()
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1557,6 +1580,218 @@ fn well_known_core_small_n_keeps_inline_floor() {
     assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
     let body = core::str::from_utf8(response.payload()).expect("utf8");
     assert_eq!(body, "</sensors/temperature/celsius>");
+}
+
+#[test]
+fn discovery_uri_preserves_decoded_segment_identity() {
+    const SEGMENTS: [&str; 2] = ["AZaz09-._~!$&'()*+,;=:@", "a/b %2E?#<>\"\0é☃"];
+    let mut site = Site::<1>::new();
+    site.route(&SEGMENTS, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(response.payload()).unwrap();
+    assert_eq!(
+        body,
+        "</AZaz09-._~!$&'()*+,;=:@/a%2Fb%20%252E%3F%23%3C%3E%22%00%C3%A9%E2%98%83>"
+    );
+    // Resolve the advertised path into decoded CoAP options, independently
+    // checking that URI delimiters do not change the segment sequence.
+    let target = body.strip_prefix("</").unwrap().strip_suffix('>').unwrap();
+    for (encoded, original) in target.split('/').zip(SEGMENTS) {
+        let mut decoded = [0u8; 128];
+        let mut n = 0;
+        let mut bytes = encoded.as_bytes();
+        while let Some((&byte, rest)) = bytes.split_first() {
+            if byte == b'%' {
+                decoded[n] =
+                    u8::from_str_radix(core::str::from_utf8(&rest[..2]).unwrap(), 16).unwrap();
+                bytes = &rest[2..];
+            } else {
+                decoded[n] = byte;
+                bytes = rest;
+            }
+            n += 1;
+        }
+        assert_eq!(&decoded[..n], original.as_bytes());
+    }
+    assert_eq!(target.split('/').count(), SEGMENTS.len());
+}
+
+#[test]
+fn discovery_uri_distinguishes_literal_slash_and_percent_text() {
+    let mut site = Site::<3>::new();
+    site.route(&["a/b"], get(get_temp))
+        .route("a/b", get(get_led))
+        .route(&["%2F"], get(get_temp))
+        .well_known_core();
+    let mut scratch = LinkFormatScratch::<3>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.payload(), b"</a%2Fb>,</a/b>,</%252F>");
+}
+
+#[test]
+fn discovery_uri_empty_catalog_needs_no_scratch() {
+    let mut site = Site::<0>::new();
+    site.well_known_core();
+    let response = dispatch_well_known(&site, &mut []);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    assert!(response.payload().is_empty());
+}
+
+#[test]
+fn discovery_uri_wire_reply_ignores_unsupported_unicast_filter() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let query = [Opt::uri_query("rt=missing")];
+    let (wire, n) = encode_req_extra(Code::GET, &[".well-known", "core"], &query, &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["a/b"], get(get_temp))
+        .route(&[], get(get_led))
+        .well_known_core()
+        .allow_plaintext()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(parsed.content_format, Some(ContentFormat::LINK_FORMAT));
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"</a%2Fb>,</>");
+}
+
+#[test]
+fn discovery_uri_encoded_capacity_refuses_then_recovers() {
+    let mut site = Site::<1>::new();
+    site.route("é", get(get_temp)).well_known_core();
+    let identity = site.observe_resource(&["é"]);
+    let mut short = [0xA5; 8];
+    let refused = dispatch_well_known(&site, &mut short);
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert_eq!(refused.format(), None);
+    assert_eq!(short, [0xA5; 8]);
+    assert_eq!(site.observe_resource(&["é"]), identity);
+    let mut exact = [0; 9];
+    let recovered = dispatch_well_known(&site, &mut exact);
+    assert_eq!(recovered.code(), Code::CONTENT);
+    assert_eq!(recovered.payload(), b"</%C3%A9>");
+}
+
+#[test]
+fn discovery_uri_expansion_respects_existing_scratch_bound() {
+    const PATH: &str = "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%";
+    assert!(PATH.len() + 3 <= INLINE_PAYLOAD);
+    assert!(PATH.len() * 3 + 3 > INLINE_PAYLOAD);
+    let mut site = Site::<1>::new();
+    site.route(PATH, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let refused = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert!(site.remove_route(PATH).unwrap());
+    site.try_route("ok", get(get_temp)).unwrap();
+    assert_eq!(
+        dispatch_well_known(&site, scratch.as_mut()).payload(),
+        b"</ok>"
+    );
+}
+
+#[test]
+fn discovery_uri_dot_routes_refuse_without_mutation() {
+    use super::{IntoPath, PathError, RouteError};
+    struct DotAdapter;
+    impl IntoPath for DotAdapter {
+        fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+            out[0] = "..";
+            Ok(1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("ok", get(get_temp)).unwrap();
+    let identity = site.observe_resource(&["ok"]);
+    for path in [".", "..", "a/../b", "x/./y"] {
+        assert_eq!(
+            site.try_route(path, get(get_led)).err(),
+            Some(RouteError::Path(PathError::DotSegment))
+        );
+    }
+    assert_eq!(
+        site.try_route(&[".."], get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(
+        site.try_route(DotAdapter, get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["ok"]), identity);
+    site.try_route(&["%2E"], get(get_led)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
+fn discovery_uri_inbound_dot_refuses_before_dispatch_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("ok", get(get_temp))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    for (i, segment) in [".", ".."].into_iter().enumerate() {
+        let raw_mid = 0x2010 + i as u16;
+        let mid = MessageId::new(raw_mid);
+        let (wire, n) = encode_req_mid(Code::GET, &["ok", segment], &[], raw_mid);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().last_send = None;
+        app.poll_with(i as u64, |_, _| panic!("invalid path dispatched"))
+            .unwrap();
+        let (destination, bytes, sent) = app.transport().last_send.expect("fresh refusal");
+        let reply = decode(&bytes[..sent]).unwrap();
+        assert_eq!(destination, peer);
+        assert_eq!(reply.message_id(), mid);
+        assert_eq!(reply.ty(), Type::Acknowledgement);
+        assert_eq!(reply.token(), Token::new(&[0xA1]).unwrap());
+        assert_eq!(reply.code(), Code::BAD_REQUEST);
+    }
+    let (wire, n) = encode_req_mid(Code::GET, &["ok"], &[], 0x2012);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(2).unwrap();
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CONTENT);
+    assert_eq!(&reply.payload[..reply.payload_len], b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[""], &[]);
+    let request = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(request.path(), &[""]);
+}
+
+#[test]
+fn discovery_uri_outgoing_dot_refuses_before_io_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    assert!(matches!(
+        app.get("a/../b").to(peer).send(0),
+        Err(Error::Path)
+    ));
+    assert!(matches!(app.get(&["."]).to(peer).send(0), Err(Error::Path)));
+    assert!(app.transport().last_send.is_none());
+    app.get(&["%2E"]).to(peer).send(0).unwrap();
+    let (_, bytes, n) = app.transport().last_send.unwrap();
+    let parsed = decode(&bytes[..n]).unwrap();
+    assert_eq!(parsed.uri_path().next().unwrap().unwrap(), "%2E");
 }
 
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
@@ -1611,6 +1846,7 @@ fn request_carries_standard_and_custom_option() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], put(put_std_and_custom))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1665,6 +1901,321 @@ fn route_slash_path_ignores_leading_slash() {
 fn route_rejects_empty_segments() {
     let mut site = Site::<4>::new();
     site.route("sensors//temp", get(get_temp));
+}
+
+#[test]
+fn checked_routes_refuse_without_mutation_and_replace_when_full() {
+    use super::{PathError, RouteError};
+    let mut site = Site::<1>::new();
+    site.try_route_path("/leds/0", get(get_led)).unwrap();
+    let identity = site.observe_resource(&["leds", "0"]);
+    assert_eq!(
+        site.try_route("new", get(get_temp)).err(),
+        Some(RouteError::Full)
+    );
+    assert_eq!(
+        site.try_route("leds//0", post(post_led)).err(),
+        Some(RouteError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(
+        site.try_route("a/b/c/d/e/f/g/h/i", get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route(&["leds", "0"], post(post_led)).unwrap();
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["leds", "0"]), identity);
+    assert_eq!(
+        site.dispatch(req, &mut [0; 1]).code(),
+        Code::METHOD_NOT_ALLOWED
+    );
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).code(), Code::CHANGED);
+}
+
+#[test]
+fn checked_routes_support_root_and_zero_capacity() {
+    use super::RouteError;
+    let mut empty = Site::<0>::new();
+    assert_eq!(
+        empty.try_route(&[], get(get_led)).err(),
+        Some(RouteError::Full)
+    );
+    assert!(empty.is_empty());
+    let mut site = Site::<1>::new();
+    site.try_route(&[], get(get_led)).unwrap();
+    let (wire, n) = encode_req(Code::GET, &[], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+}
+
+#[test]
+fn checked_routes_refuse_invalid_adapter_count_without_mutation() {
+    use super::{IntoPath, MAX_PATH_SEGMENTS, PathError, RouteError};
+    struct Overreported;
+    impl IntoPath for Overreported {
+        fn fill_path(self, _: &mut [&'static str]) -> Result<usize, PathError> {
+            Ok(MAX_PATH_SEGMENTS + 1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("leds/0", get(get_led)).unwrap();
+    assert_eq!(
+        site.try_route(Overreported, get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route("new", get(get_temp)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
+fn route_removal_preserves_other_identity_dispatch_and_catalog_with_holes() {
+    let mut site = Site::<2>::new();
+    site.route("first", get(get_led))
+        .route("second", get(get_temp))
+        .well_known_core();
+    let second = site.observe_resource(&["second"]);
+    assert!(site.remove_route("first").unwrap());
+    assert!(!site.remove_route("first").unwrap());
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["second"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"</second>");
+    site.try_route("third", get(get_led)).unwrap();
+    assert!(site.is_full());
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &["first"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).code(), Code::NOT_FOUND);
+    assert!(site.remove_route("third").unwrap());
+    // The original convenience API also inserts into the vacant slot.
+    site.route("fourth", get(get_led));
+    assert_eq!(site.len(), 2);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(
+        site.dispatch(req, &mut [0; 128]).payload(),
+        b"</fourth>,</second>"
+    );
+}
+
+#[test]
+fn route_removal_handles_zero_capacity_root_and_exact_segments() {
+    let mut zero = Site::<0>::new();
+    assert_eq!(zero.remove_route(&[]), Ok(false));
+    assert!(zero.is_empty());
+    let mut site = Site::<2>::new();
+    site.route(&["a/b"], get(get_led))
+        .route("a/b", get(get_temp));
+    assert_eq!(site.remove_route("/a/b"), Ok(true));
+    assert_eq!(site.len(), 1);
+    assert!(!site.observe_resource(&["a/b"]).is_none());
+    assert_eq!(site.remove_route(&["a/b"]), Ok(true));
+    assert!(site.is_empty());
+    site.route(&[], get(get_led));
+    assert_eq!(site.remove_route(&[]), Ok(true));
+    assert!(site.is_empty());
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+}
+
+#[test]
+fn route_removal_waits_for_call_cancellation_and_collection_without_io() {
+    use super::{PathError, RouteRemovalError};
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let call = app.get("remote").to(peer).send(0).unwrap();
+    let sent = app.transport().sent_n;
+    let metrics = app.metrics();
+    assert_eq!(app.remove_route("missing"), Ok(false));
+    assert_eq!(
+        app.remove_route("bad//path"),
+        Err(RouteRemovalError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().sent_n, sent);
+    assert_eq!(app.metrics(), metrics);
+    assert!(
+        app.site
+            .contains_path(super::request::path_from_into("target").unwrap())
+    );
+    assert!(app.cancel(call));
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("replacement", get(get_temp)).unwrap();
+    assert!(app.get("fresh").to(peer).send(1).is_ok());
+}
+
+#[test]
+fn route_removal_waits_for_deferred_and_duplicate_history_expiry() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deferred::<1>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["target"], b"work");
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert!(app.cancel_deferred(handle.unwrap()));
+    // Cancellation must not erase duplicate history to reclaim configuration early.
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let sent = app.transport().sent_n;
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(app.site.len(), 1);
+}
+
+#[test]
+fn route_removal_waits_for_observe_terminal_response_and_history() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[3]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["target"],
+        &[Opt::observe_register()],
+        100,
+        token,
+    );
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_some()
+    );
+    let sends = app.transport().send_n;
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().send_n, sends);
+    assert_eq!(
+        app.notify(1, &["target"], Response::not_found()).unwrap(),
+        1
+    );
+    let terminal = last_wide(&app);
+    assert_eq!(terminal.code(), Code::NOT_FOUND);
+    assert_eq!(terminal.ty(), Type::Confirmable);
+    let terminal_mid = terminal.message_id();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let ack = Message::empty_ack(terminal_mid);
+    let mut wire = [0; WIRE];
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_none()
+    );
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS) + 1)
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(
+        app.signal(&["fresh"]),
+        0,
+        "freed slot must not inherit observers"
+    );
+}
+
+#[test]
+fn route_removal_waits_for_retained_transfer_body_and_recovers_after_release() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let key = BlockKey::new(Token::new(&[8]).unwrap(), peer);
+    let block = BlockValue::new(0, true, 0).unwrap();
+    app.engine
+        .apply_block1(key, block, &[7; 16], Some(32))
+        .unwrap();
+    let body = app.engine.lookup_rx_body(key).unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.engine.lookup_rx_body(key), Some(body));
+    assert_eq!(app.transport().sent_n, 0);
+    app.engine.release_rx_body(body).unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    app.engine
+        .apply_block1(key, block, &[9; 16], Some(32))
+        .unwrap();
+    assert!(app.engine.lookup_rx_body(key).is_some());
 }
 
 #[test]
@@ -1834,6 +2385,7 @@ fn block1_incomplete_is_continue() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1856,6 +2408,7 @@ fn block1_acked_num_retransmit_is_continue() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1922,6 +2475,7 @@ fn block_and_qblock_do_not_share_a_packet_or_a_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(take))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2005,6 +2559,7 @@ fn block1_smaller_szx_continues_at_the_filled_byte() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(take))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2033,6 +2588,7 @@ fn client_adopts_smaller_block1_size_from_continue() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.put("upload").payload(&LARGE).to(peer).send(0).unwrap();
@@ -2065,6 +2621,7 @@ fn block1_complete_exposes_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2094,6 +2651,7 @@ fn qblock1_incomplete_con_is_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2113,6 +2671,7 @@ fn qblock1_complete_exposes_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2144,6 +2703,7 @@ fn qblock1_holes_are_request_entity_incomplete() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2185,6 +2745,7 @@ fn qblock1_duplicate_con_repeats_ack_and_preserves_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2216,6 +2777,7 @@ fn qblock2_recover_sent_from_poll() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .expect("bind");
     let engine = app.engine_mut();
@@ -2261,6 +2823,7 @@ fn block_wise_bind_uses_body_pools() {
     let app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(Loopback::default())
         .expect("bind");
     assert!(app.engine().has_body_pools());
@@ -2377,6 +2940,7 @@ fn duplicate_con_post_oversize_ack_replays_from_tx_pin() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["bulk"], post(counting_post))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2415,6 +2979,7 @@ fn large_get_ships_block2_without_slot_id() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2458,6 +3023,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2486,6 +3052,7 @@ fn large_get_without_body_pools_fails_clearly() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["large"], get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2527,6 +3094,7 @@ fn large_get_q_block2_issues_a_window() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2562,6 +3130,7 @@ fn qblock2_single_selection_honors_num_and_reclaims_temporary_snapshots() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for cycle in 0..16 {
@@ -2620,6 +3189,7 @@ fn qblock2_missing_tail_reissues_only_selected_blocks_without_advancing_window()
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let retained = if cached {
@@ -2712,6 +3282,7 @@ fn qblock2_out_of_range_selection_refuses_without_leaking_state() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for cycle in 0..12 {
@@ -2745,6 +3316,7 @@ fn qblock2_client_requests_entire_body_with_m_set() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let request = app.get("large").q_block2();
@@ -2785,6 +3357,7 @@ fn observe_insert_miss_strips_observe_option() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .expect("bind");
 
@@ -2832,6 +3405,7 @@ fn observe_register_notify_deregister() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2887,6 +3461,7 @@ fn notify_nstart_one_per_endpoint() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2924,6 +3499,7 @@ fn notify_fans_out_to_distinct_endpoints() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer_a, wire, n)),
             ..WideLoopback::default()
@@ -2965,6 +3541,7 @@ fn observe_non_notify_rst_drops_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3010,6 +3587,7 @@ fn observe_con_notify_rst_drops_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3060,6 +3638,7 @@ fn empty_con_ping_rst_does_not_drop_observe() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3085,6 +3664,7 @@ fn observe_max_age_expiry_preserves_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3115,6 +3695,7 @@ fn observe_source_sends_on_signal_poll() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3141,6 +3722,7 @@ fn observe_signal_survives_tx_saturated_poll() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3220,6 +3802,7 @@ fn echo_app() -> App<profiles::Default, Echo> {
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_body))
+        .allow_plaintext()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -3343,6 +3926,7 @@ fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
+        .allow_plaintext()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -3443,6 +4027,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -3485,6 +4070,7 @@ fn client_full_path_query_and_extras_all_on_wire() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -3552,6 +4138,7 @@ fn client_take_response_copies_etag() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["validate"], get(get_tagged))
+        .allow_plaintext()
         .bind(Echo::default())
         .expect("bind");
     let call = app.get("validate").to(peer).send(0).expect("send");
@@ -3644,6 +4231,7 @@ fn pipe_app() -> App<profiles::Default, Pipe, DEFAULT_ROUTES, true> {
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .route(&["upload"], put(put_large))
+        .allow_plaintext()
         .bind(Pipe::default())
         .expect("bind")
 }
@@ -3802,6 +4390,7 @@ fn echo_obs_app() -> App<profiles::Default, Echo> {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -3876,6 +4465,7 @@ fn record_client() -> App<profiles::Default, RecordIo> {
     App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .expect("bind")
 }
@@ -4078,6 +4668,7 @@ fn poll_progresses_when_rx_saturated() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .expect("bind");
     {
@@ -4336,6 +4927,7 @@ fn metrics_observe_register_notify_deregister() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -4453,6 +5045,7 @@ fn metrics_block1_assemble() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -4469,6 +5062,7 @@ fn metrics_rx_saturated_and_reset() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .expect("bind");
     {
@@ -4540,7 +5134,7 @@ fn options_full_500_under_oscore_is_protected() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    super::encode_options_full_500::<_, &'static str>(
+    super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,
@@ -4590,7 +5184,7 @@ fn options_full_500_oscore_without_request_is_not_plaintext() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    let err = super::encode_options_full_500::<_, &'static str>(
+    let err = super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,
@@ -4620,6 +5214,7 @@ fn response_unknown_option_policy_precedes_completion_and_ack() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<false>()
+                .allow_plaintext()
                 .bind(RecordIo::default())
                 .unwrap();
             let call = app.get("value").to(peer).send(0).unwrap();
@@ -4682,6 +5277,7 @@ fn block2_requests_with_new_tokens_select_requested_ranges_and_release_slots() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .expect("bind");
     // More independent requests than the TX body pool capacity, including
@@ -4727,6 +5323,7 @@ fn block2_outside_representation_refuses_without_retaining_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -4777,6 +5374,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
+        .allow_plaintext()
         .bind(CheckedPipe::default())
         .unwrap();
     let call = app
@@ -4890,6 +5488,17 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                 assert_eq!(queries.next(), Some(Ok("version=2")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(
+                    parsed.no_response(),
+                    Some(Ok(crate::message::NoResponse::DEFAULT))
+                );
+                assert_eq!(
+                    parsed
+                        .get_option(OptionNumber::NO_RESPONSE)
+                        .unwrap()
+                        .value(),
+                    &[]
+                );
                 assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(
                     parsed.content_format(),
@@ -4924,6 +5533,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                     Response::changed()
                 }),
             )
+            .allow_plaintext()
             .bind(CheckedUpload::default())
             .unwrap();
         let mut request = app
@@ -4935,6 +5545,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .accept(ContentFormat::OCTET_STREAM)
             .echo(EchoOpt::new(b"challenge").unwrap())
             .content_format(ContentFormat::OCTET_STREAM)
+            .no_response(crate::message::NoResponse::DEFAULT)
             .payload(&LARGE);
         if qblock {
             request = request
@@ -5003,32 +5614,26 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
 }
 
 #[test]
-fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() {
+fn fragmented_etag_refuses_instead_of_becoming_unconditional() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
-        for condition in 0..3 {
-            let mut app = pipe_app();
-            let mut request = app.put("upload").to(peer).payload(&LARGE);
-            if qblock {
-                request = request
-                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
-                    .q_block1();
-            }
-            request = match condition {
-                0 => request.if_match(b"version"),
-                1 => request.if_none_match(),
-                _ => request.etag(b"version"),
-            };
-            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
-            assert_eq!(
-                app.transport().len,
-                0,
-                "no unconditional fragment may escape"
-            );
-            assert_eq!(app.engine_mut().tx_occupied(), 0);
-            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
-            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        let mut app = pipe_app();
+        let mut request = app.put("upload").to(peer).payload(&LARGE);
+        if qblock {
+            request = request
+                .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                .q_block1();
         }
+        request = request.etag(b"version");
+        assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+        assert_eq!(
+            app.transport().len,
+            0,
+            "no unconditional fragment may escape"
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
     }
 }
 
@@ -5131,6 +5736,7 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
                     panic!("invalid tag reached handler")
                 }),
             )
+            .allow_plaintext()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -5162,6 +5768,7 @@ fn disabled_block_assembly_refuses_before_handler_dispatch() {
                 panic!("fragment reached non-block handler")
             }),
         )
+        .allow_plaintext()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             ..Loopback::default()
@@ -5287,6 +5894,7 @@ fn cancellation_reclaims_tagged_upload_and_download_bodies() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = BodyTag::new(b"upload").unwrap();
@@ -5363,6 +5971,7 @@ fn deadline_progresses_when_receive_fails() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(BadReceive)
         .unwrap();
     let call = app.get("value").to(peer).deadline(1).send(0).unwrap();
@@ -5372,6 +5981,202 @@ fn deadline_progresses_when_receive_fails() {
         crate::CallFailure::DeadlineExceeded
     );
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}
+
+#[derive(Default)]
+struct ReceiveFaultIo<T> {
+    inner: T,
+    fail_receive: bool,
+    fail_send: bool,
+}
+
+impl<T: DatagramIo<Error = &'static str>> DatagramIo for ReceiveFaultIo<T> {
+    type Error = &'static str;
+
+    fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+        if self.fail_receive {
+            Err("receive failure")
+        } else {
+            self.inner.recv(buf)
+        }
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if self.fail_send {
+            Err("send failure")
+        } else {
+            self.inner.send(dest, bytes)
+        }
+    }
+}
+
+#[test]
+fn receive_failure_preserves_con_retries_and_give_up() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<RecordIo>::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let first = app.transport().inner.sent[0].unwrap();
+    app.transport_mut().fail_receive = true;
+
+    let error = Err(Error::Io(crate::storage::DatagramIoError::Io(
+        "receive failure",
+    )));
+    let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let mut timeout = Transmission::ACK_TIMEOUT_MS;
+    for attempt in 0..Transmission::MAX_RETRANSMIT {
+        // Failed receives must neither advance an early RTO nor skip a due one.
+        assert_eq!(app.poll(now - 1), error);
+        assert_eq!(app.transport().inner.sent_n, 1 + usize::from(attempt));
+        assert_eq!(app.poll(now), error);
+        assert_eq!(app.transport().inner.sent_n, 2 + usize::from(attempt));
+        let retry = app.transport().inner.sent[1 + usize::from(attempt)].unwrap();
+        assert_eq!(retry, first, "retransmit the original complete datagram");
+        assert!(app.take_response(call).is_none());
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        timeout *= 2;
+        now += u64::from(timeout);
+    }
+    assert_eq!(app.poll(now), error);
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::TimedOut
+    );
+    assert_eq!(
+        app.transport().inner.sent_n,
+        1 + usize::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.metrics().con_retransmit,
+        u32::from(Transmission::MAX_RETRANSMIT)
+    );
+    assert_eq!(app.metrics().give_up, 1);
+    assert_eq!(
+        app.metrics().rx_error,
+        2 * u32::from(Transmission::MAX_RETRANSMIT) + 1
+    );
+    assert!(app.get("value").to(peer).send(now).is_ok());
+}
+
+#[test]
+fn receive_failure_reports_later_send_failure_first() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<RecordIo>::default())
+        .unwrap();
+    app.get("value").to(peer).send(0).unwrap();
+    app.transport_mut().fail_receive = true;
+    app.transport_mut().fail_send = true;
+    assert_eq!(
+        app.poll(u64::from(Transmission::ACK_TIMEOUT_MS)),
+        Err(Error::Io(crate::storage::DatagramIoError::Io(
+            "send failure"
+        )))
+    );
+    assert_eq!(app.metrics().rx_error, 1);
+    assert_eq!(app.metrics().tx_fail, 1);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+}
+
+#[test]
+fn receive_failure_does_not_starve_observe_notification() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register()],
+        0x1001,
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
+        .bind(ReceiveFaultIo {
+            inner: WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            },
+            ..ReceiveFaultIo::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    assert_eq!(app.signal(&["sensors", "temp"]), 1);
+    app.transport_mut().inner.send_n = 0;
+    app.transport_mut().fail_receive = true;
+    for now in [10, 11] {
+        assert_eq!(
+            app.poll(now),
+            Err(Error::Io(crate::storage::DatagramIoError::Io(
+                "receive failure"
+            )))
+        );
+    }
+    assert_eq!(app.transport().inner.send_n, 1);
+    let inner = &app.transport().inner;
+    let note = decode(&inner.sends[0][..inner.send_lens[0]]).unwrap();
+    assert_eq!(note.observe(), Some(Ok(1)));
+    assert_eq!(note.payload(), b"obs-snap");
+}
+
+#[test]
+fn receive_failure_preserves_qblock_recovery_and_releases_exhausted_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(put_body))
+        .allow_plaintext()
+        .bind(ReceiveFaultIo::<Loopback>::default())
+        .unwrap();
+    for (num, now) in [(0, 0), (3, 1)] {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, num != 3, 100 + num as u16, 64));
+        wire[0] |= 0x10; // NON; holes 1 and 2 remain in the received set.
+        app.transport_mut().inner.inbox = Some((peer, wire, n));
+        app.poll(now).unwrap();
+    }
+    app.transport_mut().fail_receive = true;
+    let mut delay = u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+    let mut now = 1 + delay;
+    for _ in 0..QBlockTransmission::NON_MAX_RETRANSMIT {
+        app.transport_mut().inner.last_send = None;
+        assert_eq!(
+            app.poll(now),
+            Err(Error::Io(crate::storage::DatagramIoError::Io(
+                "receive failure"
+            )))
+        );
+        let (_, bytes, n) = app.transport().inner.last_send.unwrap();
+        let report = decode(&bytes[..n]).unwrap();
+        assert_eq!(report.ty(), Type::NonConfirmable);
+        assert_eq!(report.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+        let mut missing = [0; 4];
+        let count = MissingBlocks::decode(report.payload(), &mut missing).unwrap();
+        assert_eq!(&missing[..count], &[1, 2]);
+        delay *= 2;
+        now += delay;
+    }
+    app.transport_mut().inner.last_send = None;
+    assert!(app.poll(now).is_err());
+    assert!(app.transport().inner.last_send.is_none());
+    for index in 0..app.engine().capacities().rx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
+    }
     assert_eq!(app.engine_mut().rx_occupied(), 0);
 }
 
@@ -5408,6 +6213,7 @@ fn missing_initial_block_completes_with_typed_failure_and_reclaims_state() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("large").to(peer).send(0).unwrap();
@@ -5446,6 +6252,7 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(handler))
+            .allow_plaintext()
             .bind(Loopback {
                 inbox: None,
                 last_send: None,
@@ -5512,6 +6319,7 @@ fn qblock2_without_etag_is_refused_before_sending_or_retaining_body() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(&["large"], get(handler))
+            .allow_plaintext()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -5552,6 +6360,7 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(handler))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let key = BlockKey::new(Token::new(&[0xA1]).unwrap(), peer)
@@ -5668,6 +6477,7 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -5693,6 +6503,72 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
 }
 
 #[test]
+fn truncated_handler_response_refuses_wire_and_observe_then_recovers() {
+    use crate::ResponseError;
+
+    fn handler(request: Request<'_>) -> Response<'static> {
+        let response = Response::content_copy(request.payload()).observe(0);
+        if request.payload().first() == Some(&b's') {
+            response.separate()
+        } else {
+            response
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xA1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("test", get(handler))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for mid in 0..12 {
+        let payload = [if mid % 2 == 0 { b's' } else { b'p' }; INLINE_PAYLOAD + 1];
+        let options = [Opt::observe_register(), Opt::uri_path("test")];
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1800 + mid))
+            .with_token(token)
+            .with_options(&options)
+            .with_payload(&payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        assert_eq!(
+            app.poll(u64::from(mid)),
+            Err(Error::Response(ResponseError::PayloadTruncated))
+        );
+        assert_eq!(app.transport().send_n, 0);
+        assert!(!observe_live(&app, peer, token));
+    }
+    let payload = [b'z'; INLINE_PAYLOAD];
+    let options = [Opt::observe_register(), Opt::uri_path("test")];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1900))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&payload);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(observe_live(&app, peer, token));
+    assert_eq!(app.transport().send_n, 1);
+    let io = app.transport();
+    assert_eq!(
+        decode(&io.sends[0][..io.send_lens[0]]).unwrap().payload(),
+        payload
+    );
+    assert_eq!(
+        app.notify(
+            13,
+            &["test"],
+            Response::content_copy(&[0; INLINE_PAYLOAD + 1])
+        ),
+        Err(Error::Response(ResponseError::PayloadTruncated))
+    );
+    assert_eq!(app.transport().send_n, 1);
+}
+
+#[test]
 fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
     use crate::ResponseError;
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -5711,6 +6587,7 @@ fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     // Repeat beyond RX/TX capacity: refusal must release every request.
@@ -5766,6 +6643,7 @@ fn invalid_handler_response_releases_assembled_upload_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(handler))
+        .allow_plaintext()
         .bind(Loopback {
             inbox: None,
             last_send: None,
@@ -5795,6 +6673,7 @@ fn client_snapshot_retains_location_max_age_echo_and_unknown_options() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.post("create").to(peer).send(0).unwrap();
@@ -5842,6 +6721,7 @@ fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply()
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let call = app.get("value").to(peer).send(0).unwrap();
@@ -5913,6 +6793,7 @@ fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).observe().send(0).unwrap();
@@ -5975,6 +6856,7 @@ fn four_untaken_response_metadata_snapshots_remain_distinct_and_bounded() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let mut calls = [None; 4];
@@ -6011,6 +6893,7 @@ fn block2_metadata_overflow_reclaims_partial_body_and_call() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).send(0).unwrap();
@@ -6066,6 +6949,7 @@ fn malformed_elective_response_values_remain_raw_without_creating_observe() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).observe().send(0).unwrap();
@@ -6116,6 +7000,7 @@ fn explicit_echo_retry_uses_received_challenge_and_preserves_request() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("value", put(handler))
+        .allow_plaintext()
         .bind(Pipe::default())
         .unwrap();
     let first = app
@@ -6166,6 +7051,7 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("value", put(|_: Request<'_>| Response::changed()))
+                .allow_plaintext()
                 .bind(Pipe::default())
                 .unwrap();
             let mut request = app
@@ -6208,6 +7094,52 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
 }
 
 #[test]
+fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
+    use crate::message::NoResponse;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = pipe_app();
+        for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
+            if mask == 16 || (qblock && mask == 2) || (!qblock && matches!(mask, 8 | 24)) {
+                continue;
+            }
+            let mut request = app
+                .put("upload")
+                .to(peer)
+                .payload(&LARGE)
+                .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+                .no_response(NoResponse::new(mask));
+            if qblock {
+                request = request.q_block1();
+            }
+            assert_eq!(request.send(0), Err(Error::NoResponseUploadUnsupported));
+            assert_eq!(app.transport().len, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+        let mut request = app
+            .put("upload")
+            .to(peer)
+            .payload(&LARGE)
+            .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+            .no_response(NoResponse::DEFAULT);
+        if qblock {
+            request = request.q_block1();
+        }
+        let call = request.send(0).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
 fn no_response_unsupported_upload_and_observe_refuse_before_io() {
     use crate::message::NoResponse;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -6216,7 +7148,7 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
         app.put("upload")
             .to(peer)
             .payload(&LARGE)
-            .no_response(NoResponse::DEFAULT)
+            .no_response(NoResponse::new(2))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );
@@ -6225,7 +7157,8 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
             .to(peer)
             .payload(b"small")
             .q_block1()
-            .no_response(NoResponse::new(2))
+            .non()
+            .no_response(NoResponse::new(8))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );
@@ -6285,6 +7218,7 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
                     let mut app = App::profile::<profiles::Default>()
                         .deterministic_for_tests()
                         .block_wise::<true>()
+                        .allow_plaintext()
                         .bind(FaultIo {
                             sends: 0,
                             fail_at: usize::MAX,
@@ -6417,6 +7351,7 @@ fn stale_observe_block_zero_cannot_replace_incomplete_representation() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .unwrap();
     let call = app.get("value").observe().to(peer).non().send(0).unwrap();
@@ -6646,6 +7581,7 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
             .deterministic_for_tests()
             .block_wise::<false>()
             .route(&["sensors", "temp"], get(get_obs))
+            .allow_plaintext()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -6727,6 +7663,7 @@ fn observe_signal_at_max_age_boundary_is_not_discarded() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -6770,6 +7707,7 @@ fn observe_notification_format_and_terminal_response_contract() {
                     .deterministic_for_tests()
                     .block_wise::<false>()
                     .route("obs", get(handler))
+                    .allow_plaintext()
                     .bind(WideLoopback {
                         inbox: Some((peer, wire, n)),
                         ..WideLoopback::default()
@@ -6820,6 +7758,7 @@ fn observe_deregistration_strips_handler_observe_and_releases_relation() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for (index, option) in [Opt::observe_register(), Opt::observe_deregister()]
@@ -6939,6 +7878,7 @@ fn explicit_echo_policy_checks_issuance_peer_scope_class_and_expiry_before_handl
             .block_wise::<false>()
             .echo_policy(fixture_authenticated_echo_policy)
             .route("effect", put(effect))
+            .allow_plaintext()
             .bind(Loopback {
                 inbox: Some((sender, wire, n)),
                 last_send: None,
@@ -6977,6 +7917,7 @@ fn echo_policy_issuance_failure_is_closed_and_reclaims_rx() {
         .echo_policy(deny)
         .block_wise::<false>()
         .route("effect", put(unreachable))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     for mid in 1..=12 {
@@ -7005,6 +7946,7 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
         .block_wise::<true>()
         .echo_policy(policy)
         .route("effect", put(unreachable))
+        .allow_plaintext()
         .bind(RecordIo::default())
         .unwrap();
     for value in [&[][..], &[0; 41][..]] {
@@ -7035,10 +7977,64 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
 }
 
 #[test]
+fn app_security_is_required_before_entropy_storage_or_transport_work() {
+    struct UntouchedIo;
+    impl DatagramIo for UntouchedIo {
+        type Error = ();
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+            panic!("security refusal must not receive");
+        }
+        fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, ()> {
+            panic!("security refusal must not send");
+        }
+    }
+    assert!(matches!(
+        App::builder()
+            .randomness(|_| panic!("security refusal must not request entropy"))
+            .bind(UntouchedIo),
+        Err(crate::BuildError::SecurityRequired)
+    ));
+    assert!(matches!(
+        App::builder().deterministic_for_tests().bind(UntouchedIo),
+        Err(crate::BuildError::SecurityRequired)
+    ));
+    assert!(matches!(
+        App::builder().deterministic_for_tests().bind_storage(
+            UntouchedIo,
+            crate::storage::Memory::<profiles::Default>::new()
+        ),
+        Err(crate::BuildError::SecurityRequired)
+    ));
+    #[cfg(feature = "alloc")]
+    assert!(matches!(
+        App::builder().deterministic_for_tests().bind_alloc(
+            UntouchedIo,
+            crate::storage::Capacities {
+                rx_datagram_slots: 0,
+                ..crate::storage::Capacities::from_profile::<profiles::Default>()
+            }
+        ),
+        Err(crate::BuildError::SecurityRequired)
+    ));
+    let mut plain = App::builder()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    plain.get("test").to(peer).send(0).unwrap();
+    let (_, bytes, n) = plain.transport().last_send.unwrap();
+    let packet = decode(&bytes[..n]).unwrap();
+    assert_eq!(packet.code(), Code::GET);
+    assert!(packet.oscore().is_none());
+}
+
+#[test]
 fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
     assert!(matches!(
         App::profile::<profiles::Default>()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(RecordIo::default()),
         Err(crate::BuildError::RandomnessRequired)
     ));
@@ -7046,6 +8042,7 @@ fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
         App::profile::<profiles::Default>()
             .randomness(|_| false)
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(RecordIo::default()),
         Err(crate::BuildError::RandomnessUnavailable)
     ));
@@ -7063,6 +8060,7 @@ fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
         let mut app = App::profile::<profiles::Default>()
             .randomness(source)
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(RecordIo::default())
             .unwrap();
         for _ in 0..12 {
@@ -7091,6 +8089,7 @@ fn injected_entropy_drives_wire_identity_and_exact_retransmission_boundary() {
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(RecordIo::default())
         .unwrap();
     let call = app.get("value").to(peer).send(100).unwrap();
@@ -7125,27 +8124,252 @@ fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
         bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) == 0
     }
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .randomness(fill)
+            .block_wise::<true>()
+            .allow_plaintext()
+            .bind(RecordIo::default())
+            .unwrap();
+        for _ in 0..12 {
+            // Both modes retain the first encoded block and its MID/jitter.
+            // Refuse that initial draw before emitting any fragment.
+            DRAWS.store(1, Ordering::SeqCst);
+            let request = app.put("value").to(peer).payload(&[7; 3000]);
+            let result = if qblock {
+                request
+                    .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+                    .q_block1()
+                    .send(0)
+            } else {
+                request.send(0)
+            };
+            assert_eq!(
+                result,
+                Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+            );
+            assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+            assert_eq!(app.transport().sent_n, 0);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            // Restoring entropy admits fresh work without resetting the App.
+            DRAWS.store(0, Ordering::SeqCst);
+            let fresh = app.get("value").to(peer).send(1).unwrap();
+            assert_eq!(app.transport().sent_n, 1);
+            assert!(app.cancel(fresh));
+            assert!(app.take_response(fresh).unwrap().is_err());
+            app.transport_mut().sent_n = 0;
+        }
+    }
+}
+
+#[test]
+fn entropy_failure_during_classic_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<true>()
-        .bind(RecordIo::default())
+        .allow_plaintext()
+        .bind(WideLoopback::default())
         .unwrap();
-    for _ in 0..12 {
-        DRAWS.store(0, Ordering::SeqCst);
-        assert_eq!(
-            app.put("value").to(peer).payload(&[7; 3000]).send(0),
-            Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let encoded = block.encode();
+    let options = [Opt::block1(&encoded)];
+    let reply = Message::new(Type::Acknowledgement, Code::CONTINUE, first.message_id())
+        .with_token(call.token())
+        .with_options(&options);
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
         );
-        assert_eq!(app.transport().sent_n, 0);
-        assert_eq!(app.engine.tx_occupied(), 0);
-        for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
-            assert!(
-                app.engine
-                    .tx_body_transfer(crate::storage::SlotId::from_index(i))
-                    .is_none()
-            );
-        }
     }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let encoded = block.encode();
+        let options = [Opt::block1(&encoded)];
+        let reply = Message::new(
+            Type::Acknowledgement,
+            if index < 2 {
+                Code::CONTINUE
+            } else {
+                Code::CHANGED
+            },
+            sent.message_id(),
+        )
+        .with_token(fresh.token())
+        .with_options(&options);
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+}
+
+#[test]
+fn entropy_failure_during_q_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .randomness(fill)
+        .block_wise::<true>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.q_block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let reply = Message::new(Type::Acknowledgement, Code::EMPTY, first.message_id());
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.q_block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let reply = if index < 2 {
+            Message::new(Type::Acknowledgement, Code::EMPTY, sent.message_id())
+        } else {
+            Message::new(Type::Acknowledgement, Code::CHANGED, sent.message_id())
+                .with_token(sent.token())
+        };
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
 }
 
 #[test]
@@ -7156,6 +8380,7 @@ fn response_non_and_qblock_window_use_shared_local_mid_space() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(get_large))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
@@ -7186,7 +8411,9 @@ fn mid_reuse_wait_also_requires_pending_transmissions_to_finish() {
     let mut app = record_client();
     let call = app.get("first").to(peer).send(0).unwrap();
     for _ in 1..65536 {
-        app.ids.next_for::<&'static str, _>(&app.engine, 0).unwrap();
+        app.ids
+            .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 0)
+            .unwrap();
     }
     assert_eq!(
         app.get("next").to(peer).non().send(247_000),
@@ -7379,6 +8606,7 @@ fn observe_cancellation_identity_bound_refuses_before_io_without_consuming_capac
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     // Four header bytes, Uri-Path, zero-valued Content-Format and payload marker = eight.
@@ -7484,6 +8712,7 @@ fn failed_observe_cancellation_retires_local_state_and_reports_uncertainty() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
+        .allow_plaintext()
         .bind(CancelIo {
             inner: RecordIo::default(),
             fail: false,
@@ -7521,6 +8750,7 @@ fn observe_cancellation_cannot_select_an_unread_terminal_response() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(decline))
+        .allow_plaintext()
         .bind(Echo::default())
         .unwrap();
     let call = app.get("x").observe().to(peer).send(0).unwrap();
@@ -7605,6 +8835,7 @@ fn observe_route_identity_keeps_literal_slashes_and_segments_distinct() {
         .block_wise::<false>()
         .route(&["a/b"], get(get_obs).observe(slash))
         .route(&["a", "b"], get(get_obs).observe(segments))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let paths: [&[&str]; 2] = [&["a/b"], &["a", "b"]];
@@ -7660,6 +8891,7 @@ fn delete_queues_reliable_terminal_notifications_and_preserves_endpoint_nstart()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
         .route("other", get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for (i, path) in ["x", "x", "other"].into_iter().enumerate() {
@@ -7761,6 +8993,7 @@ fn deleted_observer_survives_local_send_failures_until_terminal_delivery() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for (time, code, options) in [
@@ -7819,6 +9052,7 @@ fn failed_delete_keeps_observers_and_pending_non_hold_delays_successful_delete_n
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let (wire, n) = encode_wide_token(Code::GET, &["x"], &[Opt::observe_register()], 100, token);
@@ -7862,6 +9096,7 @@ fn terminal_notification_give_up_reclaims_delivery_and_unblocks_other_observers(
         .block_wise::<false>()
         .route("x", get(get_obs))
         .route("other", get(get_obs))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for (i, path) in ["x", "other"].into_iter().enumerate() {
@@ -7946,6 +9181,7 @@ fn failed_classic_continuations_retire_calls_and_bodies_immediately() {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
+                    .allow_plaintext()
                     .bind(FaultIo {
                         inbox: None,
                         last: [0; WIRE],
@@ -8068,6 +9304,7 @@ fn failed_qblock2_window_continuations_retire_partial_representation() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(FaultIo {
                     inbox: None,
                     last: [0; WIRE],
@@ -8157,6 +9394,7 @@ fn qblock2_repeated_selections_send_the_union_once() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("large", get(body))
+                .allow_plaintext()
                 .bind(WideLoopback::default())
                 .unwrap();
             let before = if cached {
@@ -8239,6 +9477,7 @@ fn qblock2_invalid_later_options_refuse_before_handler_and_preserve_cached_body(
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -8273,6 +9512,7 @@ fn qblock2_later_out_of_range_selection_is_preflighted_before_output() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     // Valid block 0 then invalid block 2 for 2000 bytes / 1024.
@@ -8340,6 +9580,7 @@ fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(never))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         app.transport_mut().inbox = Some((peer, wire, n));
@@ -8380,6 +9621,7 @@ fn qblock1_missing_required_metadata_is_bad_request_without_body_admission() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("upload", put(handler))
+                .allow_plaintext()
                 .bind(WideLoopback::default())
                 .unwrap();
             app.transport_mut().inbox = Some((peer, wire, n));
@@ -8422,6 +9664,7 @@ fn qblock1_con_ack_non_set_continue_and_final_handler_effect_are_distinct() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(finish))
+            .allow_plaintext()
             .bind(Loopback::default())
             .unwrap();
         for num in 0..11 {
@@ -8471,6 +9714,7 @@ fn qblock1_non_out_of_order_and_duplicate_payloads_wait_for_the_entire_set() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
     for (index, num) in [0, 2, 3, 4, 5, 6, 7, 8, 9, 9, 1, 1].into_iter().enumerate() {
@@ -8499,6 +9743,7 @@ fn qblock1_arrival_at_recovery_deadline_invalidates_old_missing_report() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(put_body))
+            .allow_plaintext()
             .bind(Loopback::default())
             .unwrap();
         // NUM 0 and final NUM 3 leave holes 1 and 2.
@@ -8550,6 +9795,7 @@ fn qblock2_completion_at_recovery_deadline_does_not_send_obsolete_get() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
@@ -8590,6 +9836,7 @@ fn observe_reregistration_does_not_inherit_a_replaced_rows_due_notification() {
             .block_wise::<false>()
             .route("first", get(get_obs).observe(obs_snapshot))
             .route("second", get(get_obs).observe(obs_snapshot))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let (wire, n) = encode_wide(Code::GET, &["first"], &[Opt::observe_register()], 100);
@@ -8633,6 +9880,7 @@ fn observe_signal_survives_unrelated_ingress_response_send_failure() {
         .block_wise::<false>()
         .route("obs", get(get_obs).observe(obs_snapshot))
         .route("plain", get(get_temp))
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let token = Token::new(&[0xa1]).unwrap();
@@ -8666,6 +9914,7 @@ fn qblock1_last_hole_at_give_up_deadline_completes_before_reclamation() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(put_body))
+            .allow_plaintext()
             .bind(Loopback::default())
             .unwrap();
         for (num, payload) in [(0, &[b'A'; 16][..]), (2, &[b'A'; 8][..])] {
@@ -8721,6 +9970,7 @@ fn qblock2_give_up_retires_call_and_preserves_other_calls_and_reused_body() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
@@ -8816,6 +10066,7 @@ fn qblock1_confirmable_upload_waits_for_matching_ack_between_payloads() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app
@@ -8906,6 +10157,7 @@ fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(FaultIo {
                 pipe: WideLoopback::default(),
                 fail: false,
@@ -8983,6 +10235,7 @@ fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
     let mut app = App::profile::<LargeUpload>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app
@@ -9047,6 +10300,7 @@ fn qblock2_confirmable_request_gets_empty_ack_then_all_non_payloads() {
                     get(body)
                 },
             )
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
@@ -9097,6 +10351,7 @@ fn qblock1_missing_report_reissues_exact_ranges_and_retains_upload_until_final_r
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = crate::storage::BodyTag::new(b"missing").unwrap();
@@ -9183,6 +10438,7 @@ fn qblock1_invalid_missing_reports_are_silent_and_preserve_later_recovery() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = crate::storage::BodyTag::new(b"tag").unwrap();
@@ -9313,6 +10569,7 @@ fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_othe
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(FaultIo {
                     pipe: WideLoopback::default(),
                     count: 0,
@@ -9381,6 +10638,7 @@ fn qblock2_timed_recovery_preserves_request_identity_and_selects_only_holes() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let request = app
@@ -9489,6 +10747,7 @@ fn qblock2_timed_recovery_send_failure_retires_call_without_harming_other_call()
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(FaultIo {
                 pipe: WideLoopback::default(),
                 fail: false,
@@ -9570,6 +10829,7 @@ fn download_followups_retain_conditions_and_fetch_selection() {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
+                    .allow_plaintext()
                     .bind(WideLoopback::default())
                     .unwrap();
                 let request = match method {
@@ -9673,6 +10933,7 @@ fn oversized_fetch_selection_is_refused_before_io_or_call_admission() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -9704,6 +10965,7 @@ fn retained_conditional_tags_refuse_overflow_before_sending() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -9780,6 +11042,7 @@ fn fetch_requires_one_valid_content_format_before_handler_or_body_admission() {
                     Response::content(b"ok")
                 }),
             )
+            .allow_plaintext()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -9815,6 +11078,7 @@ fn client_fetch_requires_format_without_consuming_call_capacity() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -9846,6 +11110,7 @@ fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
+        .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").observe().to(peer).send(0).unwrap();
@@ -9914,7 +11179,7 @@ fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
             + MemoryLayout<true, Store = crate::storage::Memory<P, crate::storage::WithBodies<P>>>,
     >()
     where
-        crate::storage::Memory<P, crate::storage::WithBodies<P>>: crate::storage::BodySlots,
+        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage,
     {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
@@ -9922,6 +11187,7 @@ fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
             let mut app = App::profile::<P>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
+                .allow_plaintext()
                 .bind(WideLoopback::default())
                 .unwrap();
             let other = app.get("other").non().to(peer).send(0).unwrap();
@@ -10030,6 +11296,7 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
+            .allow_plaintext()
             .bind(WindowIo::default())
             .unwrap();
         let token = Token::new(b"q").unwrap();
@@ -10117,6 +11384,7 @@ fn outgoing_upload_lookup_and_cleanup_preserve_same_key_server_body() {
         App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap()
     }
@@ -10235,6 +11503,7 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
                 .deterministic_for_tests()
                 .block_wise::<false>()
                 .route("obs", get(get_obs))
+                .allow_plaintext()
                 .bind(WideLoopback::default())
                 .unwrap();
             let key = ObserveKey::new(token, peer);
@@ -10299,18 +11568,28 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
 
 #[test]
 fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
+    // A synthetic capable peer retains client interoperability coverage;
+    // App server declines FETCH/query Observe until it owns selection.
+    fn capable_reply(wire: &[u8], sequence: u32) -> ([u8; WIRE], usize) {
+        let request = decode(wire).unwrap();
+        let seq = encode_uint(sequence);
+        let cf = encode_uint(0);
+        let opts = [Opt::observe(&seq), Opt::content_format(&cf)];
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(request.token())
+            .with_options(&opts)
+            .with_payload(b"selected");
+        let mut bytes = [0; WIRE];
+        let n = encode(&response, &mut bytes).unwrap();
+        (bytes, n)
+    }
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     for fetch_request in [false, true] {
-        let mut server = App::profile::<profiles::Default>()
-            .deterministic_for_tests()
-            .block_wise::<false>()
-            .route("obs", get(get_obs).fetch(get_obs))
-            .bind(WideLoopback::default())
-            .unwrap();
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let request = if fetch_request {
@@ -10330,9 +11609,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
             .send(0)
             .unwrap();
         let (wire, n) = (client.transport().sends[0], client.transport().send_lens[0]);
-        server.transport_mut().inbox = Some((client_ep, wire, n));
-        server.poll(0).unwrap();
-        let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+        let (wire, n) = capable_reply(&wire[..n], 0);
         client.transport_mut().inbox = Some((server_ep, wire, n));
         client.poll(1).unwrap();
         assert_eq!(
@@ -10378,7 +11655,6 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
         }
         for round in 1..=3u32 {
             client.transport_mut().send_n = 0;
-            server.transport_mut().send_n = 0;
             let request = if fetch_request {
                 client.fetch("obs")
             } else {
@@ -10436,9 +11712,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
                 0,
                 "stale ACK must stop request retransmission"
             );
-            server.transport_mut().inbox = Some((client_ep, wire, n));
-            server.poll(u64::from(round) * 100 + 2).unwrap();
-            let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+            let (wire, n) = capable_reply(&wire[..n], round);
             client.transport_mut().inbox = Some((server_ep, wire, n));
             client.poll(u64::from(round) * 100 + 3).unwrap();
             assert_eq!(
@@ -10730,6 +12004,7 @@ fn retained_classic_response_refuses_changed_bytes_or_etag_without_advancing() {
             .block_wise::<true>()
             .route("changed", get(handler))
             .route("stable", get(stable))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -10794,6 +12069,7 @@ fn retained_notification_survives_incomplete_followups_and_send_failure() {
             .block_wise::<true>()
             .route("stable", get(stable))
             .route("changed", get(changed))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -10882,6 +12158,7 @@ fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("obs", get(current))
+            .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
         let resource = app.site.observe_resource(&["obs"]);
@@ -10985,6 +12262,7 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
                     .deterministic_for_tests()
                     .block_wise::<true>()
                     .route("large", get(handler).post(handler))
+                    .allow_plaintext()
                     .bind(WideLoopback::default())
                     .unwrap();
                 let value = [(num << 4) | 6];
@@ -11110,4 +12388,1769 @@ fn replay_cache_admission_distinguishes_eviction_from_real_saturation() {
             assert_eq!(app.engine.tx_occupied(), capacity);
         }
     }
+}
+
+#[test]
+fn observe_reregistration_after_removal_starts_a_new_relation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let register = [Opt::observe_register()];
+    for by_rst in [true, false] {
+        let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &register, 0x1101);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route(&["sensors", "temp"], get(get_obs))
+            .allow_plaintext()
+            .bind(WideLoopback::default())
+            .unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                1,
+                &["sensors", "temp"],
+                Response::content(b"obs-1").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+        let mid = last_wide(&app).message_id();
+        app.transport_mut().send_n = 0;
+        if by_rst {
+            inject_empty_rst(&mut app, peer, mid);
+            app.poll(2).unwrap();
+        } else {
+            let (bye, len) = encode_wide(
+                Code::GET,
+                &["sensors", "temp"],
+                &[Opt::observe_deregister()],
+                0x1102,
+            );
+            app.transport_mut().inbox = Some((peer, bye, len));
+            app.poll(2).unwrap();
+        }
+        assert!(!observe_registered(&app, peer));
+        assert_eq!(
+            app.notify(
+                3,
+                &["sensors", "temp"],
+                Response::content(b"gone").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            0
+        );
+        let (again, again_n) = encode_wide(Code::GET, &["sensors", "temp"], &register, 0x1103);
+        app.transport_mut().send_n = 0;
+        app.transport_mut().inbox = Some((peer, again, again_n));
+        app.poll(4).unwrap();
+        assert!(observe_registered(&app, peer));
+        assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                5,
+                &["sensors", "temp"],
+                Response::content(b"again").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).payload(), b"again");
+        assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    }
+}
+
+#[test]
+fn observe_notifications_decline_query_selection_and_recover_queryless() {
+    let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
+    let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
+    let token_a = Token::new(&[0xa1]).unwrap();
+    let token_b = Token::new(&[0xb1]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register(), Opt::uri_query("u=c")],
+        0x1201,
+        token_a,
+    );
+    app.transport_mut().inbox = Some((peer_a, wire, n));
+    app.poll(0).unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register(), Opt::uri_query("u=f")],
+        0x1202,
+        token_b,
+    );
+    app.transport_mut().inbox = Some((peer_b, wire, n));
+    app.poll(1).unwrap();
+    assert!(last_wide(&app).observe().is_none());
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            2,
+            &["sensors", "temp"],
+            Response::content(b"wrong").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(app.transport().send_n, 0);
+    assert!(!observe_live(&app, peer_a, token_a));
+    assert!(!observe_live(&app, peer_b, token_b));
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register()],
+        0x1203,
+        token_a,
+    );
+    app.transport_mut().inbox = Some((peer_a, wire, n));
+    app.poll(3).unwrap();
+    assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            4,
+            &["sensors", "temp"],
+            Response::content(b"fresh").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).payload(), b"fresh");
+    assert!(!observe_live(&app, peer_b, token_b));
+}
+
+#[test]
+fn observe_sequence_starts_at_zero_on_a_new_app() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let extra = [Opt::observe_register()];
+    let (wire, n) = encode_wide(Code::GET, &["sensors", "temp"], &extra, 0x1301);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    for step in 1..=3u32 {
+        app.transport_mut().send_n = 0;
+        assert_eq!(
+            app.notify(
+                u64::from(step) * 3_001,
+                &["sensors", "temp"],
+                Response::content(b"n").content_format(ContentFormat::TEXT_PLAIN),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).observe(), Some(Ok(step)));
+    }
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["sensors", "temp"], get(get_obs))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+}
+
+#[test]
+fn large_notification_metadata_is_repeated_through_the_final_block() {
+    use crate::storage::ObserveInterest;
+    static BODY: [u8; 4096] = [b'N'; 4096];
+    fn follow(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY)
+            .etag(b"v1")
+            .content_format(ContentFormat::OCTET_STREAM)
+            .max_age(60)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for (format, max_age) in [(Some(ContentFormat::TEXT_PLAIN), Some(15u32)), (None, None)] {
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("note", get(follow))
+            .allow_plaintext()
+            .bind(WideLoopback::default())
+            .unwrap();
+        let resource = app.site.observe_resource(&["note"]);
+        app.engine
+            .insert_observe(
+                ObserveInterest::new(Token::new(&[0xa1]).unwrap(), peer)
+                    .with_resource(resource)
+                    .with_content_format(format),
+            )
+            .unwrap();
+        let mut note = Response::content(&BODY).etag(b"v1");
+        if let Some(format) = format {
+            note = note.content_format(format);
+        }
+        if let Some(seconds) = max_age {
+            note = note.max_age(seconds);
+        }
+        assert_eq!(app.notify(0, &["note"], note).unwrap(), 1);
+        let first = last_wide(&app);
+        assert_eq!(first.content_format().transpose().unwrap(), format);
+        assert_eq!(first.max_age().transpose().unwrap(), max_age);
+        assert!(first.observe().is_some());
+        assert_eq!(first.payload(), &BODY[..1024]);
+        for num in 1..=3u8 {
+            let block = [(num << 4) | 6];
+            let (wire, n) = encode_wide(
+                Code::GET,
+                &["note"],
+                &[Opt::opaque(OptionNumber::BLOCK2, &block)],
+                0x7700 + u16::from(num),
+            );
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(u64::from(num)).unwrap();
+            let response = last_wide(&app);
+            let start = usize::from(num) * 1024;
+            assert_eq!(response.payload(), &BODY[start..start + 1024]);
+            assert_eq!(response.content_format().transpose().unwrap(), format);
+            assert_eq!(response.max_age().transpose().unwrap(), max_age);
+            assert!(response.observe().is_none());
+            assert_eq!(response.etag().next(), Some(&b"v1"[..]));
+        }
+    }
+}
+
+#[test]
+fn qblock1_duplicate_after_set_repeats_continue_only_for_the_finishing_block() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    for num in 0..10u32 {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, true, 0x3e00 + num as u16, 176));
+        wire[0] |= 0x10;
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num)).unwrap();
+        if num < 9 {
+            assert!(app.transport().last_send.is_none());
+        } else {
+            let (_, bytes, len) = app.transport().last_send.unwrap();
+            let reply = decode(&bytes[..len]).unwrap();
+            assert_eq!(reply.code(), Code::CONTINUE);
+            assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+        }
+    }
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3e10, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(20).unwrap();
+    assert!(app.transport().last_send.is_none());
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 9, true, 0x3e19, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(21).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.code(), Code::CONTINUE);
+    assert_eq!(reply.ty(), Type::NonConfirmable);
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (wire, n) = encode_block_req(q_block1(&[b'A'; 16], 3, true, 0x3e23, 176));
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(22).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let ack = decode(&bytes[..len]).unwrap();
+    assert!(ack.is_empty_ack());
+
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    for num in 1..=9u32 {
+        let (mut wire, n) =
+            encode_block_req(q_block1(&[b'A'; 16], num, true, 0x3f00 + num as u16, 176));
+        wire[0] |= 0x10;
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(u64::from(num)).unwrap();
+        assert!(app.transport().last_send.is_none());
+    }
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3f00, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(10).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.code(), Code::CONTINUE);
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 0, true, 0x3f10, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(11).unwrap();
+    let (_, bytes, len) = app.transport().last_send.unwrap();
+    let reply = decode(&bytes[..len]).unwrap();
+    assert_eq!(reply.q_block1().unwrap().unwrap().num(), 9);
+    let (mut wire, n) = encode_block_req(q_block1(&[b'A'; 16], 1, true, 0x3f11, 176));
+    wire[0] |= 0x10;
+    app.transport_mut().last_send = None;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert!(app.transport().last_send.is_none());
+}
+
+#[test]
+fn qblock1_missing_reports_are_one_per_poll_and_not_held_for_nstart() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    struct Step {
+        token: &'static [u8],
+        tag: &'static [u8],
+        num: u32,
+        more: bool,
+        mid: u16,
+        now: u64,
+    }
+    let steps = [
+        Step {
+            token: &[0x11],
+            tag: b"tag-a",
+            num: 0,
+            more: true,
+            mid: 100,
+            now: 0,
+        },
+        Step {
+            token: &[0x22],
+            tag: b"tag-b",
+            num: 0,
+            more: true,
+            mid: 110,
+            now: 0,
+        },
+        Step {
+            token: &[0x11],
+            tag: b"tag-a",
+            num: 2,
+            more: false,
+            mid: 102,
+            now: 1,
+        },
+        Step {
+            token: &[0x22],
+            tag: b"tag-b",
+            num: 2,
+            more: false,
+            mid: 112,
+            now: 1,
+        },
+    ];
+    for step in steps {
+        let Step {
+            token,
+            tag,
+            num,
+            more,
+            mid,
+            now,
+        } = step;
+        let payload = [b'A'; 16];
+        let block = BlockValue::from_size(num, more, 16).unwrap().encode();
+        let size = encode_uint(48);
+        let mut opts = OptionsBuilder::<8>::new();
+        opts.push(Opt::uri_path("leds")).unwrap();
+        opts.push(Opt::uri_path("0")).unwrap();
+        opts.push(Opt::q_block1(&block)).unwrap();
+        opts.push(Opt::size1(&size)).unwrap();
+        opts.push(Opt::request_tag(tag)).unwrap();
+        let msg = Message::new(Type::NonConfirmable, Code::PUT, MessageId::new(mid))
+            .with_token(Token::new(token).unwrap())
+            .with_options(opts.as_slice())
+            .with_payload(&payload);
+        let mut wire = [0u8; 256];
+        let n = encode(&msg, &mut wire).unwrap();
+        app.transport_mut().last_send = None;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(now).unwrap();
+        assert!(app.transport().last_send.is_none());
+    }
+    let due = 1 + u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS);
+    let mut tokens = [Token::EMPTY; 2];
+    for slot in &mut tokens {
+        app.transport_mut().last_send = None;
+        app.poll(due).unwrap();
+        let (_, bytes, n) = app.transport().last_send.expect("report");
+        let reply = decode(&bytes[..n]).unwrap();
+        assert_eq!(reply.ty(), Type::NonConfirmable);
+        assert_eq!(reply.code(), Code::REQUEST_ENTITY_INCOMPLETE);
+        *slot = reply.token();
+    }
+    assert_ne!(tokens[0], tokens[1]);
+    app.transport_mut().last_send = None;
+    app.poll(due).unwrap();
+    assert!(app.transport().last_send.is_none());
+}
+
+#[test]
+fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
+    use crate::ResponseBufferError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .full_responses()
+        .allow_plaintext()
+        .bind(RecordIo::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let request = app.transport_mut().sent[0].unwrap();
+    let mid = decode(&request.1[..request.2]).unwrap().message_id();
+    let body: [u8; 200] = core::array::from_fn(|index| index as u8);
+    let format = ContentFormat::new(60).encode();
+    let opts = [Opt::location_path("receipt"), Opt::content_format(&format)];
+    let reply = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(&body);
+    let mut wire = [0; 256];
+    let n = encode(&reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    app.poll(2).unwrap(); // held RX must not be dispatched a second time
+    assert_eq!(app.engine_mut().rx_occupied(), 1);
+    let mut short = [0xA5; 199];
+    assert!(matches!(
+        app.take_response_into(call, &mut short),
+        Err(ResponseBufferError::TooSmall {
+            required: 200,
+            available: 199
+        })
+    ));
+    assert_eq!(short, [0xA5; 199]);
+    let mut output = [0; 200];
+    let response = app
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.payload(), body);
+    assert!(!response.payload_truncated());
+    assert_eq!(response.payload_src_len(), 200);
+    assert_eq!(response.format(), Some(ContentFormat::new(60)));
+    assert_eq!(response.location_paths(), &["receipt"]);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert!(app.take_response_into(call, &mut output).unwrap().is_none());
+}
+
+fn exercise_client_without_block_storage<S: super::AppStorage>(
+    mut app: App<profiles::Default, WideLoopback, DEFAULT_ROUTES, false, S>,
+    protected: bool,
+) {
+    use crate::{CallFailure, error::BlockTransferError};
+
+    #[cfg(feature = "oscore")]
+    let mut server = {
+        use crate::oscore::{DeriveParams, SecurityContext};
+        // Public test identity; no persisted security state is exercised.
+        let make = |sender, recipient| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[0x42; 16],
+                master_salt: &[],
+                sender_id: sender,
+                recipient_id: recipient,
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        if protected {
+            app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+            Some(make(&[2], &[1]))
+        } else {
+            None
+        }
+    };
+    #[cfg(not(feature = "oscore"))]
+    assert!(!protected);
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for (round, (q_block, more)) in [(false, true), (false, false), (true, true), (true, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let now = round as u64 * 10;
+        // Unsupported assembly must retire its Call and request binding,
+        // including when the received block happens to be the last one.
+        for blocked in [true, false] {
+            app.transport_mut().send_n = 0;
+            let call = app.get("value").to(peer).send(now).unwrap();
+            let transport = app.transport();
+            let request = decode(&transport.sends[0][..transport.send_lens[0]]).unwrap();
+            let block = BlockValue::from_size(0, more, 16).unwrap().encode();
+            let size = encode_uint(if more { 32 } else { 16 });
+            let mut opts = OptionsBuilder::<3>::new();
+            if blocked {
+                opts.push(Opt::etag(b"v1")).unwrap();
+                opts.push(if q_block {
+                    Opt::q_block2(&block)
+                } else {
+                    Opt::block2(&block)
+                })
+                .unwrap();
+                opts.push(Opt::size2(&size)).unwrap();
+            }
+            let body: [u8; 16] = core::array::from_fn(|index| index as u8);
+            let reply = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+                .with_token(call.token())
+                .with_options(opts.as_slice())
+                .with_payload(&body);
+            let mut wire = [0; WIRE];
+            let n = {
+                #[cfg(feature = "oscore")]
+                if let Some(server) = server.as_mut() {
+                    let mut inner = [0; WIRE];
+                    let (_, binding) = server.unprotect_request(&request, &mut inner).unwrap();
+                    server.protect_response(&reply, binding, &mut wire).unwrap()
+                } else {
+                    encode(&reply, &mut wire).unwrap()
+                }
+                #[cfg(not(feature = "oscore"))]
+                encode(&reply, &mut wire).unwrap()
+            };
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(now + 1).unwrap();
+            let mut output = [0xA5; 16];
+            let result = app.take_response_into(call, &mut output).unwrap().unwrap();
+            if blocked {
+                assert_eq!(
+                    result.unwrap_err(),
+                    CallFailure::BlockTransfer(BlockTransferError::NoBodyPools)
+                );
+                assert_eq!(output, [0xA5; 16]);
+            } else {
+                let reply = result.unwrap();
+                assert_eq!(reply.code(), Code::CONTENT);
+                assert_eq!(reply.payload(), body);
+                assert!(!reply.payload_truncated());
+            }
+            assert_eq!(app.engine_mut().rx_occupied(), 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            assert!(app.take_response(call).is_none());
+        }
+    }
+}
+
+#[test]
+fn client_without_block_storage_refuses_fragments_and_recovers() {
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        for full in [false, true] {
+            let builder = App::profile::<profiles::Default>()
+                .deterministic_for_tests()
+                .block_wise::<false>()
+                .allow_plaintext();
+            let builder = if full {
+                builder.full_responses()
+            } else {
+                builder
+            };
+            let app = builder.bind(WideLoopback::default()).unwrap();
+            exercise_client_without_block_storage(app, protected);
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn client_alloc_without_block_storage_refuses_fragments_and_recovers() {
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        let app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .full_responses()
+            .allow_plaintext()
+            .bind_alloc(
+                WideLoopback::default(),
+                crate::storage::Capacities::from_profile::<profiles::Default>(),
+            )
+            .unwrap();
+        exercise_client_without_block_storage(app, protected);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn one_app_allocated_storage_collects_beyond_legacy_hold_without_truncation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
+        .with_block_wise::<profiles::Default>();
+    capacities.rx_body_bytes = Some(8192);
+    capacities.tx_body_bytes = Some(8192);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .full_responses()
+        .allow_plaintext()
+        .bind_alloc(WideLoopback::default(), capacities)
+        .unwrap();
+    let call = app.get("large").non().to(peer).send(0).unwrap();
+    let body: [u8; 6000] = core::array::from_fn(|index| (index % 251) as u8);
+    for (num, payload) in body.chunks(1024).enumerate() {
+        let block = BlockValue::from_size(num as u32, (num + 1) * 1024 < body.len(), 1024)
+            .unwrap()
+            .encode();
+        let size = encode_uint(body.len() as u32);
+        let opts = [Opt::etag(b"v1"), Opt::block2(&block), Opt::size2(&size)];
+        let response = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(100 + num as u16),
+        )
+        .with_token(call.token())
+        .with_options(&opts)
+        .with_payload(payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&response, &mut wire).unwrap();
+        app.transport_mut().send_n = 0;
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(num as u64 + 1).unwrap();
+    }
+    let mut output = [0xA5; 6000];
+    assert!(matches!(
+        app.take_response_into(call, &mut output[..5999]),
+        Err(crate::ResponseBufferError::TooSmall {
+            required: 6000,
+            available: 5999
+        })
+    ));
+    assert_eq!(output, [0xA5; 6000]);
+    let response = app
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.payload(), body);
+    assert_eq!(response.body(), Some(&body[..]));
+    assert_eq!(response.payload_src_len(), body.len());
+    assert!(!response.payload_truncated());
+    for i in 0..capacities.rx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .rx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn deferred_completion_acknowledges_once_and_retransmits_only_wire_response() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
+    let mut handle = None;
+    let mut calls = 0;
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(0, |request, candidate| {
+        assert_eq!(request.payload(), b"work");
+        calls += 1;
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    let handle = handle.unwrap();
+    assert!(
+        decode(&app.transport_mut().sent[0].unwrap().1[..4])
+            .unwrap()
+            .is_empty_ack()
+    );
+    assert_eq!(app.transport_mut().sent_n, 1);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, _| {
+        calls += 1;
+        Response::changed()
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    app.complete(
+        handle,
+        Response::changed().payload_borrowed(b"durable-receipt"),
+        2,
+    )
+    .unwrap();
+    assert_eq!(app.transport_mut().sent_n, 3); // ACK, duplicate ACK, completed CON
+    let sent = app.transport_mut().sent[2].unwrap();
+    let response = decode(&sent.1[..sent.2]).unwrap();
+    assert_eq!(response.ty(), Type::Confirmable);
+    assert_eq!(response.payload(), b"durable-receipt");
+    app.poll(2002).unwrap(); // deliberate response loss
+    assert_eq!(app.transport_mut().sent[3], Some(sent));
+    assert!(matches!(
+        app.complete(handle, Response::changed(), 2003),
+        Err(Error::DeferredUnknown)
+    ));
+    let ack = Message::empty_ack(response.message_id());
+    let mut ack_wire = [0; 256];
+    let n = encode(&ack, &mut ack_wire).unwrap();
+    app.transport_mut().inbox = Some((peer, ack_wire, n));
+    app.poll(2004).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .deferred_lifetime(10)
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(RecordIo::default())
+        .unwrap();
+    let mut handles = [None; 4];
+    for (index, handle) in handles.iter_mut().enumerate() {
+        let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 100 + index as u16);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll_with(0, |_, candidate| {
+            *handle = candidate;
+            Response::deferred()
+        })
+        .unwrap();
+        assert!(handle.is_some());
+    }
+    let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 104);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, candidate| {
+        assert!(candidate.is_none());
+        Response::deferred()
+    })
+    .unwrap();
+    let refusal = app.transport_mut().sent[4].unwrap();
+    assert_eq!(
+        decode(&refusal.1[..refusal.2]).unwrap().code(),
+        Code::SERVICE_UNAVAILABLE
+    );
+    assert!(app.cancel_deferred(handles[0].unwrap()));
+    assert!(!app.cancel_deferred(handles[0].unwrap()));
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut new = None;
+    // New MID is needed after the refusal's live duplicate history.
+    let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 105);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(2, |_, candidate| {
+        new = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_ne!(new, handles[0]);
+    assert!(matches!(
+        app.complete(handles[0].unwrap(), Response::changed(), 3),
+        Err(Error::DeferredUnknown)
+    ));
+    assert!(matches!(
+        app.complete(handles[1].unwrap(), Response::changed(), 10),
+        Err(Error::DeferredUnknown)
+    ));
+    let truncated = Response::content_copy(&[0; 129]);
+    assert!(matches!(
+        app.complete(new.unwrap(), truncated, 11),
+        Err(Error::Response(crate::ResponseError::PayloadTruncated))
+    ));
+    app.complete(new.unwrap(), Response::changed(), 11).unwrap();
+}
+
+#[test]
+fn borrowed_response_tracks_exact_large_payload_length() {
+    let body = [7; 70_000];
+    let response = Response::new(Code::CONTENT).payload_borrowed(&body);
+    assert_eq!(response.payload_src_len(), body.len());
+    assert_eq!(response.payload(), body);
+    assert!(!response.payload_truncated());
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn canceled_oscore_deferred_response_resets_without_spending_other_call_state() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[3; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .deferred::<4>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+    let old = client
+        .post("durable")
+        .to(peer)
+        .payload(b"old")
+        .send(0)
+        .unwrap();
+    server.transport_mut().inbox = Some((
+        peer,
+        client.transport().sends[0],
+        client.transport().send_lens[0],
+    ));
+    let mut old_handle = None;
+    server
+        .poll_with(1, |_, handle| {
+            old_handle = handle;
+            Response::deferred()
+        })
+        .unwrap();
+    client.transport_mut().inbox = Some((
+        peer,
+        server.transport().sends[0],
+        server.transport().send_lens[0],
+    ));
+    client.poll(2).unwrap();
+    assert!(client.cancel(old));
+    assert_eq!(
+        client.take_response(old).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    server
+        .complete(old_handle.unwrap(), Response::content(b"late"), 3)
+        .unwrap();
+    let late = server.transport().sends[1];
+    let late_len = server.transport().send_lens[1];
+    let mid = decode(&late[..late_len]).unwrap().message_id();
+    assert!(server.engine().lookup_pending_con(mid, peer).is_some());
+    let next = client
+        .post("durable")
+        .to(peer)
+        .payload(b"next")
+        .send(4)
+        .unwrap();
+    let binding = client.oscore().unwrap().lookup(next.token());
+    let replay = client.oscore().unwrap().replay_checkpoint();
+    server.transport_mut().inbox = Some((
+        peer,
+        client.transport().sends[1],
+        client.transport().send_lens[1],
+    ));
+    let mut next_handle = None;
+    server
+        .poll_with(5, |_, handle| {
+            next_handle = handle;
+            Response::deferred()
+        })
+        .unwrap();
+    // Unexpected NON and ACK must not trigger a response or spend live state.
+    for ty in [0x10, 0x20] {
+        let mut other = late;
+        other[0] = (other[0] & 0xcf) | ty;
+        client.transport_mut().inbox = Some((peer, other, late_len));
+        client.poll(6).unwrap();
+        assert_eq!(client.transport().send_n, 2);
+    }
+    client.transport_mut().inbox = Some((peer, late, late_len));
+    client.poll(7).unwrap();
+    assert_eq!(client.transport().send_n, 3);
+    let reset = client.transport().sends[2];
+    let reset_len = client.transport().send_lens[2];
+    let parsed = decode(&reset[..reset_len]).unwrap();
+    assert_eq!(reset_len, 4);
+    assert_eq!(parsed.ty(), Type::Reset);
+    assert_eq!(parsed.message_id(), mid);
+    assert!(parsed.token().is_empty());
+    assert!(parsed.oscore().is_none());
+    assert_eq!(client.oscore().unwrap().lookup(next.token()), binding);
+    assert_eq!(client.oscore().unwrap().replay_checkpoint(), replay);
+    assert!(client.take_response(next).is_none());
+    server.transport_mut().inbox = Some((peer, reset, reset_len));
+    server.poll(8).unwrap();
+    assert!(server.engine().lookup_pending_con(mid, peer).is_none());
+    server
+        .complete(next_handle.unwrap(), Response::content(b"next reply"), 9)
+        .unwrap();
+    client.transport_mut().inbox = Some((
+        peer,
+        server.transport().sends[3],
+        server.transport().send_lens[3],
+    ));
+    client.poll(10).unwrap();
+    assert_eq!(
+        client.take_response(next).unwrap().unwrap().payload(),
+        b"next reply"
+    );
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_oscore_completion_preserves_authenticated_request_binding() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let secret = [3; 16];
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &secret,
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .full_responses()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut server = crate::App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+    let call = client
+        .post("durable")
+        .to(peer)
+        .payload(b"request")
+        .content_format(ContentFormat::new(60))
+        .send(0)
+        .unwrap();
+    let transport = client.transport_mut();
+    let request_wire = transport.sends[0];
+    let request_len = transport.send_lens[0];
+    let mut handle = None;
+    server.transport_mut().inbox = Some((peer, request_wire, request_len));
+    server
+        .poll_with(1, |request, candidate| {
+            assert_eq!(request.payload(), b"request");
+            assert_eq!(request.content_format(), Some(Ok(ContentFormat::new(60))));
+            handle = candidate;
+            Response::deferred()
+        })
+        .unwrap();
+    let transport = server.transport_mut();
+    client.transport_mut().inbox = Some((peer, transport.sends[0], transport.send_lens[0]));
+    client.poll(2).unwrap();
+    assert!(client.take_response(call).is_none());
+    let body = [0xA3; 300];
+    server
+        .complete(
+            handle.unwrap(),
+            Response::new(Code::CHANGED)
+                .payload_borrowed(&body)
+                .content_format(ContentFormat::new(60)),
+            3,
+        )
+        .unwrap();
+    let transport = server.transport_mut();
+    assert!(
+        decode(&transport.sends[1][..transport.send_lens[1]])
+            .unwrap()
+            .oscore()
+            .is_some()
+    );
+    client.transport_mut().inbox = Some((peer, transport.sends[1], transport.send_lens[1]));
+    client.poll(4).unwrap();
+    let mut output = [0; 300];
+    let response = client
+        .take_response_into(call, &mut output)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.code(), Code::CHANGED);
+    assert_eq!(response.format(), Some(ContentFormat::new(60)));
+    assert_eq!(response.payload(), body);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
+    use alloc::collections::VecDeque;
+    for protected in [false, true] {
+        #[cfg(not(feature = "oscore"))]
+        if protected {
+            continue;
+        }
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
+            .with_block_wise::<profiles::Default>();
+        capacities.rx_body_bytes = Some(81920);
+        capacities.tx_body_bytes = Some(81920);
+        let mut client = crate::App::builder()
+            .deterministic_for_tests()
+            .deferred::<4>()
+            .block_wise::<true>()
+            .full_responses()
+            .allow_plaintext()
+            .bind_alloc(WideLoopback::default(), capacities)
+            .unwrap();
+        let mut server = crate::App::builder()
+            .deterministic_for_tests()
+            .deferred::<4>()
+            .block_wise::<true>()
+            .allow_plaintext()
+            .bind_alloc(WideLoopback::default(), capacities)
+            .unwrap();
+        #[cfg(feature = "oscore")]
+        if protected {
+            use crate::oscore::{DeriveParams, SecurityContext};
+            let secret = [3; 16];
+            let make = |sender, recipient| {
+                SecurityContext::derive(DeriveParams {
+                    master_secret: &secret,
+                    master_salt: &[],
+                    sender_id: sender,
+                    recipient_id: recipient,
+                    id_context: &[],
+                })
+                .unwrap()
+            };
+            client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+        }
+        let mut domain_calls = 0;
+        // Reuse the same four TX slots while more than eight dedup replies
+        // pass through each large transfer and a subsequent durable request.
+        for round in 0..2 {
+            let body: alloc::vec::Vec<u8> = (0..70001).map(|index| (index % 251) as u8).collect();
+            let call = client
+                .post("durable")
+                .to(peer)
+                .payload(b"domain-command")
+                .content_format(ContentFormat::CBOR)
+                .send(round * 1000)
+                .unwrap();
+            let transport = client.transport_mut();
+            let mut queued = VecDeque::from([(transport.sends[0], transport.send_lens[0])]);
+            transport.send_n = 0;
+            let mut finished = false;
+            let mut output = alloc::vec![0; 70001];
+            for now in (round * 1000 + 1)..(round * 1000 + 300) {
+                let Some((wire, n)) = queued.pop_front() else {
+                    break;
+                };
+                server.transport_mut().send_n = 0;
+                server.transport_mut().inbox = Some((peer, wire, n));
+                let mut handle = None;
+                server
+                    .poll_with(now, |request, candidate| {
+                        domain_calls += 1;
+                        assert_eq!(request.payload(), b"domain-command");
+                        handle = candidate;
+                        Response::deferred()
+                    })
+                    .unwrap();
+                if let Some(handle) = handle {
+                    server
+                        .complete(
+                            handle,
+                            Response::new(Code::CHANGED)
+                                .payload_borrowed(&body)
+                                .content_format(ContentFormat::CBOR)
+                                .etag(b"stable"),
+                            now,
+                        )
+                        .unwrap();
+                }
+                let transport = server.transport_mut();
+                let replies = transport.sends;
+                let lengths = transport.send_lens;
+                let count = transport.send_n;
+                for i in 0..count {
+                    client.transport_mut().inbox = Some((peer, replies[i], lengths[i]));
+                    client.poll(now).unwrap();
+                    let transport = client.transport_mut();
+                    for i in 0..transport.send_n {
+                        queued.push_back((transport.sends[i], transport.send_lens[i]));
+                    }
+                    transport.send_n = 0;
+                    if let Some(response) = client.take_response_into(call, &mut output).unwrap() {
+                        let response = response.unwrap();
+                        assert_eq!(response.code(), Code::CHANGED);
+                        assert_eq!(response.payload(), body);
+                        assert_eq!(response.format(), Some(ContentFormat::CBOR));
+                        assert_eq!(response.etag_bytes(), Some(&b"stable"[..]));
+                        finished = true;
+                    }
+                }
+            }
+            assert!(finished, "protected={protected}");
+            assert_eq!(domain_calls, round + 1);
+            assert!(server.deferred.rows.iter().all(Option::is_none));
+            for i in 0..capacities.tx_body_slots.unwrap() {
+                assert!(
+                    server
+                        .engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            assert!(server.engine_mut().tx_occupied() <= capacities.tx_datagram_slots);
+        }
+    }
+}
+
+#[test]
+fn failed_deferred_ack_retains_work_and_completion_send_failure_keeps_handle() {
+    #[derive(Default)]
+    struct Failable {
+        io: RecordIo,
+        fail: bool,
+    }
+    impl DatagramIo for Failable {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.io.recv(bytes)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                self.fail = false;
+                return Err("injected send failure");
+            }
+            self.io.send(peer, bytes)
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .allow_plaintext()
+        .bind(Failable::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
+    let mut handle = None;
+    let mut calls = 0;
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    app.transport_mut().fail = true;
+    assert!(
+        app.poll_with(0, |_, candidate| {
+            calls += 1;
+            handle = candidate;
+            Response::deferred()
+        })
+        .is_err()
+    );
+    let handle = handle.unwrap();
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    app.poll_with(1, |_, _| {
+        calls += 1;
+        Response::changed()
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    app.transport_mut().fail = true;
+    assert!(app.complete(handle, Response::changed(), 2).is_err());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    app.complete(handle, Response::changed(), 3).unwrap();
+    assert!(matches!(
+        app.complete(handle, Response::changed(), 4),
+        Err(Error::DeferredUnknown)
+    ));
+}
+
+#[test]
+fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .block_wise::<true>()
+        .deferred_lifetime(10)
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide(Code::POST, &["durable"], &[], 100);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    let body = [7; 2000];
+    app.complete(
+        handle.unwrap(),
+        Response::new(Code::CHANGED)
+            .payload_borrowed(&body)
+            .etag(b"v1"),
+        1,
+    )
+    .unwrap();
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
+    app.transport_mut().send_n = 0;
+    let block = BlockValue::from_size(1, false, 1024).unwrap().encode();
+    let (wire, n) = encode_wide(Code::POST, &["another"], &[Opt::block2(&block)], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll_with(2, |_, _| panic!("wrong route must not dispatch work"))
+        .unwrap();
+    let io = app.transport_mut();
+    assert_eq!(
+        decode(&io.sends[0][..io.send_lens[0]]).unwrap().code(),
+        Code::BAD_REQUEST
+    );
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
+    app.poll(10).unwrap();
+    assert!(app.deferred.rows.iter().all(Option::is_none));
+    for i in 0..app.engine().capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine()
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    #[derive(Default)]
+    struct Failable {
+        io: RecordIo,
+        fail: bool,
+    }
+    impl DatagramIo for Failable {
+        type Error = &'static str;
+        fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
+            self.io.recv(bytes)
+        }
+        fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                self.fail = false;
+                return Err("injected uncertain send");
+            }
+            self.io.send(peer, bytes)
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let secret = [3; 16];
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &secret,
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let mut client = make(&[1], &[2]);
+    let mut app = crate::App::builder()
+        .deterministic_for_tests()
+        .deferred::<4>()
+        .allow_plaintext()
+        .bind(Failable::default())
+        .unwrap();
+    app.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+    let request = Message::new(Type::Confirmable, Code::POST, MessageId::new(100))
+        .with_token(Token::new(b"request").unwrap());
+    let mut wire = [0; 256];
+    let n = client.protect_request(&request, &mut wire).unwrap();
+    app.transport_mut().io.inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_eq!(app.oscore().unwrap().sender_seq(), 0);
+    app.transport_mut().fail = true;
+    assert!(
+        app.complete(
+            handle.unwrap(),
+            Response::changed().payload_borrowed(b"first"),
+            1
+        )
+        .is_err()
+    );
+    assert_eq!(app.oscore().unwrap().sender_seq(), 1);
+    app.complete(
+        handle.unwrap(),
+        Response::changed().payload_borrowed(b"second"),
+        2,
+    )
+    .unwrap();
+    assert_eq!(app.oscore().unwrap().sender_seq(), 2);
+}
+
+fn explicit_con_app(now: u64) -> App<profiles::Default, WideLoopback> {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 100);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(now).unwrap();
+    app.transport_mut().send_n = 0;
+    app
+}
+
+fn inject_observe_control(
+    app: &mut App<profiles::Default, WideLoopback>,
+    peer: Endpoint,
+    mid: MessageId,
+    ty: Type,
+) {
+    let mut wire = [0; WIRE];
+    let n = encode(&Message::new(ty, Code::EMPTY, mid), &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+}
+
+#[test]
+fn explicit_con_notification_resets_adaptive_deadline_without_clock_wrap() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for now in [
+        0,
+        u64::MAX - ObserveTransmission::CONFIRM_INTERVAL_MS - 100,
+        u64::MAX - 100,
+    ] {
+        let mut app = explicit_con_app(now);
+        assert_eq!(
+            app.notify_confirmable(now, &["obs"], obs_snapshot())
+                .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+        let mid = last_wide(&app).message_id();
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+            .unwrap();
+        let due = now.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS);
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due)
+        );
+        inject_observe_control(&mut app, peer, mid, Type::Acknowledgement);
+        app.poll(now + 1).unwrap();
+        app.transport_mut().send_n = 0;
+        assert_eq!(app.notify(now + 2, &["obs"], obs_snapshot()).unwrap(), 1);
+        assert_eq!(last_wide(&app).ty(), Type::NonConfirmable);
+        assert_eq!(
+            app.notify_confirmable(now + 3, &["obs"], obs_snapshot())
+                .unwrap(),
+            0
+        );
+        assert_eq!(app.transport().send_n, 1, "explicit CON bypassed NON hold");
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due),
+            "refused send changed adaptive policy"
+        );
+    }
+}
+
+#[test]
+fn explicit_con_notification_send_failure_retries_as_con_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let id = app
+        .engine()
+        .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+        .unwrap();
+    app.transport_mut().send_n = 4;
+    assert!(matches!(
+        app.notify_confirmable(0, &["obs"], obs_snapshot()),
+        Err(Error::Io(_))
+    ));
+    let row = app.engine().observe_interest(id).unwrap();
+    assert!(row.must_confirm(0));
+    assert!(row.is_pending());
+    assert_eq!(row.seq(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.metrics().observe_notify, 0);
+    app.transport_mut().send_n = 0;
+    app.poll(1).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(last_wide(&app).payload(), b"obs-snap");
+    assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    let mid = last_wide(&app).message_id();
+    inject_observe_control(&mut app, peer, mid, Type::Reset);
+    app.poll(2).unwrap();
+    assert!(!observe_registered(&app, peer));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.notify_confirmable(3, &["obs"], obs_snapshot()).unwrap(),
+        0
+    );
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().send_n = 0;
+    app.poll(4).unwrap();
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+}
+
+#[test]
+fn explicit_con_notification_controls_require_matching_mid_and_endpoint() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((other, wire, n));
+    app.poll(0).unwrap();
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(1, &["obs"], obs_snapshot()).unwrap(),
+        2
+    );
+    let token = Token::new(&[0xa1]).unwrap();
+    let first = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, peer))
+        .unwrap();
+    let second = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, other))
+        .unwrap();
+    let first_mid = app
+        .engine()
+        .observe_interest(first)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    let second_mid = app
+        .engine()
+        .observe_interest(second)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    assert_ne!(first_mid, second_mid);
+    for ty in [Type::Acknowledgement, Type::Reset] {
+        for (endpoint, mid) in [(other, first_mid), (peer, second_mid)] {
+            inject_observe_control(&mut app, endpoint, mid, ty);
+            app.poll(2).unwrap();
+            assert_eq!(
+                app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+                0
+            );
+            assert_eq!(app.transport().send_n, 2);
+            assert!(
+                app.engine()
+                    .observe_interest(first)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+            assert!(
+                app.engine()
+                    .observe_interest(second)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+        }
+    }
+    inject_observe_control(&mut app, peer, first_mid, Type::Acknowledgement);
+    app.poll(3).unwrap();
+    assert!(
+        !app.engine()
+            .observe_interest(first)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    assert!(
+        app.engine()
+            .observe_interest(second)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    inject_observe_control(&mut app, other, second_mid, Type::Reset);
+    app.poll(4).unwrap();
+    assert!(app.engine().observe_interest(first).is_some());
+    assert!(app.engine().observe_interest(second).is_none());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn explicit_con_notification_preserves_per_endpoint_admission_and_validation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["obs"], &[Opt::observe_register()], 101, 0xa2);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    app.transport_mut().send_n = 0;
+    assert!(matches!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot().location_path("..")),
+        Err(Error::Response(_))
+    ));
+    for token in [0xa1, 0xa2] {
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[token]).unwrap(), peer))
+            .unwrap();
+        let row = app.engine().observe_interest(id).unwrap();
+        assert!(!row.must_confirm(2));
+        assert_eq!(row.seq(), 0);
+    }
+    assert_eq!(
+        app.notify_confirmable(2, &["missing"], obs_snapshot())
+            .unwrap(),
+        0
+    );
+    assert_eq!(app.transport().send_n, 0);
+    assert_eq!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(app.metrics().observe_notify, 1);
+    assert_eq!(app.metrics().nstart_reject, 1);
+}
+
+#[test]
+fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for block_body in [false, true] {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["sensors", "temp"],
+            &[Opt::observe_register()],
+            0x1001,
+        );
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+            .allow_plaintext()
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        let key = ObserveKey::new(last_wide(&app).token(), peer);
+        let response = if block_body {
+            Response::content(&[7; 2000])
+                .content_format(ContentFormat::TEXT_PLAIN)
+                .etag(b"large")
+        } else {
+            obs_snapshot()
+        };
+        app.notify_confirmable(1, &["sensors", "temp"], response)
+            .unwrap();
+        let mid = last_wide(&app).message_id();
+        let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
+        let original = app.engine.pending_con(slot).unwrap();
+        let row_id = app.engine.lookup_observe(key).unwrap();
+        let old_row = app.engine.observe_interest(row_id).unwrap();
+        let old_wire = app.transport().sends[1];
+        let old_len = app.transport().send_lens[1];
+        if !block_body {
+            for _ in 1..65536 {
+                app.ids
+                    .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 1)
+                    .unwrap();
+            }
+        }
+        assert_eq!(app.signal(&["sensors", "temp"]), 1);
+        let due = original.rto().next_timeout_ms();
+        let error = app.poll(due).unwrap_err();
+        if block_body {
+            assert_eq!(error, Error::ObserveSupersessionUnsupported);
+        } else {
+            assert_eq!(
+                error,
+                Error::Identity(super::IdentityError::MessageIdExhausted)
+            );
+        }
+        assert_eq!(last_wide(&app).message_id(), mid);
+        assert_eq!(
+            &app.transport().sends[2][..app.transport().send_lens[2]],
+            &old_wire[..old_len]
+        );
+        let after = app.engine.pending_con(slot).unwrap();
+        assert_eq!(after.rto(), original.rto().next_attempt(due).unwrap());
+        let row = app.engine.observe_interest(row_id).unwrap();
+        assert_eq!(row.notify_hold(), old_row.notify_hold());
+        assert_eq!(row.seq(), old_row.seq());
+        assert!(row.is_pending());
+        assert!(row.superseded_con_mids().is_empty());
+        if block_body {
+            let body =
+                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).unwrap();
+            assert_eq!(app.engine.tx_body_payload(body), Some(&[7; 2000][..]));
+        }
+    }
+}
+
+#[test]
+fn deferred_selection_preserves_get_validator_behavior() {
+    let with_tag = [Opt::etag(b"v1"), Opt::uri_path("select")];
+    let no_tag = [Opt::uri_path("select")];
+    for code in [Code::GET, Code::FETCH] {
+        let make = |options: &[Opt<'_>]| {
+            let message =
+                Message::new(Type::NonConfirmable, code, MessageId::new(1)).with_options(options);
+            let mut wire = [0; 64];
+            let n = encode(&message, &mut wire).unwrap();
+            super::DeferredSelection::from_request(&decode(&wire[..n]).unwrap()).unwrap()
+        };
+        assert_eq!(make(&with_tag) == make(&no_tag), code == Code::GET);
+    }
+}
+
+#[test]
+fn fetch_observe_requestless_source_does_not_register_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        if request.payload() == b"b" {
+            Response::content(b"selected-b")
+        } else {
+            Response::content(b"selected-a")
+        }
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", fetch(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let zero = encode_uint(0);
+    let options = [
+        Opt::observe(&zero),
+        Opt::uri_path("obs"),
+        Opt::content_format(&zero),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::FETCH, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options)
+        .with_payload(b"b");
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+}
+
+#[test]
+fn get_observe_requestless_source_does_not_register_query_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        Response::content(if request.uri_query().next() == Some(Ok("b")) {
+            b"selected-b"
+        } else {
+            b"selected-a"
+        })
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let options = [
+        Opt::observe_register(),
+        Opt::uri_path("obs"),
+        Opt::uri_query("b"),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(
+        last_wide(&app).payload(),
+        b"selected-b",
+        "source cannot recover GET query"
+    );
 }

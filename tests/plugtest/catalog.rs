@@ -2,7 +2,7 @@
 //!
 //! Hand-maintained lists must match the `TD_*` keys in
 //! `tests/plugtest/td-coap4/*.yml`. Do not invent identifiers.
-//! Extraction is a line scan for `TD_…:` keys (no YAML crate).
+//! Extraction is a line scan for `TD_â€¦:` keys (no YAML crate).
 
 /// In-scope CORE TDs from `base.yml` (same order as the file).
 pub const CORE: &[&str] = &[
@@ -90,7 +90,7 @@ const LINK_YML: &str = include_str!("td-coap4/link.yml");
 const DTLS_YML: &str = include_str!("td-coap4/dtls.yml");
 const LOWPAN_YML: &str = include_str!("td-coap4/6lowpan.yml");
 
-/// Keys that look like `TD_…:` at the start of a YAML line.
+/// Keys that look like `TD_â€¦:` at the start of a YAML line.
 #[must_use]
 pub fn extract_td_ids(yaml: &str) -> Vec<&str> {
     let mut ids = Vec::new();
@@ -137,10 +137,12 @@ pub fn assert_ids_match_yaml() {
 #[must_use]
 pub fn skip_reason(id: &str) -> Option<&'static str> {
     if id.starts_with("TD_COAP_DTLS_") {
-        return Some("in-memory: no DTLS (see crates/coaptic-plugtest --features dtls)");
+        return Some(
+            "in-memory: no DTLS (see coaptic-validation plugtest harness --features dtls)",
+        );
     }
     if id.starts_with("TD_6LoWPAN_") {
-        return Some("future/backlog: 6LoWPAN (contributor opportunity)");
+        return Some("future/backlog: 6LoWPAN");
     }
     None
 }

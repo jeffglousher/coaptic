@@ -434,7 +434,7 @@ impl<'a> ProblemDetails<'a> {
     /// membership. URI syntax and extension-specific semantics are not validated.
     /// Definite nested extension values use constant auxiliary memory and work
     /// bounded by the input length. Malformed UTF-8 text and simple values are
-    /// refused even inside an unknown extension. Indefinite CBOR is unsupported.
+    /// refused even inside an unknown extension. Indefinite CBOR is refused.
     ///
     /// # Errors
     ///
@@ -1453,5 +1453,37 @@ mod tests {
             &out[..n],
             &[0xa2, 0x01, 0xa1, 0x18, 0x01, 0x18, 0x02, 0x27, 0x18, 0x3c]
         );
+    }
+
+    #[test]
+    fn indefinite_cbor_is_refused() {
+        let wires: &[&[u8]] = &[
+            &[0xbf, 0xff],
+            &[0xa1, 0x20, 0x7f, 0xff],
+            &[0xa1, 0x23, 0x5f, 0xff],
+            &[0xa1, 0x00, 0xbf, 0xff],
+            &[0xa1, 0x00, 0xa1, 0x01, 0x7f, 0xff],
+            &[0xa1, 0x00, 0xa1, 0x01, 0x5f, 0xff],
+            &[0xa1, 0x00, 0xa1, 0x01, 0x9f, 0xff],
+        ];
+        for wire in wires {
+            assert_eq!(
+                ProblemDetails::decode(wire),
+                Err(ProblemError::Invalid),
+                "{wire:x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn instance_and_base_uri_accept_definite_text_that_is_not_a_uri() {
+        // {-3: " ", -5: "not a uri"}
+        let wire = [
+            0xa2, 0x22, 0x61, b' ', 0x24, 0x69, b'n', b'o', b't', b' ', b'a', b' ', b'u', b'r',
+            b'i',
+        ];
+        let parsed = ProblemDetails::decode(&wire).unwrap();
+        assert_eq!(parsed.instance(), Some(" "));
+        assert_eq!(parsed.base_uri(), Some("not a uri"));
     }
 }

@@ -8,7 +8,7 @@ use crate::error::BuildError;
 /// Same quantum as [`crate::message::BlockValue::SIZE_MAX`].
 pub(crate) const BODY_BYTE_QUANTUM: usize = 1024;
 
-/// Runtime sizes for [`AllocMemory`](crate::storage::AllocMemory) / [`EngineBuilder::build_alloc`](crate::storage::EngineBuilder::build_alloc).
+/// Runtime sizes for `AllocMemory` / `EngineBuilder::build_alloc` (with `alloc`).
 ///
 /// Also the size report from [`Storage::capacities`](crate::storage::Storage::capacities).
 /// Body fields are `None` when Storage has no body pools.

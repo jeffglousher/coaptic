@@ -12,7 +12,7 @@
 //! sidecars are tables on those slots — not a seventh memory area.
 //! Incoming Q-Block `NON_RECEIVE_TIMEOUT` is [`QBlockReceiveWait`]
 //! (caller `now_ms`). Engine BERT (SZX 7) codecs exist; App does not
-//! expose them (future / backlog).
+//! expose them.
 //!
 //! [`Access`] / [`AccessMut`] pin occupied datagram or body bytes against
 //! [`SlotPool::release`]. The App happy path does not need them.
@@ -40,6 +40,8 @@ pub mod profiles;
 mod progress;
 mod slot;
 mod table;
+#[cfg(feature = "diagnostics")]
+mod work_metrics;
 
 #[cfg(feature = "alloc")]
 mod alloc_memory;
@@ -50,6 +52,7 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
+pub(crate) use block::classic_block2_range;
 pub use block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,
     QBlockRecover,
@@ -59,10 +62,12 @@ pub use capacities::Capacities;
 pub use endpoint::Endpoint;
 pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
+#[cfg(feature = "std")]
+pub use io::UdpSocketIo;
 pub use io::{DatagramIo, DatagramIoError};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use metrics::Metrics;
-pub use pending::{PendingCon, PendingCons, PendingRto, Retransmit};
+pub use pending::{PendingCon, PendingCons, PendingReplaceError, PendingRto, Retransmit};
 pub use pool::{BodyPool, DatagramPool, DatagramScratch};
 pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
@@ -70,6 +75,8 @@ pub use table::{
     DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
     ObserveNotifyHold, ObserveResource, ObserveTable,
 };
+#[cfg(feature = "diagnostics")]
+pub use work_metrics::WorkMetrics;
 
 /// Acquire, release, and rotate occupancy for one pool or table.
 ///
@@ -150,14 +157,14 @@ pub trait Storage {
 
 /// Filled datagram bytes for occupied RX/TX slots.
 ///
-/// [`Memory`] and [`AllocMemory`] implement this so [`Engine`] can decode
+/// [`Memory`] and `AllocMemory` (with `alloc`) implement this so [`Engine`] can decode
 /// and encode without inventing protocol responses.
 pub trait DatagramSlots {
     /// Compile-time RX slot bytes for stack scratch (inbound copy, OSCORE
     /// unprotect, Block IO). [`Memory`] uses [`MemoryProfile::RX_DATAGRAM_BYTES`]
     /// so Constrained does not reserve Default 1472.
     ///
-    /// [`AllocMemory`] keeps the Default ceiling; a smaller runtime slot
+    /// `AllocMemory` (with `alloc`) keeps the Default ceiling; a smaller runtime slot
     /// fails loud on oversize copy.
     const RX_DATAGRAM_BYTES: usize = 1472;
 
@@ -241,7 +248,7 @@ pub trait DatagramSlots {
 ///
 /// Insert, lookup, and remove scan the configured entry count (O(n) in
 /// capacity). Capacity is fixed at construction. [`Memory`] and
-/// [`AllocMemory`] implement this so [`Engine`] can store [`DedupEntry`]
+/// `AllocMemory` (with `alloc`) implement this so [`Engine`] can store [`DedupEntry`]
 /// values in the existing table slots. [`crate::App::poll`] uses
 /// [`DedupEntry::due_ms`], [`DedupEntry::replay`], and
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
@@ -266,12 +273,31 @@ pub trait DedupSlots {
 ///
 /// Insert, lookup, remove, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the profile observe-entry count. [`Memory`] and
-/// [`AllocMemory`] implement this so [`Engine`] can store
+/// `AllocMemory` (with `alloc`) implement this so [`Engine`] can store
 /// [`ObserveInterest`] values in the existing table slots. Pending notify,
 /// the 24-bit sequence, optional Max-Age / CON-wait lifetime, and RFC 7641
 /// §4.5 / §4.5.1 confirm / NSTART hold stay on the row; bodies are not
 /// stored here.
 pub trait ObserveSlots {
+    /// Atomically replace one exact pending CON and its exact Observe row.
+    ///
+    /// Any failure must leave both unchanged. Implementations must validate the
+    /// endpoint, current hold, replacement key/MID and complete pending view
+    /// before committing either area. Custom backends opt in explicitly; the
+    /// default refuses without mutation.
+    fn replace_observe_con(
+        &mut self,
+        _pending: PendingCon,
+        _original: ObserveInterest,
+        _replacement: ObserveInterest,
+        _bytes: &[u8],
+    ) -> Result<(), PendingReplaceError>
+    where
+        Self: PendingCons,
+    {
+        Err(PendingReplaceError::Unsupported)
+    }
+
     /// Insert `interest`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
@@ -334,6 +360,16 @@ pub trait BodySlots {
 
     /// Outgoing Block1 / Block2 sidecar, if `id` holds a transfer.
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+
+    /// Write the sidecar into an already-occupied outgoing body slot.
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        let _ = (id, transfer);
+        Err(SlotError::InvalidSlot)
+    }
 
     /// Incoming body slot matching `key`, if any. O(n) in RX body occupancy.
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId>;
@@ -507,6 +543,12 @@ pub trait BodySlots {
         &mut self,
         id: SlotId,
     ) -> Result<OutgoingBlock, crate::error::BlockTransferError>;
+
+    /// Open a fully issued NON Q-Block1 set after caller-enforced pacing.
+    /// No peer receipt is inferred. Custom storage may refuse this capability.
+    fn pace_q_block1(&mut self, _id: SlotId) -> Result<(), crate::error::BlockTransferError> {
+        Err(crate::error::BlockTransferError::IdentityMismatch)
+    }
 
     /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
     fn ack_q_block1(

@@ -10,14 +10,107 @@ use crate::message::{Message, ParsedMessage};
 use crate::storage::{DatagramSlots, Engine, SlotId, Storage};
 
 #[cfg(feature = "oscore")]
-use crate::oscore::{Error as OscoreError, RequestRef, SecurityContext};
+use crate::oscore::{BoundedSecurityContext, Error as OscoreError, RequestRef};
 
 /// [`App`](super::App) field: a caller-owned context, or an empty marker.
 #[cfg(feature = "oscore")]
-pub(crate) type Field = Option<SecurityContext>;
+pub(crate) type Field<const REQUESTS: usize> = Option<BoundedSecurityContext<REQUESTS>>;
+
+pub(crate) fn has_live_requests<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
+    #[cfg(feature = "oscore")]
+    {
+        ctx.as_ref().is_some_and(|ctx| ctx.has_live_requests())
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = ctx;
+        false
+    }
+}
 #[cfg(not(feature = "oscore"))]
 #[derive(Clone, Copy)]
-pub(crate) struct Field;
+pub(crate) struct Field<const REQUESTS: usize>;
+
+#[cfg(feature = "oscore")]
+pub(crate) type CheckpointCommit<'a> = dyn FnMut(crate::oscore::ReplayCheckpoint) -> bool + 'a;
+#[cfg(not(feature = "oscore"))]
+pub(crate) type CheckpointCommit<'a> = dyn FnMut() -> bool + 'a;
+
+#[cfg(feature = "oscore")]
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(crate) enum CheckpointState {
+    Volatile,
+    Dirty,
+    Clean,
+}
+
+#[cfg(not(feature = "oscore"))]
+#[derive(Clone, Copy)]
+pub(crate) struct CheckpointState;
+
+impl CheckpointState {
+    pub(crate) const fn new() -> Self {
+        #[cfg(feature = "oscore")]
+        {
+            Self::Volatile
+        }
+        #[cfg(not(feature = "oscore"))]
+        {
+            Self
+        }
+    }
+
+    pub(crate) const fn required(self) -> bool {
+        #[cfg(feature = "oscore")]
+        {
+            !matches!(self, Self::Volatile)
+        }
+        #[cfg(not(feature = "oscore"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn require(&mut self) {
+        if !self.required() {
+            *self = Self::Dirty;
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn invalidate(&mut self) {
+        if self.required() {
+            *self = Self::Dirty;
+        }
+    }
+
+    pub(crate) fn flush<E, const REQUESTS: usize>(
+        &mut self,
+        ctx: &Field<REQUESTS>,
+        commit: &mut Option<&mut CheckpointCommit<'_>>,
+    ) -> Result<(), super::Error<E>> {
+        #[cfg(feature = "oscore")]
+        if self.required() {
+            let commit = commit
+                .as_mut()
+                .ok_or(super::Error::OscoreCheckpointRequired)?;
+            let ctx = ctx
+                .as_ref()
+                .ok_or(super::Error::Oscore(OscoreError::Context))?;
+            if matches!(self, Self::Dirty) {
+                if !commit(ctx.replay_checkpoint()) {
+                    return Err(super::Error::OscoreCheckpointFailed);
+                }
+                *self = Self::Clean;
+            }
+        }
+        #[cfg(not(feature = "oscore"))]
+        let _ = (ctx, commit);
+        Ok(())
+    }
+}
 
 /// Request binding carried on an inbound OSCORE exchange.
 #[cfg(feature = "oscore")]
@@ -39,8 +132,8 @@ pub(crate) enum ResponseState {
     ResponseWithoutPiv(crate::message::Token),
 }
 
-pub(crate) fn commit_response<E>(
-    ctx: &mut Field,
+pub(crate) fn commit_response<E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
     state: ResponseState,
 ) -> Result<(), super::Error<E>> {
     #[cfg(feature = "oscore")]
@@ -88,17 +181,17 @@ pub(crate) const fn no_request() -> Request {
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) const fn empty_field() -> Field {
+pub(crate) const fn empty_field<const REQUESTS: usize>() -> Field<REQUESTS> {
     None
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) const fn empty_field() -> Field {
+pub(crate) const fn empty_field<const REQUESTS: usize>() -> Field<REQUESTS> {
     Field
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) fn is_active(ctx: &Field) -> bool {
+pub(crate) fn is_active<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
     ctx.is_some()
 }
 
@@ -116,7 +209,7 @@ pub(crate) fn request_from_interest(interest: crate::storage::ObserveInterest) -
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) fn is_active(_ctx: &Field) -> bool {
+pub(crate) fn is_active<const REQUESTS: usize>(_ctx: &Field<REQUESTS>) -> bool {
     false
 }
 
@@ -128,8 +221,8 @@ pub(crate) fn is_active(_ctx: &Field) -> bool {
 /// application body. A token-matching unprotected 2.xx/4.xx/5.xx must
 /// not complete a [`Call`](super::Call).
 #[cfg(feature = "oscore")]
-pub(crate) fn inbound<'a>(
-    ctx: &mut Field,
+pub(crate) fn inbound<'a, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
     parsed: &ParsedMessage<'_>,
     scratch: &'a mut [u8],
 ) -> Result<Option<Opened<'a>>, InboundError> {
@@ -200,8 +293,8 @@ pub(crate) fn inbound<'a>(
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) fn inbound<'a>(
-    _ctx: &mut Field,
+pub(crate) fn inbound<'a, const REQUESTS: usize>(
+    _ctx: &mut Field<REQUESTS>,
     _parsed: &ParsedMessage<'_>,
     _scratch: &'a mut [u8],
 ) -> Result<Option<Opened<'a>>, InboundError> {
@@ -213,8 +306,8 @@ pub(crate) fn inbound<'a>(
 /// Size failures stay [`EncodeError::BufferTooSmall`] so the client may
 /// start Inner Block1. Other protect failures (feature `oscore`) are the
 /// App `Oscore` error and must not look like a size miss.
-pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
-    ctx: &mut Field,
+pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
@@ -222,9 +315,14 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
     let _ = ctx;
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
+        let capacity = engine
+            .access_tx_mut(tx)
+            .map_err(super::Error::from)?
+            .capacity();
         let mut wire = S::TxScratch::default();
+        let limit = capacity.min(wire.as_ref().len());
         let n = ctx
-            .protect_request(msg, wire.as_mut())
+            .protect_request(msg, &mut wire.as_mut()[..limit])
             .map_err(protect_err)?;
         return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
@@ -239,8 +337,8 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E>(
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to plaintext. Size misses stay
 /// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
-pub(crate) fn encode_message<S: Storage + DatagramSlots, E>(
-    ctx: &Field,
+pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    ctx: &Field<REQUESTS>,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
@@ -268,8 +366,8 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E>(
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to plaintext.
-pub(crate) fn encode_notification<S: Storage + DatagramSlots, E>(
-    ctx: &mut Field,
+pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
@@ -278,20 +376,36 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E>(
     #[cfg(not(feature = "oscore"))]
     let _ = (ctx, request);
     #[cfg(feature = "oscore")]
-    if let Some(oscore) = ctx.as_mut() {
-        let Some(request) = request else {
-            return Err(protect_err(OscoreError::Context));
-        };
+    if ctx.is_some() {
         let mut wire = S::TxScratch::default();
-        let n = oscore
-            .protect_response_with_piv(msg, request, wire.as_mut())
-            .map_err(protect_err)?;
+        let n = stage_notification(ctx, request, msg, wire.as_mut())?;
         return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
         .encode_tx(tx, msg)
         .map(|_| ())
         .map_err(super::Error::from)
+}
+
+pub(crate) fn stage_notification<E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
+    request: Request,
+    msg: &Message<'_>,
+    out: &mut [u8],
+) -> Result<usize, super::Error<E>> {
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, request);
+    #[cfg(feature = "oscore")]
+    if let Some(oscore) = ctx.as_mut() {
+        let Some(request) = request else {
+            return Err(protect_err(OscoreError::Context));
+        };
+        return oscore
+            .protect_response_with_piv(msg, request, out)
+            .map_err(protect_err);
+    }
+    crate::message::encode(msg, out)
+        .map_err(|error| super::Error::Message(SlotMessageError::Encode(error)))
 }
 
 #[cfg_attr(not(feature = "oscore"), allow(dead_code))]
@@ -324,7 +438,7 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
             super::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
         }
         OscoreError::Encode(e) => super::Error::Message(SlotMessageError::Encode(e)),
-        OscoreError::Options | OscoreError::Saturated => {
+        OscoreError::Options => {
             super::Error::Message(SlotMessageError::Encode(EncodeError::OptionsFull))
         }
         other => super::Error::Oscore(other),
@@ -332,7 +446,10 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
 }
 
 /// Release a terminal client's request binding without resetting crypto state.
-pub(crate) fn cancel(ctx: &mut Field, token: crate::message::Token) {
+pub(crate) fn cancel<const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS>,
+    token: crate::message::Token,
+) {
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.as_mut() {
         let _ = ctx.take(token);
@@ -342,11 +459,11 @@ pub(crate) fn cancel(ctx: &mut Field, token: crate::message::Token) {
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) fn send_qblock1_recover<S, T>(
+pub(crate) fn send_qblock1_recover<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut super::AppIds,
-    ctx: &mut Field,
+    ctx: &mut Field<REQUESTS>,
     now_ms: u64,
     recover: crate::storage::QBlockRecover,
 ) -> Result<(), super::Error<T::Error>>
@@ -379,7 +496,7 @@ where
     let message = Message::new(
         Type::NonConfirmable,
         Code::REQUEST_ENTITY_INCOMPLETE,
-        ids.next_for(engine, now_ms)?,
+        ids.next_for(engine, io, now_ms)?,
     )
     .with_token(token)
     .with_options(&options)
@@ -396,4 +513,79 @@ where
     });
     let _ = engine.release_tx(tx);
     result
+}
+
+#[cfg(all(test, feature = "alloc", feature = "oscore"))]
+mod request_capacity_tests {
+    use super::*;
+    use crate::message::{Code, MessageId, Token, Type};
+    use crate::storage::{AllocMemory, Capacities};
+
+    #[test]
+    fn request_protection_respects_actual_tx_before_replacing_binding() {
+        let capacities = Capacities {
+            rx_datagram_slots: 1,
+            rx_datagram_bytes: 128,
+            tx_datagram_slots: 1,
+            tx_datagram_bytes: 128,
+            dedup_entries: 1,
+            observe_entries: 1,
+            rx_body_slots: None,
+            rx_body_bytes: None,
+            tx_body_slots: None,
+            tx_body_bytes: None,
+        };
+        assert!(
+            <AllocMemory as DatagramSlots>::TxScratch::default()
+                .as_ref()
+                .len()
+                > 128
+        );
+        let memory = AllocMemory::try_new(capacities, usize::MAX).unwrap();
+        let mut engine = Engine::from_storage(memory);
+        let mut ctx = Some(
+            crate::oscore::SecurityContext::derive(crate::oscore::DeriveParams {
+                master_secret: &[0x24; 16],
+                master_salt: &[],
+                sender_id: &[1],
+                recipient_id: &[2],
+                id_context: &[],
+            })
+            .unwrap(),
+        );
+        let token = Token::from_checked(&[7]);
+        let short =
+            Message::new(Type::Confirmable, Code::POST, MessageId::new(1)).with_token(token);
+        let tx = engine.acquire_tx().unwrap();
+        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
+            .unwrap();
+        let original = ctx.as_ref().unwrap().lookup(token).unwrap();
+        let before = ctx.as_ref().unwrap().sender_seq();
+        let mut bytes = [0u8; 128];
+        let retained = {
+            let view = engine.access_tx(tx).unwrap();
+            let body = view.as_bytes();
+            bytes[..body.len()].copy_from_slice(body);
+            body.len()
+        };
+        let large = Message::new(Type::Confirmable, Code::POST, MessageId::new(2))
+            .with_token(token)
+            .with_payload(&[0x5a; 200]);
+        assert!(matches!(
+            encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &large),
+            Err(super::super::Error::Message(SlotMessageError::Encode(
+                EncodeError::BufferTooSmall
+            )))
+        ));
+        assert_eq!(ctx.as_ref().unwrap().lookup(token), Some(original));
+        assert_eq!(ctx.as_ref().unwrap().sender_seq(), before + 1);
+        assert_eq!(engine.access_tx(tx).unwrap().as_bytes(), &bytes[..retained]);
+        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
+            .unwrap();
+        assert_eq!(
+            ctx.as_ref().unwrap().lookup(token).unwrap().piv().seq(),
+            before + 1
+        );
+        engine.release_tx(tx).unwrap();
+    }
 }
