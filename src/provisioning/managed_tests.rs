@@ -170,6 +170,76 @@ fn connect(client: &mut Owner<'_>, server: &mut Owner<'_>, now: u64) -> u64 {
 }
 
 #[test]
+fn final_error_after_handoff_cannot_revoke_the_installed_managed_app() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    let now = connect(&mut client, &mut server, 0) + 1;
+    let generation = server.trust().checkpoint().anchor();
+    let id = server
+        .recovery
+        .as_ref()
+        .unwrap()
+        .active_connection_id()
+        .unwrap();
+    let mut payload = id.lakers().as_cbor().to_vec();
+    payload.extend_from_slice(&[0, 0xf5]);
+    let options = [
+        Opt::uri_path(".well-known"),
+        Opt::uri_path("edhoc"),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[65]),
+    ];
+    let mut bytes = [0; DATAGRAM_BYTES];
+    let len = Message::new(Type::Confirmable, Code::POST, MessageId::new(30_000))
+        .with_token(Token::from_checked(b"late"))
+        .with_options(&options)
+        .with_payload(&payload)
+        .encode(&mut bytes)
+        .unwrap();
+    network
+        .borrow_mut()
+        .b
+        .push_back((bytes[..len].to_vec(), CLIENT));
+    assert!(matches!(
+        server.poll_with(now, idle),
+        Err(ManagedError::Recovery(RecoveryError::Bootstrap(
+            super::super::PollError::PeerAbort(super::super::PeerErrorCode::ReservedSuccess)
+        )))
+    ));
+    assert!(server.is_connected());
+    assert_eq!(server.trust().checkpoint().anchor(), generation);
+    assert_eq!(
+        server.recovery.as_ref().unwrap().active_connection_id(),
+        Some(id)
+    );
+    assert!(!server.recovery.as_ref().unwrap().has_candidate());
+    let reply = network.borrow_mut().a.pop_front().unwrap().0;
+    assert_eq!(decode(&reply).unwrap().code(), Code::CHANGED);
+    let call = client
+        .request(Method::Get, "alive", &[], None, now + 1)
+        .unwrap();
+    client.poll_with(now + 1, idle).unwrap();
+    server
+        .poll_with(now + 1, |principal, _, _| {
+            assert_eq!(principal, &a.peer().principal());
+            Response::content(b"authorized")
+        })
+        .unwrap();
+    client.poll_with(now + 1, idle).unwrap();
+    let mut body = [0; 32];
+    assert_eq!(
+        client
+            .take_response_into(call, &mut body, now + 1)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"authorized"
+    );
+}
+
+#[test]
 fn initiator_error_ack_routes_without_content_format_and_releases_nstart() {
     reset_mid_seeds();
     let a = identity(1, 1);

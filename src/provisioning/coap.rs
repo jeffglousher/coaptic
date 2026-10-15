@@ -21,6 +21,8 @@
 //! candidate after a payload-free CoAP acknowledgement; errors never elicit
 //! another EDHOC error. A routable initiator failure sends a bounded error
 //! request using the decoded responder connection ID, including equal-ID errors.
+//! After message 4, the responder retains one exact error receipt alongside
+//! its earlier completion replies. A late error never revokes an installed App.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -35,7 +37,7 @@ mod recovery;
 
 #[path = "error_request.rs"]
 mod error_request;
-use error_request::ErrorRequest;
+use error_request::{ErrorReceipt, ErrorRequest};
 
 pub use recovery::{CoapRecovery, RecoveryError};
 
@@ -322,6 +324,7 @@ enum ServerState {
         slot: usize,
         reported: bool,
     },
+    FinalAbort(ErrorReceipt),
     Failed,
 }
 
@@ -347,6 +350,7 @@ enum Role {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CompletedCacheMatch {
     ExactDuplicate,
+    FreshErrorRequest,
     RefusedMid,
     MidCollision,
     NoMatch,
@@ -606,18 +610,24 @@ impl<'a> CoapProvisioner<'a> {
                         None
                     }
                 }
-                Role::Server(server) => (server.pending != 0
-                    || matches!(
-                        server.state,
-                        ServerState::Aborted {
-                            reported: false,
-                            ..
-                        } | ServerState::PeerAborted {
-                            reported: false,
-                            ..
-                        }
-                    ))
-                .then_some(self.last_now),
+                Role::Server(server) => {
+                    if let ServerState::FinalAbort(receipt) = &server.state {
+                        Some(receipt.next_deadline(self.last_now))
+                    } else {
+                        (server.pending != 0
+                            || matches!(
+                                server.state,
+                                ServerState::Aborted {
+                                    reported: false,
+                                    ..
+                                } | ServerState::PeerAborted {
+                                    reported: false,
+                                    ..
+                                }
+                            ))
+                        .then_some(self.last_now)
+                    }
+                }
             }
         };
         let expiry = match (self.expires, self.control.as_ref().map(|c| c.expires)) {
@@ -656,6 +666,9 @@ impl<'a> CoapProvisioner<'a> {
                 )
             }
             Role::Server(server) => {
+                if let ServerState::FinalAbort(receipt) = &server.state {
+                    return Some(receipt.peer_error());
+                }
                 let ServerState::PeerAborted { slot, .. } = server.state else {
                     return None;
                 };
@@ -725,8 +738,8 @@ impl<'a> CoapProvisioner<'a> {
     /// Responder failures and routable initiator failures queue a bounded EDHOC
     /// error before flush reports the original [`PollError::Provisioning`].
     /// Initiator error requests retain their bounded retries and transport ACKs.
-    /// Incoming error requests terminate the
-    /// candidate and queue a payload-free 2.04 acknowledgement before
+    /// Incoming error requests terminate the candidate, including an unclaimed
+    /// session after message 4, and queue a payload-free 2.04 acknowledgement before
     /// [`PollError::PeerAbort`]. Exact duplicates remain answerable until expiry.
     /// One pending control blocks further ingest until sent. Its MID remains
     /// reserved for [`Self::EXCHANGE_LIFETIME_MS`], without starting/renewing
@@ -868,6 +881,10 @@ impl<'a> CoapProvisioner<'a> {
                         server.pending &= !bit;
                     }
                 }
+                if let ServerState::FinalAbort(receipt) = &mut server.state {
+                    receipt.flush(io, self.endpoint, now_ms)?;
+                    return Err(PollError::PeerAbort(receipt.peer_error().code()));
+                }
                 if let ServerState::Aborted { error, reported } = &mut server.state {
                     *reported = true;
                     return Err(PollError::Provisioning(*error));
@@ -905,7 +922,10 @@ impl<'a> CoapProvisioner<'a> {
                             ClientState::Message2(_) | ClientState::Message4(_)
                         ) && client.retry.first_sent.is_none())
                 }
-                Role::Server(server) => server.pending != 0,
+                Role::Server(server) => {
+                    server.pending != 0
+                        || matches!(&server.state, ServerState::FinalAbort(receipt) if receipt.pending())
+                }
             }
     }
 
@@ -956,6 +976,9 @@ impl<'a> CoapProvisioner<'a> {
                     Role::Server(server) => {
                         server.exchanges = [None, None];
                         server.pending = 0;
+                        if matches!(server.state, ServerState::FinalAbort(_)) {
+                            server.state = ServerState::Failed;
+                        }
                     }
                 }
                 return Ok(());
@@ -1248,6 +1271,21 @@ impl Server {
                     return Ok(false);
                 }
             }
+        }
+        if let ServerState::FinalAbort(receipt) = &mut self.state {
+            return Ok(receipt.queue(bytes, now));
+        }
+        if matches!(self.state, ServerState::Complete)
+            && self.pending == 0
+            && ErrorReceipt::matches_new(bytes, input.local_id)
+        {
+            let until = now
+                .checked_add(EXCHANGE_LIFETIME_MS)
+                .ok_or(Failure::Clock)?;
+            self.state = ServerState::FinalAbort(ErrorReceipt::new(bytes, until));
+            *input.session = None;
+            *input.expires = Some(until);
+            return Ok(true);
         }
         if !matches!(self.state, ServerState::Message1 | ServerState::Message3(_)) {
             return Ok(false);

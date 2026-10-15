@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "final_error_tests.rs"]
+mod final_errors;
+
 fn awaiting_second<'a>(
     a: &'a Identity,
     b: &'a Identity,
@@ -294,7 +297,15 @@ fn fourth_message_failure_uses_a_new_mid_after_echo_and_never_exposes_a_session(
         ));
         assert_error_request(&ci.last(), 3, 1, PeerErrorCode::Unspecified);
         assert!(client.take_session().is_none());
-        let ack = receipt(&ci.last(), Type::Acknowledgement, MessageId::new(3), false);
+        server
+            .ingest(&ci.last(), CLIENT, 3, no_entropy, no_authorization)
+            .unwrap();
+        assert_eq!(
+            server.flush(&mut si, 3),
+            Err(PollError::PeerAbort(PeerErrorCode::Unspecified))
+        );
+        assert!(server.take_session().is_none());
+        let ack = si.last();
         client
             .ingest(&ack, SERVER, 3, no_entropy, no_authorization)
             .unwrap();

@@ -1,9 +1,10 @@
 use super::{
     CompletedCacheMatch, DATAGRAM_CAPACITY, MessageFailure, Operation, OptionRole, PollError,
-    Retry, Wire, has_unsupported_critical, request, same_mid_namespace, send,
+    Retry, Wire, has_unsupported_critical, request, request_metadata, request_peer_error,
+    same_mid_namespace, send,
 };
 use crate::message::{Message as CoapMessage, ParsedMessage, Type, decode};
-use crate::provisioning::{ConnectionId, Error, Message};
+use crate::provisioning::{ConnectionId, Error, Message, PeerError, PeerErrorCode};
 use crate::storage::{DatagramIo, Endpoint};
 
 // The one buffer changes from the outgoing request to its terminal response.
@@ -172,5 +173,118 @@ impl ErrorRequest {
             return Ok(true);
         }
         Ok(false)
+    }
+}
+
+// A late error needs one retained request buffer. Its payload-free response is
+// reconstructed from the saved MID/token; the earlier completion replies stay
+// in their own slots with their original deadlines.
+pub(super) struct ErrorReceipt {
+    request: Wire,
+    expires: u64,
+    pending: bool,
+    reported: bool,
+}
+
+impl ErrorReceipt {
+    pub(super) fn matches_new(bytes: &[u8], local_id: ConnectionId) -> bool {
+        if bytes.len() > DATAGRAM_CAPACITY {
+            return false;
+        }
+        let Ok(parsed) = decode(bytes) else {
+            return false;
+        };
+        if !request_metadata(parsed) {
+            return false;
+        }
+        let Ok((id, prefix)) = ConnectionId::decode_prefix(parsed.payload()) else {
+            return false;
+        };
+        id == local_id
+            && PeerError::parse(&parsed.payload()[prefix..]).is_some_and(|error| {
+                matches!(
+                    error.code(),
+                    PeerErrorCode::ReservedSuccess | PeerErrorCode::Unspecified
+                )
+            })
+    }
+
+    pub(super) fn new(bytes: &[u8], expires: u64) -> Self {
+        Self {
+            request: Wire::copy(bytes).expect("bounded admitted error request"),
+            expires,
+            pending: true,
+            reported: false,
+        }
+    }
+
+    pub(super) fn peer_error(&self) -> PeerError<'_> {
+        request_peer_error(self.request.as_slice()).expect("admitted final error")
+    }
+
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
+
+    pub(super) fn next_deadline(&self, now: u64) -> u64 {
+        if self.pending || !self.reported {
+            now
+        } else {
+            self.expires
+        }
+    }
+
+    pub(super) fn classify(&self, bytes: &[u8], now: u64) -> CompletedCacheMatch {
+        if now >= self.expires || bytes.len() < 4 {
+            return CompletedCacheMatch::NoMatch;
+        }
+        let saved = self.request.as_slice();
+        if saved[2..4] != bytes[2..4] || !same_mid_namespace(saved[0], bytes[0]) {
+            return CompletedCacheMatch::NoMatch;
+        }
+        if saved == bytes {
+            CompletedCacheMatch::ExactDuplicate
+        } else {
+            CompletedCacheMatch::MidCollision
+        }
+    }
+
+    pub(super) fn queue(&mut self, bytes: &[u8], now: u64) -> bool {
+        if self.classify(bytes, now) != CompletedCacheMatch::ExactDuplicate {
+            return false;
+        }
+        self.pending = true;
+        true
+    }
+
+    pub(super) fn flush<T: DatagramIo>(
+        &mut self,
+        io: &mut T,
+        endpoint: Endpoint,
+        now: u64,
+    ) -> Result<bool, PollError<T::Error>> {
+        if now >= self.expires {
+            return Ok(false);
+        }
+        let progress = self.pending;
+        if self.pending {
+            let parsed = decode(self.request.as_slice()).expect("saved final error request");
+            let mut response = [0; 12];
+            let len = CoapMessage::new(
+                Type::Acknowledgement,
+                crate::message::Code::CHANGED,
+                parsed.message_id(),
+            )
+            .with_token(parsed.token())
+            .encode(&mut response)
+            .expect("payload-free error receipt");
+            send(io, endpoint, &response[..len])?;
+            self.pending = false;
+        }
+        if !self.reported {
+            self.reported = true;
+            return Err(PollError::PeerAbort(self.peer_error().code()));
+        }
+        Ok(progress)
     }
 }
