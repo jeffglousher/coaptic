@@ -448,7 +448,10 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         let Ok(message_1) = super::super::Message::from_slice(&payload[1..]) else {
             return Ok(Status::Ignored);
         };
-        let Ok(peer_id) = super::super::message_1_peer_id(&message_1) else {
+        let Some(peer_id) = super::super::message_1_peer_id(&message_1)
+            .ok()
+            .or_else(|| super::super::wrong_selected_suite_peer_id(&message_1))
+        else {
             return Ok(Status::Ignored);
         };
         let Some(local_id) = self.available_id(Some(peer_id)) else {
@@ -742,14 +745,14 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                 }
             }
         }
-        let peer_aborted = candidate.peer_error().is_some();
-        if (self.candidate_exposed || peer_aborted) && now < expires {
+        let aborted = candidate.peer_error().is_some() || candidate.local_abort();
+        if (self.candidate_exposed || aborted) && now < expires {
             let slot = self
                 .caches
                 .iter()
                 .position(Option::is_none)
                 .expect("reserved cache slot");
-            self.caches[slot] = Some(Cache::from_controller(candidate, expires, peer_aborted));
+            self.caches[slot] = Some(Cache::from_controller(candidate, expires, aborted));
         }
         self.candidate_exposed = false;
     }
