@@ -3454,6 +3454,52 @@ fn restored_recipient_checkpoint_refuses_old_authenticated_requests() {
 }
 
 #[test]
+fn replay_checkpoint_successor_preserves_seen_sequences_at_window_and_sequence_bounds() {
+    use super::ReplayCheckpoint;
+    let end = 1u64 << 40;
+    let states = [
+        (0, 0),
+        (0, 1),
+        (0, u32::MAX),
+        (1, u32::MAX),
+        (31, 1),
+        (32, 0),
+        (32, u32::MAX),
+        (33, 1),
+        (end - 32, u32::MAX),
+        (end - 1, 1),
+        (end, 0),
+    ];
+    for (left, bits) in states {
+        let before = ReplayCheckpoint::from_parts(left, bits).unwrap();
+        for (next_left, next_bits) in states {
+            let next = ReplayCheckpoint::from_parts(next_left, next_bits).unwrap();
+            let mut safe = next_left >= left;
+            for bit in 0..32 {
+                if bits & (1 << bit) == 0 {
+                    continue;
+                }
+                let sequence = left + bit;
+                let rejected = sequence < next_left
+                    || (sequence - next_left < 32
+                        && next_bits & (1 << (sequence - next_left)) != 0);
+                safe &= rejected;
+            }
+            assert_eq!(
+                before.validate_successor(next),
+                if safe {
+                    Ok(())
+                } else {
+                    Err(Error::ReplayRollback)
+                }
+            );
+            assert_eq!(before.parts(), (left, bits));
+            assert_eq!(next.parts(), (next_left, next_bits));
+        }
+    }
+}
+
+#[test]
 fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
     let mut random = 0x0086_1375_0032_u64;
     for _ in 0..256 {
@@ -3477,6 +3523,7 @@ fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
             && refused
                 .iter()
                 .all(|seq| *seq < left || (*seq - left < 32 && bits & (1 << (*seq - left)) != 0));
+        assert_eq!(before.validate_successor(candidate).is_ok(), safe);
         assert_eq!(context.restore_replay(candidate).is_ok(), safe);
         if safe {
             for seq in refused {
