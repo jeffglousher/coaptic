@@ -22,6 +22,7 @@
 //! The private EDHOC implementation is Lakers v0.8.0 with a pinned parser/MAC
 //! hardening patch. Its BSD notice and source provenance ship with the crate.
 
+mod authority;
 mod cloud;
 mod coap;
 mod connection_id;
@@ -35,6 +36,10 @@ mod profile;
 mod receipt;
 mod trust;
 
+pub use authority::{
+    ApprovalCommitError, ApprovalError, EnrollmentAnchor, EnrollmentAuthority, EnrollmentRecord,
+    EnrollmentRecordParts, EnrollmentStore,
+};
 pub use cloud::{
     AdmissionLimits, AdmissionRegistry, AdmittedSession, Association, CloudAdmission, CloudError,
 };
