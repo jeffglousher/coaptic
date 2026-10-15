@@ -6,6 +6,25 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// A requested heap array or the aggregate allocation size is unrepresentable.
+    CapacityOverflow,
+    /// Heap storage requests exceed the caller's byte budget, before allocation.
+    HeapBudgetExceeded {
+        /// Bytes requested by the configured storage arrays.
+        required: usize,
+        /// Caller-selected maximum requested bytes.
+        limit: usize,
+    },
+    /// The allocator could not reserve storage. Partial construction is dropped.
+    AllocationFailed,
+    /// App requires a provisioned OSCORE context or an explicit plaintext opt-out.
+    SecurityRequired,
+    /// App requires an explicit entropy source or test-only deterministic mode.
+    RandomnessRequired,
+    /// Stateful binding cannot replace a previously selected entropy/test source.
+    RandomnessAlreadyConfigured,
+    /// App's entropy source failed during initial Message ID selection.
+    RandomnessUnavailable,
     /// Builder sizes do not match the [`Storage`](crate::storage::Storage) being moved in.
     SizeMismatch,
     /// Enabled body slot bytes are not a multiple of 1024 (max Block/Q-Block SZX).
@@ -25,6 +44,18 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::CapacityOverflow => f.write_str("storage capacity exceeds addressable memory"),
+            Self::HeapBudgetExceeded { required, limit } => {
+                write!(
+                    f,
+                    "storage requests {required} heap bytes, exceeding budget {limit}"
+                )
+            }
+            Self::AllocationFailed => f.write_str("storage allocation failed"),
+            Self::SecurityRequired => f.write_str("App security context must be configured"),
+            Self::RandomnessAlreadyConfigured => f.write_str("App randomness already configured"),
+            Self::RandomnessRequired => f.write_str("App randomness must be configured"),
+            Self::RandomnessUnavailable => f.write_str("App randomness unavailable"),
             Self::SizeMismatch => f.write_str("storage sizes do not match the builder"),
             Self::BodyBytesNotMultipleOf1024 => {
                 f.write_str("body slot bytes must be a multiple of 1024")
@@ -295,8 +326,12 @@ pub enum BlockTransferError {
     SzxMismatch,
     /// Block range would exceed the body-slot byte capacity.
     Overflow,
-    /// M=0 length does not match Size1 / Size2, or a block would exceed it.
+    /// Q-Block length conflicts with Size1 / Size2 or an earlier final block.
     LengthInconsistent,
+    /// An incoming Q-Block payload lacks its mandatory Size1 / Size2 option.
+    MissingSize,
+    /// Q-Block1 requires Request-Tag; Q-Block2 requires a nonempty ETag.
+    MissingIdentity,
     /// Transfer already completed (M=0 accepted or last Block2 issued).
     AlreadyComplete,
     /// Payload length is not valid for this NUM / M / SZX.
@@ -326,7 +361,11 @@ impl core::fmt::Display for BlockTransferError {
             Self::Duplicate => f.write_str("block NUM is already received"),
             Self::SzxMismatch => f.write_str("block SZX does not match the transfer"),
             Self::Overflow => f.write_str("block exceeds body slot capacity"),
-            Self::LengthInconsistent => f.write_str("completed length does not match Size1/Size2"),
+            Self::LengthInconsistent => {
+                f.write_str("Q-Block length conflicts with Size1/Size2 or final block")
+            }
+            Self::MissingIdentity => f.write_str("Q-Block requires a body identity"),
+            Self::MissingSize => f.write_str("Q-Block payload requires Size1/Size2"),
             Self::AlreadyComplete => f.write_str("block transfer is already complete"),
             Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
             Self::Value(e) => write!(f, "{e}"),

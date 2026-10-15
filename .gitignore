@@ -24,3 +24,6 @@ rustc-ice-*.txt
 #.idea/
 
 # knowledge/rfcs/*.pdf stay in the tree.
+
+# External validation caches
+__pycache__/

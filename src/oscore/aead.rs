@@ -1,7 +1,7 @@
 //! HKDF-SHA-256 and AES-CCM-16-64-128. RustCrypto only; no hand-rolled AEAD.
 
 use aes::Aes128;
-use ccm::aead::{AeadInPlace, KeyInit, generic_array::GenericArray};
+use ccm::aead::{AeadInOut, KeyInit, Tag};
 use ccm::{
     Ccm,
     consts::{U8, U13},
@@ -48,30 +48,24 @@ pub(crate) fn nonce(common_iv: &[u8; NONCE_LEN], id_piv: &[u8], piv: PartialIv) 
     raw
 }
 
-pub(crate) fn seal(
+pub(crate) fn seal_in_place(
     key: &[u8; KEY_LEN],
     nonce: &[u8; NONCE_LEN],
     aad: &[u8],
-    plaintext: &[u8],
-    out: &mut [u8],
+    plaintext_len: usize,
+    buffer: &mut [u8],
 ) -> Result<usize, Error> {
-    let n = plaintext
-        .len()
+    let n = plaintext_len
         .checked_add(TAG_LEN)
         .ok_or(Error::MessageLength)?;
-    if out.len() < n {
+    if buffer.len() < n {
         return Err(Error::BufferTooSmall);
     }
-    out[..plaintext.len()].copy_from_slice(plaintext);
-    let cipher = Aes128Ccm::new(GenericArray::from_slice(key));
+    let cipher = Aes128Ccm::new(key.into());
     let tag = cipher
-        .encrypt_in_place_detached(
-            GenericArray::from_slice(nonce),
-            aad,
-            &mut out[..plaintext.len()],
-        )
+        .encrypt_inout_detached(nonce.into(), aad, (&mut buffer[..plaintext_len]).into())
         .map_err(|_| Error::Encrypt)?;
-    out[plaintext.len()..n].copy_from_slice(&tag);
+    buffer[plaintext_len..n].copy_from_slice(&tag);
     Ok(n)
 }
 
@@ -90,15 +84,11 @@ pub(crate) fn open(
         return Err(Error::BufferTooSmall);
     }
     out[..pt_len].copy_from_slice(&ciphertext[..pt_len]);
-    let tag = GenericArray::from_slice(&ciphertext[pt_len..]);
-    let cipher = Aes128Ccm::new(GenericArray::from_slice(key));
+    let tag =
+        Tag::<Aes128Ccm>::try_from(&ciphertext[pt_len..]).map_err(|_| Error::MessageLength)?;
+    let cipher = Aes128Ccm::new(key.into());
     cipher
-        .decrypt_in_place_detached(
-            GenericArray::from_slice(nonce),
-            aad,
-            &mut out[..pt_len],
-            tag,
-        )
+        .decrypt_inout_detached(nonce.into(), aad, (&mut out[..pt_len]).into(), &tag)
         .map_err(|_| Error::Decrypt)?;
     Ok(pt_len)
 }
@@ -117,5 +107,41 @@ impl Aad {
 
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_place_capacity_checks_preserve_plaintext_and_exact_fit_authenticates() {
+        let key = [0u8; KEY_LEN];
+        let nonce = [0u8; NONCE_LEN];
+        let mut short = [0x31u8; TAG_LEN];
+        assert_eq!(
+            seal_in_place(&key, &nonce, b"fixture", 1, &mut short),
+            Err(Error::BufferTooSmall)
+        );
+        assert_eq!(short, [0x31; TAG_LEN]);
+        assert_eq!(
+            seal_in_place(&key, &nonce, b"fixture", usize::MAX, &mut short),
+            Err(Error::MessageLength)
+        );
+        assert_eq!(short, [0x31; TAG_LEN]);
+        let mut exact = [0u8; TAG_LEN + 1];
+        exact[0] = 0x31;
+        assert_eq!(
+            seal_in_place(&key, &nonce, b"fixture", 1, &mut exact),
+            Ok(exact.len())
+        );
+        let mut plain = [0u8; 1];
+        assert_eq!(open(&key, &nonce, b"fixture", &exact, &mut plain), Ok(1));
+        assert_eq!(plain, [0x31]);
+        exact[0] ^= 1;
+        assert_eq!(
+            open(&key, &nonce, b"fixture", &exact, &mut plain),
+            Err(Error::Decrypt)
+        );
     }
 }

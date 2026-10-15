@@ -85,8 +85,10 @@ fn bench_idle_progress_and_poll() {
     let pending_progress = ns_per_op(N, t.elapsed());
 
     let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
         .block_wise::<true>()
         .route("sensors/temp", get(get_temp))
+        .allow_plaintext()
         .bind(NullIo)
         .expect("bind");
     for _ in 0..WARMUP {

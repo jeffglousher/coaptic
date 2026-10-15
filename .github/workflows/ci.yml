@@ -18,12 +18,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  msrv:
+    name: library MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.85.0
+      - run: cargo check --locked -p coaptic --no-default-features
+      - run: cargo check --locked -p coaptic --all-features
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
           components: rustfmt
@@ -34,51 +45,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 
   test:
     name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --no-default-features
       - run: cargo test --all-features
-      - run: cargo test -p coaptic-plugtest --features dtls,oscore
-      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
-      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
+      - run: cargo test --no-default-features --features alloc
+      - run: cargo test --no-default-features --features oscore
+      - run: cargo test --no-default-features --features alloc,oscore
+      - run: cargo test --no-default-features --features std
+      - run: cargo test --features std --test std_fixed_storage
+      - run: cargo check --locked --example fixed_service
+      - run: cargo test --locked --example fixed_service
+      - name: Run the README client and server
+        shell: bash
+        run: |
+          cargo build --locked --example server --example client --features std
+          target/debug/examples/server &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          target/debug/examples/client
+      - run: cargo run --locked --example oscore_pair --features std
+      - run: cargo test --locked --example oscore_pair --features std
+      - run: cargo run --locked --example oscore_pair --features std,alloc -- --alloc
+      - run: cargo test --locked --example oscore_pair --features std,alloc
 
   doc:
     name: doc
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: --cfg docsrs
+      RUSTDOCFLAGS: --cfg docsrs -D warnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --no-deps --no-default-features
       - run: cargo doc --no-deps --all-features
 
-  # Tarball check only — do not use `cargo publish --dry-run` here.
-  # After 0.1.0 is live, dry-run of the same version fails CI.
+  # Tarball check only â€” do not use `cargo publish --dry-run` here.
+  # After a version is published, dry-run of that same version fails CI.
   package:
     name: package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -86,8 +113,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo package -p coaptic --list --locked
-          if cargo package -p coaptic --list --locked | grep -E '^(knowledge/|crates/|\.github/|\.agents/)'; then
-            echo "::error::published crate must not include knowledge/, crates/, .github/, or .agents/"
+          if cargo package -p coaptic --list --locked | grep -E '^(knowledge/|crates/|tools/|\.github/|\.agents/)' ; then
+            echo "::error::published crate must not include knowledge/, crates/, tools/, .github/, or .agents/"
             exit 1
           fi
       - run: cargo package -p coaptic --locked
+
+  validation:
+    name: Companion validation
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@93e34bba8154b1f841d39570cc4a02db44f58673
+    with:
+      suite_revision: 93e34bba8154b1f841d39570cc4a02db44f58673
+      library_repository: ${{ github.repository }}
+      library_revision: ${{ github.sha }}

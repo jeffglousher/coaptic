@@ -58,10 +58,16 @@ impl MethodRouter {
 
     /// Register a poll-time snapshot for Observe notifications.
     ///
-    /// A successful GET/FETCH with Observe=0 that includes Observe on the
+    /// A successful queryless GET with Observe=0 that includes Observe on the
     /// [`Response`] still registers without this. This hook lets
     /// [`App::poll`](super::App::poll) encode a notification when Engine
     /// progress yields `observe_notify` (after [`App::signal`](super::App::signal)).
+    /// App declines FETCH and query-bearing GET registration with an ordinary
+    /// selected response,
+    /// including when the handler explicitly sets Observe. This requestless
+    /// source cannot retain each observer's request selection. Client-side FETCH
+    /// and query-bearing GET Observe against capable peers, and explicit
+    /// low-level Engine interests, remain available.
     #[must_use]
     pub const fn observe(self, source: ObserveSource) -> Self {
         let mut this = self;

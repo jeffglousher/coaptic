@@ -11,25 +11,23 @@ pub struct PartialIv {
 
 impl PartialIv {
     /// Encode `seq` as a Partial IV.
-    #[must_use]
-    pub const fn from_seq(seq: u64) -> Self {
+    ///
+    /// Returns [`Error::PartialIv`] when `seq` needs more than five bytes.
+    pub const fn from_seq(seq: u64) -> Result<Self, Error> {
         let be = seq.to_be_bytes();
         let mut start = 0;
         while start < 8 && be[start] == 0 {
             start += 1;
         }
         if start == 8 {
-            return Self {
+            return Ok(Self {
                 bytes: [0, 0, 0, 0, 0],
                 len: 1,
-            };
+            });
         }
         let len = 8 - start;
         if len > MAX_PIV_LEN {
-            return Self {
-                bytes: [0xff; MAX_PIV_LEN],
-                len: MAX_PIV_LEN as u8,
-            };
+            return Err(Error::PartialIv);
         }
         let mut bytes = [0u8; MAX_PIV_LEN];
         let mut i = 0;
@@ -37,10 +35,10 @@ impl PartialIv {
             bytes[i] = be[start + i];
             i += 1;
         }
-        Self {
+        Ok(Self {
             bytes,
             len: len as u8,
-        }
+        })
     }
 
     /// Parse a Partial IV from the OSCORE option.
@@ -250,7 +248,8 @@ impl OptionClass {
 /// (outer) datagram.
 ///
 /// Dual Observe is copied both ways. Other Duals stay Inner-only on
-/// this copy: Block/Size (§4.1.3.4.1), application Max-Age (§4.1.3.1),
+/// this copy: Block/Size (§4.1.3.4.1), Q-Block (RFC 9177 Table 2, same
+/// inner-fragmentation choice), application Max-Age (§4.1.3.1),
 /// No-Response (§4.1.3.6). Observe responses inject Outer Max-Age 0
 /// separately in `encode_outer` — that is not this copy.
 pub(crate) fn encode_as_outer(number: u16) -> bool {
@@ -266,8 +265,9 @@ pub(crate) fn classify(number: u16) -> OptionClass {
         // Figure 5 Class U only, plus Hop-Limit (16, RFC 8768).
         3 | 7 | 9 | 16 | 35 | 39 => OptionClass::Outer,
         // Figure 5 Dual (E+U): Observe, Max-Age, Block2, Block1, Size2,
-        // Size1, No-Response. ETag (4) is Class E — it belongs in `_`.
-        6 | 14 | 23 | 27 | 28 | 60 | 258 => OptionClass::Dual,
+        // Size1, No-Response. Q-Block1 (19) and Q-Block2 (31) are Dual in
+        // RFC 9177 Table 2. ETag (4) is Class E — it belongs in `_`.
+        6 | 14 | 19 | 23 | 27 | 28 | 31 | 60 | 258 => OptionClass::Dual,
         // Figure 5 Class E and unknown options (§4.1).
         _ => OptionClass::Inner,
     }

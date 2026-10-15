@@ -12,6 +12,9 @@
 //! successful GET to register; `app.notify(now_ms, path, response)` sends
 //! later representations. Handlers see borrowed `Request` fields and
 //! return owned `Response`. Engine slot identifiers stay off this path.
+//!
+//! This loopback interoperability example deliberately opts into plaintext.
+//! Production Apps require a provisioned OSCORE context on the builder.
 
 use std::net::UdpSocket;
 use std::time::Instant;
@@ -57,11 +60,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.set_read_timeout(Some(timeout))?;
 
     let mut app = App::profile::<profiles::Default>()
+        .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .block_wise::<true>()
         .route("sensors/temp", get(get_temp))
         .route("leds/0", get(get_led).put(put_led))
         .route("large", get(get_large))
         .well_known_core()
+        .allow_plaintext()
         .bind(socket)?;
 
     send_client(&mut client, server_ep, Code::GET, &["sensors", "temp"], &[]);
