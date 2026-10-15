@@ -4,6 +4,8 @@
 //! The BSD-3-Clause notice is retained in `LICENSE-BSD`; source transformations,
 //! including local connection-ID bounds hardening, and hashes are recorded in
 //! `provenance.json`.
+//! The bounded suite/profile extension is retained in `profile.patch`, applied
+//! after the original vendoring and formatting transformations.
 #![allow(dead_code, deprecated, unexpected_cfgs, unused_imports, missing_docs)]
 #![allow(clippy::all, clippy::pedantic)]
 

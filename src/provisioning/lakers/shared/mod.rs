@@ -31,7 +31,7 @@ pub const MAX_MESSAGE_SIZE_LEN: usize = 192;
 
 pub const ID_CRED_LEN: usize = 4;
 pub const SUITES_LEN: usize = 9;
-pub const SUPPORTED_SUITES_LEN: usize = 1;
+pub const SUPPORTED_SUITES_LEN: usize = 2;
 pub const EDHOC_METHOD: u8 = 3u8; // stat-stat is the only supported method
 pub const P256_ELEM_LEN: usize = 32;
 pub const SHA256_DIGEST_LEN: usize = 32;
@@ -41,6 +41,7 @@ pub const AES_CCM_TAG_LEN: usize = 8;
 pub const MAC_LENGTH: usize = 8; // used for EAD Zeroconf
 pub const MAC_LENGTH_2: usize = MAC_LENGTH;
 pub const MAC_LENGTH_3: usize = MAC_LENGTH_2;
+pub const MAX_MAC_LENGTH: usize = 16;
 pub const ENCODED_VOUCHER_LEN: usize = 1 + MAC_LENGTH; // 1 byte for the length of the bstr-encoded voucher
 
 // maximum supported length of connection identifier for R
@@ -90,7 +91,7 @@ const MAX_CONNID_ENCODED_LEN: usize = 8;
 pub type BytesSuites = [u8; SUITES_LEN];
 pub type BytesSupportedSuites = [u8; SUPPORTED_SUITES_LEN];
 pub const EDHOC_SUITES: BytesSuites = [0, 1, 2, 3, 4, 5, 6, 24, 25]; // all but private cipher suites
-pub const EDHOC_SUPPORTED_SUITES: BytesSupportedSuites = [0x2u8];
+pub const EDHOC_SUPPORTED_SUITES: BytesSupportedSuites = [2, 3];
 
 pub type BytesEad2 = [u8; 0];
 pub type BytesIdCred = [u8; ID_CRED_LEN];
@@ -100,8 +101,8 @@ pub type BytesCcmIvLen = [u8; AES_CCM_IV_LEN];
 pub type BufferPlaintext2 = EdhocMessageBuffer;
 pub type BufferPlaintext3 = EdhocMessageBuffer;
 pub type BufferPlaintext4 = EdhocMessageBuffer;
-pub type BytesMac2 = [u8; MAC_LENGTH_2];
-pub type BytesMac3 = [u8; MAC_LENGTH_3];
+pub type BytesMac2 = [u8; MAX_MAC_LENGTH];
+pub type BytesMac3 = [u8; MAX_MAC_LENGTH];
 pub type BufferMessage1 = EdhocMessageBuffer;
 pub type BufferMessage3 = EdhocMessageBuffer;
 pub type BufferMessage4 = EdhocMessageBuffer;
@@ -213,6 +214,9 @@ impl ConnId {
             return Err(CBORError::DecodingError);
         }
         s[..len].copy_from_slice(decoder.read_slice(len)?);
+        if len == 2 && matches!(ConnIdType::classify(s[1]), Some(ConnIdType::SingleByte)) {
+            return Err(CBORError::DecodingError);
+        }
         Ok(Self(s))
     }
 
@@ -295,8 +299,7 @@ impl From<EDHOCMethod> for u8 {
 #[derive(PartialEq, Debug)]
 pub enum EDHOCSuite {
     CipherSuite2 = 2,
-    // add others, such as:
-    // CiherSuite3 = 3,
+    CipherSuite3 = 3,
 }
 
 impl From<EDHOCSuite> for u8 {
@@ -728,8 +731,8 @@ mod edhoc_parser {
         trace!("Enter parse_suites_i");
         let mut suites_i: EdhocBuffer<MAX_SUITES_LEN> = Default::default();
         if let Ok(curr) = decoder.current() {
-            if CBOR_UINT_1BYTE_START == CBORDecoder::type_of(curr) {
-                let Ok(_) = suites_i.push(decoder.u8()?) else {
+            if matches!(CBORDecoder::type_of(curr), 0 | CBOR_NEG_INT_1BYTE_START) {
+                let Ok(_) = suites_i.push(decoder.i8()? as u8) else {
                     return Err(EDHOCError::ParsingError);
                 };
                 Ok((suites_i, decoder))
@@ -741,7 +744,7 @@ mod edhoc_parser {
                 if received_suites_i_len <= suites_i.capacity() {
                     for i in 0..received_suites_i_len {
                         // NOTE: could use suites_i.push, but hax complains about mutable references in loops
-                        suites_i.content[i] = decoder.u8()?;
+                        suites_i.content[i] = decoder.i8()? as u8;
                     }
                     suites_i.len = received_suites_i_len;
                     Ok((suites_i, decoder))
@@ -776,7 +779,7 @@ mod edhoc_parser {
             let mut g_x: BytesP256ElemLen = [0x00; P256_ELEM_LEN];
             g_x.copy_from_slice(decoder.bytes_sized(P256_ELEM_LEN)?);
 
-            // consume c_i encoded as single-byte int (we still do not support bstr encoding)
+            // Consume a compact integer or bounded byte-string connection ID.
             let c_i = ConnId::from_decoder(&mut decoder)?;
 
             // if there is still more to parse, the rest will be the EAD_1
@@ -833,9 +836,10 @@ mod edhoc_parser {
 
     pub fn decode_plaintext_2(
         plaintext_2: &BufferCiphertext2,
+        mac_length: usize,
     ) -> Result<(ConnId, IdCred, BytesMac2, Option<EADItem>), EDHOCError> {
         trace!("Enter decode_plaintext_2");
-        let mut mac_2: BytesMac2 = [0x00; MAC_LENGTH_2];
+        let mut mac_2: BytesMac2 = [0x00; MAX_MAC_LENGTH];
 
         let mut decoder = CBORDecoder::new(plaintext_2.as_slice());
 
@@ -844,7 +848,10 @@ mod edhoc_parser {
         // the id_cred may have been encoded as a single int, a byte string, or a map
         let id_cred_r = IdCred::from_encoded_value(decoder.any_as_encoded()?)?;
 
-        mac_2[..].copy_from_slice(decoder.bytes_sized(MAC_LENGTH_2)?);
+        mac_2
+            .get_mut(..mac_length)
+            .ok_or(EDHOCError::ParsingError)?
+            .copy_from_slice(decoder.bytes_sized(mac_length)?);
 
         // if there is still more to parse, the rest will be the EAD_2
         if plaintext_2.len > decoder.position() {
@@ -864,16 +871,20 @@ mod edhoc_parser {
 
     pub fn decode_plaintext_3(
         plaintext_3: &BufferPlaintext3,
+        mac_length: usize,
     ) -> Result<(IdCred, BytesMac3, Option<EADItem>), EDHOCError> {
         trace!("Enter decode_plaintext_3");
-        let mut mac_3: BytesMac3 = [0x00; MAC_LENGTH_3];
+        let mut mac_3: BytesMac3 = [0x00; MAX_MAC_LENGTH];
 
         let mut decoder = CBORDecoder::new(plaintext_3.as_slice());
 
         // the id_cred may have been encoded as a single int, a byte string, or a map
         let id_cred_i = IdCred::from_encoded_value(decoder.any_as_encoded()?)?;
 
-        mac_3[..].copy_from_slice(decoder.bytes_sized(MAC_LENGTH_3)?);
+        mac_3
+            .get_mut(..mac_length)
+            .ok_or(EDHOCError::ParsingError)?
+            .copy_from_slice(decoder.bytes_sized(mac_length)?);
 
         // if there is still more to parse, the rest will be the EAD_3
         if plaintext_3.len > decoder.position() {
@@ -1004,7 +1015,11 @@ mod cbor_decoder {
             if (0..=0x17).contains(&n) {
                 Ok(n)
             } else if 0x18 == n {
-                self.read()
+                let value = self.read()?;
+                if value < 24 {
+                    return Err(CBORError::DecodingError);
+                }
+                Ok(value)
             } else {
                 Err(CBORError::DecodingError)
             }
@@ -1018,9 +1033,16 @@ mod cbor_decoder {
             } else if (0x20..=0x37).contains(&n) {
                 Ok(-1 - (n - 0x20) as i8)
             } else if 0x18 == n {
-                i8::try_from(self.read()?).map_err(|_| CBORError::DecodingError)
+                let argument = self.read()?;
+                if argument < 24 {
+                    return Err(CBORError::DecodingError);
+                }
+                i8::try_from(argument).map_err(|_| CBORError::DecodingError)
             } else if 0x38 == n {
                 let argument = i8::try_from(self.read()?).map_err(|_| CBORError::DecodingError)?;
+                if argument < 24 {
+                    return Err(CBORError::DecodingError);
+                }
                 Ok(-1 - argument)
             } else {
                 Err(CBORError::DecodingError)
@@ -1100,7 +1122,11 @@ mod cbor_decoder {
             if (0..=0x17).contains(&b) {
                 Ok(usize::from(b))
             } else if 0x18 == b {
-                self.read().map(usize::from)
+                let argument = self.read()?;
+                if argument < 24 {
+                    return Err(CBORError::DecodingError);
+                }
+                Ok(usize::from(argument))
             } else {
                 Err(CBORError::DecodingError)
             }

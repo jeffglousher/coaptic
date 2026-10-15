@@ -183,7 +183,7 @@ fn initial_registry_failures_require_echo_and_cache_suite_profile_key_and_entrop
         let original = m1(&client, &server, 700, None);
         let mut payload = decode(&original).unwrap().payload().to_vec();
         match case {
-            0 => payload[2] = 3,
+            0 => payload[2] = 4,
             1 => payload[1] = 0,
             2 => payload[5..37].fill(0xff),
             _ => {}
@@ -234,7 +234,7 @@ fn initial_registry_failures_require_echo_and_cache_suite_profile_key_and_entrop
             }
         );
         if case == 0 {
-            assert_eq!(decode(&saved).unwrap().payload(), [2, 2]);
+            assert_eq!(decode(&saved).unwrap().payload(), [2, 0x82, 2, 3]);
         }
         assert_eq!(registry.lookups.get(), 0);
         cloud

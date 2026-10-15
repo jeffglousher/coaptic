@@ -75,5 +75,25 @@
       "output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7"
     }
   ],
-  "facade_sha256": "8d36ba507427b4fc96e703db43a981b1b9560f1ade5eed614ab43310a7b23aa0"
+  "facade_sha256": "8d36ba507427b4fc96e703db43a981b1b9560f1ade5eed614ab43310a7b23aa0",
+  "source_files_stage": "Original vendored outputs before local_patches; upstream hashes remain unchanged",
+  "local_patches": [
+    {
+      "path": "profile.patch",
+      "stage": "after_format",
+      "sha256": "581be756a41f896e491f475f744168d1600ac2a8784cc1ce4fa9f1a8e92fcaf2",
+      "base_coaptic_revision": "e9860c18aea54d3c2658e7dc232fdae970e94ec0",
+      "description": "Bounded suites 2/3, dynamic handshake MAC/tag lengths, suite preference verification, deterministic CBOR and compact connection-ID checks",
+      "outputs": {
+        "edhoc.rs": "f9766c3278f59f5454e9adffd1bb8d24b1b74b4c39600945f1aeeb77fae4fdbb",
+        "shared/mod.rs": "abef75b6d6044949fc89b3712b304f837a9a55600030ed989667983b09c1e15e",
+        "shared/crypto.rs": "a768efd79e9f1f8e5dc7f159b32a9d003a9cf644949da2cff88e9c5bc6cf33f5",
+        "mod.rs": "c50f15dfe66d1db5abd2dbebe1c179760398f15caac30dba836f7a013bef6d99"
+      },
+      "hash_encoding": "UTF-8 with LF line endings",
+      "apply_flags": [
+        "--unidiff-zero"
+      ]
+    }
+  ]
 }

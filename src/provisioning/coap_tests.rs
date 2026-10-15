@@ -124,7 +124,13 @@ fn peer_error_response(request: &[u8], ty: Type, payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn outbound_suite_error_is_cached_terminal_and_consumed_by_the_initiator() {
-    for suites in [&[3][..], &[0x82, 2, 3], &[0x83, 2, 3, 4], &[0x82, 3, 4]] {
+    for suites in [
+        &[4][..],
+        &[0x82, 2, 3],
+        &[0x83, 2, 3, 4],
+        &[0x82, 3, 4],
+        &[0x82, 3, 2],
+    ] {
         let a = identity(1, 0);
         let b = identity(2, 1);
         let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
@@ -177,7 +183,7 @@ fn outbound_suite_error_is_cached_terminal_and_consumed_by_the_initiator() {
         assert_eq!(response.code(), Code::BAD_REQUEST);
         assert_eq!(response.message_id(), p.message_id());
         assert_eq!(response.token(), p.token());
-        assert_eq!(response.payload(), [2, 2]);
+        assert_eq!(response.payload(), [2, 0x82, 2, 3]);
         assert!(error_response_metadata(response));
         si.fail = false;
         si.short = true;
@@ -235,7 +241,7 @@ fn outbound_suite_error_classifier_does_not_relabel_other_profile_failures() {
     client.flush(&mut io, 0).unwrap();
     let original = io.last();
     let bytes = &decode(&original).unwrap().payload()[1..];
-    for suites in [&[2][..], &[0x82, 3, 2], &[0x82, 4, 2]] {
+    for suites in [&[2][..], &[3], &[0x82, 4, 2], &[0x82, 4, 3]] {
         let mut message = bytes[..1].to_vec();
         message.extend_from_slice(suites);
         message.extend_from_slice(&bytes[2..]);
@@ -245,7 +251,7 @@ fn outbound_suite_error_classifier_does_not_relabel_other_profile_failures() {
         );
     }
     let mut wrong = bytes.to_vec();
-    wrong[1] = 3;
+    wrong[1] = 4;
     for len in 1..wrong.len() {
         assert!(
             super::super::wrong_selected_suite_peer_id(
@@ -286,7 +292,7 @@ fn outbound_suite_error_udp_loopback_delivers_refusal_then_fresh_authentication(
     let m1 = saved.last();
     let p = decode(&m1).unwrap();
     let mut payload = p.payload().to_vec();
-    payload[2] = 3;
+    payload[2] = 4;
     let options: Vec<_> = p.options().collect();
     let wrong = recode(&m1, p.ty(), p.message_id(), p.token(), &options, &payload);
     assert_eq!(ci.send(server_endpoint, &wrong).unwrap(), wrong.len());
@@ -434,6 +440,60 @@ fn peer_error_responses_abort_each_stage_after_exact_ack_and_retain_diagnostics(
             }
         }
     }
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn suite3_udp_loopback_authenticates_before_protected_telemetry() {
+    use crate::storage::UdpSocketIo;
+    use std::{net::UdpSocket, time::Duration};
+    let socket = || {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        UdpSocketIo::new(socket, [0; DATAGRAM_CAPACITY + 1]).unwrap()
+    };
+    let mut ci = socket();
+    let mut si = socket();
+    let client_endpoint = ci.socket().local_addr().unwrap().into();
+    let server_endpoint = si.socket().local_addr().unwrap().into();
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start_with_suite(
+        &a,
+        b.peer(),
+        server_endpoint,
+        ConnectionId::INITIATOR,
+        super::super::CipherSuite::Suite3,
+        0,
+        entropy(3),
+    )
+    .unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), client_endpoint, 0);
+    client.flush(&mut ci, 0).unwrap();
+    server
+        .poll(&mut si, 1, entropy(4), no_authorization)
+        .unwrap();
+    assert!(server.take_session().is_none());
+    client.poll(&mut ci, 2, no_entropy, |_| true).unwrap();
+    assert!(client.take_session().is_none());
+    server.poll(&mut si, 3, no_entropy, |_| true).unwrap();
+    client.poll(&mut ci, 4, no_entropy, |_| true).unwrap();
+    let (mut client_context, _) = client.take_session().unwrap().into_parts();
+    let (mut server_context, _) = server.take_session().unwrap().into_parts();
+    let message = CoapMessage::new(Type::Confirmable, Code::POST, MessageId::new(90))
+        .with_payload(b"approved device telemetry");
+    let mut wire = [0; DATAGRAM_CAPACITY];
+    let len = client_context.protect_request(&message, &mut wire).unwrap();
+    ci.send(server_endpoint, &wire[..len]).unwrap();
+    let (len, endpoint) = si.recv(&mut wire).unwrap().unwrap();
+    assert_eq!(endpoint, client_endpoint);
+    let mut inner = [0; DATAGRAM_CAPACITY];
+    let (plain, _) = server_context
+        .unprotect_request(&decode(&wire[..len]).unwrap(), &mut inner)
+        .unwrap();
+    assert_eq!(plain.payload(), b"approved device telemetry");
 }
 
 #[test]

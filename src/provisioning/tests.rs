@@ -2,6 +2,9 @@ extern crate std;
 
 use super::*;
 
+#[path = "profile_tests.rs"]
+mod profiles;
+
 fn identity(value: u8, kid: u8) -> Identity {
     let mut private = [0; 32];
     private[31] = value;
@@ -233,6 +236,12 @@ fn initiator_refuses_authenticated_peer_collisions_and_unsupported_ids() {
     let server = identity(2, 1);
     let local_id = ConnectionId::new(7).unwrap();
     for peer_bytes in [&[7][..], &[0x41, 1]] {
+        let parsed = lakers::ConnId::from_decoder(&mut lakers::CBORDecoder::new(peer_bytes));
+        if peer_bytes.len() > 1 {
+            assert!(parsed.is_err());
+            continue;
+        }
+        let cid = parsed.unwrap();
         let (initiator, m1) =
             Initiator::start_with_id(&client, server.peer(), local_id, entropy(3)).unwrap();
         let responder = lakers::EdhocResponder::new(
@@ -243,14 +252,7 @@ fn initiator_refuses_authenticated_peer_collisions_and_unsupported_ids() {
         );
         let (responder, _, _) = responder.process_message_1(&m1.buffer().unwrap()).unwrap();
         let (_, message) = responder
-            .prepare_message_2(
-                CredentialTransfer::ByReference,
-                Some(
-                    lakers::ConnId::from_decoder(&mut lakers::CBORDecoder::new(peer_bytes))
-                        .unwrap(),
-                ),
-                &None,
-            )
+            .prepare_message_2(CredentialTransfer::ByReference, Some(cid), &None)
             .unwrap();
         assert!(matches!(
             initiator.receive_message_2(&Message::from_buffer(&message).unwrap(), |_| panic!(

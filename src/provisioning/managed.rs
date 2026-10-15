@@ -584,6 +584,15 @@ where
     /// Start a fresh initiator once outgoing application CON traffic is quiescent.
     /// Candidate failures retain an already authenticated App and its grant.
     pub fn connect(&mut self, now_ms: u64) -> Result<(), ManagedError<T::Error>> {
+        self.connect_with_suite(now_ms, super::CipherSuite::Suite2)
+    }
+
+    /// Connect using a fixed local EDHOC suite; errors cannot select a fallback.
+    pub fn connect_with_suite(
+        &mut self,
+        now_ms: u64,
+        suite: super::CipherSuite,
+    ) -> Result<(), ManagedError<T::Error>> {
         self.prepare(now_ms)?;
         if self.external_bootstrap {
             return Err(ManagedError::ExternalBootstrap);
@@ -599,7 +608,7 @@ where
         recovery
             .as_mut()
             .expect("prepared recovery")
-            .start(now_ms, |bytes| {
+            .start_with_suite(now_ms, suite, |bytes| {
                 if !randomness(bytes) {
                     return false;
                 }

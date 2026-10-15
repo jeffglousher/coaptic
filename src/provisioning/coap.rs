@@ -15,7 +15,7 @@
 //! Recognized peer errors terminate the candidate after required transport ACKs
 //! are drained. Diagnostics are borrowed, unauthenticated and never authorize
 //! recovery or select a suite. The responder sends error 2 for a parsed message 1
-//! selecting an unsupported suite, advertising its configured suite 2. Other
+//! selecting an unsupported or improperly selected suite, advertising suites 2 and 3. Other
 //! responder failures use error 1 with fixed diagnostic text, or error 3 for an
 //! unknown referenced credential. Matching peer error requests abort the
 //! candidate after a payload-free CoAP acknowledgement; errors never elicit
@@ -441,6 +441,28 @@ impl<'a> CoapProvisioner<'a> {
         endpoint: Endpoint,
         local_id: ConnectionId,
         now_ms: u64,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<Self, PollError> {
+        Self::start_with_suite(
+            identity,
+            peer,
+            endpoint,
+            local_id,
+            super::CipherSuite::Suite2,
+            now_ms,
+            entropy,
+        )
+    }
+
+    /// Start with a fixed local cipher-suite policy and caller-reserved local ID.
+    /// An unauthenticated suite error aborts; it never selects a weaker profile.
+    pub fn start_with_suite(
+        identity: &'a Identity,
+        peer: PinnedPeer,
+        endpoint: Endpoint,
+        local_id: ConnectionId,
+        suite: super::CipherSuite,
+        now_ms: u64,
         mut entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<Self, PollError> {
         let expires = now_ms
@@ -448,7 +470,7 @@ impl<'a> CoapProvisioner<'a> {
             .ok_or(PollError::Clock)?;
         let ids = Ids::fresh(&mut entropy).map_err(PollError::Provisioning)?;
         let (state, message) =
-            Initiator::start_with_id(identity, peer.clone(), local_id, &mut entropy)
+            Initiator::start_with_suite(identity, peer.clone(), local_id, suite, &mut entropy)
                 .map_err(PollError::Provisioning)?;
         let request = request(ids.first, &[0xf5], &message).map_err(PollError::Provisioning)?;
         let operation = ids.first;
