@@ -278,10 +278,6 @@ impl ConnId {
     }
 }
 
-#[cfg(test)]
-#[path = "conn_id_tests.rs"]
-mod conn_id_tests;
-
 #[derive(PartialEq, Debug)]
 pub enum EDHOCMethod {
     StatStat = 3,
@@ -916,6 +912,10 @@ mod edhoc_parser {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "conn_id_tests.rs"]
+mod conn_id_tests;
 
 mod cbor_decoder {
     /// Decoder inspired by the [minicbor](https://crates.io/crates/minicbor) crate.

@@ -44,8 +44,8 @@
       "source_git_blob": "73773846df75a72ea57d95f1a6f5a53fc7d10b8c",
       "production_prefix_sha256": "b44659ae55ad8b03464454f130b77c78eb958c0d352df57b4bb12184d7f608be",
       "output": "shared/mod.rs",
-      "pre_format_output_sha256": "a4b5d228a257421fcdb7a31c0520da14529ef8aa48a00bc8e0b19c9226243ac9",
-      "output_sha256": "6def4fb227ad91544e273e6107200a74390de24a8e177a99d75b463ce8b3fdba"
+      "pre_format_output_sha256": "9feb5c1d919634cf2ee5bf8a5e1fcd60672e79ac29b7242d18ef777b0b65626e",
+      "output_sha256": "6be19e374bacba02678e6a7ddecf95645df40bc7a4f6dfe0065a384c9f09ede7"
     },
     {
       "source": "shared/src/cred.rs",
@@ -73,6 +73,13 @@
       "output": "shared/crypto.rs",
       "pre_format_output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7",
       "output_sha256": "84a7b99b9d8229ade5522391f4bb9fdea7ba6b8e8d07c923c318cd47a24520c7"
+    }
+  ],
+  "local_files": [
+    {
+      "source": "src/provisioning/lakers/shared/conn_id_tests.rs",
+      "output": "shared/conn_id_tests.rs",
+      "output_sha256": "ca895e6b44626237d638fd7170b7c4da095623d1cd2891b5882e81f01ced27ca"
     }
   ],
   "facade_sha256": "4ee5eab4782a7ae27ef9228da767cc691bd679e675bed961ac7f47720fed1595"

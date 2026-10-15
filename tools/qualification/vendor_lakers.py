@@ -19,6 +19,9 @@ FILES = {
     "shared/buffer.rs": "shared/src/buffer.rs",
     "shared/crypto.rs": "shared/src/crypto.rs",
 }
+LOCAL_FILES = {
+    "shared/conn_id_tests.rs": "src/provisioning/lakers/shared/conn_id_tests.rs",
+}
 FACADE = '''//! Private production subset of [Lakers v0.8.0](https://github.com/lake-rs/lakers).
 //!
 //! Source is pinned to [462b30f](https://github.com/jeffglousher/lakers/commit/462b30f5b3e9cfab96c05fe65f36d19eaa7002ad).
@@ -121,6 +124,21 @@ def transform(blob, relative):
     text = text_examples(text)
     if "cfg!(feature" in text or "#[cfg" in text:
         raise ValueError(f"Unexpected upstream conditional feature remains in {relative}")
+    if relative == "shared/src/lib.rs":
+        text = replace_once(
+            text,
+            "        s[..len].copy_from_slice(decoder.read_slice(len)?);",
+            "        if len > s.len() {\n"
+            "            return Err(CBORError::DecodingError);\n"
+            "        }\n"
+            "        s[..len].copy_from_slice(decoder.read_slice(len)?);",
+        )
+        text = replace_once(
+            text,
+            "mod cbor_decoder {",
+            '#[cfg(test)]\n#[path = "conn_id_tests.rs"]\nmod conn_id_tests;\n\n'
+            "mod cbor_decoder {",
+        )
     return text.encode("utf-8"), sha256(prefix.encode("utf-8"))
 
 
@@ -155,6 +173,12 @@ def build(repository, destination):
     facade.write_text(FACADE, encoding="utf-8", newline="\n")
     output_paths.append(facade)
     formatter = ["rustup", "run", "1.99.0", "rustfmt", "--edition", "2024", "--config", "skip_children=true"]
+    for output, relative in LOCAL_FILES.items():
+        path = destination / output
+        path.parent.mkdir(parents=True, exist_ok=True)
+        local_source = Path(__file__).resolve().parents[2] / relative
+        path.write_bytes(local_source.read_bytes().replace(b"\r\n", b"\n"))
+        output_paths.append(path)
     subprocess.run(formatter + [str(path) for path in output_paths], check=True)
     for entry in source_entries:
         entry["output_sha256"] = sha256((destination / entry["output"]).read_bytes())
@@ -179,8 +203,13 @@ def build(repository, destination):
             "Render upstream external-crate documentation examples as text for private vendoring",
             "Format source with the specified rustfmt; preserve production algorithms and original comments",
             "Add private facade with scope-limited unused/deprecated/cfg/documentation/Clippy lint caps",
+            "Locally reject connection-ID encoded lengths exceeding the fixed destination before slicing; add defensive regression tests",
         ],
         "source_files": source_entries,
+        "local_files": [
+            {"source": relative, "output": output, "output_sha256": sha256((destination / output).read_bytes())}
+            for output, relative in LOCAL_FILES.items()
+        ],
         "facade_sha256": sha256(facade.read_bytes()),
     }
     (destination / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -202,13 +231,13 @@ def main():
         if generated == actual or generated in actual.parents or actual in generated.parents:
             raise ValueError("Check evidence and checked output must be disjoint")
         build(args.source_repo.resolve(), generated)
-        mismatches = [relative for relative in [*FILES, "mod.rs", "LICENSE-BSD", "provenance.json"] if not (actual / relative).is_file() or (actual / relative).read_bytes() != (generated / relative).read_bytes()]
+        mismatches = [relative for relative in [*FILES, *LOCAL_FILES, "mod.rs", "LICENSE-BSD", "provenance.json"] if not (actual / relative).is_file() or (actual / relative).read_bytes() != (generated / relative).read_bytes()]
         if mismatches:
             raise ValueError(f"Vendored reproduction mismatch: {mismatches}")
-        print(json.dumps({"commit": PIN, "verified_files": len(FILES) + 3, "result": "byte-identical"}))
+        print(json.dumps({"commit": PIN, "verified_files": len(FILES) + len(LOCAL_FILES) + 3, "result": "byte-identical"}))
     else:
         build(args.source_repo.resolve(), args.output.resolve())
-        print(json.dumps({"commit": PIN, "generated_files": len(FILES) + 3, "output": str(args.output.resolve())}))
+        print(json.dumps({"commit": PIN, "generated_files": len(FILES) + len(LOCAL_FILES) + 3, "output": str(args.output.resolve())}))
 
 
 if __name__ == "__main__":
