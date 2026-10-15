@@ -2806,6 +2806,172 @@ fn bert_apply_from_rx_and_encode_with_request_tag() {
 }
 
 #[test]
+fn refused_bert_encode_preserves_progress_and_retries_first_range() {
+    for block1 in [true, false] {
+        let mut engine = build_default_bodies();
+        let key = block_key();
+        let payload = [0xa5; 3072];
+        let body = if block1 {
+            engine.start_block1(key, &payload, BlockValue::SZX_BERT)
+        } else {
+            engine.start_block2(key, &payload, BlockValue::SZX_BERT)
+        }
+        .unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.write_tx(tx, b"unchanged", key.endpoint()).unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>,
+             limit| {
+                if block1 {
+                    engine.encode_bert1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                } else {
+                    engine.encode_bert2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                }
+            };
+        assert_eq!(encode(&mut engine, 2048), Err(BlockTransferError::Overflow));
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        assert_eq!(
+            engine.storage().tx_payload(tx),
+            Some(b"unchanged".as_slice())
+        );
+        let issued = encode(&mut engine, 1024).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert!(issued.block().more());
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..1024]);
+    }
+}
+
+#[test]
+fn refused_combined_block_encode_does_not_consume_a_range() {
+    // Classic Block1/Block2, first Observe Block2, Q-Block1 and Q-Block2 all
+    // use the same transaction; a missing TX slot must leave NUM/mask intact.
+    for mode in 0..5 {
+        let mut engine = build_default_bodies();
+        let key = block_key().with_identity(BodyTag::new(b"body").unwrap());
+        let payload = [0xa5; 32];
+        let body = match mode {
+            0 => engine.start_block1(key, &payload, 0),
+            1 | 2 => engine.start_block2(key, &payload, 0),
+            3 => engine.start_q_block1(key, &payload, 0),
+            _ => engine.start_q_block2(key, &payload, 0),
+        }
+        .unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.release_tx(tx).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>, tx| {
+                match mode {
+                    0 => engine.encode_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    1 => engine.encode_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                    2 => engine.encode_block2_observe_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        42,
+                    ),
+                    3 => engine.encode_q_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    _ => engine.encode_q_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                }
+            };
+        assert_eq!(
+            encode(&mut engine, tx),
+            Err(BlockTransferError::Slot(SlotError::NotOccupied))
+        );
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        let tx = engine.acquire_tx().unwrap();
+        let issued = encode(&mut engine, tx).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..16]);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn short_tx_encode_preserves_body_progress_after_partial_wire_write() {
+    let capacities = Capacities {
+        rx_datagram_slots: 1,
+        rx_datagram_bytes: 64,
+        tx_datagram_slots: 1,
+        tx_datagram_bytes: 16,
+        dedup_entries: 1,
+        observe_entries: 1,
+        rx_body_slots: Some(1),
+        rx_body_bytes: Some(1024),
+        tx_body_slots: Some(1),
+        tx_body_bytes: Some(1024),
+    };
+    let mut engine = EngineBuilder::new()
+        .rx_datagram(1, 64)
+        .tx_datagram(1, 16)
+        .dedup(1)
+        .observe(1)
+        .rx_body(1, 1024)
+        .tx_body(1, 1024)
+        .block_wise(true)
+        .build_alloc(capacities)
+        .unwrap();
+    let payload = [0xa5; 32];
+    let body = engine.start_block1(block_key(), &payload, 0).unwrap();
+    let before = engine.tx_body_transfer(body).unwrap();
+    let tx = engine.acquire_tx().unwrap();
+    assert_eq!(
+        engine.encode_block1_tx(body, tx, Type::Confirmable, Code::PUT, MessageId::new(1)),
+        Err(BlockTransferError::Encode(
+            crate::error::EncodeError::BufferTooSmall
+        ))
+    );
+    assert_eq!(engine.tx_body_transfer(body), Some(before));
+    assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+    assert_eq!(engine.next_block1(body).unwrap().block().num(), 0);
+}
+
+#[test]
 fn block2_outgoing_slices_and_encodes() {
     let mut engine = build_default_bodies();
     let key = block_key();
@@ -4128,6 +4294,210 @@ mod alloc_backend {
 }
 
 #[test]
+fn classic_block1_changed_tokens_preserve_exact_operation_identity() {
+    classic_block1_token_suite(build_default_bodies());
+    #[cfg(feature = "alloc")]
+    {
+        let capacities =
+            Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>();
+        let engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(true)
+            .build_alloc(capacities)
+            .unwrap();
+        classic_block1_token_suite(engine);
+    }
+}
+
+fn classic_block1_token_suite<S: Storage + DatagramSlots + BodySlots>(mut engine: Engine<S>) {
+    #[derive(Clone, Copy)]
+    struct Packet<'a> {
+        peer: Endpoint,
+        token: u8,
+        method: Code,
+        path: &'a str,
+        query: &'a str,
+        tag: Option<&'a [u8]>,
+        num: u32,
+        payload: &'a [u8],
+    }
+    fn apply<S: Storage + DatagramSlots + BodySlots>(
+        engine: &mut Engine<S>,
+        packet: Packet<'_>,
+    ) -> Result<super::BlockProgress, BlockTransferError> {
+        let block = BlockValue::from_size(packet.num, packet.num == 0, 1024)
+            .unwrap()
+            .encode();
+        let size = encode_uint(2000);
+        let mut options = crate::message::OptionsBuilder::<5>::new();
+        options.push(Opt::uri_path(packet.path)).unwrap();
+        options.push(Opt::uri_query(packet.query)).unwrap();
+        options.push(Opt::block1(&block)).unwrap();
+        if packet.num == 0 {
+            options.push(Opt::size1(&size)).unwrap();
+        }
+        if let Some(tag) = packet.tag {
+            options.push(Opt::request_tag(tag)).unwrap();
+        }
+        let message = Message::new(
+            Type::Confirmable,
+            packet.method,
+            MessageId::new(u16::from(packet.token)),
+        )
+        .with_token(sample_token(&[packet.token]))
+        .with_options(options.as_slice())
+        .with_payload(packet.payload);
+        let mut bytes = [0; 1472];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        engine.write_rx(rx, &bytes[..n], packet.peer).unwrap();
+        let result = engine.apply_block1_rx(rx);
+        engine.release_rx(rx).unwrap();
+        result
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let body: [u8; 2000] = core::array::from_fn(|i| (i % 251) as u8);
+    let initial = Packet {
+        peer,
+        token: 1,
+        method: Code::PUT,
+        path: "upload",
+        query: "a=1",
+        tag: None,
+        num: 0,
+        payload: &body[..1024],
+    };
+    for change in 0..6 {
+        let first = apply(&mut engine, initial).unwrap();
+        assert!(!first.complete());
+        let rejected = apply(
+            &mut engine,
+            Packet {
+                peer: if change == 5 {
+                    Endpoint::v4([192, 0, 2, 2], 5683)
+                } else {
+                    peer
+                },
+                token: 2,
+                method: if change == 2 { Code::POST } else { Code::PUT },
+                path: if change == 0 { "other" } else { "upload" },
+                query: if change == 1 { "a=2" } else { "a=1" },
+                tag: match change {
+                    3 => Some(&[]),
+                    4 => Some(b"tag"),
+                    _ => None,
+                },
+                num: 1,
+                payload: &body[1024..],
+            },
+        );
+        assert!(rejected.is_err(), "change={change}");
+        assert_eq!(engine.rx_body_payload(first.id()), Some(&body[..1024]));
+        let final_block = apply(
+            &mut engine,
+            Packet {
+                token: 3,
+                num: 1,
+                payload: &body[1024..],
+                ..initial
+            },
+        )
+        .unwrap();
+        assert!(final_block.complete());
+        assert_eq!(final_block.id(), first.id());
+        assert_eq!(engine.rx_body_payload(final_block.id()), Some(&body[..]));
+        engine.release_rx_body(final_block.id()).unwrap();
+    }
+    let first = apply(
+        &mut engine,
+        Packet {
+            token: 4,
+            payload: &[0x11; 1024],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(
+        apply(
+            &mut engine,
+            Packet {
+                token: 5,
+                payload: b"short",
+                ..initial
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(engine.rx_body_payload(first.id()), Some(&[0x11; 1024][..]));
+    let restarted = apply(
+        &mut engine,
+        Packet {
+            token: 5,
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(!restarted.complete());
+    assert_eq!(engine.rx_body_payload(restarted.id()), Some(&body[..1024]));
+    let final_block = apply(
+        &mut engine,
+        Packet {
+            token: 6,
+            num: 1,
+            payload: &body[1024..],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(final_block.complete());
+    assert_eq!(engine.rx_body_payload(final_block.id()), Some(&body[..]));
+    if first.id() != final_block.id() {
+        assert!(engine.rx_body_payload(first.id()).is_none());
+    }
+    engine.release_rx_body(final_block.id()).unwrap();
+    let first = apply(&mut engine, initial).unwrap();
+    let other = apply(
+        &mut engine,
+        Packet {
+            token: 1,
+            path: "other",
+            payload: &[0x11; 1024],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert_ne!(first.id(), other.id());
+    let complete = apply(
+        &mut engine,
+        Packet {
+            token: 1,
+            num: 1,
+            payload: &body[1024..],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(complete.complete());
+    assert_eq!(engine.rx_body_payload(complete.id()), Some(&body[..]));
+    assert_eq!(engine.rx_body_payload(other.id()), Some(&[0x11; 1024][..]));
+    let complete_other = apply(
+        &mut engine,
+        Packet {
+            token: 9,
+            path: "other",
+            num: 1,
+            payload: &[0x22; 976],
+            ..initial
+        },
+    )
+    .unwrap();
+    assert!(complete_other.complete());
+    let other_body = engine.rx_body_payload(complete_other.id()).unwrap();
+    assert_eq!(&other_body[..1024], &[0x11; 1024]);
+    assert_eq!(&other_body[1024..], &[0x22; 976]);
+}
+
+#[test]
 fn wire_block_requests_bind_exact_operation_and_preserve_body_on_mismatch() {
     use crate::message::{OptionNumber, OptionsBuilder};
     for q in [false, true] {
@@ -4745,4 +5115,365 @@ fn incoming_request_and_response_bodies_with_the_same_key_are_isolated() {
             )
             .unwrap()
     });
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn seeded_body_backends_match_results_state_and_reclamation() {
+    let mut fixed = build_default_bodies();
+    let mut allocated = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(true)
+        .build_alloc(
+            Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>(),
+        )
+        .unwrap();
+    let body: [u8; 4097] = core::array::from_fn(|n| (n % 251) as u8);
+    let mut seed = 0x7be2_915du32;
+    let mut accepted = 0;
+    let mut refused = 0;
+    let mut counts = [0; 20];
+    let mut successes = [0; 20];
+    for step in 0..6000 {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        let role = step % 20;
+        counts[role] += 1;
+        let token = Token::new(&[(seed % 4) as u8]).unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1 + ((seed >> 3) % 2) as u8], 5683);
+        let tag = [(seed >> 5) as u8 % 2];
+        let key = BlockKey::new(token, peer).with_identity(BodyTag::new(&tag).unwrap());
+        let mut id = SlotId::from_index((seed as usize >> 7) % 6);
+        if (4..=11).contains(&role) && seed & 1 == 0 {
+            let wanted = match role {
+                4 => BlockRole::OutgoingBlock1,
+                5 => BlockRole::OutgoingBlock2,
+                6 | 8 | 10 => BlockRole::OutgoingQBlock1,
+                _ => BlockRole::OutgoingQBlock2,
+            };
+            if let Some(active) = (0..6).map(SlotId::from_index).find(|slot| {
+                fixed
+                    .tx_body_transfer(*slot)
+                    .is_some_and(|transfer| transfer.role() == wanted)
+            }) {
+                id = active;
+            }
+        }
+        let size = [0, 1, 15, 16, 17, 160, 161, 4096, 4097][(seed as usize >> 10) % 9];
+        let num = if matches!(role, 8 | 9) && seed & 1 == 0 {
+            fixed
+                .tx_body_transfer(id)
+                .map_or(0, |transfer| transfer.window_base())
+        } else {
+            (seed >> 14) % 12
+        };
+        let block = BlockValue::from_size(num, seed & 0x40000 != 0, 16).unwrap();
+        let fragment = &body[..(seed as usize >> 20) % 18];
+        let hint = [None, Some(0), Some(32), Some(160), Some(u32::MAX)][(seed as usize >> 25) % 5];
+        macro_rules! same {
+            ($method:ident($($arg:expr),* $(,)?)) => {{
+                let a = fixed.$method($($arg),*);
+                let b = allocated.$method($($arg),*);
+                assert_eq!(a, b, "step={step}, seed={seed:#x}, method={}", stringify!($method));
+                if a.is_ok() { accepted += 1;
+                    successes[role] += 1; } else { refused += 1; }
+                a
+            }};
+        }
+        match role {
+            0..=3 => {
+                let result = match role {
+                    0 => same!(start_block1(key, &body[..size], 0)),
+                    1 => same!(start_block2(key, &body[..size], 0)),
+                    2 => same!(start_q_block1(key, &body[..size], 0)),
+                    _ => same!(start_q_block2(key, &body[..size], 0)),
+                };
+                if let Ok(slot) = result {
+                    assert_eq!(fixed.tx_body_payload(slot), Some(&body[..size]));
+                }
+            }
+            4..=9 => {
+                let result = match role {
+                    4 => same!(next_block1(id)),
+                    5 => same!(next_block2(id)),
+                    6 => same!(next_q_block1(id)),
+                    7 => same!(next_q_block2(id)),
+                    8 => same!(reissue_q_block1(id, num)),
+                    _ => same!(reissue_q_block2(id, num)),
+                };
+                if let Ok(range) = result {
+                    let payload = fixed.tx_body_payload(range.id()).unwrap();
+                    assert!(range.offset() + range.len() <= payload.len());
+                    assert_eq!(range.offset(), range.block().num() as usize * 16);
+                    assert_eq!(
+                        &payload[range.offset()..range.offset() + range.len()],
+                        &body[range.offset()..range.offset() + range.len()]
+                    );
+                }
+            }
+            10 => {
+                let _ = same!(ack_q_block1(id, num));
+            }
+            11 => {
+                let _ = same!(ack_q_block2(id, num));
+            }
+            12 => {
+                let _ = same!(apply_block1(key, block, fragment, hint));
+            }
+            13 => {
+                let _ = same!(apply_block2(key, block, fragment, hint));
+            }
+            14 => {
+                let _ = same!(apply_q_block1(key, block, fragment, hint));
+            }
+            15 => {
+                let _ = same!(apply_q_block2(key, block, fragment, hint));
+            }
+            16 | 17 => {
+                let _ = same!(release_rx_body(id));
+            }
+            _ => {
+                let _ = same!(release_tx_body(id));
+            }
+        }
+        // Compare every occupied byte and sidecar, including untouched slots.
+        for index in 0..6 {
+            let slot = SlotId::from_index(index);
+            assert_eq!(
+                fixed.rx_body_transfer(slot),
+                allocated.rx_body_transfer(slot),
+                "RX step {step}"
+            );
+            assert_eq!(
+                fixed.tx_body_transfer(slot),
+                allocated.tx_body_transfer(slot),
+                "TX step {step}"
+            );
+            assert_eq!(
+                fixed.rx_body_payload(slot),
+                allocated.rx_body_payload(slot),
+                "RX bytes step {step}"
+            );
+            assert_eq!(
+                fixed.tx_body_payload(slot),
+                allocated.tx_body_payload(slot),
+                "TX bytes step {step}"
+            );
+        }
+        if step % 64 == 63 || step == 5999 {
+            for index in 0..6 {
+                let slot = SlotId::from_index(index);
+                let _ = same!(release_rx_body(slot));
+                let _ = same!(release_tx_body(slot));
+                assert!(fixed.rx_body_transfer(slot).is_none());
+                assert!(allocated.rx_body_transfer(slot).is_none());
+                assert!(fixed.tx_body_transfer(slot).is_none());
+                assert!(allocated.tx_body_transfer(slot).is_none());
+            }
+        }
+    }
+    assert_eq!(counts, [300; 20]);
+    assert!(accepted > 100 && refused > 100);
+    assert!(
+        successes[..10].iter().all(|n| *n > 0),
+        "successful operations: {successes:?}"
+    );
+    assert!(
+        successes[12..16].iter().all(|n| *n > 0),
+        "successful admissions: {successes:?}"
+    );
+}
+
+#[test]
+fn supersession_history_refuses_overflow_without_mutating_the_original() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut row = ObserveInterest::new(crate::message::Token::from_checked(&[1]), peer);
+    row.record_notify(0, crate::message::MessageId::new(1), true);
+    for n in 0..crate::message::Transmission::MAX_RETRANSMIT {
+        row.mark_due();
+        row = row
+            .supersede_con(
+                u64::from(n),
+                crate::message::MessageId::new(u16::from(n) + 2),
+            )
+            .unwrap();
+    }
+    row.mark_due();
+    let before = row;
+    assert!(
+        row.supersede_con(10, crate::message::MessageId::new(20))
+            .is_none()
+    );
+    assert_eq!(row, before);
+    assert_eq!(row.superseded_con_mids().len(), 4);
+    row.clear_notify_hold();
+    assert!(row.superseded_con_mids().is_empty());
+}
+
+#[test]
+fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
+    use super::{ObserveSlots, PendingCons, PendingReplaceError};
+    use crate::message::{MessageId, Token};
+    struct Custom {
+        untouched: u8,
+    }
+    impl ObserveSlots for Custom {
+        fn insert_observe(&mut self, _: ObserveInterest) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_observe(&self, _: ObserveKey) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn remove_observe(&mut self, _: ObserveKey) -> bool {
+            panic!("unexpected mutation")
+        }
+        fn take_observe(&mut self, _: ObserveKey) -> Option<ObserveInterest> {
+            panic!("unexpected mutation")
+        }
+        fn observe_interest(&self, _: SlotId) -> Option<ObserveInterest> {
+            panic!("unexpected access")
+        }
+        fn set_observe_interest(&mut self, _: SlotId, _: ObserveInterest) -> Result<(), SlotError> {
+            panic!("unexpected mutation")
+        }
+    }
+    impl PendingCons for Custom {
+        fn record_pending_con(
+            &mut self,
+            _: SlotId,
+            _: Endpoint,
+            _: MessageId,
+            _: u64,
+            _: u32,
+        ) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_pending_con(&self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn take_pending_con(&mut self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn pending_con(&self, _: SlotId) -> Option<PendingCon> {
+            panic!("unexpected access")
+        }
+        fn poll_retransmit(&mut self, _: u64) -> Option<Retransmit> {
+            panic!("unexpected mutation")
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut pool = DatagramPool::<1, 16>::new();
+    let slot = pool.acquire().unwrap();
+    let pending = PendingCon::new(MessageId::new(1), peer, slot);
+    let row = ObserveInterest::new(Token::from_checked(&[1]), peer);
+    let mut storage = Custom { untouched: 17 };
+    assert_eq!(
+        storage.replace_observe_con(pending, row, row, &[0x40, 69, 0, 2]),
+        Err(PendingReplaceError::Unsupported)
+    );
+    assert_eq!(storage.untouched, 17);
+}
+
+#[test]
+fn classic_if_none_match_restart_replaces_only_the_untagged_new_owner() {
+    use crate::message::OptionsBuilder;
+    for initial_condition in [false, true] {
+        let mut engine = build_default_bodies();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut original = None;
+        for phase in 0..4 {
+            let condition = if phase == 0 {
+                initial_condition
+            } else {
+                !initial_condition
+            };
+            let token = sample_token(if phase < 2 { &[1] } else { &[2] });
+            let num = u32::from(phase == 3);
+            let block = BlockValue::from_size(num, phase != 3, 16).unwrap().encode();
+            let mut opts = OptionsBuilder::<3>::new();
+            if condition && num == 0 {
+                opts.push(Opt::if_none_match()).unwrap();
+            }
+            opts.push(Opt::uri_path("upload")).unwrap();
+            opts.push(Opt::block1(&block)).unwrap();
+            let payload = [phase as u8 + 1; 16];
+            let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(phase + 1))
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(&payload);
+            let mut bytes = [0; 128];
+            let len = encode(&message, &mut bytes).unwrap();
+            let rx = engine.acquire_rx().unwrap();
+            engine.write_rx(rx, &bytes[..len], peer).unwrap();
+            let result = engine.apply_block1_rx(rx);
+            engine.release_rx(rx).unwrap();
+            if phase == 1 {
+                assert_eq!(result, Err(BlockTransferError::IdentityMismatch));
+                let id = original.unwrap();
+                assert_eq!(engine.rx_body_payload(id), Some(&[1; 16][..]));
+                assert_eq!(
+                    engine.rx_body_transfer(id).unwrap().if_none_match(),
+                    initial_condition
+                );
+                continue;
+            }
+            let progress = result.unwrap();
+            original = Some(progress.id());
+            assert_eq!(
+                engine
+                    .rx_body_transfer(progress.id())
+                    .unwrap()
+                    .if_none_match(),
+                condition
+            );
+            if phase == 2 {
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&[3; 16][..]));
+            }
+            if phase == 3 {
+                assert!(progress.complete());
+                let mut expected = [3; 32];
+                expected[16..].fill(4);
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&expected[..]));
+            }
+        }
+    }
+}
+
+#[test]
+fn classic_if_none_match_invalid_encoding_refuses_before_body_admission() {
+    use crate::message::{OptionNumber, OptionsBuilder};
+    for duplicate in [false, true] {
+        let mut engine = build_default_bodies();
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<4>::new();
+        options
+            .push(Opt::new(
+                OptionNumber::IF_NONE_MATCH,
+                if duplicate { &[] } else { &[1] },
+            ))
+            .unwrap();
+        if duplicate {
+            options.push(Opt::if_none_match()).unwrap();
+        }
+        options.push(Opt::uri_path("upload")).unwrap();
+        options.push(Opt::block1(&block)).unwrap();
+        let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+            .with_options(options.as_slice())
+            .with_payload(&[1; 16]);
+        let mut bytes = [0; 128];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        engine.write_rx(rx, &bytes[..n], peer).unwrap();
+        assert_eq!(
+            engine.apply_block1_rx(rx),
+            Err(BlockTransferError::IdentityMismatch)
+        );
+        assert!(
+            engine
+                .lookup_rx_body(BlockKey::new(Token::EMPTY, peer))
+                .is_none()
+        );
+    }
 }

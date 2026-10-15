@@ -1,7 +1,5 @@
 //! [`AllocMemory`]: runtime-sized Storage, allocated once, then no growth.
 
-use alloc::boxed::Box;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use super::Access;
@@ -42,11 +40,15 @@ use crate::message::{BlockValue, MessageId};
 
 /// `alloc` backend: runtime [`Capacities`], typed heap arrays, no later growth.
 ///
-/// Each area is a `Box<[T]>` (and each byte slot a `Box<[u8]>` of the configured
-/// length) created at init. This is not a carved byte slab.
+/// Each area is a private, fallibly reserved `Vec<T>` created at init. Lengths
+/// never change after construction. This is not a carved byte slab. Use
+/// [`Self::try_new`] to enforce an aggregate heap request budget.
 /// Q-Block assembly retains its total length across payloads. A changed size
 /// is refused before modifying bytes or progress, matching fixed body pools.
+/// Due-CON selection uses one inline `usize` cursor, with no additional heap
+/// array or change to [`Self::required_heap_bytes`].
 pub struct AllocMemory {
+    retransmit_cursor: usize,
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
     dedup: AllocDedupTable,
@@ -57,28 +59,73 @@ pub struct AllocMemory {
 }
 
 impl AllocMemory {
+    /// Checked sum of heap array layout sizes on this target, without allocating.
+    ///
+    /// Includes both payloads and metadata. See [`Self::try_new`] for exclusions.
+    pub fn required_heap_bytes(c: Capacities) -> Result<usize, BuildError> {
+        c.validate_for_build(c.has_body_pools())?;
+        let mut bytes = HeapSize(0);
+        bytes.pool::<AllocSlot>(c.rx_datagram_slots, c.rx_datagram_bytes)?;
+        bytes.pool::<AllocSlot>(c.tx_datagram_slots, c.tx_datagram_bytes)?;
+        bytes.table::<Option<DedupEntry>>(c.dedup_entries)?;
+        bytes.table::<Option<ObserveInterest>>(c.observe_entries)?;
+        bytes.table::<Option<ExchangeEntry>>(c.tx_datagram_slots)?;
+        if let Some((rx_slots, rx_bytes, tx_slots, tx_bytes)) = c.body_dims() {
+            bytes.pool::<AllocBodySlot>(rx_slots, rx_bytes)?;
+            bytes.pool::<AllocBodySlot>(tx_slots, tx_bytes)?;
+        }
+        Ok(bytes.0)
+    }
     pub(crate) fn from_capacities(
         capacities: Capacities,
         block_wise: bool,
     ) -> Result<Self, BuildError> {
         capacities.validate_for_build(block_wise)?;
+        Self::try_new(capacities, usize::MAX)
+    }
+
+    /// Allocate fixed-length pools after checking every array and the heap budget.
+    ///
+    /// `heap_limit` bounds the sum of requested array layouts, including payloads,
+    /// slot metadata, protocol tables and occupancy flags. It excludes inline App
+    /// state, stack/scratch, allocator bookkeeping/rounding, transport and application
+    /// memory. Allocator refusal returns an error and drops all partial storage.
+    /// No pool grows after construction. Body pools are selected by `capacities`.
+    ///
+    /// ```
+    /// use coaptic::{profiles, storage::{AllocMemory, Capacities}};
+    /// let capacities = Capacities::from_profile::<profiles::Constrained>();
+    /// let storage = AllocMemory::try_new(capacities, 64 * 1024)?;
+    /// // Pass storage to AppBuilder::bind_storage with the platform transport.
+    /// # Ok::<(), coaptic::BuildError>(())
+    /// ```
+    pub fn try_new(capacities: Capacities, heap_limit: usize) -> Result<Self, BuildError> {
+        let required = Self::required_heap_bytes(capacities)?;
+        if required > heap_limit {
+            return Err(BuildError::HeapBudgetExceeded {
+                required,
+                limit: heap_limit,
+            });
+        }
+        let block_wise = capacities.has_body_pools();
         let (rx_body, tx_body) = if block_wise {
             let Some((rx_slots, rx_bytes, tx_slots, tx_bytes)) = capacities.body_dims() else {
                 return Err(BuildError::MissingBodyPools);
             };
             (
-                Some(AllocBodyPool::new(rx_slots, rx_bytes)),
-                Some(AllocBodyPool::new(tx_slots, tx_bytes)),
+                Some(AllocBodyPool::new(rx_slots, rx_bytes)?),
+                Some(AllocBodyPool::new(tx_slots, tx_bytes)?),
             )
         } else {
             (None, None)
         };
         Ok(Self {
-            rx: AllocDatagramPool::new(capacities.rx_datagram_slots, capacities.rx_datagram_bytes),
-            tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes),
-            dedup: AllocDedupTable::new(capacities.dedup_entries),
-            observe: AllocObserveTable::new(capacities.observe_entries),
-            exchange: AllocExchangeTable::new(capacities.tx_datagram_slots),
+            retransmit_cursor: 0,
+            rx: AllocDatagramPool::new(capacities.rx_datagram_slots, capacities.rx_datagram_bytes)?,
+            tx: AllocDatagramPool::new(capacities.tx_datagram_slots, capacities.tx_datagram_bytes)?,
+            dedup: AllocDedupTable::new(capacities.dedup_entries)?,
+            observe: AllocObserveTable::new(capacities.observe_entries)?,
+            exchange: AllocExchangeTable::new(capacities.tx_datagram_slots)?,
             rx_body,
             tx_body,
         })
@@ -100,6 +147,49 @@ impl AllocMemory {
             tx_body_bytes: self.tx_body.as_ref().map(|p| p.slot_bytes),
         }
     }
+}
+
+// Use Layout rather than unchecked multiplication: each allocation must fit
+// isize::MAX after alignment, even when its product fits usize.
+struct HeapSize(usize);
+
+impl HeapSize {
+    fn array<T>(&mut self, count: usize, copies: usize) -> Result<(), BuildError> {
+        let size = core::alloc::Layout::array::<T>(count)
+            .map_err(|_| BuildError::CapacityOverflow)?
+            .size();
+        self.0 = size
+            .checked_mul(copies)
+            .and_then(|bytes| self.0.checked_add(bytes))
+            .ok_or(BuildError::CapacityOverflow)?;
+        Ok(())
+    }
+
+    fn table<T>(&mut self, count: usize) -> Result<(), BuildError> {
+        self.array::<T>(count, 1)?;
+        self.array::<bool>(count, 2)
+    }
+
+    fn pool<T>(&mut self, count: usize, bytes: usize) -> Result<(), BuildError> {
+        self.table::<T>(count)?;
+        self.array::<u8>(bytes, count)
+    }
+}
+
+// Retain Vec storage: converting to Box<[T]> can perform an infallible shrink
+// allocation. Reserve once, then initialize without exceeding the reservation.
+pub(super) fn try_array<T>(
+    count: usize,
+    mut init: impl FnMut() -> Result<T, BuildError>,
+) -> Result<Vec<T>, BuildError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(count)
+        .map_err(|_| BuildError::AllocationFailed)?;
+    for _ in 0..count {
+        values.push(init()?);
+    }
+    Ok(values)
 }
 
 impl core::fmt::Debug for AllocMemory {
@@ -141,34 +231,33 @@ impl Storage for AllocMemory {
 }
 
 struct AllocSlot {
-    buf: Box<[u8]>,
+    buf: Vec<u8>,
     len: usize,
     endpoint: Option<Endpoint>,
     pending: Option<PendingMark>,
 }
 
 struct AllocDatagramPool {
-    slots: Box<[AllocSlot]>,
+    slots: Vec<AllocSlot>,
     slot_bytes: usize,
     occ: HeapOccupancy,
 }
 
 impl AllocDatagramPool {
-    fn new(slots: usize, bytes: usize) -> Self {
-        let mut v = Vec::with_capacity(slots);
-        for _ in 0..slots {
-            v.push(AllocSlot {
-                buf: vec![0u8; bytes].into_boxed_slice(),
+    fn new(slots: usize, bytes: usize) -> Result<Self, BuildError> {
+        let slots_storage = try_array(slots, || {
+            Ok(AllocSlot {
+                buf: try_array(bytes, || Ok(0))?,
                 len: 0,
                 endpoint: None,
                 pending: None,
-            });
-        }
-        Self {
-            slots: v.into_boxed_slice(),
+            })
+        })?;
+        Ok(Self {
+            slots: slots_storage,
             slot_bytes: bytes,
-            occ: HeapOccupancy::new(slots),
-        }
+            occ: HeapOccupancy::new(slots)?,
+        })
     }
 
     fn reset(&mut self, id: SlotId) {
@@ -417,6 +506,31 @@ impl DatagramSlots for AllocMemory {
 }
 
 impl PendingCons for AllocMemory {
+    fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        let id = expected.tx_slot();
+        let replacement = super::pending::validate_replacement(
+            expected,
+            self.pending_con(id),
+            self.tx.payload(id),
+            bytes,
+            self.tx.slot_bytes,
+            self.tx.occ.is_pinned(id),
+        )?;
+        // Validation proves this slot exists and all lengths fit; commit cannot fail.
+        let slot = &mut self.tx.slots[id.index()];
+        slot.buf[..bytes.len()].copy_from_slice(bytes);
+        slot.len = bytes.len();
+        slot.pending = Some(PendingMark::new(
+            replacement.message_id(),
+            replacement.rto(),
+        ));
+        Ok(replacement)
+    }
+
     fn record_pending_con(
         &mut self,
         id: SlotId,
@@ -459,7 +573,9 @@ impl PendingCons for AllocMemory {
     }
 
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
-        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        let due = next_due_slot(self.tx.slot_count(), self.retransmit_cursor, now_ms, |id| {
+            self.pending_con(id)
+        })?;
         match due.mark {
             Some(mark) => {
                 self.tx
@@ -470,6 +586,7 @@ impl PendingCons for AllocMemory {
                 self.tx.clear_pending_mid(due.id).ok()?;
             }
         }
+        self.retransmit_cursor = due.id.index() + 1;
         Some(due.event)
     }
 }
@@ -536,6 +653,17 @@ impl BodySlots for AllocMemory {
 
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.tx_body.as_ref()?.transfer(id)
+    }
+
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .set_transfer(id, transfer)
     }
 
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
@@ -717,6 +845,13 @@ impl BodySlots for AllocMemory {
             .next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
+    fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .adopt_smaller_outgoing_szx(id, BlockRole::OutgoingBlock1, szx)
+    }
+
     fn next_bert1(
         &mut self,
         id: SlotId,
@@ -777,6 +912,13 @@ impl BodySlots for AllocMemory {
             .next_outgoing(id, BlockRole::OutgoingQBlock1)
     }
 
+    fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .pace_q_block1(id)
+    }
+
     fn ack_q_block1(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {
         self.tx_body
             .as_mut()
@@ -826,6 +968,31 @@ impl BodySlots for AllocMemory {
 }
 
 impl ObserveSlots for AllocMemory {
+    fn replace_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError>
+    where
+        Self: PendingCons,
+    {
+        let id = super::table::validate_observe_replacement(
+            self,
+            pending,
+            original,
+            replacement,
+            bytes,
+        )?;
+        self.replace_pending_con(pending, bytes)?;
+        // ObserveStore is private: the owned table cannot fail an occupied-row
+        // write while this exclusive borrow retains the validated row.
+        self.observe
+            .set_entry(id, replacement)
+            .expect("validated occupied Observe row");
+        Ok(())
+    }
     fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
         self.observe.insert(interest)
     }
@@ -856,32 +1023,31 @@ impl ObserveSlots for AllocMemory {
 }
 
 struct AllocBodySlot {
-    buf: Box<[u8]>,
+    buf: Vec<u8>,
     len: usize,
     transfer: Option<BlockTransfer>,
 }
 
 struct AllocBodyPool {
-    slots: Box<[AllocBodySlot]>,
+    slots: Vec<AllocBodySlot>,
     slot_bytes: usize,
     occ: HeapOccupancy,
 }
 
 impl AllocBodyPool {
-    fn new(slots: usize, bytes: usize) -> Self {
-        let mut v = Vec::with_capacity(slots);
-        for _ in 0..slots {
-            v.push(AllocBodySlot {
-                buf: vec![0u8; bytes].into_boxed_slice(),
+    fn new(slots: usize, bytes: usize) -> Result<Self, BuildError> {
+        let slots_storage = try_array(slots, || {
+            Ok(AllocBodySlot {
+                buf: try_array(bytes, || Ok(0))?,
                 len: 0,
                 transfer: None,
-            });
-        }
-        Self {
-            slots: v.into_boxed_slice(),
+            })
+        })?;
+        Ok(Self {
+            slots: slots_storage,
             slot_bytes: bytes,
-            occ: HeapOccupancy::new(slots),
-        }
+            occ: HeapOccupancy::new(slots)?,
+        })
     }
 
     fn reset(&mut self, id: SlotId) {
@@ -1134,6 +1300,29 @@ impl AllocBodyPool {
         ))
     }
 
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < self.occ.slot_count() {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.slots[id.index()]
+            .transfer
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        transfer.adopt_smaller_szx(szx)
+    }
+
     fn next_bert_outgoing(
         &mut self,
         id: SlotId,
@@ -1256,6 +1445,15 @@ impl BodyOps for AllocBodyPool {
         AllocBodyPool::next_outgoing(self, id, role)
     }
 
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        AllocBodyPool::adopt_smaller_outgoing_szx(self, id, role, szx)
+    }
+
     fn next_bert_outgoing(
         &mut self,
         id: SlotId,
@@ -1322,16 +1520,16 @@ impl SlotPool for AllocBodyPool {
 }
 
 struct AllocDedupTable {
-    entries: Box<[Option<DedupEntry>]>,
+    entries: Vec<Option<DedupEntry>>,
     occ: HeapOccupancy,
 }
 
 impl AllocDedupTable {
-    fn new(entries: usize) -> Self {
-        Self {
-            entries: vec![None; entries].into_boxed_slice(),
-            occ: HeapOccupancy::new(entries),
-        }
+    fn new(entries: usize) -> Result<Self, BuildError> {
+        Ok(Self {
+            entries: try_array(entries, || Ok(None))?,
+            occ: HeapOccupancy::new(entries)?,
+        })
     }
 
     fn reset(&mut self, id: SlotId) {
@@ -1377,16 +1575,16 @@ impl DedupStore for AllocDedupTable {
 }
 
 struct AllocExchangeTable {
-    entries: Box<[Option<ExchangeEntry>]>,
+    entries: Vec<Option<ExchangeEntry>>,
     occ: HeapOccupancy,
 }
 
 impl AllocExchangeTable {
-    fn new(entries: usize) -> Self {
-        Self {
-            entries: vec![None; entries].into_boxed_slice(),
-            occ: HeapOccupancy::new(entries),
-        }
+    fn new(entries: usize) -> Result<Self, BuildError> {
+        Ok(Self {
+            entries: try_array(entries, || Ok(None))?,
+            occ: HeapOccupancy::new(entries)?,
+        })
     }
 
     fn reset(&mut self, id: SlotId) {
@@ -1500,16 +1698,16 @@ impl SlotPool for AllocDedupTable {
 }
 
 struct AllocObserveTable {
-    entries: Box<[Option<ObserveInterest>]>,
+    entries: Vec<Option<ObserveInterest>>,
     occ: HeapOccupancy,
 }
 
 impl AllocObserveTable {
-    fn new(entries: usize) -> Self {
-        Self {
-            entries: vec![None; entries].into_boxed_slice(),
-            occ: HeapOccupancy::new(entries),
-        }
+    fn new(entries: usize) -> Result<Self, BuildError> {
+        Ok(Self {
+            entries: try_array(entries, || Ok(None))?,
+            occ: HeapOccupancy::new(entries)?,
+        })
     }
 
     fn reset(&mut self, id: SlotId) {

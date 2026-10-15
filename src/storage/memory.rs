@@ -155,7 +155,10 @@ impl<P: MemoryProfile> WithBodies<P> {
 /// }
 /// ```
 ///
+/// Includes one inline `usize` cursor for due-CON selection, independent of
+/// each pool's acquisition cursor. It adds no per-slot or heap storage.
 pub struct Memory<P: MemoryProfile, B = NoBodies> {
+    retransmit_cursor: usize,
     rx: P::RxDatagram,
     tx: P::TxDatagram,
     dedup: P::Dedup,
@@ -170,6 +173,7 @@ impl<P: MemoryProfile> Memory<P> {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            retransmit_cursor: 0,
             rx: P::RxDatagram::default(),
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
@@ -191,6 +195,7 @@ impl<P: MemoryProfile> Memory<P, WithBodies<P>> {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            retransmit_cursor: 0,
             rx: P::RxDatagram::default(),
             tx: P::TxDatagram::default(),
             dedup: P::Dedup::default(),
@@ -435,6 +440,14 @@ impl<P: MemoryProfile, B> PendingCons for Memory<P, B>
 where
     P::TxDatagram: DatagramBytes + SlotPool,
 {
+    fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        self.tx.replace_pending(expected, bytes)
+    }
+
     fn record_pending_con(
         &mut self,
         id: SlotId,
@@ -481,7 +494,9 @@ where
     }
 
     fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
-        let due = next_due_slot(self.tx.slot_count(), now_ms, |id| self.pending_con(id))?;
+        let due = next_due_slot(self.tx.slot_count(), self.retransmit_cursor, now_ms, |id| {
+            self.pending_con(id)
+        })?;
         match due.mark {
             Some(mark) => {
                 DatagramBytes::set_pending(&mut self.tx, due.id, mark.message_id, mark.rto).ok()?;
@@ -490,6 +505,7 @@ where
                 DatagramBytes::clear_pending_mid(&mut self.tx, due.id).ok()?;
             }
         }
+        self.retransmit_cursor = due.id.index() + 1;
         Some(due.event)
     }
 }
@@ -540,6 +556,31 @@ impl<P: MemoryProfile, B> ObserveSlots for Memory<P, B>
 where
     P::Observe: ObserveStore,
 {
+    fn replace_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError>
+    where
+        Self: PendingCons,
+    {
+        let id = super::table::validate_observe_replacement(
+            self,
+            pending,
+            original,
+            replacement,
+            bytes,
+        )?;
+        self.replace_pending_con(pending, bytes)?;
+        // ObserveStore is private: the owned table cannot fail an occupied-row
+        // write while this exclusive borrow retains the validated row.
+        self.observe
+            .set_entry(id, replacement)
+            .expect("validated occupied Observe row");
+        Ok(())
+    }
     fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
         self.observe.insert(interest)
     }
@@ -731,6 +772,10 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn adopt_smaller_block1(&mut self, _id: SlotId, _szx: u8) -> Result<(), BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn next_bert1(
         &mut self,
         _id: SlotId,
@@ -838,6 +883,14 @@ where
 
     fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
         self.bodies.tx.transfer(id)
+    }
+
+    fn set_tx_body_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer,
+    ) -> Result<(), SlotError> {
+        self.bodies.tx.set_transfer(id, transfer)
     }
 
     fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
@@ -1003,6 +1056,12 @@ where
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock1)
     }
 
+    fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.bodies
+            .tx
+            .adopt_smaller_outgoing_szx(id, BlockRole::OutgoingBlock1, szx)
+    }
+
     fn next_bert1(
         &mut self,
         id: SlotId,
@@ -1051,6 +1110,10 @@ where
 
     fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingQBlock1)
+    }
+
+    fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.bodies.tx.pace_q_block1(id)
     }
 
     fn ack_q_block1(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {

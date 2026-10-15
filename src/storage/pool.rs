@@ -333,6 +333,11 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
 
 /// Byte and sidecar access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
 pub(crate) trait DatagramBytes {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError>;
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
@@ -354,6 +359,35 @@ pub(crate) trait DatagramBytes {
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError> {
+        let id = expected.tx_slot();
+        let current = self
+            .pending_mid(id)
+            .zip(self.endpoint(id))
+            .zip(self.pending_rto(id))
+            .map(|((mid, endpoint), rto)| super::PendingCon::new(mid, endpoint, id).with_rto(rto));
+        let replacement = super::pending::validate_replacement(
+            expected,
+            current,
+            self.payload(id),
+            bytes,
+            BYTES,
+            self.occ.is_pinned(id),
+        )?;
+        // All refusal checks precede this infallible commit under exclusive access.
+        self.bytes[id.index()][..bytes.len()].copy_from_slice(bytes);
+        self.lens[id.index()] = bytes.len();
+        self.pending[id.index()] = Some(PendingMark::new(
+            replacement.message_id(),
+            replacement.rto(),
+        ));
+        Ok(replacement)
+    }
+
     fn payload(&self, id: SlotId) -> Option<&[u8]> {
         DatagramPool::payload(self, id)
     }
@@ -749,6 +783,29 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         ))
     }
 
+    /// Shrink an outgoing classic Block1 transfer before the next range.
+    pub fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        transfer.adopt_smaller_szx(szx)
+    }
+
     /// Issue one BERT payload of at most `max_payload` bytes from `id`.
     pub fn next_bert_outgoing(
         &mut self,
@@ -881,6 +938,15 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         BodyPool::next_outgoing(self, id, role)
+    }
+
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        BodyPool::adopt_smaller_outgoing_szx(self, id, role, szx)
     }
 
     fn next_bert_outgoing(

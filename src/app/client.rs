@@ -13,14 +13,15 @@
 //! [`Response::payload_truncated`]. The full assembled representation is
 //! [`Response::body`], not a 4KiB field on [`Response`].
 //!
-//! App holds at most four live client requests, including Observe
-//! subscriptions and replies waiting for `take_response`. Resource-specific
-//! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! App defaults to four live client requests, including Observe subscriptions
+//! and replies waiting for `take_response`. [`super::AppBuilder::client_calls`]
+//! sizes those inline tables independently of packet storage. Other pool and
+//! security limits can be lower. Call-table exhaustion is `Error::Saturated`.
 //! Upload continuation and cleanup select request-body roles separately from
 //! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
-//! continuation identity. This bounded state adds about 1.1 KiB per App on
-//! 64-bit hosts; it is separate from the optional assembled-body storage.
+//! continuation identity. With the default four Calls this bounded state adds
+//! about 1.1 KiB on 64-bit hosts, separate from assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
 //! unknown elective options are retained in `Response::received_options`.
 //! New Observe representations retain their initial Content-Format, including
@@ -46,7 +47,7 @@
 //! Download follow-ups retain If-Match, If-None-Match and Content-Format.
 //! Classic Block2 also retains request ETag; Q-Block2 omits it to request
 //! payloads instead of cache-validation responses. Two retained 8-byte tags
-//! and their presence/condition flags cost at most 96 bytes across four Calls
+//! and their presence/condition flags cost at most 96 bytes across the default four Calls
 //! including host alignment.
 //! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
 //! use caller-managed Engine transfers for larger selection bodies.
@@ -96,6 +97,7 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -127,6 +129,33 @@ impl Call {
         self.peer
     }
 }
+
+/// Caller-buffer collection failed without consuming the completed reply.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponseBufferError {
+    /// The complete representation does not fit; retry with a larger buffer.
+    TooSmall {
+        /// Exact complete representation length.
+        required: usize,
+        /// Supplied output capacity.
+        available: usize,
+    },
+    /// Complete bytes are unavailable (legacy truncated snapshot or invalid storage).
+    Unavailable,
+}
+impl core::fmt::Display for ResponseBufferError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TooSmall {
+                required,
+                available,
+            } => write!(f, "response needs {required} bytes; buffer has {available}"),
+            Self::Unavailable => f.write_str("complete response bytes unavailable"),
+        }
+    }
+}
+#[cfg(feature = "std")]
+impl std::error::Error for ResponseBufferError {}
 
 /// Local terminal outcome of a client call, distinct from a remote CoAP response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,13 +204,6 @@ impl core::fmt::Display for CallFailure {
 #[cfg(feature = "std")]
 impl std::error::Error for CallFailure {}
 
-/// How many outstanding client [`Call`]s [`App`](super::App) holds.
-///
-/// Caps both the completed-reply inbox and the live-request table. A fifth
-/// [`Outgoing::send`] without [`App::take_response`](super::App::take_response)
-/// is [`Error::Saturated`] — no silent eviction.
-pub(crate) const RESPONSE_INBOX: usize = 4;
-
 /// Maximum options retained per client response, including unknown elective options.
 pub const RESPONSE_OPTION_COUNT: usize = 24;
 /// Maximum encoded header, Token and options retained per client response (no payload).
@@ -189,12 +211,12 @@ pub const RESPONSE_OPTION_BYTES: usize = 512;
 
 /// Maximum canonical Observe request bytes retained per live Call for exact
 /// cancellation matching, including a fixed four-byte header and payload.
-/// Four App Call slots each reserve this space plus bounded length metadata.
+/// Each configured App Call slot reserves this space plus bounded length metadata.
 /// Observe and ETag options are excluded; no hash replaces exact comparison.
 pub const OBSERVE_REQUEST_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
-struct ReplyMeta {
+pub(super) struct ReplyMeta {
     received_at_ms: u64,
     header: [u8; RESPONSE_OPTION_BYTES],
     header_len: u16,
@@ -205,7 +227,15 @@ struct ReplyMeta {
 }
 
 impl ReplyMeta {
-    fn from_parsed(
+    // Canonically encoded code, Token, MID and selected options. Capture time
+    // and copied payload bookkeeping are not representation-header identity.
+    pub(super) fn same_header(&self, other: &Self) -> bool {
+        self.peer == other.peer
+            && self.header[..usize::from(self.header_len)]
+                == other.header[..usize::from(other.header_len)]
+    }
+
+    pub(super) fn from_parsed(
         parsed: &ParsedMessage<'_>,
         peer: Endpoint,
         received_at_ms: u64,
@@ -249,7 +279,7 @@ impl ReplyMeta {
         })
     }
 
-    fn response(&self) -> Response<'_> {
+    pub(super) fn response(&self) -> Response<'_> {
         // The stored header was produced by the encoder and is immutable.
         let parsed = crate::message::decode(&self.header[..usize::from(self.header_len)])
             .expect("encoded response header");
@@ -299,19 +329,24 @@ struct InboxRow {
     call: Call,
     meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
+    datagram: Option<SlotId>,
 }
 
 /// Bounded completed-reply table (not a seventh memory area).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientInbox {
-    rows: [Option<InboxRow>; RESPONSE_INBOX],
+pub(crate) struct ClientInbox<const CALLS: usize> {
+    rows: [Option<InboxRow>; CALLS],
     held: Option<ReplyMeta>,
 }
 
-impl ClientInbox {
+impl<const CALLS: usize> ClientInbox<CALLS> {
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
             held: None,
         }
     }
@@ -336,6 +371,7 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(prev);
         }
@@ -345,10 +381,34 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(None);
         }
         Err(())
+    }
+
+    pub(super) fn holds_datagram(&self, rx: SlotId) -> bool {
+        self.rows
+            .iter()
+            .flatten()
+            .any(|row| row.datagram == Some(rx))
+    }
+
+    fn take_datagram(&mut self, call: Call) -> Option<SlotId> {
+        self.rows
+            .iter_mut()
+            .flatten()
+            .find(|row| row.call == call)?
+            .datagram
+            .take()
+    }
+
+    fn completed(&self, call: Call) -> Option<&InboxRow> {
+        self.rows
+            .iter()
+            .flatten()
+            .find(|row| row.complete && row.call == call)
     }
 
     fn discard(&mut self, call: Call) {
@@ -504,18 +564,24 @@ struct LiveCall {
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
+    /// Next NON Q1 set may start at this instant; zero means disarmed.
+    q_pace_ms: u64,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientLives {
-    rows: [Option<LiveCall>; RESPONSE_INBOX],
+pub(crate) struct ClientLives<const CALLS: usize> {
+    rows: [Option<LiveCall>; CALLS],
 }
 
-impl ClientLives {
+impl<const CALLS: usize> ClientLives<CALLS> {
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
         }
     }
 
@@ -700,6 +766,7 @@ enum OutgoingObserve {
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -707,11 +774,21 @@ enum OutgoingObserve {
 /// app.poll(0).unwrap();
 /// let _ = app.take_response(call);
 /// ```
-pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing, const BLOCK_WISE: bool = false>
-where
+pub struct Outgoing<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest = Missing,
+    const BLOCK_WISE: bool = false,
+    S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
+    const DEFERRED: usize = 0,
+    const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
+    const REQUESTS: usize = 4,
+> where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
@@ -736,7 +813,16 @@ where
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -745,44 +831,65 @@ where
     /// Distinct from the site router [`get`](super::get).
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
-    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn get(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn put(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn post(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn delete(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Delete, path)
     }
 
     /// CON FETCH builder. Set [`Outgoing::content_format`] for the selection
     /// body (also required for an empty selection), then [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn fetch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn patch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn ipatch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::IPatch, path)
     }
 
@@ -792,7 +899,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -821,7 +928,16 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -862,12 +978,21 @@ where
     /// retain the first accepted fragment's header metadata; no response is
     /// exposed until assembly completes. Metadata and assembled bytes borrow App.
     pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
             super::oscore::cancel(&mut self.oscore, call.token());
         }
         if let Some(id) = body {
+            if rx_body_payload(&self.engine, id)
+                .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+            {
+                release_rx_body(&mut self.engine, id);
+                return Some(Err(CallFailure::ResponseBodyBounds));
+            }
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
                 P::store(&mut self.assembled, bytes);
             }
@@ -878,6 +1003,89 @@ where
         }
         Some(response)
     }
+    /// Collect a complete representation into caller-owned storage.
+    ///
+    /// Enable [`super::AppBuilder::full_responses`] before bind to retain full
+    /// ordinary datagrams and bodies larger than the legacy assembled hold.
+    /// An insufficient buffer leaves the reply and all bytes available for a
+    /// later attempt; no bytes are copied and no partial success is returned.
+    /// Metadata borrows App; `payload()` (and block `body()`) borrows `output`.
+    /// The nested outcome distinguishes local Call failure from remote 4.xx/5.xx.
+    /// Block2 / Q-Block2 require block-wise storage. Without it, the Call
+    /// fails with [`CallFailure::BlockTransfer`] containing
+    /// [`BlockTransferError::NoBodyPools`], rather than returning one fragment.
+    pub fn take_response_into<'a>(
+        &'a mut self,
+        call: Call,
+        output: &'a mut [u8],
+    ) -> Result<Option<Result<Response<'a>, CallFailure>>, ResponseBufferError> {
+        let Some(row) = self.inbox.completed(call) else {
+            return Ok(None);
+        };
+        let body = row.body;
+        let datagram = row.datagram;
+        if let Ok(meta) = row.meta {
+            let bytes = if let Some(body) = body {
+                self.engine
+                    .rx_body_payload(body)
+                    .ok_or(ResponseBufferError::Unavailable)?
+            } else if let Some(rx) = datagram {
+                self.engine
+                    .decode_rx(rx)
+                    .map_err(|_| ResponseBufferError::Unavailable)?
+                    .payload()
+            } else {
+                if meta.payload_src_len > meta.payload_len {
+                    return Err(ResponseBufferError::Unavailable);
+                }
+                &meta.payload[..usize::from(meta.payload_len)]
+            };
+            if bytes.len() > output.len() {
+                return Err(ResponseBufferError::TooSmall {
+                    required: bytes.len(),
+                    available: output.len(),
+                });
+            }
+        }
+        // Copy before releasing the occupied storage; bounds were proven above.
+        let len = if let Some(body) = body {
+            let bytes = self
+                .engine
+                .rx_body_payload(body)
+                .ok_or(ResponseBufferError::Unavailable)?;
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Some(rx) = datagram {
+            let parsed = self
+                .engine
+                .decode_rx(rx)
+                .map_err(|_| ResponseBufferError::Unavailable)?;
+            let bytes = parsed.payload();
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Ok(meta) = row.meta {
+            let len = usize::from(meta.payload_len);
+            output[..len].copy_from_slice(&meta.payload[..len]);
+            len
+        } else {
+            0
+        };
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
+        let (response, _) = self.inbox.take(call).expect("completed reply");
+        if let Some(body) = body {
+            let _ = self.engine.release_rx_body(body);
+        }
+        if !client_observe_live(&self.engine, call) {
+            self.lives.remove(call);
+            super::oscore::cancel(&mut self.oscore, call.token());
+        }
+        Ok(Some(response.map(|response| {
+            response.with_complete_payload(&output[..len], body.is_some())
+        })))
+    }
+
     /// Cancel an active call and reclaim its exchange, body, Observe and OSCORE
     /// state. The next `take_response` yields `Err(CallFailure::Cancelled)`.
     /// No wire message is sent; use `Outgoing::deregister` for Observe signaling.
@@ -901,13 +1109,27 @@ where
     }
 }
 
-impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool> Outgoing<'a, P, T, N, Dest, BLOCK_WISE>
+impl<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE> {
+    pub fn to(
+        self,
+        peer: Endpoint,
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -948,6 +1170,9 @@ where
     /// Request body. A payload that does not fit one datagram is sent as
     /// Block1 (or Q-Block1 after [`.q_block1`](Self::q_block1)) when
     /// block-wise is enabled.
+    /// Initial classic Block1 sizing tries at most seven sizes against the
+    /// configured TX capacity, including security overhead. Later block-number
+    /// or security-sequence growth can still refuse a continuation.
     #[must_use]
     pub const fn payload(mut self, payload: &'a [u8]) -> Self {
         self.payload = payload;
@@ -967,8 +1192,17 @@ where
     /// optional: returned responses remain observable. Silence is never reported
     /// as success; use [`Self::deadline`] for a partial mask, or [`App::cancel`]
     /// to cease listening when suppressing all classes. Empty ACKs only stop RTO.
-    /// Fragmented uploads and suppressed Observe registration are explicit App
-    /// boundaries; use Engine for caller-managed interactions in those cases.
+    /// Zero is also retained on every Block1 or Q-Block1 upload fragment.
+    /// Classic Block1 also supports error-only masks 8, 16 and 24: successful
+    /// Continue responses still advance the upload. Suppressed errors leave the
+    /// outcome unknown; deadline or cancellation bounds the local wait without
+    /// proving success. A peer may still return a selected error response.
+    /// Q-Block1 permits masks 2, 16 and 18 for CON and NON. CON uses transport
+    /// ACKs; NON masks 2/18 pace each new ten-payload set after a sampled 2..=3s
+    /// delay unless Continue arrives first. Poll sends at most one timed set,
+    /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
+    /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
+    /// Observe registration remain explicit App boundaries.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1010,27 +1244,39 @@ where
         self
     }
 
-    /// ETag option (conditional GET / validation).
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`]; conditional upload retention is not implemented.
+    /// ETag cache validator (1..=8 bytes), distinct from a write precondition.
+    /// Classic/Q-Block1 FETCH retains this validator on every fragment, with the
+    /// existing 512-byte canonical selection bound. Other fragmented methods
+    /// return [`Error::ConditionalUploadUnsupported`]. First-fragment sizing tries
+    /// at most seven block sizes against the actual plaintext/protected TX limit.
+    /// Later option or Partial-IV growth can still refuse; no security state rewinds.
+    /// The handler validates the complete selection and may return 2.03 Valid.
+    /// FETCH Block2 follow-ups repeat the full selection
+    /// and must fit one datagram; their size failure terminates the Call.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
         self
     }
 
-    /// If-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-Match option, retained on every Block1/Q-Block1 fragment and reissue.
+    /// An empty tag requires any current representation. The receiving handler
+    /// evaluates the precondition against its current representation when it
+    /// commits the complete body; intermediate ACKs do not prove it has passed.
     #[must_use]
     pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
         self.if_match = Some(tag);
         self
     }
 
-    /// If-None-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-None-Match option. Block1/Q-Block1 send it only on NUM0 and retain
+    /// it for complete-body handler evaluation. The handler checks current
+    /// existence atomically with its application effect; partial ACKs are not success.
+    /// Q-Block1 retains the condition even when NUM0 arrives after later blocks.
+    /// With OSCORE and one Token, the client accepts only its latest request
+    /// binding: a response to an older reordered fragment may remain unknown.
+    /// Missing-block reports and fresh selective reissues preserve this security
+    /// boundary. Use a deadline and check current state when retrying an uncertain effect.
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -1148,7 +1394,16 @@ where
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> Outgoing<'_, P, T, N, Present, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1168,8 +1423,8 @@ where
     /// peer received no datagrams or performed no action; retry policy must
     /// account for that uncertainty. Security sequence numbers are not reset.
     ///
-    /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
-    /// lives cap) and this Token is not one of them.
+    /// [`Error::Saturated`] if the configured client Call table is full and
+    /// this Token is not one of its retained Calls. No reply is evicted.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
@@ -1185,7 +1440,11 @@ where
         if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
             return Err(Error::ObserveMethodUnsupported);
         }
-        if self.no_response.is_some() && self.q_block1 {
+        if self
+            .no_response
+            .is_some_and(|value| !matches!(value.get(), 0 | 2 | 16 | 18))
+            && self.q_block1
+        {
             return Err(Error::NoResponseUploadUnsupported);
         }
         if self.no_response.is_some_and(|value| value.get() != 0)
@@ -1203,6 +1462,11 @@ where
         let if_match = BodyTag::from_first(self.if_match).map_err(|_| {
             Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
         })?;
+        if self.etag.is_some_and(<[u8]>::is_empty) {
+            return Err(Error::Message(SlotMessageError::Parse(
+                crate::error::ParseError::BadOptionFormat(crate::message::OptionNumber::ETAG),
+            )));
+        }
         let etag = BodyTag::from_first(self.etag).map_err(|_| {
             Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
         })?;
@@ -1257,6 +1521,9 @@ where
             }) {
                 return Ok(existing.call);
             }
+        }
+        if !replacing && self.app.lives.rows.iter().all(Option::is_some) {
+            return Err(Error::Saturated);
         }
         let token = if replacing {
             self.app
@@ -1341,6 +1608,9 @@ where
             }
         };
         if replacing {
+            if let Some(rx) = self.app.inbox.take_datagram(call) {
+                let _ = self.app.engine.release_rx(rx);
+            }
             self.app.inbox.discard(call);
         }
         self.app.lives.insert(LiveCall {
@@ -1362,26 +1632,41 @@ where
             observed_format: prior.and_then(|live| live.observed_format),
             request_identity,
             deadline_ms,
+            q_pace_ms: 0,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
                 Transmission::EXCHANGE_LIFETIME_MS
             })),
         });
+        arm_q_pacing(
+            &self.app.engine,
+            &mut self.app.lives,
+            &self.app.ids,
+            now_ms,
+            call,
+        );
         Ok(call)
     }
 }
 
 impl<
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-    T,
+    T: DatagramIo,
     const N: usize,
     const BLOCK_WISE: bool,
-> App<P, T, N, BLOCK_WISE>
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
-            let token = self.ids.token().map_err(Error::Identity)?;
+            let token = self
+                .ids
+                .token(&mut |bytes| self.io.fill_random(bytes))
+                .map_err(Error::Identity)?;
             if !self
                 .lives
                 .rows
@@ -1504,11 +1789,11 @@ fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, En
     })?
 }
 
-fn send_client<Mem, T>(
+fn send_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     spec: ClientSend<'_>,
 ) -> Result<Call, Error<T::Error>>
@@ -1519,7 +1804,7 @@ where
     if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
     }
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
@@ -1550,15 +1835,24 @@ where
         )
         .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            if spec.no_response.is_some() {
+            // Classic Block1 requires 2.xx Continue. This bounded App combination
+            // supports only the defined error-class bits; undefined bits are an
+            // API boundary, not a wire-validity judgment. CON Q uploads use
+            // transport ACKs, so their admitted 2/18 masks do not hide progress.
+            if !spec.q_block1
+                && spec.no_response.is_some_and(|value| {
+                    value.get()
+                        & !(crate::message::NoResponse::SUPPRESS_4
+                            | crate::message::NoResponse::SUPPRESS_5)
+                        != 0
+                })
+            {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
             }
-            // These conditions cannot be dropped while changing to Block1.
-            // Until the App retains their transfer-specific semantics, refuse
-            // fragmentation instead of turning a conditional write into an
-            // unconditional one (RFC 7959 section 2.10).
-            if spec.if_match.is_some() || spec.if_none_match || spec.etag.is_some() {
+            // FETCH retains fragmented cache-validator semantics.
+            // An ETag is not an If-Match write precondition.
+            if spec.etag.is_some() && spec.code != Code::FETCH {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }
@@ -1582,8 +1876,13 @@ where
                 spec.request_tag,
                 spec.content_format,
                 spec.echo,
+                spec.no_response,
+                spec.if_match,
+                spec.etag,
+                spec.if_none_match,
                 spec.q_block1,
                 tx,
+                mid,
             )
         }
         Err(e) => {
@@ -1594,11 +1893,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_client_block1<Mem, T>(
+fn send_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1611,18 +1910,67 @@ fn send_client_block1<Mem, T>(
     request_tag: BodyTag,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     q_block1: bool,
     tx: SlotId,
+    mid: MessageId,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
+    // At most seven candidate SZX values. Only size misses try a smaller
+    // prefix. Protection may consume sequence numbers; never rewind them.
+    let mut initial_szx = BlockValue::SZX_MAX;
+    loop {
+        let size = 1usize << (initial_szx + 4);
+        let count = payload.len().min(size);
+        let block = BlockValue::new(0, count < payload.len(), initial_szx)
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?;
+        match encode_block1_request(
+            engine,
+            oscore,
+            tx,
+            ty,
+            code,
+            mid,
+            token,
+            path,
+            queries,
+            accept,
+            content_format,
+            echo,
+            no_response,
+            if_match,
+            etag,
+            if_none_match,
+            block,
+            q_block1,
+            request_tag,
+            u32::try_from(payload.len()).ok(),
+            &payload[..count],
+        ) {
+            Ok(()) => break,
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if initial_szx > 0 =>
+            {
+                initial_szx -= 1
+            }
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                return Err(error);
+            }
+        }
+    }
     let key = BlockKey::new(token, dest).with_identity(request_tag);
     let started = if q_block1 {
-        engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_q_block1(key, payload, initial_szx)
     } else {
-        engine.start_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_block1(key, payload, initial_szx)
     };
     let body = match started {
         Ok(id) => id,
@@ -1637,46 +1985,50 @@ where
             return Err(Error::Block(e));
         }
     };
-    let outcome = if q_block1 {
-        issue_q_block1_window(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            echo,
-            body,
-            Some(tx),
-            None,
-        )
-        .map(|_| ())
+    // The first datagram already owns its MID, jitter and protected RequestRef.
+    // Advance the admitted body once and send those exact bytes. A NON Q set
+    // continues only after that successful send; CON waits for its matching ACK.
+    let first = if q_block1 {
+        engine.next_q_block1(body)
     } else {
-        issue_block1(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            echo,
-            body,
-            Some(tx),
-        )
+        engine.next_block1(body)
+    };
+    let outcome = match first {
+        Ok(issued) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+            .and_then(|()| {
+                if q_block1 && ty == Type::NonConfirmable && !issued.complete() {
+                    issue_q_block1_window(
+                        engine,
+                        io,
+                        ids,
+                        oscore,
+                        now_ms,
+                        dest,
+                        ty,
+                        code,
+                        token,
+                        path,
+                        queries,
+                        accept,
+                        content_format,
+                        echo,
+                        no_response,
+                        if_match,
+                        etag,
+                        if_none_match,
+                        body,
+                        None,
+                        None,
+                    )
+                    .map(|_| ())
+                } else {
+                    Ok(())
+                }
+            }),
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            Err(Error::Block(error))
+        }
     };
     if outcome.is_err() {
         let _ = engine.release_tx_body(body);
@@ -1686,21 +2038,28 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn complete_client<Mem, T>(
+pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     response_state: super::oscore::ResponseState,
+    full_responses: bool,
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + Exchanges
+        + BodySlots
+        + ObserveSlots
+        + crate::storage::DedupSlots,
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
@@ -1830,6 +2189,7 @@ where
                         oscore,
                         now_ms,
                         parsed.token(),
+                        parsed.block1().and_then(Result::ok),
                         parsed.q_block1().and_then(Result::ok),
                         peer,
                         body,
@@ -1888,11 +2248,15 @@ where
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1936,7 +2300,6 @@ where
                 let _ = engine.release_rx(rx);
                 return Ok(());
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,
@@ -1967,11 +2330,15 @@ where
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -2016,7 +2383,6 @@ where
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,
@@ -2043,29 +2409,39 @@ where
         metadata,
         None,
     );
-    let _ = engine.release_rx(rx);
+    if full_responses {
+        if let Some(row) = inbox.rows.iter_mut().flatten().find(|row| row.call == call) {
+            row.datagram = Some(rx);
+        } else {
+            let _ = engine.release_rx(rx);
+        }
+    } else {
+        let _ = engine.release_rx(rx);
+    }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_assembled<Mem>(
+fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     rx: SlotId,
     body: SlotId,
     metadata: ReplyMeta,
     via_exchange: bool,
+    full_responses: bool,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let call = Call::new(parsed.token(), peer);
-    if engine
-        .rx_body_payload(body)
-        .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+    if !full_responses
+        && engine
+            .rx_body_payload(body)
+            .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
     {
         fail_call(
             engine,
@@ -2101,13 +2477,16 @@ fn finish_assembled<Mem>(
     let _ = engine.release_rx(rx);
 }
 
-fn store_reply<Mem: Storage + BodySlots>(
+fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
+    inbox: &mut ClientInbox<CALLS>,
     call: Call,
     meta: ReplyMeta,
     body: Option<SlotId>,
 ) {
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
             if let Some(id) = prev {
@@ -2175,12 +2554,12 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block2_continue<Mem, T>(
+fn send_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2212,12 +2591,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_q_block2_continue<Mem, T>(
+fn send_q_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2249,13 +2628,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn recover_qblock2<Mem, T>(
+pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     recover: crate::storage::QBlockRecover,
 ) -> Result<bool, Error<T::Error>>
@@ -2305,12 +2684,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_followup<Mem, T>(
+fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     token: Token,
     peer: Endpoint,
@@ -2405,7 +2784,7 @@ where
     if let Err(e) = filled {
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
-    let mid = ids.next_for(engine, now_ms)?;
+    let mid = ids.next_for(engine, io, now_ms)?;
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
@@ -2439,12 +2818,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reissue_qblock1_missing<Mem, T>(
+fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2494,22 +2873,140 @@ where
             live.accept,
             live.content_format,
             live.echo,
+            live.no_response,
+            live.if_match.as_slice(),
+            live.etag.as_slice(),
+            live.if_none_match,
             issued,
             true,
             None,
         )?;
     }
+    if count != 0 {
+        arm_q_pacing(engine, lives, ids, now_ms, live.call);
+    }
     Ok(())
 }
 
+// Only success-suppressed NON uploads use timer progression. The last packet's
+// bounded unbiased 0..=1000ms jitter sample also schedules its next payload set.
+fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
+    engine: &Engine<Mem>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &AppIds,
+    now_ms: u64,
+    call: Call,
+) {
+    let body = upload_body(engine, lives.upload_key(call));
+    let ready = body
+        .and_then(|body| engine.tx_body_transfer(body))
+        .is_some_and(|t| {
+            t.role() == BlockRole::OutgoingQBlock1
+                && !t.is_complete()
+                && t.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1
+        });
+    if let Some(live) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|live| live.call == call)
+    {
+        live.q_pace_ms = if ready
+            && live.ty == Type::NonConfirmable
+            && live
+                .no_response
+                .is_some_and(|mask| matches!(mask.get(), 2 | 18))
+        {
+            now_ms
+                .checked_add(u64::from(
+                    crate::message::QBlockTransmission::NON_TIMEOUT_MS + ids.jitter(),
+                ))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+    }
+}
+
+/// At most one due payload set per poll, oldest deadline first. Missed time does
+/// not accumulate send credit. Ingress runs first so valid Continue/recovery can
+/// disarm or rearm this opportunity before selection.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn continue_qblock1_ack<Mem, T>(
+pub(crate) fn pace_qblock1<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    let Some(live) = lives
+        .rows
+        .iter()
+        .flatten()
+        .filter(|live| live.q_pace_ms != 0 && live.q_pace_ms <= now_ms)
+        .min_by_key(|live| live.q_pace_ms)
+        .copied()
+    else {
+        return Ok(());
+    };
+    // Clear before attempting: every success rearms from now, every failure
+    // retires the Call without changing the uncertainty of remote effects.
+    if let Some(row) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|row| row.call == live.call)
+    {
+        row.q_pace_ms = 0;
+    }
+    let Some(body) = upload_body(engine, lives.upload_key(live.call)) else {
+        return Ok(());
+    };
+    let result = (|| {
+        engine.pace_q_block1(body).map_err(Error::Block)?;
+        continue_block1_tx(
+            engine,
+            io,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            live.call.token(),
+            None,
+            None,
+            live.call.peer(),
+            body,
+        )
+    })();
+    if result.is_err() {
+        abandon_send(engine, oscore, live.call.token(), live.call.peer());
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            live.call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     mid: MessageId,
     peer: Endpoint,
@@ -2556,6 +3053,7 @@ where
             now_ms,
             call.token(),
             None,
+            None,
             peer,
             body,
         )
@@ -2576,14 +3074,15 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn continue_block1_tx<Mem, T>(
+fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
+    lives: &mut ClientLives<CALLS>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     token: Token,
+    block1: Option<BlockValue>,
     q_ack: Option<BlockValue>,
     peer: Endpoint,
     body: SlotId,
@@ -2595,6 +3094,13 @@ where
     let Some(transfer) = engine.tx_body_transfer(body) else {
         return Ok(());
     };
+    if let Some(preferred) = block1 {
+        if transfer.role() == BlockRole::OutgoingBlock1 && preferred.szx() < transfer.szx() {
+            engine
+                .adopt_smaller_block1(body, preferred.szx())
+                .map_err(Error::Block)?;
+        }
+    }
     if transfer.is_complete() {
         return Ok(());
     }
@@ -2604,6 +3110,10 @@ where
     let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
     let echo = live.and_then(|live| live.echo);
+    let no_response = live.and_then(|live| live.no_response);
+    let if_match = live.as_ref().and_then(|live| live.if_match.as_slice());
+    let etag = live.as_ref().and_then(|live| live.etag.as_slice());
+    let if_none_match = live.is_some_and(|live| live.if_none_match);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
     let mut query_n = 0;
@@ -2632,11 +3142,34 @@ where
                 accept,
                 content_format,
                 echo,
+                no_response,
+                if_match,
+                etag,
+                if_none_match,
                 body,
                 None,
             )
         }
         BlockRole::OutgoingQBlock1 => {
+            let paced = ty == Type::NonConfirmable
+                && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
+            if paced {
+                if let Some(q) = q_ack {
+                    if transfer
+                        .window_base()
+                        .checked_add(u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) - 1)
+                        != Some(q.num())
+                        || q.szx() != transfer.szx()
+                        || !q.more()
+                    {
+                        return Ok(());
+                    }
+                } else if transfer.window_mask() != 0 {
+                    // A response without the current set's valid Continue must
+                    // neither grant send credit nor postpone its pacing timer.
+                    return Ok(());
+                }
+            }
             if let Some(q) = q_ack {
                 engine.ack_q_block1(body, q.num()).map_err(Error::Block)?;
             }
@@ -2655,22 +3188,28 @@ where
                 accept,
                 content_format,
                 echo,
+                no_response,
+                if_match,
+                etag,
+                if_none_match,
                 body,
                 None,
                 Some((token, peer)),
             )
-            .map(|_| ())
+            .map(|_| ())?;
+            arm_q_pacing(engine, lives, ids, now_ms, Call::new(token, peer));
+            Ok(())
         }
         _ => Ok(()),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_block1<Mem, T>(
+fn issue_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -2681,6 +3220,10 @@ fn issue_block1<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     tx: Option<SlotId>,
 ) -> Result<(), Error<T::Error>>
@@ -2704,6 +3247,10 @@ where
         accept,
         content_format,
         echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
         issued,
         false,
         tx,
@@ -2711,11 +3258,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_q_block1_window<Mem, T>(
+fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     first_ty: Type,
@@ -2726,6 +3273,10 @@ fn issue_q_block1_window<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     mut tx: Option<SlotId>,
     take_first: Option<(Token, Endpoint)>,
@@ -2762,6 +3313,10 @@ where
             accept,
             content_format,
             echo,
+            no_response,
+            if_match,
+            etag,
+            if_none_match,
             issued,
             true,
             tx.take(),
@@ -2776,11 +3331,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block1_issued<Mem, T>(
+fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -2791,6 +3346,10 @@ fn send_block1_issued<Mem, T>(
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     issued: OutgoingBlock,
     q_block1: bool,
     tx: Option<SlotId>,
@@ -2813,19 +3372,86 @@ where
         Some(tx) => tx,
         None => engine.acquire_tx().ok_or(Error::Saturated)?,
     };
-    let mid = match ids.next_for(engine, now_ms) {
+    let mid = match ids.next_for(engine, io, now_ms) {
         Ok(mid) => mid,
         Err(error) => {
             let _ = engine.release_tx(tx);
             return Err(error);
         }
     };
+    if let Err(error) = encode_block1_request(
+        engine,
+        oscore,
+        tx,
+        ty,
+        code,
+        mid,
+        token,
+        path,
+        queries,
+        accept,
+        content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
+        issued.block(),
+        q_block1,
+        tag,
+        size1,
+        &chunk[..n],
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+
+    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_block1_request<Mem, E, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    tx: SlotId,
+    ty: Type,
+    code: Code,
+    mid: MessageId,
+    token: Token,
+    path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
+    content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
+    block: BlockValue,
+    q_block1: bool,
+    tag: BodyTag,
+    size1: Option<u32>,
+    payload: &[u8],
+) -> Result<(), Error<E>>
+where
+    Mem: Storage + DatagramSlots,
+{
     let cf = content_format.map(ContentFormat::encode);
     let acc = accept.map(ContentFormat::encode);
-    let blk = issued.block().encode();
+    let blk = block.encode();
     let size = size1.map(encode_uint);
+    let no_response = no_response.map(crate::message::NoResponse::encode);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let filled = (|| -> Result<(), EncodeError> {
+        if let Some(value) = if_match {
+            push_opt(&mut opts, Opt::if_match(value))?;
+        }
+        if let Some(value) = etag {
+            push_opt(&mut opts, Opt::etag(value))?;
+        }
+        if if_none_match && block.num() == 0 {
+            push_opt(&mut opts, Opt::if_none_match())?;
+        }
         for segment in path {
             push_opt(&mut opts, Opt::uri_path(segment))?;
         }
@@ -2846,6 +3472,9 @@ where
         if let Some(ref encoded) = size {
             push_opt(&mut opts, Opt::size1(encoded))?;
         }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
+        }
         if let Some(echo) = echo.as_ref() {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
         }
@@ -2855,18 +3484,13 @@ where
         Ok(())
     })();
     if let Err(e) = filled {
-        let _ = engine.release_tx(tx);
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
-        .with_payload(&chunk[..n]);
-    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(e);
-    }
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+        .with_payload(payload);
+    super::oscore::encode_request(oscore, engine, tx, &msg)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2908,9 +3532,9 @@ where
 // A send can fail after earlier Q-Block datagrams went out. No Call is
 // returned, so retire all local state owned by this request. Never rewind
 // OSCORE sequence numbers: a transport error does not prove non-delivery.
-fn abandon_send<Mem>(
+fn abandon_send<Mem, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    oscore: &mut super::oscore::Field,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     token: Token,
     peer: Endpoint,
 ) where
@@ -3000,9 +3624,9 @@ fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: 
     engine.lookup_observe(key).is_some()
 }
 
-fn accept_client_observe<Mem>(
+fn accept_client_observe<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     now_ms: u64,
@@ -3031,11 +3655,11 @@ fn accept_client_observe<Mem>(
 }
 
 /// Retransmission give-up completes the call rather than silently losing it.
-pub(crate) fn give_up_client<Mem>(
+pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     tx: SlotId,
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
@@ -3078,11 +3702,11 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
 
 // Retire a timed-out Q download in the same poll that reclaims its body.
 // The inbox must not keep a partial SlotId that another transfer can reuse.
-pub(crate) fn qblock_give_up<Mem>(
+pub(crate) fn qblock_give_up<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     key: ExchangeKey,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -3102,11 +3726,11 @@ pub(crate) fn qblock_give_up<Mem>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fail_call<Mem>(
+fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     call: Call,
     failure: CallFailure,
     release_pending: bool,
@@ -3124,6 +3748,9 @@ fn fail_call<Mem>(
         }
     }
     let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer()));
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
         let _ = engine.release_rx_body(body);
     }
@@ -3163,11 +3790,11 @@ fn fail_call<Mem>(
     }
 }
 
-pub(crate) fn complete_client_rst<Mem>(
+pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     message_id: MessageId,
     peer: Endpoint,
 ) where
@@ -3190,16 +3817,16 @@ pub(crate) fn complete_client_rst<Mem>(
     }
 }
 
-pub(crate) fn expire_client_exchanges<Mem>(
+pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let mut due = [None; RESPONSE_INBOX];
+    let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
         let Some(live) = *live else {
             continue;

@@ -13,7 +13,7 @@
 //! missing-blocks CBOR-seq ([`crate::Response::missing_blocks`]).
 //! [`Echo`] is RFC 9175; App applies 4.01 when
 //! [`crate::app::AppBuilder::echo_policy`] is set. [`BlockValue`] SZX 7
-//! is Engine BERT (future / backlog on the App face).
+//! is Engine BERT; App does not expose BERT transfers.
 //!
 //! Optional, not used by [`decode`]:
 //! [`ParsedMessage::check_rfc7252_options`] (Table 4 unrecognized
@@ -52,7 +52,7 @@ pub use missing_blocks::{MissingBlocks, MissingBlocksError};
 pub use no_response::NoResponse;
 pub use option::{Opt, OptionNumber, Options};
 pub use precondition::Precondition;
-pub use problem::{ProblemDetails, ProblemError, ProblemText, WritingDirection};
+pub use problem::{ProblemDetails, ProblemError, ProblemOptions, ProblemText, WritingDirection};
 pub use value::{
     BlockOptions, BlockValue, ContentFormat, EncodedUint, OBSERVE_DEREGISTER, OBSERVE_REGISTER,
     OBSERVE_SEQUENCE_MASK, OpaqueOptions, OptionValueFormat, OptionsByNumber, StringOptions,
