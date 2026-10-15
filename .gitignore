@@ -25,5 +25,5 @@ rustc-ice-*.txt
 
 # knowledge/rfcs/*.pdf stay in the tree.
 
-# Python process harness bytecode
+# External validation caches
 __pycache__/

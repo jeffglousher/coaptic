@@ -2806,6 +2806,172 @@ fn bert_apply_from_rx_and_encode_with_request_tag() {
 }
 
 #[test]
+fn refused_bert_encode_preserves_progress_and_retries_first_range() {
+    for block1 in [true, false] {
+        let mut engine = build_default_bodies();
+        let key = block_key();
+        let payload = [0xa5; 3072];
+        let body = if block1 {
+            engine.start_block1(key, &payload, BlockValue::SZX_BERT)
+        } else {
+            engine.start_block2(key, &payload, BlockValue::SZX_BERT)
+        }
+        .unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.write_tx(tx, b"unchanged", key.endpoint()).unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>,
+             limit| {
+                if block1 {
+                    engine.encode_bert1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                } else {
+                    engine.encode_bert2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        limit,
+                    )
+                }
+            };
+        assert_eq!(encode(&mut engine, 2048), Err(BlockTransferError::Overflow));
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        assert_eq!(
+            engine.storage().tx_payload(tx),
+            Some(b"unchanged".as_slice())
+        );
+        let issued = encode(&mut engine, 1024).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert!(issued.block().more());
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..1024]);
+    }
+}
+
+#[test]
+fn refused_combined_block_encode_does_not_consume_a_range() {
+    // Classic Block1/Block2, first Observe Block2, Q-Block1 and Q-Block2 all
+    // use the same transaction; a missing TX slot must leave NUM/mask intact.
+    for mode in 0..5 {
+        let mut engine = build_default_bodies();
+        let key = block_key().with_identity(BodyTag::new(b"body").unwrap());
+        let payload = [0xa5; 32];
+        let body = match mode {
+            0 => engine.start_block1(key, &payload, 0),
+            1 | 2 => engine.start_block2(key, &payload, 0),
+            3 => engine.start_q_block1(key, &payload, 0),
+            _ => engine.start_q_block2(key, &payload, 0),
+        }
+        .unwrap();
+        let before = engine.tx_body_transfer(body).unwrap();
+        let tx = engine.acquire_tx().unwrap();
+        engine.release_tx(tx).unwrap();
+        let encode =
+            |engine: &mut Engine<Memory<profiles::Default, WithBodies<profiles::Default>>>, tx| {
+                match mode {
+                    0 => engine.encode_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    1 => engine.encode_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                    2 => engine.encode_block2_observe_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                        42,
+                    ),
+                    3 => engine.encode_q_block1_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::PUT,
+                        MessageId::new(1),
+                    ),
+                    _ => engine.encode_q_block2_tx(
+                        body,
+                        tx,
+                        Type::Confirmable,
+                        Code::CONTENT,
+                        MessageId::new(1),
+                    ),
+                }
+            };
+        assert_eq!(
+            encode(&mut engine, tx),
+            Err(BlockTransferError::Slot(SlotError::NotOccupied))
+        );
+        assert_eq!(engine.tx_body_transfer(body), Some(before));
+        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+        let tx = engine.acquire_tx().unwrap();
+        let issued = encode(&mut engine, tx).unwrap();
+        assert_eq!(issued.block().num(), 0);
+        assert_eq!(issued.offset(), 0);
+        assert_eq!(engine.decode_tx(tx).unwrap().payload(), &payload[..16]);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn short_tx_encode_preserves_body_progress_after_partial_wire_write() {
+    let capacities = Capacities {
+        rx_datagram_slots: 1,
+        rx_datagram_bytes: 64,
+        tx_datagram_slots: 1,
+        tx_datagram_bytes: 16,
+        dedup_entries: 1,
+        observe_entries: 1,
+        rx_body_slots: Some(1),
+        rx_body_bytes: Some(1024),
+        tx_body_slots: Some(1),
+        tx_body_bytes: Some(1024),
+    };
+    let mut engine = EngineBuilder::new()
+        .rx_datagram(1, 64)
+        .tx_datagram(1, 16)
+        .dedup(1)
+        .observe(1)
+        .rx_body(1, 1024)
+        .tx_body(1, 1024)
+        .block_wise(true)
+        .build_alloc(capacities)
+        .unwrap();
+    let payload = [0xa5; 32];
+    let body = engine.start_block1(block_key(), &payload, 0).unwrap();
+    let before = engine.tx_body_transfer(body).unwrap();
+    let tx = engine.acquire_tx().unwrap();
+    assert_eq!(
+        engine.encode_block1_tx(body, tx, Type::Confirmable, Code::PUT, MessageId::new(1)),
+        Err(BlockTransferError::Encode(
+            crate::error::EncodeError::BufferTooSmall
+        ))
+    );
+    assert_eq!(engine.tx_body_transfer(body), Some(before));
+    assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+    assert_eq!(engine.next_block1(body).unwrap().block().num(), 0);
+}
+
+#[test]
 fn block2_outgoing_slices_and_encodes() {
     let mut engine = build_default_bodies();
     let key = block_key();
@@ -5117,4 +5283,197 @@ fn seeded_body_backends_match_results_state_and_reclamation() {
         successes[12..16].iter().all(|n| *n > 0),
         "successful admissions: {successes:?}"
     );
+}
+
+#[test]
+fn supersession_history_refuses_overflow_without_mutating_the_original() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut row = ObserveInterest::new(crate::message::Token::from_checked(&[1]), peer);
+    row.record_notify(0, crate::message::MessageId::new(1), true);
+    for n in 0..crate::message::Transmission::MAX_RETRANSMIT {
+        row.mark_due();
+        row = row
+            .supersede_con(
+                u64::from(n),
+                crate::message::MessageId::new(u16::from(n) + 2),
+            )
+            .unwrap();
+    }
+    row.mark_due();
+    let before = row;
+    assert!(
+        row.supersede_con(10, crate::message::MessageId::new(20))
+            .is_none()
+    );
+    assert_eq!(row, before);
+    assert_eq!(row.superseded_con_mids().len(), 4);
+    row.clear_notify_hold();
+    assert!(row.superseded_con_mids().is_empty());
+}
+
+#[test]
+fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
+    use super::{ObserveSlots, PendingCons, PendingReplaceError};
+    use crate::message::{MessageId, Token};
+    struct Custom {
+        untouched: u8,
+    }
+    impl ObserveSlots for Custom {
+        fn insert_observe(&mut self, _: ObserveInterest) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_observe(&self, _: ObserveKey) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn remove_observe(&mut self, _: ObserveKey) -> bool {
+            panic!("unexpected mutation")
+        }
+        fn take_observe(&mut self, _: ObserveKey) -> Option<ObserveInterest> {
+            panic!("unexpected mutation")
+        }
+        fn observe_interest(&self, _: SlotId) -> Option<ObserveInterest> {
+            panic!("unexpected access")
+        }
+        fn set_observe_interest(&mut self, _: SlotId, _: ObserveInterest) -> Result<(), SlotError> {
+            panic!("unexpected mutation")
+        }
+    }
+    impl PendingCons for Custom {
+        fn record_pending_con(
+            &mut self,
+            _: SlotId,
+            _: Endpoint,
+            _: MessageId,
+            _: u64,
+            _: u32,
+        ) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn lookup_pending_con(&self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected access")
+        }
+        fn take_pending_con(&mut self, _: MessageId, _: Endpoint) -> Option<SlotId> {
+            panic!("unexpected mutation")
+        }
+        fn pending_con(&self, _: SlotId) -> Option<PendingCon> {
+            panic!("unexpected access")
+        }
+        fn poll_retransmit(&mut self, _: u64) -> Option<Retransmit> {
+            panic!("unexpected mutation")
+        }
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut pool = DatagramPool::<1, 16>::new();
+    let slot = pool.acquire().unwrap();
+    let pending = PendingCon::new(MessageId::new(1), peer, slot);
+    let row = ObserveInterest::new(Token::from_checked(&[1]), peer);
+    let mut storage = Custom { untouched: 17 };
+    assert_eq!(
+        storage.replace_observe_con(pending, row, row, &[0x40, 69, 0, 2]),
+        Err(PendingReplaceError::Unsupported)
+    );
+    assert_eq!(storage.untouched, 17);
+}
+
+#[test]
+fn classic_if_none_match_restart_replaces_only_the_untagged_new_owner() {
+    use crate::message::OptionsBuilder;
+    for initial_condition in [false, true] {
+        let mut engine = build_default_bodies();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut original = None;
+        for phase in 0..4 {
+            let condition = if phase == 0 {
+                initial_condition
+            } else {
+                !initial_condition
+            };
+            let token = sample_token(if phase < 2 { &[1] } else { &[2] });
+            let num = u32::from(phase == 3);
+            let block = BlockValue::from_size(num, phase != 3, 16).unwrap().encode();
+            let mut opts = OptionsBuilder::<3>::new();
+            if condition && num == 0 {
+                opts.push(Opt::if_none_match()).unwrap();
+            }
+            opts.push(Opt::uri_path("upload")).unwrap();
+            opts.push(Opt::block1(&block)).unwrap();
+            let payload = [phase as u8 + 1; 16];
+            let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(phase + 1))
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(&payload);
+            let mut bytes = [0; 128];
+            let len = encode(&message, &mut bytes).unwrap();
+            let rx = engine.acquire_rx().unwrap();
+            engine.write_rx(rx, &bytes[..len], peer).unwrap();
+            let result = engine.apply_block1_rx(rx);
+            engine.release_rx(rx).unwrap();
+            if phase == 1 {
+                assert_eq!(result, Err(BlockTransferError::IdentityMismatch));
+                let id = original.unwrap();
+                assert_eq!(engine.rx_body_payload(id), Some(&[1; 16][..]));
+                assert_eq!(
+                    engine.rx_body_transfer(id).unwrap().if_none_match(),
+                    initial_condition
+                );
+                continue;
+            }
+            let progress = result.unwrap();
+            original = Some(progress.id());
+            assert_eq!(
+                engine
+                    .rx_body_transfer(progress.id())
+                    .unwrap()
+                    .if_none_match(),
+                condition
+            );
+            if phase == 2 {
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&[3; 16][..]));
+            }
+            if phase == 3 {
+                assert!(progress.complete());
+                let mut expected = [3; 32];
+                expected[16..].fill(4);
+                assert_eq!(engine.rx_body_payload(progress.id()), Some(&expected[..]));
+            }
+        }
+    }
+}
+
+#[test]
+fn classic_if_none_match_invalid_encoding_refuses_before_body_admission() {
+    use crate::message::{OptionNumber, OptionsBuilder};
+    for duplicate in [false, true] {
+        let mut engine = build_default_bodies();
+        let block = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let mut options = OptionsBuilder::<4>::new();
+        options
+            .push(Opt::new(
+                OptionNumber::IF_NONE_MATCH,
+                if duplicate { &[] } else { &[1] },
+            ))
+            .unwrap();
+        if duplicate {
+            options.push(Opt::if_none_match()).unwrap();
+        }
+        options.push(Opt::uri_path("upload")).unwrap();
+        options.push(Opt::block1(&block)).unwrap();
+        let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+            .with_options(options.as_slice())
+            .with_payload(&[1; 16]);
+        let mut bytes = [0; 128];
+        let n = encode(&message, &mut bytes).unwrap();
+        let rx = engine.acquire_rx().unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        engine.write_rx(rx, &bytes[..n], peer).unwrap();
+        assert_eq!(
+            engine.apply_block1_rx(rx),
+            Err(BlockTransferError::IdentityMismatch)
+        );
+        assert!(
+            engine
+                .lookup_rx_body(BlockKey::new(Token::EMPTY, peer))
+                .is_none()
+        );
+    }
 }

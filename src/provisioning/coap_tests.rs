@@ -64,12 +64,364 @@ fn entropy(value: u8) -> impl FnMut(&mut [u8]) -> bool {
     }
 }
 
+fn fresh_operations(value: u8, mid: u8) -> impl FnMut(&mut [u8]) -> bool {
+    move |out| {
+        out.fill(0);
+        if out.len() == 32 {
+            out[31] = value;
+        } else {
+            out[1] = mid;
+        }
+        true
+    }
+}
+
 fn no_entropy(_: &mut [u8]) -> bool {
     panic!("duplicates and transitions must reuse established keys")
 }
 
 fn no_authorization(_: &Principal) -> bool {
     panic!("unauthenticated messages must not invoke authorization")
+}
+
+fn echo_response(request: &[u8], echo: &[u8]) -> Vec<u8> {
+    let parsed = decode(request).unwrap();
+    let options = [Opt::echo(echo)];
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::new(
+        Type::Acknowledgement,
+        Code::UNAUTHORIZED,
+        parsed.message_id(),
+    )
+    .with_token(parsed.token())
+    .with_options(&options)
+    .encode(&mut out)
+    .unwrap();
+    out[..len].to_vec()
+}
+
+fn peer_error_response(request: &[u8], ty: Type, payload: &[u8]) -> Vec<u8> {
+    let p = decode(request).unwrap();
+    let options = [Opt::new(
+        OptionNumber::CONTENT_FORMAT,
+        &[RESPONSE_FORMAT as u8],
+    )];
+    let mut bytes = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::new(ty, Code::BAD_REQUEST, p.message_id())
+        .with_token(p.token())
+        .with_options(&options)
+        .with_payload(payload)
+        .encode(&mut bytes)
+        .unwrap();
+    bytes[..len].to_vec()
+}
+
+#[test]
+fn peer_error_responses_abort_each_stage_after_exact_ack_and_retain_diagnostics() {
+    for stage in [0, 1] {
+        for ty in [
+            Type::Acknowledgement,
+            Type::Confirmable,
+            Type::NonConfirmable,
+        ] {
+            let cases: &[(&[u8], PeerErrorCode)] = if stage == 0 {
+                &[
+                    (&[0, 0x19, 1, 0], PeerErrorCode::ReservedSuccess),
+                    (&[1, 0x63, b'b', b'a', b'd'], PeerErrorCode::Unspecified),
+                    (&[2, 0x82, 2, 3], PeerErrorCode::WrongCipherSuite),
+                ]
+            } else {
+                &[
+                    (&[0, 0x19, 1, 0], PeerErrorCode::ReservedSuccess),
+                    (&[1, 0x63, b'b', b'a', b'd'], PeerErrorCode::Unspecified),
+                    (&[3, 0xf5], PeerErrorCode::UnknownCredential),
+                ]
+            };
+            for &(payload, code) in cases {
+                let a = identity(1, 0);
+                let b = identity(2, 1);
+                let mut client =
+                    CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+                let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+                let mut ci = Io::default();
+                let mut si = Io::default();
+                client.flush(&mut ci, 0).unwrap();
+                if stage == 1 {
+                    server
+                        .ingest(&ci.last(), CLIENT, 0, entropy(4), no_authorization)
+                        .unwrap();
+                    server.flush(&mut si, 0).unwrap();
+                    client
+                        .ingest(&si.last(), SERVER, 0, no_entropy, |_| true)
+                        .unwrap();
+                    client.flush(&mut ci, 0).unwrap();
+                    assert_eq!(
+                        client.ingest(
+                            &peer_error_response(&ci.last(), ty, &[2, 2]),
+                            SERVER,
+                            1,
+                            no_entropy,
+                            no_authorization
+                        ),
+                        Ok(Status::Ignored)
+                    );
+                }
+                let error = peer_error_response(&ci.last(), ty, payload);
+                let request_count = ci.attempts.len();
+                assert_eq!(
+                    client.ingest(&error, SERVER, 1, no_entropy, no_authorization),
+                    Ok(Status::Progress)
+                );
+                assert!(client.take_session().is_none());
+                assert_eq!(client.next_deadline(), Some(1));
+                assert_eq!(client.peer_error().unwrap().code(), code);
+                if code == PeerErrorCode::Unspecified {
+                    assert_eq!(client.peer_error().unwrap().diagnostic(), Some("bad"));
+                }
+                if code == PeerErrorCode::WrongCipherSuite {
+                    assert_eq!(
+                        client
+                            .peer_error()
+                            .unwrap()
+                            .cipher_suites()
+                            .collect::<Vec<_>>(),
+                        [2, 3]
+                    );
+                }
+                if ty == Type::Confirmable {
+                    ci.fail = true;
+                    assert_eq!(client.flush(&mut ci, 1), Err(PollError::Io(9)));
+                    let ack = ci.last();
+                    assert_eq!(ack, [0x60, 0, error[2], error[3]]);
+                    assert_eq!(ci.attempts.last().unwrap().0, SERVER);
+                    ci.fail = false;
+                    ci.short = true;
+                    assert_eq!(client.flush(&mut ci, 2), Err(PollError::ShortSend));
+                    assert_eq!(ci.last(), ack);
+                    ci.short = false;
+                }
+                assert_eq!(client.flush(&mut ci, 3), Err(PollError::PeerAbort(code)));
+                let after = ci.attempts.len();
+                assert_eq!(
+                    client.flush(&mut ci, 100_000),
+                    Err(PollError::PeerAbort(code))
+                );
+                assert_eq!(ci.attempts.len(), after); // no handshake retransmission after abort
+                assert_eq!(
+                    after,
+                    request_count + if ty == Type::Confirmable { 3 } else { 0 }
+                );
+                assert_eq!(client.next_deadline(), Some(1 + EXCHANGE_LIFETIME_MS));
+                assert_eq!(
+                    client.ingest(&error, SERVER, 100_001, no_entropy, no_authorization),
+                    Ok(Status::Progress)
+                );
+                assert_eq!(
+                    client.flush(&mut ci, 100_001),
+                    Err(PollError::PeerAbort(code))
+                );
+                assert_eq!(
+                    ci.attempts.len(),
+                    after + usize::from(ty == Type::Confirmable)
+                );
+                assert_eq!(client.next_deadline(), Some(1 + EXCHANGE_LIFETIME_MS));
+                assert_eq!(
+                    client.flush(&mut ci, 1 + EXCHANGE_LIFETIME_MS),
+                    Ok(Status::Expired)
+                );
+                assert!(client.peer_error().is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn peer_error_invalid_or_unrelated_response_keeps_valid_handshake_and_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let deadline = client.next_deadline();
+    for payload in [
+        &[1][..],
+        &[1, 0x61, 0xff],
+        &[2, 0x80],
+        &[3, 0xf5],
+        &[23, 0xf6],
+    ] {
+        assert_eq!(
+            client.ingest(
+                &peer_error_response(&m1, Type::Acknowledgement, payload),
+                SERVER,
+                1,
+                no_entropy,
+                no_authorization
+            ),
+            Ok(Status::Ignored)
+        );
+    }
+    let valid_error = peer_error_response(&m1, Type::Acknowledgement, &[1, 0x60]);
+    assert_eq!(
+        client.ingest(&valid_error, OTHER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let mut wrong_mid = valid_error.clone();
+    wrong_mid[3] ^= 1;
+    assert_eq!(
+        client.ingest(&wrong_mid, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let p = decode(&valid_error).unwrap();
+    let options: Vec<_> = p.options().collect();
+    let wrong_token = recode(
+        &valid_error,
+        p.ty(),
+        p.message_id(),
+        Token::from_checked(b"wrong"),
+        &options,
+        p.payload(),
+    );
+    assert_eq!(
+        client.ingest(&wrong_token, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let mut wrong_code = valid_error.clone();
+    wrong_code[1] = Code::CHANGED.as_raw();
+    assert!(matches!(
+        client.ingest(&wrong_code, SERVER, 1, no_entropy, no_authorization),
+        Err(PollError::Provisioning(_))
+    ));
+    // Matching malformed successful EDHOC messages consume state, unlike malformed error metadata.
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let wrong_format = recode(
+        &valid_error,
+        p.ty(),
+        p.message_id(),
+        p.token(),
+        &[Opt::new(OptionNumber::CONTENT_FORMAT, &[65])],
+        p.payload(),
+    );
+    assert_eq!(
+        client.ingest(&wrong_format, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let critical = extra_options(
+        &peer_error_response(&m1, Type::Confirmable, &[1, 0x60]),
+        &[Opt::new(OptionNumber::new(99), &[])],
+    );
+    assert_eq!(
+        client.ingest(&critical, SERVER, 1, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    client.flush(&mut ci, 1).unwrap();
+    assert_eq!(ci.last(), [0x70, 0, m1[2], m1[3]]);
+    assert!(client.peer_error().is_none());
+    assert_eq!(client.next_deadline(), deadline);
+    server
+        .ingest(&m1, CLIENT, 1, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 1).unwrap();
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 1);
+}
+
+#[test]
+fn echo_retry_uses_reserved_mid_exact_message1_and_original_wait_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let deadline = match &client.role {
+        Role::Client(client) => client.retry.wait_until.unwrap(),
+        _ => unreachable!(),
+    };
+    let challenge = echo_response(&original, &[8; 24]);
+    client
+        .ingest(
+            &challenge,
+            SERVER,
+            deadline - 1,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    client.flush(&mut io, deadline - 1).unwrap();
+    let retry = io.last();
+    assert_eq!(
+        decode(&retry).unwrap().payload(),
+        decode(&original).unwrap().payload()
+    );
+    assert_eq!(
+        decode(&retry).unwrap().message_id(),
+        decode(&original).unwrap().message_id().wrapping_add(2)
+    );
+    assert_eq!(
+        decode(&retry).unwrap().token(),
+        decode(&original).unwrap().token()
+    );
+    assert_eq!(decode(&retry).unwrap().echo(), Some(&[8; 24][..]));
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.retry.wait_until,
+            _ => unreachable!(),
+        },
+        Some(deadline)
+    );
+    assert_eq!(client.flush(&mut io, deadline), Err(PollError::Timeout));
+    assert_eq!(io.attempts.len(), 2);
+}
+
+#[test]
+fn echoed_request_and_saved_challenge_cannot_be_replaced_by_further_challenges() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let challenge = echo_response(&original, &[8; 24]);
+    let mut malformed = challenge.clone();
+    malformed[1] = 68;
+    assert_eq!(
+        client.ingest(&malformed, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, OTHER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    client
+        .ingest(&challenge, SERVER, 0, no_entropy, no_authorization)
+        .unwrap();
+    io.fail = true;
+    assert_eq!(client.flush(&mut io, 0), Err(PollError::Io(9)));
+    let echoed = io.last();
+    io.fail = false;
+    client.flush(&mut io, 0).unwrap();
+    assert_eq!(io.last(), echoed);
+    let second = echo_response(&echoed, &[9; 24]);
+    assert_eq!(
+        client.ingest(&second, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&challenge, SERVER, 0, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    assert!(client.take_session().is_none());
+    assert_eq!(
+        match &client.role {
+            Role::Client(client) => client.request.as_slice(),
+            _ => unreachable!(),
+        },
+        echoed
+    );
 }
 
 fn finish(
@@ -120,6 +472,852 @@ fn recode(
         .encode(&mut output)
         .unwrap();
     output[..len].to_vec()
+}
+
+fn elective_wire(bytes: &[u8]) -> Vec<u8> {
+    let parsed = decode(bytes).unwrap();
+    let mut options: Vec<_> = parsed.options().collect();
+    // Before, between and after profile options, including repeated empty
+    // values and a two-byte option number. Option zero is reserved and must
+    // also be treated as unrecognized (RFC7252 section5.4).
+    options.extend([
+        Opt::new(OptionNumber::new(0), &[]),
+        Opt::new(OptionNumber::new(2), b"before"),
+        Opt::new(OptionNumber::new(10), &[0xff]),
+        Opt::new(OptionNumber::new(18), &[]),
+        Opt::new(OptionNumber::new(18), b"repeat"),
+        Opt::new(OptionNumber::new(65000), b"after"),
+    ]);
+    options.sort_by_key(|option| option.number());
+    recode(
+        bytes,
+        parsed.ty(),
+        parsed.message_id(),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    )
+}
+
+fn extra_options(bytes: &[u8], extra: &[Opt<'_>]) -> Vec<u8> {
+    let parsed = decode(bytes).unwrap();
+    let mut options: Vec<_> = parsed.options().collect();
+    options.extend_from_slice(extra);
+    options.sort_by_key(|o| o.number());
+    recode(
+        bytes,
+        parsed.ty(),
+        parsed.message_id(),
+        parsed.token(),
+        &options,
+        parsed.payload(),
+    )
+}
+
+fn complete_tail(
+    client: &mut CoapProvisioner<'_>,
+    server: &mut CoapProvisioner<'_>,
+    ci: &mut Io,
+    si: &mut Io,
+    now: u64,
+) {
+    client
+        .ingest(&si.last(), SERVER, now, no_entropy, |_| true)
+        .unwrap();
+    client.flush(ci, now).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, now, no_entropy, |_| true)
+        .unwrap();
+    server.flush(si, now).unwrap();
+    client
+        .ingest(&si.last(), SERVER, now, no_entropy, |_| true)
+        .unwrap();
+    let (cc, _) = client.take_session().unwrap().into_parts();
+    let (sc, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(cc.sender_key(), sc.recipient_key());
+    assert_eq!(cc.recipient_key(), sc.sender_key());
+    assert_eq!(cc.common_iv(), sc.common_iv());
+}
+
+#[test]
+fn bootstrap_options_critical_request_control_is_bounded_and_recovers() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let good = ci.last();
+    let bad = extra_options(&good, &[Opt::new(OptionNumber::new(99), b"critical")]);
+    assert_eq!(CoapProvisioner::CONTROL_CAPACITY, 1);
+    assert_eq!(
+        server
+            .ingest(&bad, OTHER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(
+        server
+            .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    assert_eq!(server.expires, None);
+    assert_eq!(server.next_deadline(), Some(0));
+    let p = decode(&bad).unwrap();
+    let other = recode(
+        &bad,
+        p.ty(),
+        p.message_id().wrapping_add(1),
+        Token::from_checked(&[3]),
+        &p.options().collect::<Vec<_>>(),
+        p.payload(),
+    );
+    assert_eq!(
+        server
+            .ingest(&other, CLIENT, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(
+        server
+            .ingest(&good, CLIENT, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    si.fail = true;
+    assert_eq!(server.flush(&mut si, 0), Err(PollError::Io(9)));
+    let saved = si.last();
+    let reply = decode(&saved).unwrap();
+    assert_eq!(si.attempts.last().unwrap().0, CLIENT);
+    assert_eq!(reply.ty(), Type::Acknowledgement);
+    assert_eq!(reply.code(), Code::BAD_OPTION);
+    assert_eq!(reply.message_id(), p.message_id());
+    assert_eq!(reply.token(), p.token());
+    assert!(reply.options().next().is_none());
+    assert!(reply.payload().is_empty());
+    assert!(saved.len() <= 12);
+    si.fail = false;
+    si.short = true;
+    assert_eq!(server.flush(&mut si, 1), Err(PollError::ShortSend));
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    assert_eq!(server.flush(&mut si, 2).unwrap(), Status::Progress);
+    assert_eq!(si.last(), saved);
+    assert_eq!(server.next_deadline(), Some(EXCHANGE_LIFETIME_MS));
+    server
+        .ingest(&bad, CLIENT, 2, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    // Changed bytes under the refused MID replay the original refusal.
+    let non_owner = recode(
+        &good,
+        Type::NonConfirmable,
+        p.message_id(),
+        p.token(),
+        &decode(&good).unwrap().options().collect::<Vec<_>>(),
+        decode(&good).unwrap().payload(),
+    );
+    let count = si.attempts.len();
+    assert_eq!(
+        server
+            .ingest(&non_owner, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.flush(&mut si, 2).unwrap(), Status::Idle);
+    assert_eq!(si.attempts.len(), count);
+    server
+        .ingest(&good, CLIENT, 2, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    let changed_token = recode(
+        &bad,
+        p.ty(),
+        p.message_id(),
+        Token::from_checked(&[9]),
+        &p.options().collect::<Vec<_>>(),
+        p.payload(),
+    );
+    server
+        .ingest(&changed_token, CLIENT, 2, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    assert_eq!(
+        server
+            .ingest(&other, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    client = CoapProvisioner::start(&a, b.peer(), SERVER, 2, fresh_operations(5, 10)).unwrap();
+    client.flush(&mut ci, 2).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 2, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 2);
+    let mut opposite_role = bad.clone();
+    opposite_role[1] = 68; // 2.04 response under a peer-owned refused request MID
+    let count = si.attempts.len();
+    assert_eq!(
+        server.classify_completed_cache(&opposite_role, CLIENT, 2),
+        CompletedCacheMatch::RefusedMid
+    );
+    assert_eq!(
+        server
+            .ingest(&opposite_role, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.flush(&mut si, 2).unwrap(), Status::Complete);
+    assert_eq!(si.attempts.len(), count);
+    // Completion controllers serve retained owners only. Once the refusal
+    // expires, a new critical request cannot extend a completed controller.
+    assert_eq!(
+        server
+            .ingest(
+                &other,
+                CLIENT,
+                EXCHANGE_LIFETIME_MS,
+                no_entropy,
+                no_authorization
+            )
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(server.control.is_none());
+}
+
+#[test]
+fn bootstrap_options_control_expiry_and_clock_overflow_preserve_bounds() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut ci = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let bad = extra_options(&ci.last(), &[Opt::new(OptionNumber::new(99), &[])]);
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    server
+        .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+        .unwrap();
+    let mut si = Io::default();
+    assert_eq!(
+        server.flush(&mut si, EXCHANGE_LIFETIME_MS).unwrap(),
+        Status::Idle
+    );
+    assert!(si.attempts.is_empty());
+    assert!(server.control.is_none());
+    assert_eq!(server.next_deadline(), None);
+    let mut fresh =
+        CoapProvisioner::start(&a, b.peer(), SERVER, EXCHANGE_LIFETIME_MS, entropy(5)).unwrap();
+    finish(
+        &mut fresh,
+        &mut server,
+        &mut ci,
+        &mut si,
+        EXCHANGE_LIFETIME_MS,
+    );
+    assert!(fresh.take_session().is_some());
+    assert!(server.take_session().is_some());
+    let mut overflow = CoapProvisioner::listen(&b, a.peer(), CLIENT, u64::MAX);
+    assert_eq!(
+        overflow.ingest(&bad, CLIENT, u64::MAX, no_entropy, no_authorization),
+        Err(PollError::Clock)
+    );
+    assert!(overflow.control.is_none());
+    assert_eq!(overflow.next_deadline(), None);
+}
+
+#[test]
+fn bootstrap_options_critical_refusal_preserves_accepted_mid_cache() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let good = ci.last();
+    server
+        .ingest(&good, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let saved = si.last();
+    let expiry = server.expires;
+    let bad = extra_options(&good, &[Opt::new(OptionNumber::OSCORE, &[])]);
+    assert_eq!(
+        server
+            .ingest(&bad, CLIENT, 1, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.flush(&mut si, 1).unwrap(), Status::Idle);
+    assert_eq!(si.attempts.len(), 1);
+    let p = decode(&bad).unwrap();
+    let different = recode(
+        &bad,
+        p.ty(),
+        p.message_id().wrapping_add(7),
+        p.token(),
+        &p.options().collect::<Vec<_>>(),
+        p.payload(),
+    );
+    server
+        .ingest(&different, CLIENT, 1, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 1).unwrap();
+    assert_eq!(decode(&si.last()).unwrap().code(), Code::BAD_OPTION);
+    assert_eq!(server.expires, expiry);
+    server
+        .ingest(&good, CLIENT, 2, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 2);
+}
+
+#[test]
+fn bootstrap_options_critical_response_reset_has_exact_ownership_and_recovery() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let good = si.last();
+    let bad = extra_options(&good, &[Opt::new(OptionNumber::new(99), &[])]);
+    let p = decode(&bad).unwrap();
+    let options: Vec<_> = p.options().collect();
+    let con = recode(
+        &bad,
+        Type::Confirmable,
+        MessageId::new(900),
+        p.token(),
+        &options,
+        p.payload(),
+    );
+    let wrong_token = recode(
+        &con,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        &options,
+        p.payload(),
+    );
+    let original_deadline = client.next_deadline();
+    assert_eq!(
+        client
+            .ingest(&con, OTHER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(
+        client
+            .ingest(&wrong_token, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(
+        client
+            .ingest(&bad, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    let non = recode(
+        &bad,
+        Type::NonConfirmable,
+        MessageId::new(900),
+        p.token(),
+        &options,
+        p.payload(),
+    );
+    assert_eq!(
+        client
+            .ingest(&non, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(client.next_deadline(), original_deadline);
+    assert_eq!(ci.attempts.len(), 1);
+    assert_eq!(
+        client
+            .ingest(&con, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    ci.fail = true;
+    assert_eq!(client.flush(&mut ci, 0), Err(PollError::Io(9)));
+    let reset = ci.last();
+    assert_eq!(ci.attempts.last().unwrap().0, SERVER);
+    let parsed = decode(&reset).unwrap();
+    assert!(parsed.is_empty_rst());
+    assert_eq!(parsed.message_id(), MessageId::new(900));
+    assert!(parsed.token().is_empty());
+    assert_eq!(reset.len(), 4);
+    ci.fail = false;
+    ci.short = true;
+    assert_eq!(client.flush(&mut ci, 1), Err(PollError::ShortSend));
+    assert_eq!(ci.last(), reset);
+    ci.short = false;
+    client.flush(&mut ci, 2).unwrap();
+    assert_eq!(ci.last(), reset);
+    assert_eq!(client.next_deadline(), original_deadline);
+    let g = decode(&good).unwrap();
+    let valid_non_under_refused_mid = recode(
+        &good,
+        Type::NonConfirmable,
+        MessageId::new(900),
+        g.token(),
+        &g.options().collect::<Vec<_>>(),
+        g.payload(),
+    );
+    let count = ci.attempts.len();
+    assert_eq!(
+        client
+            .ingest(
+                &valid_non_under_refused_mid,
+                SERVER,
+                2,
+                no_entropy,
+                no_authorization
+            )
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(client.flush(&mut ci, 2).unwrap(), Status::Idle);
+    assert_eq!(ci.attempts.len(), count);
+    let valid_con_under_refused_mid = recode(
+        &good,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        &g.options().collect::<Vec<_>>(),
+        g.payload(),
+    );
+    assert_eq!(
+        client
+            .ingest(
+                &valid_con_under_refused_mid,
+                SERVER,
+                2,
+                no_entropy,
+                no_authorization
+            )
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut ci, 2).unwrap();
+    assert_eq!(ci.last(), reset);
+    let mut opposite_role = valid_con_under_refused_mid.clone();
+    opposite_role[1] = 2; // POST under a peer-owned refused response MID
+    let count = ci.attempts.len();
+    assert_eq!(
+        client
+            .ingest(&opposite_role, SERVER, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    client.flush(&mut ci, 2).unwrap();
+    assert_eq!(ci.attempts.len(), count);
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 2);
+}
+
+#[test]
+fn bootstrap_options_elective_roles_and_repetitions_complete_authentication() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = extra_options(
+        &ci.last(),
+        &[
+            Opt::new(OptionNumber::OBSERVE, &[]), // not defined for POST
+            Opt::new(OptionNumber::CONTENT_FORMAT, &[0, 0, 65]), // extra invalid length
+            Opt::new(OptionNumber::CONTENT_FORMAT, &[64]), // extra wrong format
+            Opt::new(OptionNumber::MAX_AGE, &[1]), // not defined for a request
+        ],
+    );
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let m2 = extra_options(
+        &si.last(),
+        &[
+            Opt::new(OptionNumber::CONTENT_FORMAT, &[65]),
+            Opt::new(OptionNumber::MAX_AGE, &[0, 0, 0, 0, 1]),
+        ],
+    );
+    client.ingest(&m2, SERVER, 0, no_entropy, |_| true).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 0, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+}
+
+#[test]
+fn bootstrap_options_invalid_first_format_cannot_be_repaired_by_repeat() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let good = ci.last();
+    let p = decode(&good).unwrap();
+    let options = [
+        Opt::new(OptionNumber::URI_PATH, b".well-known"),
+        Opt::new(OptionNumber::URI_PATH, b"edhoc"),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[0, 0, 65]),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[65]),
+    ];
+    let bad = recode(
+        &good,
+        p.ty(),
+        p.message_id(),
+        p.token(),
+        &options,
+        p.payload(),
+    );
+    assert_eq!(
+        server
+            .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.next_deadline(), None);
+    server
+        .ingest(&good, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    complete_tail(&mut client, &mut server, &mut ci, &mut si, 0);
+}
+
+#[test]
+fn bootstrap_options_echo_repetition_keeps_first_occurrence_and_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut ci = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let good = ci.last();
+    let invalid = extra_options(&echo_response(&good, &[]), &[Opt::echo(b"second")]);
+    assert_eq!(
+        client
+            .ingest(&invalid, SERVER, 0, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    let deadline = match &client.role {
+        Role::Client(c) => c.retry.wait_until,
+        _ => unreachable!(),
+    };
+    let challenge = extra_options(
+        &echo_response(&good, b"first"),
+        &[Opt::echo(&[4; 41]), Opt::echo(b"second")],
+    );
+    client
+        .ingest(&challenge, SERVER, 0, no_entropy, no_authorization)
+        .unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    assert_eq!(decode(&ci.last()).unwrap().echo(), Some(&b"first"[..]));
+    assert_eq!(
+        decode(&ci.last()).unwrap().payload(),
+        decode(&good).unwrap().payload()
+    );
+    assert_eq!(
+        match &client.role {
+            Role::Client(c) => c.retry.wait_until,
+            _ => unreachable!(),
+        },
+        deadline
+    );
+}
+
+#[test]
+fn elective_options_complete_authenticated_sequential_bootstrap() {
+    for ty in [
+        Type::Acknowledgement,
+        Type::Confirmable,
+        Type::NonConfirmable,
+    ] {
+        elective_handshake(ty);
+    }
+}
+
+fn elective_handshake(response_type: Type) {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    for step in 0..2 {
+        let request = elective_wire(&ci.last());
+        assert_eq!(
+            server
+                .ingest(&request, CLIENT, 0, entropy(4), |_| true)
+                .unwrap(),
+            Status::Progress
+        );
+        server.flush(&mut si, 0).unwrap();
+        let saved = si.last();
+        let parsed = decode(&saved).unwrap();
+        let mid = if response_type == Type::Acknowledgement {
+            parsed.message_id()
+        } else {
+            MessageId::new(900 + step)
+        };
+        let response = recode(
+            &saved,
+            response_type,
+            mid,
+            parsed.token(),
+            &parsed.options().collect::<Vec<_>>(),
+            parsed.payload(),
+        );
+        let response = elective_wire(&response);
+        let expected = if step == 0 || response_type == Type::Confirmable {
+            Status::Progress
+        } else {
+            Status::Complete
+        };
+        assert_eq!(
+            client
+                .ingest(&response, SERVER, 0, no_entropy, |_| true)
+                .unwrap(),
+            expected
+        );
+        let before = ci.attempts.len();
+        let flushed = client.flush(&mut ci, 0).unwrap();
+        if step == 1 {
+            assert_eq!(flushed, Status::Complete);
+        }
+        if response_type == Type::Confirmable {
+            let (endpoint, ack) = &ci.attempts[before];
+            let ack = decode(ack).unwrap();
+            assert_eq!(*endpoint, SERVER);
+            assert!(ack.is_empty_ack());
+            assert_eq!(ack.message_id(), mid);
+        }
+    }
+    let cs = client.take_session().unwrap();
+    let ss = server.take_session().unwrap();
+    assert_eq!(*cs.principal(), b.peer().principal());
+    assert_eq!(*ss.principal(), a.peer().principal());
+    let (cc, _) = cs.into_parts();
+    let (sc, _) = ss.into_parts();
+    assert_eq!(cc.sender_key(), sc.recipient_key());
+    assert_eq!(cc.recipient_key(), sc.sender_key());
+    assert_eq!(cc.common_iv(), sc.common_iv());
+}
+
+#[test]
+fn elective_options_echo_preserves_entropy_payload_and_deadline() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut io = Io::default();
+    client.flush(&mut io, 0).unwrap();
+    let original = io.last();
+    let deadline = match &client.role {
+        Role::Client(c) => c.retry.wait_until,
+        _ => unreachable!(),
+    };
+    let challenge = elective_wire(&echo_response(&original, b"challenge"));
+    assert_eq!(
+        client
+            .ingest(&challenge, SERVER, 1, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut io, 1).unwrap();
+    let retry = io.last();
+    let parsed = decode(&retry).unwrap();
+    assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
+    assert_eq!(parsed.payload(), decode(&original).unwrap().payload());
+    assert_eq!(
+        parsed.message_id(),
+        decode(&original).unwrap().message_id().wrapping_add(2)
+    );
+    assert_eq!(parsed.token(), decode(&original).unwrap().token());
+    assert_eq!(
+        match &client.role {
+            Role::Client(c) => c.retry.wait_until,
+            _ => unreachable!(),
+        },
+        deadline
+    );
+    let count = io.attempts.len();
+    assert_eq!(
+        client
+            .ingest(&challenge, SERVER, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut io, 2).unwrap();
+    assert_eq!(io.attempts.len(), count);
+}
+
+#[test]
+fn elective_options_preserve_exact_duplicate_ownership_and_send_recovery() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let raw = ci.last();
+    let request = elective_wire(&raw);
+    server
+        .ingest(&request, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    si.fail = true;
+    assert_eq!(server.flush(&mut si, 0), Err(PollError::Io(9)));
+    let saved = si.last();
+    si.fail = false;
+    si.short = true;
+    assert_eq!(server.flush(&mut si, 1), Err(PollError::ShortSend));
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    let count = si.attempts.len();
+    // Semantically ignored bytes still belong to the original MID owner.
+    assert_eq!(
+        server
+            .ingest(&raw, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    let mut changed = request.clone();
+    let offset = changed
+        .windows(5)
+        .position(|bytes| bytes == b"after")
+        .unwrap();
+    changed[offset] ^= 1;
+    assert_eq!(
+        server
+            .ingest(&changed, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    assert_eq!(server.flush(&mut si, 2).unwrap(), Status::Idle);
+    assert_eq!(si.attempts.len(), count);
+    assert_eq!(
+        server
+            .ingest(&request, CLIENT, 2, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(si.last(), saved);
+    client
+        .ingest(&saved, SERVER, 2, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 2).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 2, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 2).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 2, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
+}
+
+#[test]
+fn elective_options_do_not_hide_critical_options() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 0).unwrap();
+    let request = elective_wire(&ci.last());
+    let add = |wire: &[u8], number| {
+        let parsed = decode(wire).unwrap();
+        let mut options: Vec<_> = parsed.options().collect();
+        options.push(Opt::new(number, &[]));
+        options.sort_by_key(|o| o.number());
+        recode(
+            wire,
+            parsed.ty(),
+            parsed.message_id(),
+            parsed.token(),
+            &options,
+            parsed.payload(),
+        )
+    };
+    for number in [OptionNumber::new(99), OptionNumber::OSCORE] {
+        let bad = add(&request, number);
+        assert_eq!(
+            server
+                .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+                .unwrap(),
+            Status::Progress
+        );
+        server.flush(&mut si, 0).unwrap();
+        assert_eq!(decode(&si.last()).unwrap().code(), Code::BAD_OPTION);
+        assert_eq!(server.next_deadline(), Some(EXCHANGE_LIFETIME_MS));
+    }
+    client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, fresh_operations(5, 10)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let request = elective_wire(&ci.last());
+    server
+        .ingest(&request, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let response = elective_wire(&si.last());
+    for number in [OptionNumber::new(99), OptionNumber::OSCORE] {
+        let bad = add(&response, number);
+        assert_eq!(
+            client
+                .ingest(&bad, SERVER, 0, no_entropy, no_authorization)
+                .unwrap(),
+            Status::Ignored
+        );
+        assert!(client.take_session().is_none());
+    }
+    assert_eq!(
+        client
+            .ingest(&response, SERVER, 0, no_entropy, |_| true)
+            .unwrap(),
+        Status::Progress
+    );
+    client.flush(&mut ci, 0).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 0, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 0, no_entropy, |_| true)
+        .unwrap();
+    assert!(client.take_session().is_some());
+    assert!(server.take_session().is_some());
 }
 
 #[test]
@@ -189,6 +1387,37 @@ fn nondefault_local_ids_accept_authenticated_peer_choice_and_route_message3() {
     assert_eq!(client_context.sender_key(), server_context.recipient_key());
     assert_eq!(client_context.recipient_key(), server_context.sender_key());
     assert_eq!(client_context.common_iv(), server_context.common_iv());
+}
+
+#[test]
+fn extended_local_ids_route_complete_coap_handshakes_without_truncation() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let client_id = ConnectionId::from_slice(&[1, 2, 3, 4, 5, 6, 7]).unwrap();
+    let server_id = ConnectionId::from_slice(&[9, 8, 7, 6, 5, 4, 3]).unwrap();
+    let mut client =
+        CoapProvisioner::start_with_id(&a, b.peer(), SERVER, client_id, 0, entropy(3)).unwrap();
+    let mut server = CoapProvisioner::listen_with_id(&b, a.peer(), CLIENT, server_id, 0);
+    let mut client_io = Io::default();
+    let mut server_io = Io::default();
+    let (m1, _, m3, _) = finish(&mut client, &mut server, &mut client_io, &mut server_io, 0);
+    assert_eq!(
+        &decode(&m1).unwrap().payload()[37..],
+        client_id.lakers().as_cbor()
+    );
+    assert_eq!(
+        &decode(&m3).unwrap().payload()[..8],
+        server_id.lakers().as_cbor()
+    );
+    let (client, _) = client.take_session().unwrap().into_parts();
+    let (server, _) = server.take_session().unwrap().into_parts();
+    assert_eq!(client.sender_id(), server_id.as_bytes());
+    assert_eq!(client.recipient_id(), client_id.as_bytes());
+    assert_eq!(server.sender_id(), client_id.as_bytes());
+    assert_eq!(server.recipient_id(), server_id.as_bytes());
+    assert_eq!(client.sender_key(), server.recipient_key());
+    assert_eq!(client.recipient_key(), server.sender_key());
+    assert_eq!(client.common_iv(), server.common_iv());
 }
 
 #[test]
@@ -878,14 +2107,7 @@ fn invalid_request_path_format_code_and_payload_prefix_preserve_listening_state(
         parsed.payload(),
     );
     let mut server = CoapProvisioner::listen(&b, a.peer(), CLIENT, 0);
-    for bad in [
-        &wrong_path,
-        &wrong_format,
-        &repeated_format,
-        &wrong_prefix,
-        &wrong_code,
-        &non,
-    ] {
+    for bad in [&wrong_path, &wrong_format, &wrong_prefix, &wrong_code, &non] {
         assert_eq!(
             server
                 .ingest(bad, CLIENT, 0, no_entropy, no_authorization)
@@ -896,7 +2118,7 @@ fn invalid_request_path_format_code_and_payload_prefix_preserve_listening_state(
     }
     assert_eq!(
         server
-            .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+            .ingest(&repeated_format, CLIENT, 0, entropy(4), no_authorization)
             .unwrap(),
         Status::Progress
     );
@@ -1310,7 +2532,7 @@ fn oversized_response_connection_id_consumes_state_without_ack_or_session() {
             payload.len() - combined_len + crate::provisioning::lakers::P256_ELEM_LEN;
         // Replace the known C_R byte in XOR-encrypted plaintext_2 with an
         // oversized bstr header without changing the CoAP or EDHOC envelope.
-        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8() ^ 0x48;
+        payload[ciphertext_start] ^= ConnectionId::RESPONDER.as_u8().unwrap() ^ 0x48;
         let bad = recode(
             &good,
             ty,

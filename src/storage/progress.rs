@@ -148,15 +148,21 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// Empty tables are skipped in O(1) via [`super::SlotPool::occupied_count`]
     /// (CON / Observe / Q-Block scans run only while that area is occupied).
     pub fn progress(&mut self, now_ms: u64) -> Progress {
-        self.progress_inner(now_ms, true)
+        self.progress_inner(now_ms, true, |_| true)
     }
 
     // App reserves a pending candidate without consuming its signal. Ingress
     // may cancel or replace the relation before App claims that candidate.
     // A newly registered row is never pending, even if it reuses this slot.
     // Q recovery/expiry also waits until ingress can fill its missing blocks.
-    pub(crate) fn progress_before_dispatch(&mut self, now_ms: u64) -> Progress {
-        self.progress_inner(now_ms, false)
+    // App excludes retained full responses during the RX scan. Filtering only
+    // the returned candidate could let a held row hide other queued work.
+    pub(crate) fn progress_before_dispatch(
+        &mut self,
+        now_ms: u64,
+        eligible_rx: impl FnMut(SlotId) -> bool,
+    ) -> Progress {
+        self.progress_inner(now_ms, false, eligible_rx)
     }
 
     pub(crate) fn claim_observe_notification(&mut self, id: SlotId, now_ms: u64) -> Option<SlotId> {
@@ -182,7 +188,12 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         (recover, expired)
     }
 
-    fn progress_inner(&mut self, now_ms: u64, immediate_later_work: bool) -> Progress {
+    fn progress_inner(
+        &mut self,
+        now_ms: u64,
+        immediate_later_work: bool,
+        eligible_rx: impl FnMut(SlotId) -> bool,
+    ) -> Progress {
         Metrics::inc(&mut self.metrics_mut().progress);
         let rx_busy = !self.storage_mut().rx_datagram().is_empty();
         let tx_busy = !self.storage_mut().tx_datagram().is_empty();
@@ -203,7 +214,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             let _ = self.mark_observe_unacked_due(pending.message_id(), pending.endpoint(), now_ms);
         }
         let rx_ready = if rx_busy {
-            next_unpinned_rx(self)
+            next_unpinned_rx(self, eligible_rx)
         } else {
             None
         };
@@ -376,7 +387,10 @@ fn progress_qblock<S: Storage + BodySlots>(
 ///
 /// Advances the cursor past the visited slot (or by one when every occupied
 /// slot is pinned) so the next call does not restart at slot zero.
-fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
+fn next_unpinned_rx<S: Storage>(
+    engine: &mut Engine<S>,
+    mut eligible: impl FnMut(SlotId) -> bool,
+) -> Option<SlotId> {
     if engine.storage_mut().rx_datagram().is_empty() {
         return None;
     }
@@ -389,7 +403,7 @@ fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
     for offset in 0..n {
         let id = SlotId::from_index((start + offset) % n);
         let pool = engine.storage_mut().rx_datagram();
-        if pool.is_occupied(id) && !pool.is_pinned(id) {
+        if pool.is_occupied(id) && !pool.is_pinned(id) && eligible(id) {
             found = Some((id, offset));
             break;
         }

@@ -5,6 +5,16 @@
 //! Confirmable or Non-confirmable replies. Block-wise transfer, discovery,
 //! proxies, EAD and combined EDHOC/OSCORE requests are outside this profile.
 //! No application plaintext policy is changed by bootstrap.
+//! Elective options outside the selected message role, invalid elective lengths
+//! and supernumerary elective occurrences are ignored for profile matching.
+//! Unsupported critical requests receive 4.02; matching separate Confirmable
+//! responses receive Reset. Cached duplicates still compare complete datagrams.
+//! The initiator accepts at most one initial piggybacked Echo challenge, saving
+//! its exact response and retrying the same message 1 under a separately reserved
+//! Message ID. This neither renews entropy nor extends the original wait limit.
+//! Recognized peer errors terminate the candidate after required transport ACKs
+//! are drained. Diagnostics are borrowed, unauthenticated and never authorize
+//! recovery or select a suite. Outbound EDHOC error generation is not implemented.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -28,8 +38,8 @@ use crate::message::{
 use crate::storage::{DatagramIo, Endpoint};
 
 use super::{
-    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PinnedPeer, Principal,
-    Responder, Session,
+    ConnectionId, Error, Identity, Initiator, InitiatorConfirm, Message, PeerError, PeerErrorCode,
+    PinnedPeer, Principal, Responder, Session,
 };
 
 const DATAGRAM_CAPACITY: usize = 384;
@@ -43,7 +53,7 @@ const RESPONSE_FORMAT: u16 = 64;
 pub enum Status {
     /// No datagram or deadline required work.
     Idle,
-    /// A valid transition, retransmission or cached reply made progress.
+    /// A transition, retransmission, cached reply or refusal control made progress.
     Progress,
     /// Authentication completed and all immediately required sends succeeded.
     Complete,
@@ -68,6 +78,10 @@ pub enum PollError<E = Infallible> {
     Clock,
     /// The matching Confirmable operation received a Reset.
     Rejected,
+    /// An unauthenticated matching EDHOC error terminated this candidate.
+    /// Any required transport ACK has been sent; inspect [`CoapProvisioner::peer_error`].
+    /// It does not revoke trust, authorize recovery or select another cipher suite.
+    PeerAbort(PeerErrorCode),
 }
 
 #[derive(Clone, Copy)]
@@ -123,9 +137,41 @@ struct Operation {
     token: Token,
 }
 
+#[derive(Clone, Copy)]
+enum ControlKind {
+    BadOption(Operation),
+    Reset(MessageId),
+}
+
+struct Control {
+    kind: ControlKind,
+    expires: u64,
+    pending: bool,
+}
+
+impl Control {
+    fn owns(&self, message: ParsedMessage<'_>, now: u64) -> bool {
+        now < self.expires
+            && matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+            && match self.kind {
+                ControlKind::BadOption(operation) => message.message_id() == operation.mid,
+                ControlKind::Reset(mid) => message.message_id() == mid,
+            }
+    }
+
+    fn can_replay(&self, message: ParsedMessage<'_>) -> bool {
+        message.ty() == Type::Confirmable
+            && match self.kind {
+                ControlKind::BadOption(_) => message.code().is_request(),
+                ControlKind::Reset(_) => message.code().is_response(),
+            }
+    }
+}
+
 struct Ids {
     first: Operation,
     second: Operation,
+    echo: Operation,
     first_timeout: u64,
     second_timeout: u64,
 }
@@ -149,6 +195,10 @@ impl Ids {
             second: Operation {
                 mid: mid.wrapping_add(1),
                 token: Token::from_checked(&seed[10..18]),
+            },
+            echo: Operation {
+                mid: mid.wrapping_add(2),
+                token: Token::from_checked(&seed[2..10]),
             },
             first_timeout: 2000 + jitter(seed[18], seed[19]),
             second_timeout: 2000 + jitter(seed[20], seed[21]),
@@ -200,7 +250,8 @@ impl Retry {
         } else {
             self.first_sent = Some(now);
             self.next_retry = Some(now.checked_add(self.initial).ok_or(Failure::Clock)?);
-            self.wait_until = Some(now.checked_add(self.initial * 31).ok_or(Failure::Clock)?);
+            let deadline = now.checked_add(self.initial * 31).ok_or(Failure::Clock)?;
+            self.wait_until = Some(self.wait_until.map_or(deadline, |old| old.min(deadline)));
         }
         Ok(())
     }
@@ -211,6 +262,11 @@ enum ClientState {
     Message2(Initiator),
     Message4(InitiatorConfirm),
     Complete,
+    Aborted {
+        code: PeerErrorCode,
+        slot: usize,
+        reported: bool,
+    },
     Failed,
 }
 
@@ -226,8 +282,9 @@ struct Client {
     operation: Operation,
     request: Wire,
     retry: Retry,
-    acks: [Option<ResponseAck>; 2],
+    acks: [Option<ResponseAck>; 3],
     pending_acks: u8,
+    echo_retried: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -251,6 +308,7 @@ struct Server {
     pending: u8,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Role {
     Client(Client),
     Server(Server),
@@ -259,6 +317,7 @@ enum Role {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CompletedCacheMatch {
     ExactDuplicate,
+    RefusedMid,
     MidCollision,
     NoMatch,
 }
@@ -274,6 +333,7 @@ struct Input<'a> {
     local_id: ConnectionId,
     expires: &'a mut Option<u64>,
     session: &'a mut Option<Session>,
+    control: &'a mut Option<Control>,
     entropy: &'a mut dyn FnMut(&mut [u8]) -> bool,
     authorize: &'a mut dyn FnMut(&Principal) -> bool,
 }
@@ -300,11 +360,18 @@ pub struct CoapProvisioner<'a> {
     last_now: u64,
     expires: Option<u64>,
     session: Option<Session>,
+    control: Option<Control>,
     failure: Option<Failure>,
     expired: bool,
 }
 
 impl<'a> CoapProvisioner<'a> {
+    /// Pending refusal controls are limited to one caller-drained slot.
+    /// A failed/short send retains it; additional input waits for its flush.
+    /// Sent controls retain MID ownership until exchange-lifetime expiry.
+    /// Fresh valid traffic may proceed; another refusal owner waits for expiry.
+    /// The slot stores identifiers, never another body.
+    pub const CONTROL_CAPACITY: usize = 1;
     /// Maximum complete CoAP datagram accepted by this bootstrap profile.
     pub const DATAGRAM_CAPACITY: usize = DATAGRAM_CAPACITY;
 
@@ -348,7 +415,7 @@ impl<'a> CoapProvisioner<'a> {
         let (state, message) =
             Initiator::start_with_id(identity, peer.clone(), local_id, &mut entropy)
                 .map_err(PollError::Provisioning)?;
-        let request = request(ids.first, 0xf5, &message).map_err(PollError::Provisioning)?;
+        let request = request(ids.first, &[0xf5], &message).map_err(PollError::Provisioning)?;
         let operation = ids.first;
         let retry = Retry::new(ids.first_timeout);
         Ok(Self {
@@ -362,12 +429,14 @@ impl<'a> CoapProvisioner<'a> {
                 operation,
                 request,
                 retry,
-                acks: [None, None],
+                acks: [None, None, None],
                 pending_acks: 0,
+                echo_retried: false,
             }),
             last_now: now_ms,
             expires: Some(expires),
             session: None,
+            control: None,
             failure: None,
             expired: false,
         })
@@ -410,6 +479,7 @@ impl<'a> CoapProvisioner<'a> {
             last_now: now_ms,
             expires: None,
             session: None,
+            control: None,
             failure: None,
             expired: false,
         }
@@ -437,6 +507,13 @@ impl<'a> CoapProvisioner<'a> {
             return CompletedCacheMatch::NoMatch;
         }
         let mid = MessageId::new(u16::from_be_bytes([bytes[2], bytes[3]]));
+        if bytes.len() <= DATAGRAM_CAPACITY
+            && self.control.as_ref().is_some_and(|control| {
+                decode(bytes).is_ok_and(|message| control.owns(message, now_ms))
+            })
+        {
+            return CompletedCacheMatch::RefusedMid;
+        }
         let cached = match &self.role {
             Role::Client(client) => client.acks.iter().flatten().find_map(|response| {
                 (now_ms < response.expires
@@ -466,22 +543,38 @@ impl<'a> CoapProvisioner<'a> {
         if self.failure.is_some() || self.expired {
             return None;
         }
-        let action = match &self.role {
-            Role::Client(client) => {
-                if client.pending_acks != 0 {
-                    Some(self.last_now)
-                } else if matches!(
-                    client.state,
-                    ClientState::Message2(_) | ClientState::Message4(_)
-                ) {
-                    Some(client.retry.deadline(self.last_now))
-                } else {
-                    None
+        let action = if self.control.as_ref().is_some_and(|c| c.pending) {
+            Some(self.last_now)
+        } else {
+            match &self.role {
+                Role::Client(client) => {
+                    if client.pending_acks != 0
+                        || matches!(
+                            client.state,
+                            ClientState::Aborted {
+                                reported: false,
+                                ..
+                            }
+                        )
+                    {
+                        Some(self.last_now)
+                    } else if matches!(
+                        client.state,
+                        ClientState::Message2(_) | ClientState::Message4(_)
+                    ) {
+                        Some(client.retry.deadline(self.last_now))
+                    } else {
+                        None
+                    }
                 }
+                Role::Server(server) => (server.pending != 0).then_some(self.last_now),
             }
-            Role::Server(server) => (server.pending != 0).then_some(self.last_now),
         };
-        match (action, self.expires) {
+        let expiry = match (self.expires, self.control.as_ref().map(|c| c.expires)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        match (action, expiry) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
@@ -495,6 +588,23 @@ impl<'a> CoapProvisioner<'a> {
             return None;
         }
         self.session.take()
+    }
+
+    /// The retained unauthenticated error, available after ingest and termination
+    /// until its response cache expires. No diagnostic bytes are copied or logged.
+    #[must_use]
+    pub fn peer_error(&self) -> Option<PeerError<'_>> {
+        let Role::Client(client) = &self.role else {
+            return None;
+        };
+        let ClientState::Aborted { slot, .. } = client.state else {
+            return None;
+        };
+        PeerError::parse(
+            decode(client.acks[slot].as_ref()?.response.as_slice())
+                .ok()?
+                .payload(),
+        )
     }
 
     /// Sends pending cached bytes, receives at most one datagram, then sends any
@@ -542,8 +652,16 @@ impl<'a> CoapProvisioner<'a> {
 
     /// Processes one complete datagram routed to bootstrap by the caller.
     /// Unrelated endpoints or invalid CoAP metadata leave the handshake intact.
-    /// A matching wire-valid malformed EDHOC message consumes its state.
+    /// A matching wire-valid malformed successful EDHOC message consumes its state.
+    /// Recognized error responses drop handshake state and return Progress;
+    /// call flush to drain any transport ACK and receive [`PollError::PeerAbort`].
     /// Responses remain queued for [`Self::flush`], without receiving App traffic.
+    /// Unsupported critical options at this resource queue 4.02; matching
+    /// separate Confirmable responses queue Reset before cryptographic work.
+    /// One pending control blocks further ingest until sent. Its MID remains
+    /// reserved for [`Self::EXCHANGE_LIFETIME_MS`], without starting/renewing
+    /// the handshake. Fresh valid traffic may proceed after the send; another
+    /// refusal owner is not admitted while the control slot remains reserved.
     pub fn ingest(
         &mut self,
         bytes: &[u8],
@@ -562,6 +680,18 @@ impl<'a> CoapProvisioner<'a> {
         let Ok(parsed) = decode(bytes) else {
             return Ok(Status::Ignored);
         };
+        if let Some(control) = &mut self.control {
+            if control.pending {
+                return Ok(Status::Ignored);
+            }
+            if control.owns(parsed, now_ms) {
+                if !control.can_replay(parsed) {
+                    return Ok(Status::Ignored);
+                }
+                control.pending = true;
+                return Ok(Status::Progress);
+            }
+        }
         let mut input = Input {
             now: now_ms,
             identity: self.identity,
@@ -569,6 +699,7 @@ impl<'a> CoapProvisioner<'a> {
             local_id: self.local_id,
             expires: &mut self.expires,
             session: &mut self.session,
+            control: &mut self.control,
             entropy: &mut entropy,
             authorize: &mut authorize,
         };
@@ -599,6 +730,7 @@ impl<'a> CoapProvisioner<'a> {
             return Ok(Status::Expired);
         }
         let mut progress = false;
+        progress |= flush_control(&mut self.control, io, self.endpoint, now_ms)?;
         match &mut self.role {
             Role::Client(client) => {
                 for index in 0..client.acks.len() {
@@ -653,6 +785,12 @@ impl<'a> CoapProvisioner<'a> {
                 }
             }
         }
+        if let Role::Client(client) = &mut self.role {
+            if let ClientState::Aborted { code, reported, .. } = &mut client.state {
+                *reported = true;
+                return Err(PollError::PeerAbort(*code));
+            }
+        }
         Ok(self.status(progress, false))
     }
 
@@ -664,16 +802,17 @@ impl<'a> CoapProvisioner<'a> {
     }
 
     fn pending(&self) -> bool {
-        match &self.role {
-            Role::Client(client) => {
-                client.pending_acks != 0
-                    || (matches!(
-                        client.state,
-                        ClientState::Message2(_) | ClientState::Message4(_)
-                    ) && client.retry.first_sent.is_none())
+        self.control.as_ref().is_some_and(|c| c.pending)
+            || match &self.role {
+                Role::Client(client) => {
+                    client.pending_acks != 0
+                        || (matches!(
+                            client.state,
+                            ClientState::Message2(_) | ClientState::Message4(_)
+                        ) && client.retry.first_sent.is_none())
+                }
+                Role::Server(server) => server.pending != 0,
             }
-            Role::Server(server) => server.pending != 0,
-        }
     }
 
     fn status(&self, progress: bool, ignored: bool) -> Status {
@@ -700,13 +839,21 @@ impl<'a> CoapProvisioner<'a> {
             return Err(PollError::Clock);
         }
         self.last_now = now;
+        if self
+            .control
+            .as_ref()
+            .is_some_and(|control| now >= control.expires)
+        {
+            self.control = None;
+        }
         if self.expires.is_some_and(|expires| now >= expires) {
-            if self.complete() {
+            if self.complete() || self.peer_error().is_some() {
                 self.expired = true;
                 self.session = None;
+                self.control = None;
                 match &mut self.role {
                     Role::Client(client) => {
-                        client.acks = [None, None];
+                        client.acks = [None, None, None];
                         client.pending_acks = 0;
                     }
                     Role::Server(server) => {
@@ -783,10 +930,102 @@ impl Client {
             self.retry.wait_until = *input.expires;
             return Ok(true);
         }
+        if parsed.code().is_response()
+            && parsed.token() == self.operation.token
+            && (parsed.ty() != Type::Acknowledgement || parsed.message_id() == self.operation.mid)
+            && has_unsupported_critical(parsed, OptionRole::Response)
+        {
+            return if parsed.ty() == Type::Confirmable {
+                queue_control(
+                    input.control,
+                    input.now,
+                    ControlKind::Reset(parsed.message_id()),
+                )
+            } else {
+                Ok(false)
+            };
+        }
+        if matches!(self.state, ClientState::Message2(_))
+            && !self.echo_retried
+            && parsed.ty() == Type::Acknowledgement
+            && parsed.code() == Code::UNAUTHORIZED
+            && parsed.message_id() == self.operation.mid
+            && parsed.token() == self.operation.token
+            && parsed.payload().is_empty()
+        {
+            let mut options = profile_options(parsed, OptionRole::Challenge);
+            let Some(echo) = options.next() else {
+                return Ok(false);
+            };
+            if echo.number() != OptionNumber::ECHO
+                || !(1..=40).contains(&echo.value().len())
+                || options.next().is_some()
+            {
+                return Ok(false);
+            }
+            let old = decode(self.request.as_slice())
+                .map_err(|_| Failure::Provisioning(Error::Parsing))?;
+            let options = [
+                Opt::new(OptionNumber::URI_PATH, b".well-known"),
+                Opt::new(OptionNumber::URI_PATH, b"edhoc"),
+                Opt::new(OptionNumber::CONTENT_FORMAT, &[REQUEST_FORMAT as u8]),
+                Opt::new(OptionNumber::ECHO, echo.value()),
+            ];
+            let mut request = Wire::empty();
+            request.len = CoapMessage::con(Code::POST, self.ids.echo.mid, self.ids.echo.token)
+                .with_options(&options)
+                .with_payload(old.payload())
+                .encode(&mut request.bytes)
+                .map_err(|_| Failure::Provisioning(Error::Parsing))?;
+            self.acks[2] = Some(ResponseAck {
+                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                mid: parsed.message_id(),
+                expires: input.expires.ok_or(Failure::Clock)?,
+            });
+            let deadline = self.retry.wait_until;
+            self.retry = Retry::new(self.ids.first_timeout);
+            self.retry.wait_until = deadline;
+            self.operation = self.ids.echo;
+            self.request = request;
+            self.echo_retried = true;
+            return Ok(true);
+        }
         if parsed.token() != self.operation.token
             || (parsed.ty() == Type::Acknowledgement && parsed.message_id() != self.operation.mid)
-            || !response_metadata(parsed)
         {
+            return Ok(false);
+        }
+        if error_response_metadata(parsed) {
+            let Some(error) = PeerError::parse(parsed.payload()) else {
+                return Ok(false);
+            };
+            let waiting_message_2 = matches!(self.state, ClientState::Message2(_));
+            if (error.code() == PeerErrorCode::WrongCipherSuite && !waiting_message_2)
+                || (error.code() == PeerErrorCode::UnknownCredential && waiting_message_2)
+            {
+                return Ok(false);
+            }
+            let until = now
+                .checked_add(EXCHANGE_LIFETIME_MS)
+                .ok_or(Failure::Clock)?;
+            let slot = if waiting_message_2 { 0 } else { 1 };
+            self.acks[slot] = Some(ResponseAck {
+                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                mid: parsed.message_id(),
+                expires: until,
+            });
+            if parsed.ty() == Type::Confirmable {
+                self.pending_acks |= 1 << slot;
+            }
+            self.state = ClientState::Aborted {
+                code: error.code(),
+                slot,
+                reported: false,
+            };
+            *input.expires = Some(until);
+            return Ok(true);
+        }
+        if !response_metadata(parsed) {
             return Ok(false);
         }
         let until = now
@@ -805,7 +1044,7 @@ impl Client {
                     .map_err(Failure::Provisioning)?;
                 self.request = request(
                     self.ids.second,
-                    state.peer_connection_id().as_u8(),
+                    state.peer_connection_id().lakers().as_cbor(),
                     &message,
                 )
                 .map_err(Failure::Provisioning)?;
@@ -858,22 +1097,47 @@ impl Server {
                 }
             }
         }
+        if !matches!(self.state, ServerState::Message1 | ServerState::Message3(_)) {
+            return Ok(false);
+        }
+        if parsed.ty() == Type::Confirmable
+            && parsed.code() == Code::POST
+            && has_unsupported_critical(parsed, OptionRole::Request)
+            && request_path(parsed)
+        {
+            return queue_control(
+                input.control,
+                input.now,
+                ControlKind::BadOption(Operation {
+                    mid: parsed.message_id(),
+                    token: parsed.token(),
+                }),
+            );
+        }
         if !request_metadata(parsed) || parsed.payload().len() < 2 {
             return Ok(false);
         }
-        let prefix = parsed.payload()[0];
-        let matches_state = match &self.state {
-            ServerState::Message1 => prefix == 0xf5,
-            ServerState::Message3(_) => prefix == input.local_id.as_u8(),
-            _ => false,
+        let prefix_len = match &self.state {
+            ServerState::Message1 if parsed.payload()[0] == 0xf5 => 1,
+            ServerState::Message3(_) => {
+                let Ok((id, len)) = ConnectionId::decode_prefix(parsed.payload()) else {
+                    return Ok(false);
+                };
+                if id != input.local_id {
+                    return Ok(false);
+                }
+                len
+            }
+            _ => return Ok(false),
         };
-        if !matches_state {
+        if parsed.payload().len() <= prefix_len {
             return Ok(false);
         }
         let until = now
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(Failure::Clock)?;
-        let message = Message::from_slice(&parsed.payload()[1..]).map_err(Failure::Provisioning)?;
+        let message =
+            Message::from_slice(&parsed.payload()[prefix_len..]).map_err(Failure::Provisioning)?;
         let operation = Operation {
             mid: parsed.message_id(),
             token: parsed.token(),
@@ -915,14 +1179,14 @@ impl Server {
     }
 }
 
-fn request(operation: Operation, prefix: u8, message: &Message) -> Result<Wire, Error> {
+fn request(operation: Operation, prefix: &[u8], message: &Message) -> Result<Wire, Error> {
     let mut payload = [0; DATAGRAM_CAPACITY];
-    let len = message.as_bytes().len() + 1;
+    let len = message.as_bytes().len() + prefix.len();
     if len > payload.len() {
         return Err(Error::Parsing);
     }
-    payload[0] = prefix;
-    payload[1..len].copy_from_slice(message.as_bytes());
+    payload[..prefix.len()].copy_from_slice(prefix);
+    payload[prefix.len()..len].copy_from_slice(message.as_bytes());
     let options = [
         Opt::new(OptionNumber::URI_PATH, b".well-known"),
         Opt::new(OptionNumber::URI_PATH, b"edhoc"),
@@ -956,7 +1220,7 @@ fn request_metadata(message: ParsedMessage<'_>) -> bool {
     if message.ty() != Type::Confirmable || message.code() != Code::POST {
         return false;
     }
-    let mut options = message.options();
+    let mut options = profile_options(message, OptionRole::Request);
     matches!(options.next(), Some(option) if option.number() == OptionNumber::URI_PATH && option.value() == b".well-known")
         && matches!(options.next(), Some(option) if option.number() == OptionNumber::URI_PATH && option.value() == b"edhoc")
         && matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(REQUEST_FORMAT))
@@ -972,9 +1236,122 @@ fn response_metadata(message: ParsedMessage<'_>) -> bool {
     {
         return false;
     }
-    let mut options = message.options();
+    let mut options = profile_options(message, OptionRole::Response);
     matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(RESPONSE_FORMAT))
         && options.next().is_none()
+}
+
+fn error_response_metadata(message: ParsedMessage<'_>) -> bool {
+    if !matches!(
+        message.ty(),
+        Type::Acknowledgement | Type::Confirmable | Type::NonConfirmable
+    ) || !matches!(message.code().class(), 4 | 5)
+    {
+        return false;
+    }
+    let mut options = profile_options(message, OptionRole::Response);
+    matches!(options.next(), Some(option) if option.number() == OptionNumber::CONTENT_FORMAT && decode_uint16(option.value()) == Ok(RESPONSE_FORMAT))
+        && options.next().is_none()
+}
+
+#[derive(Clone, Copy)]
+enum OptionRole {
+    Request,
+    Response,
+    Challenge,
+}
+
+fn option_supported(option: Opt<'_>, role: OptionRole, repeated: bool) -> bool {
+    match option.number() {
+        OptionNumber::URI_PATH => {
+            matches!(role, OptionRole::Request) && option.value().len() <= 255
+        }
+        OptionNumber::CONTENT_FORMAT => {
+            !matches!(role, OptionRole::Challenge) && !repeated && option.value().len() <= 2
+        }
+        OptionNumber::ECHO => {
+            matches!(role, OptionRole::Challenge)
+                && !repeated
+                && (1..=40).contains(&option.value().len())
+        }
+        _ => false,
+    }
+}
+
+// CoAP options are ordered. Remember just the previous number to classify
+// supernumerary occurrences, including those following an invalid first value.
+fn profile_options(message: ParsedMessage<'_>, role: OptionRole) -> impl Iterator<Item = Opt<'_>> {
+    let mut previous = None;
+    message.options().filter(move |option| {
+        let repeated = previous == Some(option.number());
+        previous = Some(option.number());
+        option_supported(*option, role, repeated) || option.number().is_critical()
+    })
+}
+
+fn has_unsupported_critical(message: ParsedMessage<'_>, role: OptionRole) -> bool {
+    let mut previous = None;
+    message.options().any(|option| {
+        let repeated = previous == Some(option.number());
+        previous = Some(option.number());
+        option.number().is_critical() && !option_supported(option, role, repeated)
+    })
+}
+
+fn request_path(message: ParsedMessage<'_>) -> bool {
+    let mut path = message
+        .options()
+        .filter(|option| option.number() == OptionNumber::URI_PATH);
+    matches!(path.next(), Some(option) if option.value() == b".well-known")
+        && matches!(path.next(), Some(option) if option.value() == b"edhoc")
+        && path.next().is_none()
+}
+
+fn queue_control(
+    control: &mut Option<Control>,
+    now: u64,
+    kind: ControlKind,
+) -> Result<bool, Failure> {
+    if control.is_some() {
+        return Ok(false);
+    }
+    let expires = now
+        .checked_add(EXCHANGE_LIFETIME_MS)
+        .ok_or(Failure::Clock)?;
+    *control = Some(Control {
+        kind,
+        expires,
+        pending: true,
+    });
+    Ok(true)
+}
+
+fn flush_control<T: DatagramIo>(
+    control: &mut Option<Control>,
+    io: &mut T,
+    endpoint: Endpoint,
+    now: u64,
+) -> Result<bool, PollError<T::Error>> {
+    if control.as_ref().is_some_and(|c| now >= c.expires) {
+        *control = None;
+    }
+    let Some(control) = control.as_mut().filter(|c| c.pending) else {
+        return Ok(false);
+    };
+    let mut bytes = [0; 12];
+    let message = match control.kind {
+        ControlKind::BadOption(operation) => {
+            CoapMessage::new(Type::Acknowledgement, Code::BAD_OPTION, operation.mid)
+                .with_token(operation.token)
+        }
+        ControlKind::Reset(mid) => CoapMessage::empty_rst(mid),
+    };
+    let len = message
+        .encode(&mut bytes)
+        .expect("bounded control header and token");
+    send(io, endpoint, &bytes[..len])?;
+    control.pending = false;
+    Ok(true)
 }
 
 fn send<T: DatagramIo>(
@@ -997,6 +1374,7 @@ fn widen<E>(error: PollError) -> PollError<E> {
         PollError::ShortSend => PollError::ShortSend,
         PollError::Clock => PollError::Clock,
         PollError::Rejected => PollError::Rejected,
+        PollError::PeerAbort(code) => PollError::PeerAbort(code),
     }
 }
 
