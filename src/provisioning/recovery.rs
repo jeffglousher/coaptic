@@ -5,9 +5,9 @@ use core::{convert::Infallible, fmt};
 use super::super::{ConnectionId, Identity, PeerError, PinnedPeer, Principal, Session};
 use super::{
     ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
-    EXCHANGE_LIFETIME_MS, ErrorRequest, Exchange, Operation, OptionRole, PollError, ResponseAck,
-    Role, Status, flush_control, has_unsupported_critical, queue_control, request_metadata,
-    request_path, request_peer_error, same_mid_namespace, send,
+    EXCHANGE_LIFETIME_MS, ErrorReceipt, ErrorRequest, Exchange, Operation, OptionRole, PollError,
+    ResponseAck, Role, Status, flush_control, has_unsupported_critical, queue_control,
+    request_metadata, request_path, request_peer_error, same_mid_namespace, send,
 };
 use crate::message::{Code, Message as CoapMessage, MessageId, Type, decode};
 use crate::storage::{DatagramIo, Endpoint};
@@ -36,6 +36,8 @@ enum CachedRole {
         exchanges: [Option<Exchange>; 2],
         pending: u8,
         peer_error_slot: Option<usize>,
+        final_ready: bool,
+        final_error: Option<ErrorReceipt>,
     },
 }
 
@@ -78,14 +80,21 @@ impl Cache {
                     abort,
                 }
             }
-            Role::Server(server) => CachedRole::Server {
-                exchanges: server.exchanges,
-                pending: if replies { server.pending } else { 0 },
-                peer_error_slot: match server.state {
-                    super::ServerState::PeerAborted { slot, .. } => Some(slot),
-                    _ => None,
-                },
-            },
+            Role::Server(server) => {
+                let (peer_error_slot, final_ready, final_error) = match server.state {
+                    super::ServerState::PeerAborted { slot, .. } => (Some(slot), false, None),
+                    super::ServerState::Complete => (None, true, None),
+                    super::ServerState::FinalAbort(receipt) => (None, false, Some(receipt)),
+                    _ => (None, false, None),
+                };
+                CachedRole::Server {
+                    exchanges: server.exchanges,
+                    pending: if replies { server.pending } else { 0 },
+                    peer_error_slot,
+                    final_ready,
+                    final_error,
+                }
+            }
         };
         Self {
             local_id: controller.local_id,
@@ -139,7 +148,12 @@ impl Cache {
                     return CompletedCacheMatch::MidCollision;
                 }
             }
-            CachedRole::Server { exchanges, .. } => {
+            CachedRole::Server {
+                exchanges,
+                final_error,
+                final_ready,
+                ..
+            } => {
                 for exchange in exchanges.iter().flatten() {
                     if now < exchange.expires
                         && mid == exchange.operation.mid
@@ -151,6 +165,12 @@ impl Cache {
                             CompletedCacheMatch::MidCollision
                         };
                     }
+                }
+                if let Some(receipt) = final_error {
+                    return receipt.classify(bytes, now);
+                }
+                if self.replies && *final_ready && ErrorReceipt::matches_new(bytes, self.local_id) {
+                    return CompletedCacheMatch::FreshErrorRequest;
                 }
             }
         }
@@ -193,7 +213,11 @@ impl Cache {
                 }
             }
             CachedRole::Server {
-                exchanges, pending, ..
+                exchanges,
+                pending,
+                final_error,
+                final_ready,
+                ..
             } => {
                 for (index, exchange) in exchanges.iter().enumerate() {
                     if exchange.as_ref().is_some_and(|exchange| {
@@ -202,6 +226,18 @@ impl Cache {
                         *pending |= 1 << index;
                         return true;
                     }
+                }
+                if let Some(receipt) = final_error {
+                    return receipt.queue(bytes, now);
+                }
+                if *final_ready && ErrorReceipt::matches_new(bytes, self.local_id) {
+                    let Some(expires) = now.checked_add(EXCHANGE_LIFETIME_MS) else {
+                        return false;
+                    };
+                    *final_error = Some(ErrorReceipt::new(bytes, expires));
+                    *final_ready = false;
+                    self.expires = self.expires.max(expires);
+                    return true;
                 }
             }
         }
@@ -220,6 +256,10 @@ impl Cache {
                     .payload(),
             ),
             CachedRole::Server {
+                final_error: Some(receipt),
+                ..
+            } => Some(receipt.peer_error()),
+            CachedRole::Server {
                 exchanges,
                 peer_error_slot: Some(slot),
                 ..
@@ -231,9 +271,12 @@ impl Cache {
     fn pending(&self) -> bool {
         self.control.as_ref().is_some_and(|c| c.pending)
             || match &self.role {
-                CachedRole::Client { pending, .. } | CachedRole::Server { pending, .. } => {
-                    *pending != 0
-                }
+                CachedRole::Client { pending, .. } => *pending != 0,
+                CachedRole::Server {
+                    pending,
+                    final_error,
+                    ..
+                } => *pending != 0 || final_error.as_ref().is_some_and(ErrorReceipt::pending),
             }
             || matches!(&self.role, CachedRole::Client { abort: Some(abort), .. } if abort.pending())
     }
@@ -248,6 +291,10 @@ impl Cache {
             CachedRole::Client {
                 abort: Some(abort), ..
             } => deadline.min(abort.next_deadline(now)),
+            CachedRole::Server {
+                final_error: Some(receipt),
+                ..
+            } => deadline.min(receipt.next_deadline(now)),
             _ => deadline,
         }
     }
@@ -287,7 +334,10 @@ impl Cache {
                 }
             }
             CachedRole::Server {
-                exchanges, pending, ..
+                exchanges,
+                pending,
+                final_error,
+                ..
             } => {
                 for (index, exchange) in exchanges.iter().enumerate() {
                     let bit = 1 << index;
@@ -299,6 +349,9 @@ impl Cache {
                         }
                         *pending &= !bit;
                     }
+                }
+                if let Some(receipt) = final_error {
+                    progress |= receipt.flush(io, endpoint, now)?;
                 }
             }
         }
@@ -445,7 +498,9 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         }
         for cache in self.caches.iter_mut().flatten() {
             match cache.classify(bytes, now_ms) {
-                CompletedCacheMatch::ExactDuplicate | CompletedCacheMatch::RefusedMid => {
+                CompletedCacheMatch::ExactDuplicate
+                | CompletedCacheMatch::FreshErrorRequest
+                | CompletedCacheMatch::RefusedMid => {
                     return Ok(if cache.queue(bytes, now_ms) {
                         Status::Progress
                     } else {

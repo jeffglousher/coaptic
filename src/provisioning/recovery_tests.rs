@@ -163,6 +163,186 @@ fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
 }
 
 #[test]
+fn final_error_receipt_after_handoff_preserves_a_concurrent_candidate() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<4>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<4>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let (old_wires, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+    let active = server.active_connection_id().unwrap();
+    let mut payload = active.lakers().as_cbor().to_vec();
+    payload.extend_from_slice(&[1, 0x64, b's', b't', b'o', b'p']);
+    let late = packet(
+        &old_wires[2],
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(b"late"),
+        &payload,
+    );
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(10, entropy(5)).unwrap();
+    client.flush(&mut ci, 10).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 10, entropy(6), no_authorization)
+        .unwrap();
+    let candidate_id = server.candidate.as_ref().unwrap().local_connection_id();
+    assert_eq!(
+        server.ingest(&late, OTHER, 11, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    server
+        .ingest(&late, CLIENT, 11, no_entropy, no_authorization)
+        .unwrap();
+    si.fail = true;
+    assert_eq!(
+        server.flush(&mut si, 11),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    let saved = si.last();
+    si.fail = false;
+    si.short = true;
+    assert_eq!(
+        server.flush(&mut si, 12),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    si.short = false;
+    assert_eq!(
+        server.flush(&mut si, 13),
+        Err(RecoveryError::Bootstrap(PollError::PeerAbort(
+            PeerErrorCode::Unspecified
+        )))
+    );
+    assert_eq!(si.last(), saved);
+    assert_eq!(server.peer_error().unwrap().diagnostic(), Some("stop"));
+    assert!(server.has_candidate());
+    assert_eq!(
+        server.candidate.as_ref().unwrap().local_connection_id(),
+        candidate_id
+    );
+    assert_eq!(server.active_connection_id(), Some(active));
+    server.flush(&mut si, 14).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 14, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 14).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 14, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 14).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 14, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 14).unwrap();
+    let fresh_client = client.take_session().unwrap();
+    let fresh_server = server.take_session().unwrap();
+    assert!(client.confirm_handoff());
+    assert!(server.confirm_handoff());
+    let mut collision = late.clone();
+    *collision.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        server.ingest(&collision, CLIENT, 15, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    server
+        .ingest(&late, CLIENT, 15, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 15).unwrap();
+    assert_eq!(si.last(), saved);
+    assert_eq!(
+        server
+            .caches
+            .iter()
+            .flatten()
+            .find(|cache| cache.local_id == active)
+            .unwrap()
+            .expires,
+        11 + EXCHANGE_LIFETIME_MS
+    );
+    let (old_client, _) = old_client.into_parts();
+    let (old_server, _) = old_server.into_parts();
+    assert_eq!(old_client.sender_key(), old_server.recipient_key());
+    let (fresh_client, _) = fresh_client.into_parts();
+    let (fresh_server, _) = fresh_server.into_parts();
+    assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+    assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+}
+
+#[test]
+fn final_error_receipt_survives_cancellation_before_the_session_handoff() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut established = CoapRecovery::<4>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<4>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let (_, _, old_server) = exchange(&mut established, &mut server, 0, 3);
+    let active = server.active_connection_id();
+    let mut client = CoapProvisioner::start_with_id(
+        &a,
+        b.peer(),
+        SERVER,
+        ConnectionId::new(7).unwrap(),
+        10,
+        entropy(5),
+    )
+    .unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.flush(&mut ci, 10).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 10, entropy(6), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 10).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 10, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 10).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 10, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 10).unwrap();
+    let fourth = si.last();
+    let p = decode(&fourth).unwrap();
+    let mut payload = p.payload().to_vec();
+    *payload.last_mut().unwrap() ^= 1;
+    let bad = packet(&fourth, p.ty(), p.message_id(), p.token(), &payload);
+    client
+        .ingest(&bad, SERVER, 11, no_entropy, no_authorization)
+        .unwrap();
+    assert_eq!(
+        client.flush(&mut ci, 11),
+        Err(PollError::Provisioning(Error::Authentication))
+    );
+    let late = ci.last();
+    server
+        .ingest(&late, CLIENT, 11, no_entropy, no_authorization)
+        .unwrap();
+    assert!(server.discard_candidate(11).unwrap());
+    assert!(server.take_session().is_none());
+    si.fail = true;
+    assert_eq!(
+        server.flush(&mut si, 11),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    let saved = si.last();
+    si.fail = false;
+    assert_eq!(
+        server.flush(&mut si, 12),
+        Err(RecoveryError::Bootstrap(PollError::PeerAbort(
+            PeerErrorCode::Unspecified
+        )))
+    );
+    assert_eq!(si.last(), saved);
+    server
+        .ingest(&late, CLIENT, 13, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 13).unwrap();
+    assert_eq!(si.last(), saved);
+    assert_eq!(server.active_connection_id(), active);
+    assert_eq!(old_server.principal(), &a.peer().principal());
+    assert!(!server.has_candidate());
+}
+
+#[test]
 fn initiator_error_survives_cancellation_preserves_active_session_and_blocks_a_new_con() {
     for cancel_before_send in [false, true] {
         let a = identity(1, 0);
