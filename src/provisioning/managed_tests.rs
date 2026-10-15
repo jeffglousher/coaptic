@@ -703,6 +703,10 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
     ));
     assert!(server.is_connected());
     assert!(!server.recovery.as_ref().unwrap().has_candidate());
+    let refusal = network.borrow_mut().a.pop_front().unwrap().0;
+    let refused = decode(&refusal).unwrap();
+    assert_eq!(refused.code(), Code::BAD_REQUEST);
+    assert_eq!(refused.payload(), b"\x01\x6cEDHOC failed");
     let call = client
         .request(Method::Get, "still-authorized", &[], None, now + 2)
         .unwrap();

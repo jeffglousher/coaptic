@@ -180,6 +180,26 @@ fn wrong_selected_suite_peer_id(message: &Message) -> Option<ConnectionId> {
     ConnectionId::from_lakers(cid).ok()
 }
 
+struct MessageFailure {
+    error: Error,
+    code: PeerErrorCode,
+}
+
+impl From<Error> for MessageFailure {
+    fn from(error: Error) -> Self {
+        Self {
+            error,
+            code: PeerErrorCode::Unspecified,
+        }
+    }
+}
+
+impl From<lakers::EDHOCError> for MessageFailure {
+    fn from(error: lakers::EDHOCError) -> Self {
+        Error::from(error).into()
+    }
+}
+
 /// An unauthenticated credential lookup hint decoded from EDHOC message 3.
 ///
 /// A trusted registry must resolve it to one unambiguous installed credential.
@@ -377,14 +397,26 @@ impl Responder {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(Session, Message), Error> {
+        self.receive_message_3_with_error(message, authorize)
+            .map_err(|failure| failure.error)
+    }
+
+    fn receive_message_3_with_error(
+        self,
+        message: &Message,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), MessageFailure> {
         let (state, id, ead) = self.state.parse_message_3(&message.buffer()?)?;
         if ead.is_some() {
-            return Err(Error::Profile);
+            return Err(Error::Profile.into());
         }
-        check_reference(&id, &self.peer)?;
+        check_reference(&id, &self.peer).map_err(|error| MessageFailure {
+            error,
+            code: PeerErrorCode::UnknownCredential,
+        })?;
         let (state, _) = state.verify_message_3(self.peer.credential())?;
         if !authorize(&self.peer.principal()) {
-            return Err(Error::Unauthorized);
+            return Err(Error::Unauthorized.into());
         }
         let (mut state, message) = state.prepare_message_4(&None)?;
         let secret = state.edhoc_exporter(0, &[], 16);

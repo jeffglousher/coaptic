@@ -7,7 +7,7 @@ use super::{
     ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
     EXCHANGE_LIFETIME_MS, Exchange, Operation, OptionRole, PollError, ResponseAck, Role, Status,
     flush_control, has_unsupported_critical, queue_control, request_metadata, request_path,
-    same_mid_namespace, send,
+    request_peer_error, same_mid_namespace, send,
 };
 use crate::message::{Code, Message as CoapMessage, MessageId, Type, decode};
 use crate::storage::{DatagramIo, Endpoint};
@@ -34,6 +34,7 @@ enum CachedRole {
     Server {
         exchanges: [Option<Exchange>; 2],
         pending: u8,
+        peer_error_slot: Option<usize>,
     },
 }
 
@@ -69,6 +70,10 @@ impl Cache {
             Role::Server(server) => CachedRole::Server {
                 exchanges: server.exchanges,
                 pending: if replies { server.pending } else { 0 },
+                peer_error_slot: match server.state {
+                    super::ServerState::PeerAborted { slot, .. } => Some(slot),
+                    _ => None,
+                },
             },
         };
         Self {
@@ -157,7 +162,9 @@ impl Cache {
                     }
                 }
             }
-            CachedRole::Server { exchanges, pending } => {
+            CachedRole::Server {
+                exchanges, pending, ..
+            } => {
                 for (index, exchange) in exchanges.iter().enumerate() {
                     if exchange.as_ref().is_some_and(|exchange| {
                         now < exchange.expires && bytes == exchange.request.as_slice()
@@ -172,19 +179,23 @@ impl Cache {
     }
 
     fn peer_error(&self) -> Option<PeerError<'_>> {
-        let CachedRole::Client {
-            acks,
-            peer_error_slot: Some(slot),
-            ..
-        } = &self.role
-        else {
-            return None;
-        };
-        PeerError::parse(
-            decode(acks[*slot].as_ref()?.response.as_slice())
-                .ok()?
-                .payload(),
-        )
+        match &self.role {
+            CachedRole::Client {
+                acks,
+                peer_error_slot: Some(slot),
+                ..
+            } => PeerError::parse(
+                decode(acks[*slot].as_ref()?.response.as_slice())
+                    .ok()?
+                    .payload(),
+            ),
+            CachedRole::Server {
+                exchanges,
+                peer_error_slot: Some(slot),
+                ..
+            } => request_peer_error(exchanges[*slot].as_ref()?.request.as_slice()),
+            _ => None,
+        }
     }
 
     fn pending(&self) -> bool {
@@ -222,7 +233,9 @@ impl Cache {
                     }
                 }
             }
-            CachedRole::Server { exchanges, pending } => {
+            CachedRole::Server {
+                exchanges, pending, ..
+            } => {
                 for (index, exchange) in exchanges.iter().enumerate() {
                     let bit = 1 << index;
                     if *pending & bit != 0 {
