@@ -1,6 +1,6 @@
 //! Authenticated, bounded EDHOC provisioning with pinned P-256 credentials.
 //!
-//! The optional `edhoc` feature supports method 3, cipher suite 2, credentials
+//! The optional `edhoc` feature supports method 3, cipher suites 2 and 3, credentials
 //! by reference and mandatory message 4. Install each [`PinnedPeer`] through
 //! an authenticated commissioning channel. An untrusted network or a UUID
 //! lookup is insufficient to establish trust. Authorization is checked against
@@ -31,6 +31,7 @@ mod identity;
 mod lakers;
 mod managed;
 mod peer_error;
+mod profile;
 mod receipt;
 mod trust;
 
@@ -50,6 +51,7 @@ pub use managed::{
     ManagedRefreshError, PolicyValidity,
 };
 pub use peer_error::{PeerError, PeerErrorCode};
+pub use profile::CipherSuite;
 pub use receipt::{
     OperationId, Receipt, ReceiptError, ReceiptStore, TelemetryOperation, commit_telemetry,
 };
@@ -59,7 +61,7 @@ pub use trust::{
 
 use core::fmt;
 
-use self::lakers::{CredentialTransfer, EDHOCMethod, EDHOCSuite};
+use self::lakers::{CredentialTransfer, EDHOCMethod};
 
 use crate::oscore::{DeriveParams, SecurityContext};
 
@@ -158,23 +160,19 @@ fn check_reference(id: &lakers::IdCred, peer: &PinnedPeer) -> Result<(), Error> 
 }
 
 fn message_1_peer_id(message: &Message) -> Result<ConnectionId, Error> {
-    let bytes = message.as_bytes();
-    if bytes.len() < 37 || bytes[..4] != [3, 2, 0x58, 0x20] {
+    let (method, suites, _, cid, ead) =
+        lakers::parse_message_1(&message.buffer()?).map_err(|_| Error::Profile)?;
+    if method != 3 || CipherSuite::selected(suites.as_slice()).is_none() || ead.is_some() {
         return Err(Error::Profile);
     }
-    let (peer_id, len) = ConnectionId::decode_prefix(&bytes[36..])?;
-    if bytes.len() != 36 + len {
-        return Err(Error::Profile);
-    }
-    Ok(peer_id)
+    ConnectionId::from_lakers(cid)
 }
 
 // Recognize only a fully parsed message 1 in the selected method/EAD profile.
 // A suite refusal does not need ephemeral entropy or an authenticated peer.
 fn wrong_selected_suite_peer_id(message: &Message) -> Option<ConnectionId> {
     let (method, suites, _, cid, ead) = lakers::parse_message_1(&message.buffer().ok()?).ok()?;
-    let selected = suites.as_slice().last()?;
-    if method != 3 || ead.is_some() || *selected == 2 {
+    if method != 3 || ead.is_some() || CipherSuite::selected(suites.as_slice()).is_some() {
         return None;
     }
     ConnectionId::from_lakers(cid).ok()
@@ -234,7 +232,7 @@ impl MessageFailure {
 
     fn payload(&self) -> &'static [u8] {
         match self.code {
-            PeerErrorCode::WrongCipherSuite => &[2, 2],
+            PeerErrorCode::WrongCipherSuite => &[2, 0x82, 2, 3],
             PeerErrorCode::UnknownCredential => &[3, 0xf5],
             _ => b"\x01\x6cEDHOC failed",
         }
@@ -269,6 +267,7 @@ pub struct Initiator {
     peer: PinnedPeer,
     local_principal: Principal,
     local_id: ConnectionId,
+    suite: CipherSuite,
 }
 
 impl Initiator {
@@ -291,10 +290,22 @@ impl Initiator {
         local_id: ConnectionId,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
+        Self::start_with_suite(identity, peer, local_id, CipherSuite::Suite2, entropy)
+    }
+
+    /// Start with a locally selected suite; peer errors never change this choice.
+    /// Reserve `local_id` outside all live handshakes and OSCORE recipient IDs.
+    pub fn start_with_suite(
+        identity: &Identity,
+        peer: PinnedPeer,
+        local_id: ConnectionId,
+        suite: CipherSuite,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
-        let crypto = Crypto::fresh(entropy)?;
+        let crypto = Crypto::fresh_with_suite(suite, entropy)?;
         let mut initiator =
-            lakers::EdhocInitiator::new(crypto, EDHOCMethod::StatStat, EDHOCSuite::CipherSuite2);
+            lakers::EdhocInitiator::new(crypto, EDHOCMethod::StatStat, suite.lakers());
         initiator.set_identity(identity.scalar(), identity.credential());
         let (state, message) = initiator.prepare_message_1(Some(local_id.lakers()), &None)?;
         Ok((
@@ -303,6 +314,7 @@ impl Initiator {
                 peer,
                 local_principal: identity.peer().principal(),
                 local_id,
+                suite,
             },
             Message::from_buffer(&message)?,
         ))
@@ -350,6 +362,7 @@ impl Initiator {
                     local_principal: self.local_principal,
                     local_id: self.local_id,
                     peer_id,
+                    suite: self.suite,
                 },
                 Message::from_buffer(&message)?,
             ))
@@ -368,6 +381,7 @@ pub struct InitiatorConfirm {
     local_principal: Principal,
     local_id: ConnectionId,
     peer_id: ConnectionId,
+    suite: CipherSuite,
 }
 
 impl InitiatorConfirm {
@@ -399,6 +413,7 @@ impl InitiatorConfirm {
             self.peer_id,
             self.local_principal,
             self.peer,
+            self.suite,
         )
     }
 }
@@ -410,6 +425,7 @@ pub struct Responder {
     local_principal: Principal,
     local_id: ConnectionId,
     peer_id: ConnectionId,
+    suite: CipherSuite,
 }
 
 impl Responder {
@@ -444,6 +460,7 @@ impl Responder {
                 local_principal: responder.local_principal,
                 local_id,
                 peer_id: responder.peer_id,
+                suite: responder.suite,
             },
             message,
         ))
@@ -488,6 +505,7 @@ impl Responder {
                 self.peer_id,
                 self.local_principal,
                 self.peer,
+                self.suite,
             )?,
             Message::from_buffer(&message)?,
         ))
@@ -506,6 +524,7 @@ pub struct RegistryResponder {
     local_public_x: [u8; 32],
     local_id: ConnectionId,
     peer_id: ConnectionId,
+    suite: CipherSuite,
 }
 
 impl RegistryResponder {
@@ -522,12 +541,13 @@ impl RegistryResponder {
         let message = message.buffer()?;
         let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
         let peer_id = ConnectionId::from_lakers(cid)?;
-        if method != 3 || suites.as_slice() != [2] || peer_id == local_id || ead.is_some() {
+        let suite = CipherSuite::selected(suites.as_slice()).ok_or(Error::Profile)?;
+        if method != 3 || peer_id == local_id || ead.is_some() {
             return Err(Error::Profile);
         }
         crypto::validate_public_x(&public_x)?;
         let responder = lakers::EdhocResponder::new(
-            Crypto::fresh(entropy)?,
+            Crypto::fresh_with_suite(suite, entropy)?,
             EDHOCMethod::StatStat,
             identity.scalar(),
             identity.credential(),
@@ -545,6 +565,7 @@ impl RegistryResponder {
                 local_public_x: identity.public_x(),
                 local_id,
                 peer_id,
+                suite,
             },
             Message::from_buffer(&message)?,
         ))
@@ -601,6 +622,7 @@ impl RegistryResponder {
                 self.peer_id,
                 self.local_principal,
                 peer,
+                self.suite,
             )?,
             Message::from_buffer(&message)?,
         ))
@@ -612,6 +634,7 @@ pub struct Session {
     context: SecurityContext,
     principal: Principal,
     local_principal: Principal,
+    suite: CipherSuite,
 }
 
 impl Session {
@@ -622,6 +645,7 @@ impl Session {
         peer_id: ConnectionId,
         local_principal: Principal,
         peer: PinnedPeer,
+        suite: CipherSuite,
     ) -> Result<Self, Error> {
         let context = SecurityContext::derive(DeriveParams {
             master_secret: secret,
@@ -635,12 +659,20 @@ impl Session {
             context,
             principal: peer.principal(),
             local_principal,
+            suite,
         })
     }
 
     /// Returns the peer identity authenticated by the completed exchange.
     pub fn principal(&self) -> &Principal {
         &self.principal
+    }
+
+    /// Cipher suite authenticated by the completed EDHOC transcript.
+    /// Check a deployment's minimum handshake profile before handing off keys.
+    #[must_use]
+    pub const fn cipher_suite(&self) -> CipherSuite {
+        self.suite
     }
 
     /// Full principal of the local credential used to authenticate this exchange.

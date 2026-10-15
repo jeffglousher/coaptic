@@ -61,7 +61,7 @@ pub fn r_process_message_1(
         // verify that the method is supported
         if method == EDHOC_METHOD {
             // Step 2: verify that the selected cipher suite is supported
-            if suites_i[suites_i.len() - 1] == EDHOC_SUPPORTED_SUITES[0] {
+            if super::super::CipherSuite::selected(suites_i.as_slice()).is_some() {
                 // hash message_1 and save the hash to the state to avoid saving the whole message
                 let mut message_1_buf: BytesMaxBuffer = [0x00; MAX_BUFFER_LEN];
                 message_1_buf[..message_1.len].copy_from_slice(message_1.as_slice());
@@ -123,7 +123,12 @@ pub fn r_prepare_message_2(
     );
 
     // compute ciphertext_2
-    let plaintext_2 = encode_plaintext_2(c_r, id_cred_r.as_encoded_value(), &mac_2, &ead_2)?;
+    let plaintext_2 = encode_plaintext_2(
+        c_r,
+        id_cred_r.as_encoded_value(),
+        &mac_2[..crypto.mac_length()],
+        &ead_2,
+    )?;
 
     // step is actually from processing of message_3
     // but we do it here to avoid storing plaintext_2 in State
@@ -156,7 +161,7 @@ pub fn r_parse_message_3(
     let plaintext_3 = decrypt_message_3(crypto, &state.prk_3e2m, &state.th_3, message_3);
 
     if let Ok(plaintext_3) = plaintext_3 {
-        let decoded_p3_res = decode_plaintext_3(&plaintext_3);
+        let decoded_p3_res = decode_plaintext_3(&plaintext_3, crypto.mac_length());
 
         if let Ok((id_cred_i, mac_3, ead_3)) = decoded_p3_res {
             Ok((
@@ -322,7 +327,7 @@ pub fn i_parse_message_2<'a>(
         let plaintext_2 = encrypt_decrypt_ciphertext_2(crypto, &prk_2e, &th_2, &ciphertext_2);
 
         // decode plaintext_2
-        let plaintext_2_decoded = decode_plaintext_2(&plaintext_2);
+        let plaintext_2_decoded = decode_plaintext_2(&plaintext_2, crypto.mac_length());
 
         if let Ok((c_r_2, id_cred_r, mac_2, ead_2)) = plaintext_2_decoded {
             let state = ProcessingM2 {
@@ -420,7 +425,11 @@ pub fn i_prepare_message_3(
         ead_3,
     );
 
-    let plaintext_3 = encode_plaintext_3(id_cred_i.as_encoded_value(), &mac_3, &ead_3)?;
+    let plaintext_3 = encode_plaintext_3(
+        id_cred_i.as_encoded_value(),
+        &mac_3[..crypto.mac_length()],
+        &ead_3,
+    )?;
     let message_3 = encrypt_message_3(crypto, &state.prk_3e2m, &state.th_3, &plaintext_3);
 
     let th_4 = compute_th_4(crypto, &state.th_3, &plaintext_3, cred_i.bytes.as_slice());
@@ -673,7 +682,7 @@ fn edhoc_kdf(
 
 fn encode_plaintext_3(
     id_cred_i: &[u8],
-    mac_3: &BytesMac3,
+    mac_3: &[u8],
     ead_3: &Option<EADItem>,
 ) -> Result<BufferPlaintext3, EDHOCError> {
     let mut plaintext_3: BufferPlaintext3 = BufferPlaintext3::new();
@@ -684,7 +693,7 @@ fn encode_plaintext_3(
         .extend_from_slice(id_cred_i)
         .or(Err(EDHOCError::EncodingError))?;
     let offset_cred = plaintext_3.len;
-    plaintext_3.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | MAC_LENGTH_3 as u8;
+    plaintext_3.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | mac_3.len() as u8;
     plaintext_3.content[offset_cred + 1..][..mac_3.len()].copy_from_slice(&mac_3[..]);
     plaintext_3.len = offset_cred + 1 + mac_3.len();
 
@@ -804,7 +813,7 @@ fn encrypt_message_3(
     plaintext_3: &BufferPlaintext3,
 ) -> BufferMessage3 {
     let mut output: BufferMessage3 = BufferMessage3::new();
-    let bytestring_length = plaintext_3.len + AES_CCM_TAG_LEN;
+    let bytestring_length = plaintext_3.len + crypto.mac_length();
     let prefix_length;
     // FIXME: Reuse CBOR encoder
     if bytestring_length < 24 {
@@ -827,7 +836,7 @@ fn encrypt_message_3(
 
     let (k_3, iv_3) = compute_k_3_iv_3(crypto, prk_3e2m, th_3);
 
-    let ciphertext_3 = crypto.aes_ccm_encrypt_tag_8(&k_3, &iv_3, &enc_structure[..], plaintext_3);
+    let ciphertext_3 = crypto.aes_ccm_encrypt(&k_3, &iv_3, &enc_structure[..], plaintext_3);
 
     output.content[prefix_length..][..ciphertext_3.len].copy_from_slice(ciphertext_3.as_slice());
 
@@ -846,7 +855,7 @@ fn decrypt_message_3(
 
     let enc_structure = encode_enc_structure(th_3);
 
-    crypto.aes_ccm_decrypt_tag_8(&k_3, &iv_3, &enc_structure, &ciphertext_3)
+    crypto.aes_ccm_decrypt(&k_3, &iv_3, &enc_structure, &ciphertext_3)
 }
 
 fn encrypt_message_4(
@@ -856,7 +865,7 @@ fn encrypt_message_4(
     plaintext_4: &BufferPlaintext4,
 ) -> BufferMessage4 {
     let mut output: BufferMessage4 = BufferMessage4::new();
-    let bytestring_length = plaintext_4.len + AES_CCM_TAG_LEN;
+    let bytestring_length = plaintext_4.len + crypto.mac_length();
     let prefix_length;
     // FIXME: Reuse CBOR encoder
     if bytestring_length < 24 {
@@ -879,7 +888,7 @@ fn encrypt_message_4(
 
     let (k_4, iv_4) = compute_k_4_iv_4(crypto, prk_4e3m, th_4);
 
-    let ciphertext_4 = crypto.aes_ccm_encrypt_tag_8(&k_4, &iv_4, &enc_structure[..], plaintext_4);
+    let ciphertext_4 = crypto.aes_ccm_encrypt(&k_4, &iv_4, &enc_structure[..], plaintext_4);
 
     output.content[prefix_length..][..ciphertext_4.len].copy_from_slice(ciphertext_4.as_slice());
 
@@ -898,7 +907,7 @@ fn decrypt_message_4(
 
     let enc_structure = encode_enc_structure(th_4);
 
-    crypto.aes_ccm_decrypt_tag_8(&k_4, &iv_4, &enc_structure, &ciphertext_4)
+    crypto.aes_ccm_decrypt(&k_4, &iv_4, &enc_structure, &ciphertext_4)
 }
 
 fn decode_ciphertext(message: &EdhocMessageBuffer) -> Result<EdhocMessageBuffer, EDHOCError> {
@@ -970,17 +979,18 @@ fn compute_mac_3(
     let (context, context_len) = encode_kdf_context(None, id_cred_i, th_3, cred_i, ead_3);
 
     // compute mac_3
+    let mac_length = crypto.mac_length();
     let output_buf = edhoc_kdf(
         crypto,
         prk_4e3m,
         6u8, // registered label for "MAC_3"
         &context,
         context_len,
-        MAC_LENGTH_3,
+        mac_length,
     );
 
-    let mut output: BytesMac3 = [0x00; MAC_LENGTH_3];
-    output[..MAC_LENGTH_3].copy_from_slice(&output_buf[..MAC_LENGTH_3]);
+    let mut output: BytesMac3 = [0x00; MAX_MAC_LENGTH];
+    output[..mac_length].copy_from_slice(&output_buf[..mac_length]);
     output
 }
 
@@ -997,9 +1007,10 @@ fn compute_mac_2(
     let (context, context_len) = encode_kdf_context(Some(c_r), id_cred_r, th_2, cred_r, ead_2);
 
     // MAC_2 = EDHOC-KDF( PRK_3e2m, 2, context_2, mac_length_2 )
-    let mut mac_2: BytesMac2 = [0x00; MAC_LENGTH_2];
-    mac_2[..].copy_from_slice(
-        &edhoc_kdf(crypto, prk_3e2m, 2_u8, &context, context_len, MAC_LENGTH_2)[..MAC_LENGTH_2],
+    let mac_length = crypto.mac_length();
+    let mut mac_2: BytesMac2 = [0x00; MAX_MAC_LENGTH];
+    mac_2[..mac_length].copy_from_slice(
+        &edhoc_kdf(crypto, prk_3e2m, 2_u8, &context, context_len, mac_length)[..mac_length],
     );
 
     mac_2
@@ -1008,7 +1019,7 @@ fn compute_mac_2(
 fn encode_plaintext_2(
     c_r: ConnId,
     id_cred_r: &[u8],
-    mac_2: &BytesMac2,
+    mac_2: &[u8],
     ead_2: &Option<EADItem>,
 ) -> Result<BufferPlaintext2, EDHOCError> {
     let mut plaintext_2: BufferPlaintext2 = BufferPlaintext2::new();
@@ -1023,7 +1034,7 @@ fn encode_plaintext_2(
         .or(Err(EDHOCError::EncodingError))?;
     let offset_cred = plaintext_2.len;
 
-    plaintext_2.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | MAC_LENGTH_2 as u8;
+    plaintext_2.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | mac_2.len() as u8;
     plaintext_2.content[1 + offset_cred..1 + offset_cred + mac_2.len()].copy_from_slice(&mac_2[..]);
     plaintext_2.len = 1 + offset_cred + mac_2.len();
 

@@ -1,0 +1,191 @@
+diff --git a/edhoc.rs b/edhoc.rs
+index d1b77b5..7712e90 100644
+--- a/edhoc.rs
++++ b/edhoc.rs
+@@ -64 +64 @@ pub fn r_process_message_1(
+-            if suites_i[suites_i.len() - 1] == EDHOC_SUPPORTED_SUITES[0] {
++            if super::super::CipherSuite::selected(suites_i.as_slice()).is_some() {
+@@ -126 +126,6 @@ pub fn r_prepare_message_2(
+-    let plaintext_2 = encode_plaintext_2(c_r, id_cred_r.as_encoded_value(), &mac_2, &ead_2)?;
++    let plaintext_2 = encode_plaintext_2(
++        c_r,
++        id_cred_r.as_encoded_value(),
++        &mac_2[..crypto.mac_length()],
++        &ead_2,
++    )?;
+@@ -159 +164 @@ pub fn r_parse_message_3(
+-        let decoded_p3_res = decode_plaintext_3(&plaintext_3);
++        let decoded_p3_res = decode_plaintext_3(&plaintext_3, crypto.mac_length());
+@@ -325 +330 @@ pub fn i_parse_message_2<'a>(
+-        let plaintext_2_decoded = decode_plaintext_2(&plaintext_2);
++        let plaintext_2_decoded = decode_plaintext_2(&plaintext_2, crypto.mac_length());
+@@ -423 +428,5 @@ pub fn i_prepare_message_3(
+-    let plaintext_3 = encode_plaintext_3(id_cred_i.as_encoded_value(), &mac_3, &ead_3)?;
++    let plaintext_3 = encode_plaintext_3(
++        id_cred_i.as_encoded_value(),
++        &mac_3[..crypto.mac_length()],
++        &ead_3,
++    )?;
+@@ -676 +685 @@ fn encode_plaintext_3(
+-    mac_3: &BytesMac3,
++    mac_3: &[u8],
+@@ -687 +696 @@ fn encode_plaintext_3(
+-    plaintext_3.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | MAC_LENGTH_3 as u8;
++    plaintext_3.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | mac_3.len() as u8;
+@@ -807 +816 @@ fn encrypt_message_3(
+-    let bytestring_length = plaintext_3.len + AES_CCM_TAG_LEN;
++    let bytestring_length = plaintext_3.len + crypto.mac_length();
+@@ -830 +839 @@ fn encrypt_message_3(
+-    let ciphertext_3 = crypto.aes_ccm_encrypt_tag_8(&k_3, &iv_3, &enc_structure[..], plaintext_3);
++    let ciphertext_3 = crypto.aes_ccm_encrypt(&k_3, &iv_3, &enc_structure[..], plaintext_3);
+@@ -849 +858 @@ fn decrypt_message_3(
+-    crypto.aes_ccm_decrypt_tag_8(&k_3, &iv_3, &enc_structure, &ciphertext_3)
++    crypto.aes_ccm_decrypt(&k_3, &iv_3, &enc_structure, &ciphertext_3)
+@@ -859 +868 @@ fn encrypt_message_4(
+-    let bytestring_length = plaintext_4.len + AES_CCM_TAG_LEN;
++    let bytestring_length = plaintext_4.len + crypto.mac_length();
+@@ -882 +891 @@ fn encrypt_message_4(
+-    let ciphertext_4 = crypto.aes_ccm_encrypt_tag_8(&k_4, &iv_4, &enc_structure[..], plaintext_4);
++    let ciphertext_4 = crypto.aes_ccm_encrypt(&k_4, &iv_4, &enc_structure[..], plaintext_4);
+@@ -901 +910 @@ fn decrypt_message_4(
+-    crypto.aes_ccm_decrypt_tag_8(&k_4, &iv_4, &enc_structure, &ciphertext_4)
++    crypto.aes_ccm_decrypt(&k_4, &iv_4, &enc_structure, &ciphertext_4)
+@@ -972,0 +982 @@ fn compute_mac_3(
++    let mac_length = crypto.mac_length();
+@@ -979 +989 @@ fn compute_mac_3(
+-        MAC_LENGTH_3,
++        mac_length,
+@@ -982,2 +992,2 @@ fn compute_mac_3(
+-    let mut output: BytesMac3 = [0x00; MAC_LENGTH_3];
+-    output[..MAC_LENGTH_3].copy_from_slice(&output_buf[..MAC_LENGTH_3]);
++    let mut output: BytesMac3 = [0x00; MAX_MAC_LENGTH];
++    output[..mac_length].copy_from_slice(&output_buf[..mac_length]);
+@@ -1000,3 +1010,4 @@ fn compute_mac_2(
+-    let mut mac_2: BytesMac2 = [0x00; MAC_LENGTH_2];
+-    mac_2[..].copy_from_slice(
+-        &edhoc_kdf(crypto, prk_3e2m, 2_u8, &context, context_len, MAC_LENGTH_2)[..MAC_LENGTH_2],
++    let mac_length = crypto.mac_length();
++    let mut mac_2: BytesMac2 = [0x00; MAX_MAC_LENGTH];
++    mac_2[..mac_length].copy_from_slice(
++        &edhoc_kdf(crypto, prk_3e2m, 2_u8, &context, context_len, mac_length)[..mac_length],
+@@ -1011 +1022 @@ fn encode_plaintext_2(
+-    mac_2: &BytesMac2,
++    mac_2: &[u8],
+@@ -1026 +1037 @@ fn encode_plaintext_2(
+-    plaintext_2.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | MAC_LENGTH_2 as u8;
++    plaintext_2.content[offset_cred] = CBOR_MAJOR_BYTE_STRING | mac_2.len() as u8;
+diff --git a/mod.rs b/mod.rs
+index 075de3a..28140b4 100644
+--- a/mod.rs
++++ b/mod.rs
+@@ -6,0 +7,2 @@
++//! The bounded suite/profile extension is retained in `profile.patch`, applied
++//! after the original vendoring and formatting transformations.
+diff --git a/shared/crypto.rs b/shared/crypto.rs
+index 2de5823..94bae4b 100644
+--- a/shared/crypto.rs
++++ b/shared/crypto.rs
+@@ -14,5 +14,6 @@ pub fn prepare_suites_i(
+-    // TODO: implement a re-positioning algorithm, considering preferred and selected suites (see Section 5.2.2 of RFC 9528)
+-    //       for now, we only support a single suite so we just return it
+-    // NOTE: should we assume that supported_suites == preferred_suites?
+-    if supported_suites.contains(&(selected_suite)) {
+-        EdhocBuffer::<MAX_SUITES_LEN>::new_from_slice(&[selected_suite.into()])
++    if let Some(index) = supported_suites
++        .as_slice()
++        .iter()
++        .position(|suite| *suite == selected_suite)
++    {
++        EdhocBuffer::<MAX_SUITES_LEN>::new_from_slice(&supported_suites.as_slice()[..=index])
+@@ -39,0 +41,2 @@ pub trait Crypto: core::fmt::Debug {
++    /// MAC and AEAD tag length fixed for the lifetime of this exchange.
++    fn mac_length(&self) -> usize;
+@@ -54 +57 @@ pub trait Crypto: core::fmt::Debug {
+-    fn aes_ccm_encrypt_tag_8(
++    fn aes_ccm_encrypt(
+@@ -61 +64 @@ pub trait Crypto: core::fmt::Debug {
+-    fn aes_ccm_decrypt_tag_8(
++    fn aes_ccm_decrypt(
+diff --git a/shared/mod.rs b/shared/mod.rs
+index 61d84eb..5beccfd 100644
+--- a/shared/mod.rs
++++ b/shared/mod.rs
+@@ -34 +34 @@ pub const SUITES_LEN: usize = 9;
+-pub const SUPPORTED_SUITES_LEN: usize = 1;
++pub const SUPPORTED_SUITES_LEN: usize = 2;
+@@ -43,0 +44 @@ pub const MAC_LENGTH_3: usize = MAC_LENGTH_2;
++pub const MAX_MAC_LENGTH: usize = 16;
+@@ -93 +94 @@ pub const EDHOC_SUITES: BytesSuites = [0, 1, 2, 3, 4, 5, 6, 24, 25]; // all but
+-pub const EDHOC_SUPPORTED_SUITES: BytesSupportedSuites = [0x2u8];
++pub const EDHOC_SUPPORTED_SUITES: BytesSupportedSuites = [2, 3];
+@@ -103,2 +104,2 @@ pub type BufferPlaintext4 = EdhocMessageBuffer;
+-pub type BytesMac2 = [u8; MAC_LENGTH_2];
+-pub type BytesMac3 = [u8; MAC_LENGTH_3];
++pub type BytesMac2 = [u8; MAX_MAC_LENGTH];
++pub type BytesMac3 = [u8; MAX_MAC_LENGTH];
+@@ -215,0 +217,3 @@ impl ConnId {
++        if len == 2 && matches!(ConnIdType::classify(s[1]), Some(ConnIdType::SingleByte)) {
++            return Err(CBORError::DecodingError);
++        }
+@@ -298,2 +302 @@ pub enum EDHOCSuite {
+-    // add others, such as:
+-    // CiherSuite3 = 3,
++    CipherSuite3 = 3,
+@@ -731,2 +734,2 @@ mod edhoc_parser {
+-            if CBOR_UINT_1BYTE_START == CBORDecoder::type_of(curr) {
+-                let Ok(_) = suites_i.push(decoder.u8()?) else {
++            if matches!(CBORDecoder::type_of(curr), 0 | CBOR_NEG_INT_1BYTE_START) {
++                let Ok(_) = suites_i.push(decoder.i8()? as u8) else {
+@@ -744 +747 @@ mod edhoc_parser {
+-                        suites_i.content[i] = decoder.u8()?;
++                        suites_i.content[i] = decoder.i8()? as u8;
+@@ -779 +782 @@ mod edhoc_parser {
+-            // consume c_i encoded as single-byte int (we still do not support bstr encoding)
++            // Consume a compact integer or bounded byte-string connection ID.
+@@ -835,0 +839 @@ mod edhoc_parser {
++        mac_length: usize,
+@@ -838 +842 @@ mod edhoc_parser {
+-        let mut mac_2: BytesMac2 = [0x00; MAC_LENGTH_2];
++        let mut mac_2: BytesMac2 = [0x00; MAX_MAC_LENGTH];
+@@ -847 +851,4 @@ mod edhoc_parser {
+-        mac_2[..].copy_from_slice(decoder.bytes_sized(MAC_LENGTH_2)?);
++        mac_2
++            .get_mut(..mac_length)
++            .ok_or(EDHOCError::ParsingError)?
++            .copy_from_slice(decoder.bytes_sized(mac_length)?);
+@@ -866,0 +874 @@ mod edhoc_parser {
++        mac_length: usize,
+@@ -869 +877 @@ mod edhoc_parser {
+-        let mut mac_3: BytesMac3 = [0x00; MAC_LENGTH_3];
++        let mut mac_3: BytesMac3 = [0x00; MAX_MAC_LENGTH];
+@@ -876 +884,4 @@ mod edhoc_parser {
+-        mac_3[..].copy_from_slice(decoder.bytes_sized(MAC_LENGTH_3)?);
++        mac_3
++            .get_mut(..mac_length)
++            .ok_or(EDHOCError::ParsingError)?
++            .copy_from_slice(decoder.bytes_sized(mac_length)?);
+@@ -1007 +1018,5 @@ mod cbor_decoder {
+-                self.read()
++                let value = self.read()?;
++                if value < 24 {
++                    return Err(CBORError::DecodingError);
++                }
++                Ok(value)
+@@ -1021 +1036,5 @@ mod cbor_decoder {
+-                i8::try_from(self.read()?).map_err(|_| CBORError::DecodingError)
++                let argument = self.read()?;
++                if argument < 24 {
++                    return Err(CBORError::DecodingError);
++                }
++                i8::try_from(argument).map_err(|_| CBORError::DecodingError)
+@@ -1023,0 +1043,3 @@ mod cbor_decoder {
++                if argument < 24 {
++                    return Err(CBORError::DecodingError);
++                }
+@@ -1103 +1125,5 @@ mod cbor_decoder {
+-                self.read().map(usize::from)
++                let argument = self.read()?;
++                if argument < 24 {
++                    return Err(CBORError::DecodingError);
++                }
++                Ok(usize::from(argument))

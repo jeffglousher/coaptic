@@ -432,6 +432,16 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     pub fn start(
         &mut self,
         now_ms: u64,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(), RecoveryError> {
+        self.start_with_suite(now_ms, super::super::CipherSuite::Suite2, entropy)
+    }
+
+    /// Start a fresh candidate with a fixed local suite policy and no fallback.
+    pub fn start_with_suite(
+        &mut self,
+        now_ms: u64,
+        suite: super::super::CipherSuite,
         mut entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(), RecoveryError> {
         self.check_time(now_ms)?;
@@ -442,11 +452,12 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(RecoveryError::Bootstrap(PollError::Clock))?;
         let local_id = self.available_id(None).ok_or(RecoveryError::Capacity)?;
-        let candidate = CoapProvisioner::start_with_id(
+        let candidate = CoapProvisioner::start_with_suite(
             self.identity,
             self.peer.clone(),
             self.endpoint,
             local_id,
+            suite,
             now_ms,
             |bytes| {
                 for _ in 0..8 {

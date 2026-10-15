@@ -12,17 +12,26 @@ use p256::elliptic_curve::{
 };
 use sha2::{Digest, Sha256};
 
-use super::Error;
+use super::{CipherSuite, Error};
 use crate::oscore::aead;
 
 pub(super) struct Crypto {
     ephemeral: Option<p256::SecretKey>,
+    suite: CipherSuite,
 }
 
 impl Crypto {
     /// Obtain one ephemeral scalar using at most eight fallible entropy calls.
     /// Each successful call must fill the entire output with fresh cryptographic entropy.
+    #[cfg(test)]
     pub(super) fn fresh(mut entropy: impl FnMut(&mut [u8]) -> bool) -> Result<Self, Error> {
+        Self::fresh_with_suite(CipherSuite::Suite2, &mut entropy)
+    }
+
+    pub(super) fn fresh_with_suite(
+        suite: CipherSuite,
+        mut entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<Self, Error> {
         let mut candidate = [0u8; 32];
         for _ in 0..8 {
             if !entropy(&mut candidate) {
@@ -34,6 +43,7 @@ impl Crypto {
             if let Ok(ephemeral) = scalar {
                 return Ok(Self {
                     ephemeral: Some(ephemeral),
+                    suite,
                 });
             }
         }
@@ -62,6 +72,15 @@ pub(super) fn public_x_for_private(private_key: &[u8; 32]) -> Result<[u8; 32], E
 }
 
 impl CryptoTrait for Crypto {
+    fn mac_length(&self) -> usize {
+        self.suite.tag_len()
+    }
+
+    fn supported_suites(&self) -> lakers::EdhocBuffer<{ lakers::MAX_SUITES_LEN }> {
+        // Initiators select a fixed local profile, with no automatic fallback.
+        lakers::EdhocBuffer::new_from_slice(&[self.suite.label()]).unwrap()
+    }
+
     fn sha256_digest(&mut self, message: &BytesMaxBuffer, message_len: usize) -> BytesHashLen {
         Sha256::digest(
             message
@@ -92,7 +111,7 @@ impl CryptoTrait for Crypto {
         hkdf::Hkdf::<Sha256>::extract(Some(salt), ikm).0.into()
     }
 
-    fn aes_ccm_encrypt_tag_8(
+    fn aes_ccm_encrypt(
         &mut self,
         key: &BytesCcmKeyLen,
         iv: &BytesCcmIvLen,
@@ -105,12 +124,30 @@ impl CryptoTrait for Crypto {
             .get(..plaintext.len)
             .expect("bounded EDHOC plaintext");
         output.content[..source.len()].copy_from_slice(source);
-        output.len = aead::seal_in_place(key, iv, ad, source.len(), &mut output.content)
-            .expect("bounded EDHOC encryption input");
+        output.len = match self.suite {
+            CipherSuite::Suite2 => {
+                aead::seal_in_place(key, iv, ad, source.len(), &mut output.content)
+                    .expect("bounded EDHOC encryption input")
+            }
+            CipherSuite::Suite3 => {
+                use ccm::aead::{AeadInOut, KeyInit};
+                type Cipher = ccm::Ccm<aes::Aes128, ccm::consts::U16, ccm::consts::U13>;
+                let tag = Cipher::new(key.into())
+                    .encrypt_inout_detached(
+                        iv.into(),
+                        ad,
+                        (&mut output.content[..source.len()]).into(),
+                    )
+                    .expect("bounded EDHOC encryption input");
+                let end = source.len() + 16;
+                output.content[source.len()..end].copy_from_slice(&tag);
+                end
+            }
+        };
         output
     }
 
-    fn aes_ccm_decrypt_tag_8(
+    fn aes_ccm_decrypt(
         &mut self,
         key: &BytesCcmKeyLen,
         iv: &BytesCcmIvLen,
@@ -122,7 +159,30 @@ impl CryptoTrait for Crypto {
             .get(..ciphertext.len)
             .ok_or(EDHOCError::ParsingError)?;
         let mut output = BufferPlaintext3::new();
-        output.len = aead::open(key, iv, ad, source, &mut output.content).map_err(|error| {
+        let result = match self.suite {
+            CipherSuite::Suite2 => aead::open(key, iv, ad, source, &mut output.content),
+            CipherSuite::Suite3 => {
+                use ccm::aead::{AeadInOut, KeyInit, Tag};
+                type Cipher = ccm::Ccm<aes::Aes128, ccm::consts::U16, ccm::consts::U13>;
+                let len = source
+                    .len()
+                    .checked_sub(16)
+                    .ok_or(EDHOCError::ParsingError)?;
+                let tag = Tag::<Cipher>::try_from(&source[len..])
+                    .map_err(|_| EDHOCError::ParsingError)?;
+                output.content[..len].copy_from_slice(&source[..len]);
+                Cipher::new(key.into())
+                    .decrypt_inout_detached(
+                        iv.into(),
+                        ad,
+                        (&mut output.content[..len]).into(),
+                        &tag,
+                    )
+                    .map(|()| len)
+                    .map_err(|_| crate::oscore::Error::Decrypt)
+            }
+        };
+        output.len = result.map_err(|error| {
             if error == crate::oscore::Error::Decrypt {
                 EDHOCError::MacVerificationFailed
             } else {
@@ -176,6 +236,54 @@ mod tests {
             true
         })
         .unwrap()
+    }
+
+    #[test]
+    fn suite3_ccm_matches_independent_cryptography_aesccm_and_rejects_tag_changes() {
+        // Python cryptography AESCCM(tag_length=16), fixed public inputs.
+        let key = core::array::from_fn(|i| i as u8);
+        let iv = core::array::from_fn(|i| i as u8);
+        let plain = BufferPlaintext3::new_from_slice(b"coaptic suite 3").unwrap();
+        let expected = [
+            0x75, 0x5b, 0xd5, 0xf8, 0x27, 0x60, 0x99, 0xa2, 0x29, 0xe2, 0x5a, 0xd3, 0xf8, 0x14,
+            0x2d, 0x93, 0xb7, 0x86, 0xef, 0xf2, 0x75, 0x8b, 0x15, 0x76, 0x17, 0xd1, 0xad, 0x0a,
+            0xcc, 0xba, 0xe7,
+        ];
+        let mut crypto = Crypto::fresh_with_suite(CipherSuite::Suite3, |out| {
+            out.copy_from_slice(&scalar(3));
+            true
+        })
+        .unwrap();
+        let ciphertext = crypto.aes_ccm_encrypt(&key, &iv, b"profile-bound", &plain);
+        assert_eq!(ciphertext.as_slice(), expected);
+        assert_eq!(
+            crypto
+                .aes_ccm_decrypt(&key, &iv, b"profile-bound", &ciphertext)
+                .unwrap()
+                .as_slice(),
+            plain.as_slice()
+        );
+        for index in 0..ciphertext.len {
+            let mut changed = ciphertext;
+            changed.content[index] ^= 1;
+            assert!(
+                crypto
+                    .aes_ccm_decrypt(&key, &iv, b"profile-bound", &changed)
+                    .is_err()
+            );
+        }
+        for len in 0..16 {
+            assert!(
+                crypto
+                    .aes_ccm_decrypt(
+                        &key,
+                        &iv,
+                        b"profile-bound",
+                        &BufferCiphertext3::new_from_slice(&[0; 16][..len]).unwrap()
+                    )
+                    .is_err()
+            );
+        }
     }
 
     #[test]
@@ -295,11 +403,11 @@ mod tests {
         ];
         let mut crypto = backend(1);
         let plaintext_buffer = BufferPlaintext3::new_from_slice(&plaintext).unwrap();
-        let ciphertext = crypto.aes_ccm_encrypt_tag_8(&key, &iv, &aad, &plaintext_buffer);
+        let ciphertext = crypto.aes_ccm_encrypt(&key, &iv, &aad, &plaintext_buffer);
         assert_eq!(ciphertext.as_slice(), expected);
         assert_eq!(
             crypto
-                .aes_ccm_decrypt_tag_8(&key, &iv, &aad, &ciphertext)
+                .aes_ccm_decrypt(&key, &iv, &aad, &ciphertext)
                 .unwrap()
                 .as_slice(),
             plaintext
@@ -307,14 +415,14 @@ mod tests {
         let mut corrupted = ciphertext;
         corrupted.content[0] ^= 1;
         assert!(matches!(
-            crypto.aes_ccm_decrypt_tag_8(&key, &iv, &aad, &corrupted),
+            crypto.aes_ccm_decrypt(&key, &iv, &aad, &corrupted),
             Err(EDHOCError::MacVerificationFailed)
         ));
         for length in 0..8 {
             let mut short = BufferCiphertext3::new();
             short.len = length;
             assert!(matches!(
-                crypto.aes_ccm_decrypt_tag_8(&key, &iv, &aad, &short),
+                crypto.aes_ccm_decrypt(&key, &iv, &aad, &short),
                 Err(EDHOCError::ParsingError)
             ));
         }

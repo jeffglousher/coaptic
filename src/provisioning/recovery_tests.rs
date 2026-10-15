@@ -460,7 +460,7 @@ fn outbound_suite_error_recovery_retains_pending_reply_and_recovers_with_fresh_k
         let m1 = ci.last();
         let p = decode(&m1).unwrap();
         let mut payload = p.payload().to_vec();
-        payload[2] = 3;
+        payload[2] = 4;
         let wrong = packet(&m1, p.ty(), p.message_id(), p.token(), &payload);
         assert_eq!(
             server.ingest(&wrong, CLIENT, 11, no_entropy, no_authorization),
@@ -479,7 +479,7 @@ fn outbound_suite_error_recovery_retains_pending_reply_and_recovers_with_fresh_k
             Err(RecoveryError::Bootstrap(PollError::Io(9)))
         );
         let saved = si.last();
-        assert_eq!(decode(&saved).unwrap().payload(), [2, 2]);
+        assert_eq!(decode(&saved).unwrap().payload(), [2, 0x82, 2, 3]);
         si.fail = false;
         si.short = true;
         assert_eq!(
@@ -566,7 +566,7 @@ fn outbound_suite_error_recovery_capacity_preserves_the_only_reply_until_expiry(
     let m1 = ci.last();
     let p = decode(&m1).unwrap();
     let mut payload = p.payload().to_vec();
-    payload[2] = 3;
+    payload[2] = 4;
     let wrong = packet(&m1, p.ty(), p.message_id(), p.token(), &payload);
     server
         .ingest(&wrong, CLIENT, 1, no_entropy, no_authorization)
