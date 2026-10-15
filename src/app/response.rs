@@ -33,9 +33,15 @@ pub const RESPONSE_BODY: usize = 4096;
 /// [`Response::validate`] reports the error before App sends it.
 pub const LOCATION_MAX: usize = 8;
 
-/// A handler response exceeds an option bound or contains an invalid option value.
+/// A response exceeds a payload or option bound, or contains an invalid option value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseError {
+    /// A copied payload exceeds its storage bound. App refuses to send it.
+    PayloadTruncated,
+    /// Deferred completion metadata exceeds its bounded retained header.
+    DeferredMetadataBounds,
+    /// A deferred Observe retry changes the initial attempted Content-Format.
+    DeferredObserveFormat,
     /// ETag must contain 1 through 8 bytes.
     EtagLength,
     /// Location-Path exceeds eight segments or a segment exceeds 255 bytes.
@@ -48,6 +54,9 @@ pub enum ResponseError {
 impl core::fmt::Display for ResponseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
+            Self::PayloadTruncated => "response payload exceeds its copy bound",
+            Self::DeferredMetadataBounds => "deferred response metadata exceeds App bounds",
+            Self::DeferredObserveFormat => "deferred Observe retry changes Content-Format",
             Self::EtagLength => "ETag must contain 1 through 8 bytes",
             Self::LocationPathBounds => "Location-Path exceeds its count or byte bound",
             Self::LocationQueryBounds => "Location-Query exceeds its count or byte bound",
@@ -117,7 +126,7 @@ impl IntoResponse for Response<'static> {
 /// Created can carry [`Self::location_path`] / [`Self::location_query`]
 /// (bounded, borrowed strings, no heap). Received Location values borrow App's
 /// reply hold; handler locations must outlive their response. [`Self::separate`] is an empty ACK to a
-/// CON request, then the representation in a later CON (new Message ID).
+/// CON request, then the representation in a new CON during the same poll.
 ///
 /// Handler returns and [`Self::observe`] copy the small header +
 /// inline/`'static` payload only.
@@ -153,9 +162,11 @@ pub struct Response<'a> {
     location_query: [&'a str; LOCATION_MAX],
     location_query_len: u8,
     separate: bool,
+    deferred: bool,
+    fresh_piv: bool,
     /// Length of the source before [`INLINE_PAYLOAD`] / [`RESPONSE_BODY`]
     /// copy. Greater than [`Self::payload`] when truncated.
-    payload_src_len: u16,
+    payload_src_len: usize,
 }
 
 impl<'a> Response<'a> {
@@ -184,6 +195,8 @@ impl<'a> Response<'a> {
             location_query: [""; LOCATION_MAX],
             location_query_len: 0,
             separate: false,
+            deferred: false,
+            fresh_piv: false,
             payload_src_len: 0,
         }
     }
@@ -218,15 +231,28 @@ impl<'a> Response<'a> {
         self
     }
 
-    /// Check bounded option setters before returning or sending this response.
+    /// Check payload and option bounds before returning or sending this response.
     ///
     /// Invalid setters retain the first error. Later valid setters do not clear
     /// it; construct a new response to recover. App refuses the invalid intent
-    /// before sending any bytes or registering an Observe subscription.
+    /// before sending any bytes or registering an Observe subscription. A
+    /// truncated payload also fails validation; replacing it with a complete
+    /// payload clears that condition.
     pub const fn validate(&self) -> Result<(), ResponseError> {
         match self.invalid {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => {
+                let len = match self.payload {
+                    Payload::Empty => 0,
+                    Payload::Static(bytes) | Payload::Borrowed(bytes) => bytes.len(),
+                    Payload::Inline { len, .. } => len as usize,
+                };
+                if self.payload_src_len > len {
+                    Err(ResponseError::PayloadTruncated)
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -247,12 +273,21 @@ impl<'a> Response<'a> {
     /// [`INLINE_PAYLOAD`]).
     ///
     /// Same 128-byte cap as a client snapshot [`Self::payload`]. Longer
-    /// input sets [`Self::payload_truncated`]. Prefer [`Self::content`]
+    /// input sets [`Self::payload_truncated`] and App refuses to send it.
+    /// Use [`Self::try_content_copy`] to handle overflow immediately. Prefer [`Self::content`]
     /// (`'static`) or [`Self::payload_copy_full`] (borrow) when the body
     /// must not be cut.
     #[must_use]
     pub fn content_copy(payload: &[u8]) -> Self {
         Self::new(Code::CONTENT).payload_copy(payload)
+    }
+
+    /// 2.05 Content with a complete copy into the inline buffer.
+    ///
+    /// Returns [`ResponseError::PayloadTruncated`] when `payload` exceeds
+    /// [`INLINE_PAYLOAD`], allowing the handler to return a size error instead.
+    pub fn try_content_copy(payload: &[u8]) -> Result<Self, ResponseError> {
+        Self::new(Code::CONTENT).try_payload_copy(payload)
     }
 
     /// 2.01 Created.
@@ -371,6 +406,33 @@ impl<'a> Response<'a> {
         Self::new(code).with_problem(None, None)
     }
 
+    /// Add RFC 9290 unprocessed option numbers to a problem response.
+    /// Existing valid problem fields are preserved. Other payloads are replaced
+    /// with a problem map carrying this response's code. Apply this after
+    /// title/detail builders, which rebuild their compact problem payload.
+    ///
+    /// # Errors
+    /// [`crate::message::ProblemError::Invalid`] for an empty list or malformed
+    /// existing problem payload; `BufferTooSmall` if the complete map exceeds
+    /// the inline payload capacity. No partial/truncated map is returned.
+    pub fn unprocessed_options(
+        self,
+        numbers: &[u64],
+    ) -> Result<Self, crate::message::ProblemError> {
+        let details = if self.format() == Some(ContentFormat::PROBLEM_DETAILS) {
+            ProblemDetails::decode(self.payload())?
+        } else {
+            ProblemDetails::new(self.code())
+        };
+        let mut buf = [0; INLINE_PAYLOAD];
+        let n = details
+            .with_unprocessed_options(numbers)?
+            .encode(&mut buf)?;
+        Ok(self
+            .content_format(ContentFormat::PROBLEM_DETAILS)
+            .payload_copy(&buf[..n]))
+    }
+
     /// 4.08 with RFC 9177 missing-blocks CBOR-seq (Content-Format 272).
     ///
     /// Encodes `nums` as a CBOR Sequence of unsigned integers (no array
@@ -449,7 +511,7 @@ impl<'a> Response<'a> {
                 .unwrap_or(ContentFormat::PROBLEM_DETAILS),
         );
         self.payload = encode_problem_payload(self.code, title, detail);
-        self.payload_src_len = src_len_u16(payload_stored_len(&self.payload));
+        self.payload_src_len = src_len(payload_stored_len(&self.payload));
         self
     }
 
@@ -497,6 +559,16 @@ impl<'a> Response<'a> {
     #[must_use]
     pub const fn max_age(mut self, seconds: u32) -> Self {
         self.max_age = Some(seconds);
+        self
+    }
+
+    pub(crate) const fn retain_format(mut self, format: Option<ContentFormat>) -> Self {
+        self.content_format = format;
+        self
+    }
+
+    pub(crate) const fn retain_max_age(mut self, seconds: Option<u32>) -> Self {
+        self.max_age = seconds;
         self
     }
 
@@ -567,13 +639,36 @@ impl<'a> Response<'a> {
         &self.location_query[..usize::from(self.location_query_len)]
     }
 
+    /// Defer application work accepted by [`super::App::poll_with`].
+    ///
+    /// Copy required request data into caller-owned bounded work, retain the
+    /// supplied [`super::DeferredReply`], and later call [`super::App::complete`].
+    /// An empty ACK means reception only; the completion carries the response.
+    /// A `None` handle cannot defer and is answered with 5.03. Ordinary route
+    /// handlers cannot obtain a handle; use `poll_with` for stateful/deferred work.
+    #[must_use]
+    pub const fn deferred() -> Self {
+        let mut response = Self::new(Code::EMPTY);
+        response.deferred = true;
+        response
+    }
+
+    pub(crate) const fn is_deferred(&self) -> bool {
+        self.deferred
+    }
+
     /// Send as a separate response (RFC 7252 §5.2.2).
     ///
     /// A CON request is acknowledged with an empty ACK; the representation
     /// follows in a new CON with a fresh Message ID and the request Token.
     /// A NON request is answered with a NON that also uses a fresh Message
-    /// ID. [`App::poll`](super::App::poll) performs both sends. Default is
-    /// piggybacked ACK (CON) or a NON that reuses the request Message ID.
+    /// ID. The handler completes synchronously before either send;
+    /// [`App::poll`](super::App::poll) performs both sends in that invocation.
+    /// This flag provides no deferred completion handle. Applications needing
+    /// work across polls must own that lifecycle through the advanced
+    /// [`Engine`](crate::storage::Engine) API, including retained request
+    /// identity, deadlines, duplicate suppression and pending CON delivery.
+    /// Default is piggybacked ACK (CON) or NON with a fresh Message ID.
     ///
     /// ```
     /// use coaptic::Response;
@@ -595,10 +690,12 @@ impl<'a> Response<'a> {
 
     /// Set Observe sequence.
     ///
-    /// On a successful GET/FETCH with Observe=0 this opts the handler into
+    /// On a successful queryless GET with Observe=0 this opts the handler into
     /// registration ([`App`](super::App) writes sequence 0 on the wire).
     /// [`App::notify`](super::App::notify) overwrites this with the table
     /// sequence. Mutating in place avoids copying the payload.
+    /// App server FETCH and query-bearing GET responses omit Observe:
+    /// request-specific selection ownership for notifications is not implemented.
     #[must_use]
     pub const fn observe(mut self, sequence: u32) -> Self {
         self.set_observe(sequence);
@@ -631,18 +728,19 @@ impl<'a> Response<'a> {
         } else {
             Payload::Static(payload)
         };
-        self.payload_src_len = src_len_u16(payload.len());
+        self.payload_src_len = src_len(payload.len());
         self
     }
 
     /// Replace the payload by copying into the inline buffer.
     ///
     /// Copies `min(len, `[`INLINE_PAYLOAD`]`)`. Longer input is truncated;
-    /// [`Self::payload_truncated`] is then `true`. This is the same cap
+    /// [`Self::payload_truncated`] is then `true` and App refuses to send it.
+    /// Use [`Self::try_payload_copy`] to handle overflow immediately. This is the same cap
     /// [`super::App::take_response`] uses for a non-Block client snapshot.
     #[must_use]
     pub fn payload_copy(mut self, payload: &[u8]) -> Self {
-        self.payload_src_len = src_len_u16(payload.len());
+        self.payload_src_len = src_len(payload.len());
         let n = payload.len().min(INLINE_PAYLOAD);
         let mut bytes = [0u8; INLINE_PAYLOAD];
         bytes[..n].copy_from_slice(&payload[..n]);
@@ -657,11 +755,24 @@ impl<'a> Response<'a> {
         self
     }
 
+    /// Replace the payload with a complete copy into the inline buffer.
+    ///
+    /// Returns [`ResponseError::PayloadTruncated`] rather than retaining a
+    /// partial payload when `payload` exceeds [`INLINE_PAYLOAD`].
+    pub fn try_payload_copy(self, payload: &[u8]) -> Result<Self, ResponseError> {
+        if payload.len() > INLINE_PAYLOAD {
+            return Err(ResponseError::PayloadTruncated);
+        }
+        Ok(self.payload_copy(payload))
+    }
+
     /// Use `payload` as the body without copying (catalog / poll scratch).
     ///
     /// Lengths that fit inline use [`Self::payload_copy`]. Larger slices are
     /// borrowed for `'a` (capped at [`RESPONSE_BODY`]). This is the handler
-    /// path that is **not** silently cut at [`INLINE_PAYLOAD`].
+    /// path that is **not** silently cut at [`INLINE_PAYLOAD`]. Input exceeding
+    /// [`RESPONSE_BODY`] is marked truncated and App refuses to send it; use
+    /// [`Self::payload_borrowed`] for a complete borrow without this legacy cap.
     #[must_use]
     pub fn payload_copy_full(self, payload: &'a [u8]) -> Self {
         if payload.len() <= INLINE_PAYLOAD {
@@ -669,9 +780,22 @@ impl<'a> Response<'a> {
         }
         let n = payload.len().min(RESPONSE_BODY);
         let mut response = self;
-        response.payload_src_len = src_len_u16(payload.len());
+        response.payload_src_len = src_len(payload.len());
         response.payload = Payload::Borrowed(&payload[..n]);
         response
+    }
+
+    /// Borrow the complete payload without copying or truncating it.
+    ///
+    /// The caller owns these bytes until App has encoded/sent this intent.
+    /// Datagram and body pools selected by the App builder determine whether
+    /// it fits; failures are explicit. This works with fixed storage, `alloc`
+    /// and `std`, and permits bodies larger than the legacy 4096-byte borrow.
+    #[must_use]
+    pub fn payload_borrowed(mut self, payload: &'a [u8]) -> Self {
+        self.payload = Payload::Borrowed(payload);
+        self.payload_src_len = payload.len();
+        self
     }
 
     /// Response code.
@@ -720,7 +844,7 @@ impl<'a> Response<'a> {
     /// borrow was capped at [`RESPONSE_BODY`].
     #[must_use]
     pub fn payload_truncated(&self) -> bool {
-        usize::from(self.payload_src_len) > self.payload().len()
+        self.payload_src_len > self.payload().len()
     }
 
     /// Source length before the inline / assembled copy cap.
@@ -730,7 +854,7 @@ impl<'a> Response<'a> {
     /// nothing was truncated.
     #[must_use]
     pub const fn payload_src_len(&self) -> usize {
-        self.payload_src_len as usize
+        self.payload_src_len
     }
 
     /// Content-Format, if set.
@@ -791,7 +915,8 @@ impl<'a> Response<'a> {
     /// `None` when this is handler intent or a single-datagram client
     /// snapshot (including a truncated piggyback — see
     /// [`Self::payload_truncated`]). Borrowed from [`super::App`] after
-    /// [`super::App::take_response`] (truncated at [`RESPONSE_BODY`]).
+    /// [`super::App::take_response`]. App refuses representations above
+    /// [`RESPONSE_BODY`] with [`super::CallFailure::ResponseBodyBounds`].
     /// Invalidated by a later take or poll. This is the client path for a
     /// representation larger than [`INLINE_PAYLOAD`].
     #[must_use]
@@ -824,7 +949,22 @@ impl<'a> Response<'a> {
     }
 
     pub(crate) const fn with_payload_src_len(mut self, payload_src_len: u16) -> Self {
-        self.payload_src_len = payload_src_len;
+        self.payload_src_len = payload_src_len as usize;
+        self
+    }
+
+    pub(crate) const fn with_fresh_piv(mut self) -> Self {
+        self.fresh_piv = true;
+        self
+    }
+    pub(crate) const fn fresh_piv(&self) -> bool {
+        self.fresh_piv
+    }
+
+    pub(crate) fn with_complete_payload(mut self, src: &'a [u8], assembled: bool) -> Self {
+        self.payload = Payload::Borrowed(src);
+        self.payload_src_len = src_len(src.len());
+        self.assembled = assembled.then_some(src);
         self
     }
 
@@ -840,12 +980,8 @@ enum Field {
     Detail,
 }
 
-const fn src_len_u16(n: usize) -> u16 {
-    if n > u16::MAX as usize {
-        u16::MAX
-    } else {
-        n as u16
-    }
+const fn src_len(n: usize) -> usize {
+    n
 }
 
 fn payload_stored_len(payload: &Payload<'_>) -> usize {
@@ -1001,9 +1137,9 @@ pub(crate) type AssembledField<P, const BLOCK_WISE: bool> = <P as AppAssembled<B
 mod assembled_hold_tests {
     use super::{
         AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, INLINE_PAYLOAD, RESPONSE_BODY,
-        Response,
+        Response, ResponseError,
     };
-    use crate::profiles;
+    use crate::{Code, profiles};
     use core::mem::size_of;
 
     #[test]
@@ -1028,6 +1164,40 @@ mod assembled_hold_tests {
         assert_eq!(none.view(), None);
         none.store(b"x");
         assert_eq!(none.view(), None);
+    }
+
+    #[test]
+    fn checked_copy_preserves_complete_payload_and_refuses_overflow() {
+        for len in [0, 1, INLINE_PAYLOAD] {
+            let bytes = [b'x'; INLINE_PAYLOAD];
+            let response = Response::try_content_copy(&bytes[..len]).unwrap();
+            assert_eq!(response.code(), Code::CONTENT);
+            assert_eq!(response.payload(), &bytes[..len]);
+            assert_eq!(response.validate(), Ok(()));
+        }
+        let oversized = [0; INLINE_PAYLOAD + 1];
+        assert_eq!(
+            Response::try_content_copy(&oversized).unwrap_err(),
+            ResponseError::PayloadTruncated
+        );
+        assert_eq!(
+            Response::changed()
+                .try_payload_copy(&oversized)
+                .unwrap_err(),
+            ResponseError::PayloadTruncated
+        );
+        let truncated = Response::content_copy(&oversized);
+        assert_eq!(truncated.validate(), Err(ResponseError::PayloadTruncated));
+        assert_eq!(truncated.with_static(b"complete").validate(), Ok(()));
+        let body = [0; RESPONSE_BODY + 1];
+        assert_eq!(
+            Response::changed().payload_copy_full(&body).validate(),
+            Err(ResponseError::PayloadTruncated)
+        );
+        assert_eq!(
+            Response::changed().payload_borrowed(&body).validate(),
+            Ok(())
+        );
     }
 
     #[test]

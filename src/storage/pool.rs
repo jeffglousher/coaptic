@@ -333,6 +333,11 @@ impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BY
 
 /// Byte and sidecar access for one datagram pool. Used by [`DatagramSlots`](super::DatagramSlots).
 pub(crate) trait DatagramBytes {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError>;
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]>;
     fn set_len(&mut self, id: SlotId, len: usize) -> Result<(), SlotError>;
@@ -354,6 +359,35 @@ pub(crate) trait DatagramBytes {
 }
 
 impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOTS, BYTES> {
+    fn replace_pending(
+        &mut self,
+        expected: super::PendingCon,
+        bytes: &[u8],
+    ) -> Result<super::PendingCon, super::PendingReplaceError> {
+        let id = expected.tx_slot();
+        let current = self
+            .pending_mid(id)
+            .zip(self.endpoint(id))
+            .zip(self.pending_rto(id))
+            .map(|((mid, endpoint), rto)| super::PendingCon::new(mid, endpoint, id).with_rto(rto));
+        let replacement = super::pending::validate_replacement(
+            expected,
+            current,
+            self.payload(id),
+            bytes,
+            BYTES,
+            self.occ.is_pinned(id),
+        )?;
+        // All refusal checks precede this infallible commit under exclusive access.
+        self.bytes[id.index()][..bytes.len()].copy_from_slice(bytes);
+        self.lens[id.index()] = bytes.len();
+        self.pending[id.index()] = Some(PendingMark::new(
+            replacement.message_id(),
+            replacement.rto(),
+        ));
+        Ok(replacement)
+    }
+
     fn payload(&self, id: SlotId) -> Option<&[u8]> {
         DatagramPool::payload(self, id)
     }
@@ -531,7 +565,9 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         self.occ.unpin(id)
     }
 
-    /// Occupied slot whose sidecar matches `key`, if any. O(n) in slot count.
+    /// First occupied slot whose sidecar matches `key`, across roles.
+    /// Use [`Self::lookup_role`] to distinguish request and response bodies.
+    /// O(n) in slot count.
     #[must_use]
     pub fn lookup(&self, key: BlockKey) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
@@ -540,6 +576,17 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
                 Some(t) if t.key() == key => Some(id),
                 _ => None,
             }
+        })
+    }
+
+    /// Occupied body with the exact key and transfer role.
+    #[must_use]
+    pub fn lookup_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..SLOTS).find_map(|i| {
+            let id = SlotId::from_index(i);
+            self.transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
         })
     }
 
@@ -656,7 +703,10 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError> {
-        if let Some(id) = self.lookup(key).or_else(|| self.lookup_identity(key, role)) {
+        if let Some(id) = self
+            .lookup_role(key, role)
+            .or_else(|| self.lookup_identity(key, role))
+        {
             let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
             if role.is_q_block() && transfer.expected_len() != expected_len {
                 return Err(BlockTransferError::LengthInconsistent);
@@ -731,6 +781,29 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
             len,
             transfer.is_complete(),
         ))
+    }
+
+    /// Shrink an outgoing classic Block1 transfer before the next range.
+    pub fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        if !self.occ.is_occupied(id) {
+            return Err(if id.index() < SLOTS {
+                SlotError::NotOccupied.into()
+            } else {
+                SlotError::InvalidSlot.into()
+            });
+        }
+        let transfer = self.transfers[id.index()]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        transfer.adopt_smaller_szx(szx)
     }
 
     /// Issue one BERT payload of at most `max_payload` bytes from `id`.
@@ -865,6 +938,15 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError> {
         BodyPool::next_outgoing(self, id, role)
+    }
+
+    fn adopt_smaller_outgoing_szx(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        szx: u8,
+    ) -> Result<(), BlockTransferError> {
+        BodyPool::adopt_smaller_outgoing_szx(self, id, role, szx)
     }
 
     fn next_bert_outgoing(

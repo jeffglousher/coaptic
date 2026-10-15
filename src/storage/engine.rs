@@ -43,14 +43,14 @@ use crate::message::{
 /// [`crate::App::poll`]. Reach here via [`crate::App::engine_mut`] only
 /// when you need explicit slots, [`Access`] / [`AccessMut`], or policy
 /// App does not apply. Engine BERT (SZX 7) codecs exist; App does not
-/// expose them (future / backlog).
+/// expose them.
 ///
 /// One [`Self::progress`] pass: CON retransmit, one unpinned RX step, one
 /// Observe notify (skips an endpoint at notification NSTART), at most one
 /// Observe expiry, at most one due Q-Block recover. The caller owns
 /// clock, socket ([`super::DatagramIo`]), and RST / remaining 4.xx
-/// policy. [`Self::echo_freshness`] classifies; App applies 4.01 when
-/// configured. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
+/// policy. [`Self::echo_freshness`] classifies timestamp age only; App uses
+/// caller-owned [`crate::app::EchoPolicy`] verification. This type does not invent 4.02 / 4.08 / 2.31 / RST policy.
 ///
 /// Wrapping [`Metrics`] sit on this type. Copy with [`Self::metrics`];
 /// [`crate::App::metrics`] is the same snapshot from the happy path.
@@ -58,6 +58,8 @@ use crate::message::{
 pub struct Engine<S: Storage> {
     storage: S,
     metrics: Metrics,
+    #[cfg(feature = "diagnostics")]
+    work_metrics: super::WorkMetrics,
 }
 
 impl<S: Storage> Engine<S> {
@@ -65,6 +67,8 @@ impl<S: Storage> Engine<S> {
         Self {
             storage,
             metrics: Metrics::ZERO,
+            #[cfg(feature = "diagnostics")]
+            work_metrics: super::WorkMetrics::ZERO,
         }
     }
 
@@ -87,6 +91,24 @@ impl<S: Storage> Engine<S> {
     #[inline]
     pub(crate) fn metrics_mut(&mut self) -> &mut Metrics {
         &mut self.metrics
+    }
+
+    /// Copy optional request-path work counters without clocks or allocation.
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub const fn work_metrics(&self) -> super::WorkMetrics {
+        self.work_metrics
+    }
+
+    /// Reset work counters independently of the always-on reactor counters.
+    #[cfg(feature = "diagnostics")]
+    pub fn reset_work_metrics(&mut self) {
+        self.work_metrics = super::WorkMetrics::ZERO;
+    }
+
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn work_metrics_mut(&mut self) -> &mut super::WorkMetrics {
+        &mut self.work_metrics
     }
 
     /// Borrow the backing store.
@@ -113,6 +135,7 @@ impl<S: Storage> Engine<S> {
 
     /// Time-based freshness of a mint-shaped Echo on `parsed`.
     ///
+    /// This does not verify issuance, a MAC, or endpoint/security binding.
     /// Event-based freshness is equality against a caller-owned [`Echo`].
     /// Does not invent 4.01 / RST policy. See `knowledge/rfcs/rfc9175.txt`.
     #[must_use]
@@ -312,6 +335,11 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     pub fn encode_tx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.tx_payload_mut(id), msg)?;
         self.storage.set_tx_len(id, n)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(
+            &mut self.work_metrics.tx_payload_encoded_bytes,
+            msg.payload().len(),
+        );
         Ok(n)
     }
 
@@ -325,6 +353,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         copy_into_slot(self.storage.rx_payload_mut(id), bytes)?;
         self.storage.set_rx_len(id, bytes.len())?;
         self.storage.set_rx_endpoint(id, endpoint)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_rx_copied_bytes, bytes.len());
         Ok(bytes.len())
     }
 
@@ -338,6 +368,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         copy_into_slot(self.storage.tx_payload_mut(id), bytes)?;
         self.storage.set_tx_len(id, bytes.len())?;
         self.storage.set_tx_endpoint(id, endpoint)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
         Ok(bytes.len())
     }
 
@@ -415,6 +447,21 @@ impl<S: Storage + DedupSlots> Engine<S> {
 }
 
 impl<S: Storage + PendingCons> Engine<S> {
+    /// Atomically replace one exact pending CON, retaining its slot and RTO.
+    ///
+    /// See [`PendingCons::replace_pending_con`] for staging, MID selection,
+    /// refusal guarantees and higher-layer ownership responsibilities.
+    pub fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        let replacement = self.storage.replace_pending_con(expected, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(replacement)
+    }
+
     /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
     ///
     /// Initializes RTO from [`crate::message::Transmission`] using caller `now_ms`
@@ -516,7 +563,14 @@ impl<S: Storage + PendingCons> Engine<S> {
 
     /// Next pending CON whose timeout is due at caller `now_ms`, if any.
     ///
-    /// Scans pending TX slots in index order (O(n)). Skips the scan when
+    /// The owned fixed and allocated backends scan pending TX slots round-robin
+    /// (O(n)), independently of slot acquisition order. A continuously due owner
+    /// receives an event within TX-slot-count committed event opportunities.
+    /// Empty/not-yet-due scans leave the cursor unchanged; a committed event
+    /// advances it even if a later send fails. Pinned bytes do not prevent
+    /// pending-sidecar progress. This bounds event selection, not wire delivery
+    /// or progress without caller polling. Custom backends define their policy.
+    /// Skips the scan when
     /// the TX pool is empty. On [`Retransmit::Due`], doubles the timeout
     /// and increments attempts. On [`Retransmit::GiveUp`], clears pending.
     /// Does not send — [`crate::App::poll`] sends Due and releases GiveUp.
@@ -733,9 +787,13 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Mark the interest matching `key` as due for one notification.
     ///
     /// Coalesces: a second signal before [`Self::progress`] surfaces the row
-    /// still yields one work item. `None` when no row matches. Does not
+    /// still yields one work item. `None` for client-side subscriptions or
+    /// when no row matches. Does not
     /// encode a payload, acquire a TX slot, or invent 4.02 / RST policy.
     pub fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
+        if key.is_client() {
+            return None;
+        }
         self.storage.signal_observe(key)
     }
 
@@ -801,6 +859,9 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     ) -> Option<SlotId> {
         let id = self.storage.lookup_observe(key)?;
         let mut interest = self.storage.observe_interest(id)?;
+        if interest.key().is_client() {
+            return None;
+        }
         if let Some(existing) = interest.notify_hold() {
             if existing.is_held(now_ms) {
                 if confirmable && existing.con_mid() == Some(message_id) {
@@ -833,9 +894,26 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         message_id: MessageId,
         endpoint: Endpoint,
     ) -> Option<ObserveInterest> {
-        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint).or_else(|| {
+            self.superseded_observe_notify(message_id, endpoint)
+                .and_then(|row| self.lookup_observe(row.key()))
+        })?;
         let interest = self.storage.observe_interest(id)?;
         self.take_observe(interest.key())
+    }
+
+    pub(crate) fn superseded_observe_notify(
+        &self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        (0..self.storage.capacities().observe_entries).find_map(|index| {
+            let row = self.storage.observe_interest(SlotId::from_index(index))?;
+            (!row.key().is_client()
+                && row.endpoint() == endpoint
+                && row.superseded_con_mids().contains(&message_id))
+            .then_some(row)
+        })
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.
@@ -924,7 +1002,19 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Marks the row due, then [`ObserveInterest::take_due`]. `None` when
     /// the slot is free. Does not encode or send.
     pub fn next_observe_seq(&mut self, id: SlotId) -> Option<u32> {
+        self.next_observe_seq_with_confirmation(id, false)
+    }
+
+    /// Assign a sequence and optionally retain an explicit CON requirement.
+    pub(crate) fn next_observe_seq_with_confirmation(
+        &mut self,
+        id: SlotId,
+        confirmable: bool,
+    ) -> Option<u32> {
         let mut interest = self.storage.observe_interest(id)?;
+        if confirmable && !interest.key().is_client() {
+            interest.require_confirmation();
+        }
         interest.mark_due();
         let seq = interest.take_due()?;
         self.storage.set_observe_interest(id, interest).ok()?;
@@ -959,7 +1049,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             let Some(mut interest) = self.storage.observe_interest(id) else {
                 continue;
             };
-            if interest.resource() != resource {
+            if interest.key().is_client() || interest.resource() != resource {
                 continue;
             }
             interest.mark_due();
@@ -970,10 +1060,33 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         marked
     }
 
+    /// Queue a terminal App notification without losing congestion-control state.
+    pub(crate) fn mark_observe_resource_deleted(&mut self, resource: ObserveResource) -> usize {
+        if resource.is_none() {
+            return 0;
+        }
+        let mut marked = 0;
+        for i in 0..self.storage.capacities().observe_entries {
+            let id = SlotId::from_index(i);
+            let Some(mut interest) = self.storage.observe_interest(id) else {
+                continue;
+            };
+            if interest.key().is_client() || interest.resource() != resource {
+                continue;
+            }
+            interest.mark_deleted();
+            if self.storage.set_observe_interest(id, interest).is_ok() {
+                marked += 1;
+            }
+        }
+        marked
+    }
+
     /// Drop every interest whose [`ObserveResource`] equals `resource`.
     ///
-    /// Returns how many rows were removed. Used when DELETE succeeds on that
-    /// path. [`ObserveResource::NONE`] matches nothing.
+    /// Returns how many rows were removed. This is immediate removal with no
+    /// notification; App DELETE instead queues terminal delivery.
+    /// [`ObserveResource::NONE`] matches nothing.
     pub fn take_observe_resource(&mut self, resource: ObserveResource) -> usize {
         if resource.is_none() {
             return 0;
@@ -985,7 +1098,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             let Some(interest) = self.storage.observe_interest(id) else {
                 continue;
             };
-            if interest.resource() != resource {
+            if interest.key().is_client() || interest.resource() != resource {
                 continue;
             }
             if self.take_observe(interest.key()).is_some() {
@@ -1017,6 +1130,22 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     }
 }
 
+impl<S: Storage + PendingCons + ObserveSlots> Engine<S> {
+    pub(crate) fn supersede_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError> {
+        self.storage
+            .replace_observe_con(pending, original, replacement, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(())
+    }
+}
+
 fn observe_resource_from_message(parsed: &ParsedMessage<'_>) -> ObserveResource {
     let mut segs = [""; 8];
     let mut n = 0usize;
@@ -1043,7 +1172,11 @@ pub(crate) fn endpoint_notify_held<S: Storage + ObserveSlots>(
         .filter(|&i| {
             storage
                 .observe_interest(SlotId::from_index(i))
-                .is_some_and(|row| row.endpoint() == endpoint && row.is_notify_held(now_ms))
+                .is_some_and(|row| {
+                    !row.key().is_client()
+                        && row.endpoint() == endpoint
+                        && row.is_notify_held(now_ms)
+                })
         })
         .count()
 }
@@ -1059,7 +1192,7 @@ fn lookup_observe_unacked<S: Storage + ObserveSlots>(
         let Some(interest) = storage.observe_interest(id) else {
             continue;
         };
-        if interest.endpoint() != endpoint {
+        if interest.key().is_client() || interest.endpoint() != endpoint {
             continue;
         }
         if interest.lifetime().and_then(ObserveLifetime::con_mid) == Some(message_id)
@@ -1151,6 +1284,75 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.rx_body_transfer(id)
     }
 
+    #[cfg(feature = "oscore")]
+    pub(crate) fn remember_qblock1_request(
+        &mut self,
+        id: SlotId,
+        token: crate::message::Token,
+        request: crate::oscore::RequestRef,
+    ) {
+        let Some(mut transfer) = self.storage.rx_body_transfer(id) else {
+            return;
+        };
+        if transfer.role() != BlockRole::IncomingQBlock1 {
+            return;
+        }
+        if transfer
+            .oscore_request
+            .is_none_or(|(_, old)| request.piv().seq() > old.piv().seq())
+        {
+            transfer.oscore_request = Some((token, request));
+            let _ = self.storage.set_rx_body_transfer(id, transfer);
+        }
+    }
+
+    // A future NON Q1 datagram may refresh the authenticated report owner only
+    // after the same immutable checks as accepted data. The bytes stay discarded.
+    pub(crate) fn validated_q1_future_rx(&self, rx: SlotId) -> Result<SlotId, BlockTransferError>
+    where
+        S: DatagramSlots + BodySlots,
+    {
+        let endpoint = self.storage.rx_endpoint(rx).ok_or(SlotError::NotOccupied)?;
+        let parsed =
+            crate::message::decode(self.storage.rx_payload(rx).ok_or(SlotError::NotOccupied)?)?;
+        if parsed.ty() != crate::message::Type::NonConfirmable {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let block = parsed
+            .q_block1()
+            .ok_or(BlockTransferError::MissingBlock)??;
+        let expected = parsed.size1().ok_or(BlockTransferError::MissingSize)??;
+        let tag = RxBlockOpt::QBlock1.read_identity(&parsed)?;
+        if tag.is_absent() || (block.num() != 0 && parsed.if_none_match()) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let key = BlockKey::new(parsed.token(), endpoint).with_identity(tag);
+        let id = (0..self.capacities().rx_body_slots.unwrap_or(0))
+            .find_map(|i| {
+                let id = SlotId::from_index(i);
+                let transfer = self.storage.rx_body_transfer(id)?;
+                same_body_identity(transfer, key, BlockRole::IncomingQBlock1).then_some(id)
+            })
+            .ok_or(BlockTransferError::NoTransfer)?;
+        let transfer = self
+            .storage
+            .rx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.expected_len() != Some(expected) {
+            return Err(BlockTransferError::LengthInconsistent);
+        }
+        transfer
+            .request_binding
+            .ok_or(BlockTransferError::IdentityMismatch)?
+            .retain_condition(RequestBinding::from_message(&parsed, block.num())?)?;
+        transfer.validate_q1_future(
+            block,
+            parsed.payload().len(),
+            self.capacities().rx_body_bytes.unwrap_or(0),
+        )?;
+        Ok(id)
+    }
+
     /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
     ///
     /// [`Self::apply_q_block1`] / [`Self::apply_q_block2`] do not take a clock.
@@ -1171,18 +1373,45 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.tx_body_transfer(id)
     }
 
-    /// Incoming body slot matching `key`, if any.
+    /// First incoming body matching `key` across roles; see [`Self::lookup_rx_body_role`].
     #[inline]
     #[must_use]
     pub fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_rx_body(key)
     }
 
-    /// Outgoing body slot matching `key`, if any.
+    /// First outgoing body matching `key` across roles; see [`Self::lookup_tx_body_role`].
     #[inline]
     #[must_use]
     pub fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
         self.storage.lookup_tx_body(key)
+    }
+
+    /// Incoming body matching both key and role. Use this when acting as
+    /// both client and server: opposite directions may use identical Tokens
+    /// and tags at the same endpoint. This scans the configured slot bound.
+    #[must_use]
+    pub fn lookup_rx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
+            let id = SlotId::from_index(index);
+            self.storage
+                .rx_body_transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
+        })
+    }
+
+    /// Outgoing body matching both key and role, without selecting a body
+    /// owned by the opposite client/server direction.
+    #[must_use]
+    pub fn lookup_tx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+        (0..self.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+            let id = SlotId::from_index(index);
+            self.storage
+                .tx_body_transfer(id)
+                .filter(|transfer| transfer.key() == key && transfer.role() == role)
+                .map(|_| id)
+        })
     }
 
     /// Admit a new incoming Block1 body when the first block arrives.
@@ -1229,7 +1458,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         result
     }
 
-    /// Decode occupied RX `id` and [`Self::apply_block1`] using Block1 + Token + endpoint.
+    /// Decode occupied RX `id` and apply the matching Block1 request body.
     ///
     /// Copies the datagram payload into the body slot (datagram RX stays
     /// separate). Request-Tag, when present, is stored on the body sidecar.
@@ -1238,6 +1467,10 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// [`BlockTransfer::REQUEST_IDENTITY_BYTES`]. A changed operation is refused
     /// before body mutation; integer leading-zero encodings compare equally.
     /// Direct range APIs require the caller to enforce operation matchability.
+    /// Untagged classic continuations match the endpoint, method and cache-key
+    /// options even when Tokens change. A new block zero with a different Token
+    /// replaces only that operation's retained partial body. Tagged and Q-Block
+    /// transfers retain their explicit identity requirements.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -1426,7 +1659,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_block1(key, body, szx)
+        let result = self.storage.start_block1(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next in-order outgoing Block1 range. Bytes stay in the body slot.
@@ -1435,10 +1673,20 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.next_block1(id)
     }
 
+    /// Continue an outgoing Block1 body at a smaller power-of-two size.
+    #[inline]
+    pub fn adopt_smaller_block1(&mut self, id: SlotId, szx: u8) -> Result<(), BlockTransferError> {
+        self.storage.adopt_smaller_block1(id, szx)
+    }
+
     /// Issue the next Block1 and encode it into occupied TX `tx_id`.
     ///
     /// Token and remote endpoint come from the body-slot sidecar. The caller
     /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    ///
+    /// A refused issue or encode preserves outgoing transfer progress and body
+    /// bytes, so another TX slot or a smaller range can retry the same NUM.
+    /// Encoding may modify TX bytes before failing; do not send a refused TX.
     pub fn encode_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1450,13 +1698,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block1(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block1,
+            None,
+            |storage| storage.next_block1(body_id),
         )
     }
 
@@ -1474,6 +1722,10 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Request-Tag comes from the body sidecar when present. Does not invent
     /// 2.31 / 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    /// `max_payload` is also bounded by the storage's TX scratch and TX slot,
+    /// including encoded headers/options. Larger body capacity does not enlarge
+    /// that scratch; a refused range can be retried with a smaller payload.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_bert1_tx(
         &mut self,
         body_id: SlotId,
@@ -1486,13 +1738,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_bert1(body_id, max_payload)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block1,
+            None,
+            |storage| storage.next_bert1(body_id, max_payload),
         )
     }
 
@@ -1504,7 +1756,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_block2(key, body, szx)
+        let result = self.storage.start_block2(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Select a classic Block2 response range without advancing a transfer cursor.
@@ -1521,19 +1778,14 @@ impl<S: Storage + BodySlots> Engine<S> {
         if transfer.role() != BlockRole::OutgoingBlock2 || requested.is_bert() {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        let size = usize::from(requested.size());
-        let offset = usize::try_from(requested.num())
-            .ok()
-            .and_then(|n| n.checked_mul(size))
-            .ok_or(BlockTransferError::Overflow)?;
-        let total = transfer.filled();
-        if offset > total || (offset == total && total > 0) {
-            return Err(BlockTransferError::Gap);
-        }
-        let len = (total - offset).min(size);
-        let more = offset + len < total;
-        let block = BlockValue::new(requested.num(), more, requested.szx())?;
-        Ok(OutgoingBlock::new(id, block, offset, len, !more))
+        let (block, range) = super::classic_block2_range(transfer.filled(), requested)?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            range.start,
+            range.len(),
+            !block.more(),
+        ))
     }
 
     /// Issue the next in-order outgoing Block2 range. Bytes stay in the body slot.
@@ -1546,6 +1798,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     ///
     /// Token and remote endpoint come from the body-slot sidecar. The caller
     /// supplies type, code, and Message ID. Does not invent 2.31 / 4.08.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_block2_tx(
         &mut self,
         body_id: SlotId,
@@ -1557,13 +1810,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block2(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
+            None,
+            |storage| storage.next_block2(body_id),
         )
     }
 
@@ -1572,6 +1825,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Use on the first block of a block-wise notification. Subsequent
     /// blocks stay on [`Self::encode_block2_tx`]. Does not invent 2.31.
     /// See `knowledge/rfcs/rfc7641.txt` and `knowledge/rfcs/rfc7959.txt`.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_block2_observe_tx(
         &mut self,
         body_id: SlotId,
@@ -1584,14 +1838,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_block2(body_id)?;
-        self.finish_outgoing_tx_observe(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
             Some(observe_seq),
+            |storage| storage.next_block2(body_id),
         )
     }
 
@@ -1606,9 +1859,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     }
 
     /// Issue the next Block2 BERT range and encode it into occupied TX `tx_id`.
+    /// `max_payload` is also bounded by the storage's TX scratch and TX slot,
+    /// including encoded headers/options. Larger body capacity does not enlarge
+    /// that scratch; a refused range can be retried with a smaller payload.
     ///
     /// ETag comes from the body sidecar when present. Does not invent 2.31 /
     /// 4.08. See `knowledge/rfcs/rfc8323.txt`.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_bert2_tx(
         &mut self,
         body_id: SlotId,
@@ -1621,13 +1878,13 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        let issued = self.storage.next_bert2(body_id, max_payload)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::Block2,
+            None,
+            |storage| storage.next_bert2(body_id, max_payload),
         )
     }
 
@@ -1639,13 +1896,25 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_q_block1(key, body, szx)
+        let result = self.storage.start_q_block1(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next unsent outgoing Q-Block1 range in the current window.
     #[inline]
     pub fn next_q_block1(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_q_block1(id)
+    }
+
+    /// Open a fully issued NON Q-Block1 set after caller-enforced pacing.
+    /// This is not an acknowledgement; body bytes remain available for recovery.
+    #[inline]
+    pub fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.storage.pace_q_block1(id)
     }
 
     /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
@@ -1668,6 +1937,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// encoded (RFC 9177 §4.6). The sidecar must have a Request-Tag (empty
     /// is valid). Missing identity is refused before advancing the window.
     /// The caller owns uniqueness across bodies and supplies type, code, and Message ID.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_q_block1_tx(
         &mut self,
         body_id: SlotId,
@@ -1680,13 +1950,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         self.require_q_identity(body_id, BlockRole::OutgoingQBlock1)?;
-        let issued = self.storage.next_q_block1(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::QBlock1,
+            None,
+            |storage| storage.next_q_block1(body_id),
         )
     }
 
@@ -1714,7 +1984,12 @@ impl<S: Storage + BodySlots> Engine<S> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
-        self.storage.start_q_block2(key, body, szx)
+        let result = self.storage.start_q_block2(key, body, szx);
+        #[cfg(feature = "diagnostics")]
+        if result.is_ok() {
+            super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
+        }
+        result
     }
 
     /// Issue the next unsent outgoing Q-Block2 range in the current window.
@@ -1743,6 +2018,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// encoded (RFC 9177 §4.6). The sidecar must have a nonempty ETag. Missing
     /// identity is refused before advancing the window; callers own ETag uniqueness.
     /// The caller supplies type, code, and Message ID.
+    /// Errors preserve outgoing progress and body bytes, as with [`Self::encode_block1_tx`].
     pub fn encode_q_block2_tx(
         &mut self,
         body_id: SlotId,
@@ -1755,13 +2031,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots,
     {
         self.require_q_identity(body_id, BlockRole::OutgoingQBlock2)?;
-        let issued = self.storage.next_q_block2(body_id)?;
-        self.finish_outgoing_tx(
-            issued,
+        self.issue_and_encode_tx(
             body_id,
             tx_id,
             (ty, code, message_id),
             OutgoingBlockOpt::QBlock2,
+            None,
+            |storage| storage.next_q_block2(body_id),
         )
     }
 
@@ -1977,7 +2253,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         // Profile-sized copy so Constrained does not stack Default 1472.
         let mut tmp = S::RxScratch::default();
-        let (token, block, expected, identity, binding, n) = {
+        let (token, block, expected, identity, mut binding, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
@@ -2012,7 +2288,10 @@ impl<S: Storage + BodySlots> Engine<S> {
                 _ => {}
             }
             let binding = if which.uses_size1() {
-                Some(RequestBinding::from_message(&parsed)?)
+                if block.num() != 0 && parsed.if_none_match() {
+                    return Err(BlockTransferError::IdentityMismatch);
+                }
+                Some(RequestBinding::from_message(&parsed, block.num())?)
             } else {
                 None
             };
@@ -2030,36 +2309,103 @@ impl<S: Storage + BodySlots> Engine<S> {
                 payload.len(),
             )
         };
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.block_rx_staged_bytes, n);
         let key = BlockKey::new(token, endpoint).with_identity(identity);
-        if let Some(binding) = binding {
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        let mut classic_body = None;
+        if let Some(candidate) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
             } else {
                 BlockRole::IncomingQBlock1
             };
-            let existing = self.storage.lookup_rx_body(key).or_else(|| {
+            let existing = if untagged_classic {
                 (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
                     let id = SlotId::from_index(i);
                     let transfer = self.storage.rx_body_transfer(id)?;
-                    same_body_identity(transfer, key, role).then_some(id)
+                    (transfer.role() == role
+                        && transfer.endpoint() == endpoint
+                        && transfer.identity().is_absent()
+                        && transfer
+                            .request_binding
+                            .is_some_and(|stored| stored.same_options(candidate)))
+                    .then_some(id)
                 })
-            });
+            } else {
+                self.lookup_rx_body_role(key, role).or_else(|| {
+                    (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
+                        let id = SlotId::from_index(i);
+                        let transfer = self.storage.rx_body_transfer(id)?;
+                        same_body_identity(transfer, key, role).then_some(id)
+                    })
+                })
+            };
             if let Some(id) = existing {
                 let transfer = self
                     .storage
                     .rx_body_transfer(id)
                     .ok_or(BlockTransferError::NoTransfer)?;
-                if transfer.request_binding != Some(binding) {
-                    return Err(BlockTransferError::IdentityMismatch);
+                let stored = transfer
+                    .request_binding
+                    .ok_or(BlockTransferError::IdentityMismatch)?;
+                let restart = untagged_classic && block.num() == 0 && key != transfer.key();
+                if restart {
+                    if !stored.same_options(candidate) {
+                        return Err(BlockTransferError::IdentityMismatch);
+                    }
+                } else {
+                    // Q may admit NUM0 last. Validate its immutable condition before
+                    // applying bytes, then commit the merged knowledge only on success.
+                    binding = Some(stored.retain_condition(candidate)?);
+                }
+                if untagged_classic {
+                    if block.num() == 0 && key != transfer.key() {
+                        BlockTransfer::incoming_block1(
+                            key,
+                            block,
+                            n,
+                            self.capacities().rx_body_bytes.unwrap_or(0),
+                            expected,
+                        )?;
+                        self.release_rx_body(id)?;
+                    } else {
+                        classic_body = Some(id);
+                    }
                 }
             }
         }
-        let progress = match which {
-            RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock1 => self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected),
-            RxBlockOpt::QBlock2 => self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected),
-        }?;
+        let progress = if untagged_classic {
+            let result = if let Some(id) = classic_body {
+                self.write_block1(id, block, &tmp.as_ref()[..n])
+            } else {
+                self.admit_block1(key, block, &tmp.as_ref()[..n], expected)
+                    .and_then(|id| {
+                        let transfer = self
+                            .storage
+                            .rx_body_transfer(id)
+                            .ok_or(BlockTransferError::NoTransfer)?;
+                        Ok(BlockProgress::new(
+                            id,
+                            transfer.filled(),
+                            transfer.is_complete(),
+                        ))
+                    })
+            };
+            self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+            result?
+        } else {
+            match which {
+                RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
+                RxBlockOpt::QBlock1 => {
+                    self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected)
+                }
+                RxBlockOpt::QBlock2 => {
+                    self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected)
+                }
+            }?
+        };
         if let Some(binding) = binding {
             let mut transfer = self
                 .storage
@@ -2072,6 +2418,41 @@ impl<S: Storage + BodySlots> Engine<S> {
             }
         }
         Ok(progress)
+    }
+
+    fn issue_and_encode_tx(
+        &mut self,
+        body_id: SlotId,
+        tx_id: SlotId,
+        header: (Type, Code, MessageId),
+        which: OutgoingBlockOpt,
+        observe_seq: Option<u32>,
+        issue: impl FnOnce(&mut S) -> Result<OutgoingBlock, BlockTransferError>,
+    ) -> Result<OutgoingBlock, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        let checkpoint = self
+            .storage
+            .tx_body_transfer(body_id)
+            .map(|transfer| transfer.issue_checkpoint());
+        let result = match issue(&mut self.storage) {
+            Ok(issued) => {
+                self.finish_outgoing_tx_observe(issued, body_id, tx_id, header, which, observe_seq)
+            }
+            Err(error) => Err(error),
+        };
+        if result.is_err() {
+            if let Some(checkpoint) = checkpoint {
+                let mut transfer = self
+                    .storage
+                    .tx_body_transfer(body_id)
+                    .ok_or(BlockTransferError::NoTransfer)?;
+                transfer.restore_issue(checkpoint);
+                self.storage.set_tx_body_transfer(body_id, transfer)?;
+            }
+        }
+        result
     }
 
     fn finish_outgoing_tx(
@@ -2118,6 +2499,8 @@ impl<S: Storage + BodySlots> Engine<S> {
             return Err(BlockTransferError::Overflow);
         }
         tmp.as_mut()[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.block_tx_staged_bytes, issued.len());
         let encoded = issued.block().encode();
         let size_n = u32::try_from(transfer.filled()).map_err(|_| BlockTransferError::Overflow)?;
         let size = encode_uint(size_n);

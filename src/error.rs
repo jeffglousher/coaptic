@@ -6,6 +6,25 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// A requested heap array or the aggregate allocation size is unrepresentable.
+    CapacityOverflow,
+    /// Heap storage requests exceed the caller's byte budget, before allocation.
+    HeapBudgetExceeded {
+        /// Bytes requested by the configured storage arrays.
+        required: usize,
+        /// Caller-selected maximum requested bytes.
+        limit: usize,
+    },
+    /// The allocator could not reserve storage. Partial construction is dropped.
+    AllocationFailed,
+    /// App requires a provisioned OSCORE context or an explicit plaintext opt-out.
+    SecurityRequired,
+    /// App requires an explicit entropy source or test-only deterministic mode.
+    RandomnessRequired,
+    /// Stateful binding cannot replace a previously selected entropy/test source.
+    RandomnessAlreadyConfigured,
+    /// App's entropy source failed during initial Message ID selection.
+    RandomnessUnavailable,
     /// Builder sizes do not match the [`Storage`](crate::storage::Storage) being moved in.
     SizeMismatch,
     /// Enabled body slot bytes are not a multiple of 1024 (max Block/Q-Block SZX).
@@ -25,6 +44,18 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::CapacityOverflow => f.write_str("storage capacity exceeds addressable memory"),
+            Self::HeapBudgetExceeded { required, limit } => {
+                write!(
+                    f,
+                    "storage requests {required} heap bytes, exceeding budget {limit}"
+                )
+            }
+            Self::AllocationFailed => f.write_str("storage allocation failed"),
+            Self::SecurityRequired => f.write_str("App security context must be configured"),
+            Self::RandomnessAlreadyConfigured => f.write_str("App randomness already configured"),
+            Self::RandomnessRequired => f.write_str("App randomness must be configured"),
+            Self::RandomnessUnavailable => f.write_str("App randomness unavailable"),
             Self::SizeMismatch => f.write_str("storage sizes do not match the builder"),
             Self::BodyBytesNotMultipleOf1024 => {
                 f.write_str("body slot bytes must be a multiple of 1024")

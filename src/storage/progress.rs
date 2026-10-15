@@ -148,6 +148,52 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// Empty tables are skipped in O(1) via [`super::SlotPool::occupied_count`]
     /// (CON / Observe / Q-Block scans run only while that area is occupied).
     pub fn progress(&mut self, now_ms: u64) -> Progress {
+        self.progress_inner(now_ms, true, |_| true)
+    }
+
+    // App reserves a pending candidate without consuming its signal. Ingress
+    // may cancel or replace the relation before App claims that candidate.
+    // A newly registered row is never pending, even if it reuses this slot.
+    // Q recovery/expiry also waits until ingress can fill its missing blocks.
+    // App excludes retained full responses during the RX scan. Filtering only
+    // the returned candidate could let a held row hide other queued work.
+    pub(crate) fn progress_before_dispatch(
+        &mut self,
+        now_ms: u64,
+        eligible_rx: impl FnMut(SlotId) -> bool,
+    ) -> Progress {
+        self.progress_inner(now_ms, false, eligible_rx)
+    }
+
+    pub(crate) fn claim_observe_notification(&mut self, id: SlotId, now_ms: u64) -> Option<SlotId> {
+        let mut interest = self.observe_interest(id)?;
+        if interest.key().is_client()
+            || !interest.is_pending()
+            || endpoint_notify_held(self.storage(), interest.endpoint(), now_ms)
+                >= usize::from(Transmission::NSTART)
+        {
+            return None;
+        }
+        interest.take_due()?;
+        self.storage_mut().set_observe_interest(id, interest).ok()?;
+        Some(id)
+    }
+
+    pub(crate) fn next_qblock_recovery(
+        &mut self,
+        now_ms: u64,
+    ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
+        let mut expired = None;
+        let recover = progress_qblock(self, now_ms, &mut expired);
+        (recover, expired)
+    }
+
+    fn progress_inner(
+        &mut self,
+        now_ms: u64,
+        immediate_later_work: bool,
+        eligible_rx: impl FnMut(SlotId) -> bool,
+    ) -> Progress {
         Metrics::inc(&mut self.metrics_mut().progress);
         let rx_busy = !self.storage_mut().rx_datagram().is_empty();
         let tx_busy = !self.storage_mut().tx_datagram().is_empty();
@@ -168,7 +214,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             let _ = self.mark_observe_unacked_due(pending.message_id(), pending.endpoint(), now_ms);
         }
         let rx_ready = if rx_busy {
-            next_unpinned_rx(self)
+            next_unpinned_rx(self, eligible_rx)
         } else {
             None
         };
@@ -181,13 +227,13 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             retransmit,
             rx_ready,
             observe_notify: if observe_busy {
-                progress_observe(self, now_ms)
+                progress_observe(self, now_ms, immediate_later_work)
             } else {
                 None
             },
             observe_expired,
-            qblock_recover: if qblock_busy {
-                progress_qblock(self, now_ms)
+            qblock_recover: if qblock_busy && immediate_later_work {
+                progress_qblock(self, now_ms, &mut None)
             } else {
                 None
             },
@@ -203,6 +249,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
 fn progress_observe<S: Storage + ObserveSlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
+    select_notification: bool,
 ) -> Option<SlotId> {
     if engine.storage_mut().observe().is_empty() {
         return None;
@@ -218,13 +265,17 @@ fn progress_observe<S: Storage + ObserveSlots>(
         let Some(mut interest) = engine.observe_interest(id) else {
             continue;
         };
-        if !interest.is_pending() {
+        if interest.key().is_client() || !interest.is_pending() {
             continue;
         }
         if endpoint_notify_held(engine.storage(), interest.endpoint(), now_ms)
             >= usize::from(Transmission::NSTART)
         {
             continue;
+        }
+        if !select_notification {
+            engine.advance_observe(offset + 1);
+            return Some(id);
         }
         if interest.take_due().is_none() {
             continue;
@@ -257,6 +308,7 @@ fn progress_observe<S: Storage + ObserveSlots>(
 fn progress_qblock<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
+    client_expired: &mut Option<super::ExchangeKey>,
 ) -> Option<QBlockRecover> {
     if engine
         .storage_mut()
@@ -289,7 +341,10 @@ fn progress_qblock<S: Storage + BodySlots>(
             continue;
         }
         if transfer.note_q_recover(now_ms).is_none() {
-            give_up = Some((id, offset));
+            let client = (transfer.role() == super::BlockRole::IncomingQBlock2).then_some(
+                super::ExchangeKey::new(transfer.key().token(), transfer.endpoint()),
+            );
+            give_up = Some((id, offset, client));
             break;
         }
         if engine
@@ -313,7 +368,8 @@ fn progress_qblock<S: Storage + BodySlots>(
         ));
         break;
     }
-    if let Some((id, offset)) = give_up {
+    if let Some((id, offset, client)) = give_up {
+        *client_expired = client;
         let _ = engine.release_rx_body(id);
         engine.advance_rx_body(offset + 1);
         return None;
@@ -331,7 +387,10 @@ fn progress_qblock<S: Storage + BodySlots>(
 ///
 /// Advances the cursor past the visited slot (or by one when every occupied
 /// slot is pinned) so the next call does not restart at slot zero.
-fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
+fn next_unpinned_rx<S: Storage>(
+    engine: &mut Engine<S>,
+    mut eligible: impl FnMut(SlotId) -> bool,
+) -> Option<SlotId> {
     if engine.storage_mut().rx_datagram().is_empty() {
         return None;
     }
@@ -344,7 +403,7 @@ fn next_unpinned_rx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
     for offset in 0..n {
         let id = SlotId::from_index((start + offset) % n);
         let pool = engine.storage_mut().rx_datagram();
-        if pool.is_occupied(id) && !pool.is_pinned(id) {
+        if pool.is_occupied(id) && !pool.is_pinned(id) && eligible(id) {
             found = Some((id, offset));
             break;
         }

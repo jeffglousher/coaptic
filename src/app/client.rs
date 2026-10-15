@@ -13,14 +13,21 @@
 //! [`Response::payload_truncated`]. The full assembled representation is
 //! [`Response::body`], not a 4KiB field on [`Response`].
 //!
-//! App holds at most four live client requests, including Observe
-//! subscriptions and replies waiting for `take_response`. Resource-specific
-//! profile limits can be lower. Exhaustion returns `Error::Saturated`.
+//! App defaults to four live client requests, including Observe subscriptions
+//! and replies waiting for `take_response`. [`super::AppBuilder::client_calls`]
+//! sizes those inline tables independently of packet storage. Other pool and
+//! security limits can be lower. Call-table exhaustion is `Error::Saturated`.
+//! Upload continuation and cleanup select request-body roles separately from
+//! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
-//! continuation identity. This bounded state adds about 1.1 KiB per App on
-//! 64-bit hosts; it is separate from the optional assembled-body storage.
+//! continuation identity. With the default four Calls this bounded state adds
+//! about 1.1 KiB on 64-bit hosts, separate from assembled-body storage.
 //! Unknown critical response options reject the response (RST for CON);
 //! unknown elective options are retained in `Response::received_options`.
+//! New Observe representations retain their initial Content-Format, including
+//! absence. A fresh changed/malformed format terminates the Call with
+//! `CallFailure::ObserveFormatMismatch` (RST for CON); stale representations do
+//! not change this state. A 2.03 validation may omit Content-Format.
 //! A matching ACK still stops retries. Replies retain at most 24 options and
 //! 512 encoded header/Token/option bytes, with at most eight Location-Path and
 //! eight Location-Query values. Overflow completes the call with
@@ -34,24 +41,35 @@
 //! the same socket. Continues reuse the path recorded at
 //! [`Outgoing::send`]. Observe subscribe ([`Outgoing::observe`]) keeps the
 //! same [`Call`] after the Exchange is cleared.
+//! FETCH retains its encoded selection request (at most 512 bytes excluding
+//! Token, Observe and ETag) in the existing per-call identity buffer. Block2
+//! and Q-Block2 follow-ups preserve its body, Content-Format and conditions.
+//! Download follow-ups retain If-Match, If-None-Match and Content-Format.
+//! Classic Block2 also retains request ETag; Q-Block2 omits it to request
+//! payloads instead of cache-validation responses. Two retained 8-byte tags
+//! and their presence/condition flags cost at most 96 bytes across the default four Calls
+//! including host alignment.
+//! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
+//! use caller-managed Engine transfers for larger selection bodies.
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, Ids, Message, MessageId, Opt, OptionsBuilder, ParsedMessage,
-    Token, Transmission, Type, encode_uint,
+    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
+    Transmission, Type, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
     ExchangeEntry, ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey,
-    ObserveResource, ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
 };
 
+use super::identity::AppIds;
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
 use super::response::{AppAssembled, INLINE_PAYLOAD, Response};
 use super::{App, Error, Method, push_opt};
 
 /// Option slots for an outbound request (path + query + Table 4 extras).
-const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
+const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 
 /// Outstanding client exchange (Token + destination).
 ///
@@ -77,7 +95,9 @@ const CLIENT_OPTION_SLOTS: usize = 8 + 2 * MAX_PATH_SEGMENTS;
 /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
+///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -110,11 +130,47 @@ impl Call {
     }
 }
 
+/// Caller-buffer collection failed without consuming the completed reply.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponseBufferError {
+    /// The complete representation does not fit; retry with a larger buffer.
+    TooSmall {
+        /// Exact complete representation length.
+        required: usize,
+        /// Supplied output capacity.
+        available: usize,
+    },
+    /// Complete bytes are unavailable (legacy truncated snapshot or invalid storage).
+    Unavailable,
+}
+impl core::fmt::Display for ResponseBufferError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TooSmall {
+                required,
+                available,
+            } => write!(f, "response needs {required} bytes; buffer has {available}"),
+            Self::Unavailable => f.write_str("complete response bytes unavailable"),
+        }
+    }
+}
+#[cfg(feature = "std")]
+impl std::error::Error for ResponseBufferError {}
+
 /// Local terminal outcome of a client call, distinct from a remote CoAP response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallFailure {
     /// Caller cancelled this call locally (no deregistration is sent).
     Cancelled,
+    /// Explicit cancellation could not be sent; local subscription is retired.
+    CancellationFailed,
+    /// Re-registration could not be sent; local subscription is retired.
+    ReregistrationFailed,
+    /// A new Observe representation changes or malforms its established format.
+    ObserveFormatMismatch,
+    /// A block continuation could not be sent. Poll returns the detailed error;
+    /// the call is retired locally and remote effects remain uncertain.
+    ContinuationFailed,
     /// Caller-supplied absolute deadline was reached.
     DeadlineExceeded,
     /// Retransmissions or the response lifetime were exhausted.
@@ -125,15 +181,22 @@ pub enum CallFailure {
     BlockTransfer(BlockTransferError),
     /// Response metadata exceeds App's option count, byte, or Location count bound.
     ResponseMetadataBounds,
+    /// Complete block representation exceeds App's fixed assembled-response hold.
+    ResponseBodyBounds,
 }
 impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Cancelled => f.write_str("call cancelled"),
+            Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
+            Self::ReregistrationFailed => f.write_str("Observe re-registration send failed"),
+            Self::ObserveFormatMismatch => f.write_str("Observe notification format mismatch"),
+            Self::ContinuationFailed => f.write_str("block continuation send failed"),
             Self::DeadlineExceeded => f.write_str("call deadline exceeded"),
             Self::TimedOut => f.write_str("request timed out"),
             Self::Reset => f.write_str("peer reset the request"),
             Self::ResponseMetadataBounds => f.write_str("response metadata exceeds App bounds"),
+            Self::ResponseBodyBounds => f.write_str("response body exceeds App bounds"),
             Self::BlockTransfer(error) => write!(f, "response block transfer failed: {error}"),
         }
     }
@@ -141,20 +204,19 @@ impl core::fmt::Display for CallFailure {
 #[cfg(feature = "std")]
 impl std::error::Error for CallFailure {}
 
-/// How many outstanding client [`Call`]s [`App`](super::App) holds.
-///
-/// Caps both the completed-reply inbox and the live-request table. A fifth
-/// [`Outgoing::send`] without [`App::take_response`](super::App::take_response)
-/// is [`Error::Saturated`] — no silent eviction.
-pub(crate) const RESPONSE_INBOX: usize = 4;
-
 /// Maximum options retained per client response, including unknown elective options.
 pub const RESPONSE_OPTION_COUNT: usize = 24;
 /// Maximum encoded header, Token and options retained per client response (no payload).
 pub const RESPONSE_OPTION_BYTES: usize = 512;
 
+/// Maximum canonical Observe request bytes retained per live Call for exact
+/// cancellation matching, including a fixed four-byte header and payload.
+/// Each configured App Call slot reserves this space plus bounded length metadata.
+/// Observe and ETag options are excluded; no hash replaces exact comparison.
+pub const OBSERVE_REQUEST_BYTES: usize = 512;
+
 #[derive(Clone, Copy, Debug)]
-struct ReplyMeta {
+pub(super) struct ReplyMeta {
     received_at_ms: u64,
     header: [u8; RESPONSE_OPTION_BYTES],
     header_len: u16,
@@ -165,7 +227,15 @@ struct ReplyMeta {
 }
 
 impl ReplyMeta {
-    fn from_parsed(
+    // Canonically encoded code, Token, MID and selected options. Capture time
+    // and copied payload bookkeeping are not representation-header identity.
+    pub(super) fn same_header(&self, other: &Self) -> bool {
+        self.peer == other.peer
+            && self.header[..usize::from(self.header_len)]
+                == other.header[..usize::from(other.header_len)]
+    }
+
+    pub(super) fn from_parsed(
         parsed: &ParsedMessage<'_>,
         peer: Endpoint,
         received_at_ms: u64,
@@ -209,7 +279,7 @@ impl ReplyMeta {
         })
     }
 
-    fn response(&self) -> Response<'_> {
+    pub(super) fn response(&self) -> Response<'_> {
         // The stored header was produced by the encoder and is immutable.
         let parsed = crate::message::decode(&self.header[..usize::from(self.header_len)])
             .expect("encoded response header");
@@ -259,19 +329,24 @@ struct InboxRow {
     call: Call,
     meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
+    datagram: Option<SlotId>,
 }
 
 /// Bounded completed-reply table (not a seventh memory area).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientInbox {
-    rows: [Option<InboxRow>; RESPONSE_INBOX],
+pub(crate) struct ClientInbox<const CALLS: usize> {
+    rows: [Option<InboxRow>; CALLS],
     held: Option<ReplyMeta>,
 }
 
-impl ClientInbox {
+impl<const CALLS: usize> ClientInbox<CALLS> {
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
             held: None,
         }
     }
@@ -296,6 +371,7 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(prev);
         }
@@ -305,10 +381,42 @@ impl ClientInbox {
                 call,
                 meta,
                 body,
+                datagram: None,
             });
             return Ok(None);
         }
         Err(())
+    }
+
+    pub(super) fn holds_datagram(&self, rx: SlotId) -> bool {
+        self.rows
+            .iter()
+            .flatten()
+            .any(|row| row.datagram == Some(rx))
+    }
+
+    fn take_datagram(&mut self, call: Call) -> Option<SlotId> {
+        self.rows
+            .iter_mut()
+            .flatten()
+            .find(|row| row.call == call)?
+            .datagram
+            .take()
+    }
+
+    fn completed(&self, call: Call) -> Option<&InboxRow> {
+        self.rows
+            .iter()
+            .flatten()
+            .find(|row| row.complete && row.call == call)
+    }
+
+    fn discard(&mut self, call: Call) {
+        for row in &mut self.rows {
+            if row.as_ref().is_some_and(|row| row.call == call) {
+                *row = None;
+            }
+        }
     }
 
     fn contains(&self, call: Call) -> bool {
@@ -404,32 +512,76 @@ impl RetainedQueries {
     }
 }
 
+/// Exact canonical request identity for Observe cancellation and FETCH follow-ups.
+/// Fixed header/Token; Observe and ETag are omitted. Includes the FETCH body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ObserveRequest {
+    bytes: [u8; OBSERVE_REQUEST_BYTES],
+    len: usize,
+}
+
+impl ObserveRequest {
+    fn same_target(&self, other: &Self) -> bool {
+        use crate::message::OptionNumber as N;
+        let left = crate::message::decode(&self.bytes[..self.len]).expect("encoded identity");
+        let right = crate::message::decode(&other.bytes[..other.len]).expect("encoded identity");
+        let cache_key = |number: N| {
+            !number.is_no_cache_key()
+                && !matches!(number, N::BLOCK1 | N::BLOCK2 | N::Q_BLOCK1 | N::Q_BLOCK2)
+        };
+        left.code() == right.code()
+            && (left.code() != Code::FETCH || left.payload() == right.payload())
+            && left
+                .options()
+                .filter(|option| cache_key(option.number()))
+                .map(|option| (option.number(), option.value()))
+                .eq(right
+                    .options()
+                    .filter(|option| cache_key(option.number()))
+                    .map(|option| (option.number(), option.value())))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveCall {
     call: Call,
     queries: RetainedQueries,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
+    if_match: BodyTag,
+    if_none_match: bool,
+    etag: BodyTag,
     path: Path<'static>,
     code: Code,
     ty: Type,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     observe: OutgoingObserve,
+    observed: Option<(u32, u64)>,
+    observed_format: Option<Option<ContentFormat>>,
+    request_identity: Option<ObserveRequest>,
     /// When the outstanding request may be forgotten (`0` = never).
     due_ms: u64,
     deadline_ms: Option<u64>,
+    /// Next NON Q1 set may start at this instant; zero means disarmed.
+    q_pace_ms: u64,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientLives {
-    rows: [Option<LiveCall>; RESPONSE_INBOX],
+pub(crate) struct ClientLives<const CALLS: usize> {
+    rows: [Option<LiveCall>; CALLS],
 }
 
-impl ClientLives {
+impl<const CALLS: usize> ClientLives<CALLS> {
+    pub(super) fn has_protocol_state(&self) -> bool {
+        self.rows.iter().any(Option::is_some)
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
-            rows: [None; RESPONSE_INBOX],
+            rows: [None; CALLS],
         }
     }
 
@@ -460,6 +612,69 @@ impl ClientLives {
         })
     }
 
+    fn observe_fresh(&self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) -> bool {
+        let Some(sequence) = observation_start(parsed) else {
+            return true;
+        };
+        let Some((previous, received)) = self.get(call).and_then(|live| live.observed) else {
+            return true;
+        };
+        let delta = sequence.wrapping_sub(previous) & 0x00ff_ffff;
+        (delta != 0 && delta < 0x0080_0000) || now_ms.saturating_sub(received) > 128_000
+    }
+
+    pub(crate) fn observe_format_admissible(
+        &self,
+        call: Call,
+        parsed: &ParsedMessage<'_>,
+        now_ms: u64,
+        protected: bool,
+    ) -> bool {
+        (!protected && !self.observe_fresh(call, parsed, now_ms))
+            || self.observe_format_matches(call, parsed)
+    }
+
+    fn observe_format_matches(&self, call: Call, parsed: &ParsedMessage<'_>) -> bool {
+        if observation_start(parsed).is_none() {
+            return true;
+        }
+        if parsed
+            .content_format()
+            .is_some_and(|format| format.is_err())
+            || parsed
+                .get_options(crate::message::OptionNumber::CONTENT_FORMAT)
+                .count()
+                > 1
+        {
+            return false;
+        }
+        // 2.03 may validate a cached representation without repeating its format.
+        if parsed.code() == Code::VALID && parsed.content_format().is_none() {
+            return true;
+        }
+        self.get(call)
+            .and_then(|live| live.observed_format)
+            .is_none_or(|initial| initial == parsed.content_format().and_then(Result::ok))
+    }
+
+    fn record_observation(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+        if let Some(sequence) = observation_start(parsed) {
+            if let Some(live) = self
+                .rows
+                .iter_mut()
+                .flatten()
+                .find(|live| live.call == call)
+            {
+                live.observed = Some((sequence, now_ms));
+                if live.observed_format.is_none()
+                    && (parsed.code() != Code::VALID || parsed.content_format().is_some())
+                {
+                    live.observed_format = Some(parsed.content_format().and_then(Result::ok));
+                }
+            }
+        }
+    }
+
     fn upload_key(&self, call: Call) -> BlockKey {
         BlockKey::new(call.token, call.peer).with_identity(
             self.get(call)
@@ -477,17 +692,45 @@ impl ClientLives {
         }
     }
 
-    fn token_for(&self, path: Path<'static>, peer: Endpoint) -> Option<Token> {
-        self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| {
-                row.call.peer == peer
-                    && row.path == path
-                    && row.observe == OutgoingObserve::Register
-                    && row.due_ms != 0
-            })
-            .map(|row| row.call.token)
-        })
+    fn observe_call<E>(
+        &self,
+        peer: Endpoint,
+        identity: ObserveRequest,
+        target: Option<Call>,
+        is_live: impl Fn(Call) -> bool,
+    ) -> Result<Call, Error<E>> {
+        let mut matches = self.rows.iter().flatten().filter(|live| {
+            live.call.peer == peer
+                && live.observe == OutgoingObserve::Register
+                && live.due_ms != 0
+                && is_live(live.call)
+                && live.request_identity == Some(identity)
+                && target.is_none_or(|call| live.call == call)
+        });
+        let call = matches
+            .next()
+            .ok_or(Error::ObserveCancellationMismatch)?
+            .call;
+        if matches.next().is_some() {
+            return Err(Error::ObserveCancellationAmbiguous);
+        }
+        Ok(call)
     }
+}
+
+// RFC 7959 section 2.6: only block zero carries a new notification.
+fn observation_start(parsed: &ParsedMessage<'_>) -> Option<u32> {
+    if !parsed.code().is_success()
+        || parsed
+            .block2()
+            .is_some_and(|block| block.is_ok_and(|block| block.num() != 0))
+        || parsed
+            .q_block2()
+            .any(|block| block.is_ok_and(|block| block.num() != 0))
+    {
+        return None;
+    }
+    parsed.observe().and_then(Result::ok)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -521,7 +764,9 @@ enum OutgoingObserve {
 /// #     fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> { Ok(bytes.len()) }
 /// # }
 /// let mut app = App::profile::<profiles::Default>()
+///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
+///     .allow_plaintext()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -529,17 +774,29 @@ enum OutgoingObserve {
 /// app.poll(0).unwrap();
 /// let _ = app.take_response(call);
 /// ```
-pub struct Outgoing<'a, P, T, const N: usize, Dest = Missing, const BLOCK_WISE: bool = false>
-where
+pub struct Outgoing<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest = Missing,
+    const BLOCK_WISE: bool = false,
+    S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
+    const DEFERRED: usize = 0,
+    const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
+    const REQUESTS: usize = 4,
+> where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -551,11 +808,21 @@ where
     q_block2: bool,
     block2: Option<BlockValue>,
     observe: OutgoingObserve,
+    observe_target: Option<Call>,
     deadline_ms: Option<u64>,
     _dest: core::marker::PhantomData<Dest>,
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -564,43 +831,65 @@ where
     /// Distinct from the site router [`get`](super::get).
     /// `path` is [`IntoPath`]: `"sensors/temp"` or `&["sensors", "temp"]`.
     #[must_use]
-    pub fn get(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn get(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Get, path)
     }
 
     /// CON PUT builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn put(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn put(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Put, path)
     }
 
     /// CON POST builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn post(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn post(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Post, path)
     }
 
     /// CON DELETE builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn delete(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn delete(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Delete, path)
     }
 
-    /// CON FETCH builder. Next: [`Outgoing::to`].
+    /// CON FETCH builder. Set [`Outgoing::content_format`] for the selection
+    /// body (also required for an empty selection), then [`Outgoing::to`].
     #[must_use]
-    pub fn fetch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn fetch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Fetch, path)
     }
 
     /// CON PATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn patch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn patch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::Patch, path)
     }
 
     /// CON iPATCH builder. Next: [`Outgoing::to`].
     #[must_use]
-    pub fn ipatch(&mut self, path: impl IntoPath) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    pub fn ipatch(
+        &mut self,
+        path: impl IntoPath,
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         self.request(Method::IPatch, path)
     }
 
@@ -610,7 +899,7 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self,
             code: method.code(),
@@ -619,6 +908,8 @@ where
             path: path_from_into(path),
             payload: &[],
             content_format: None,
+            echo: None,
+            no_response: None,
             accept: None,
             request_tag: BodyTag::ABSENT,
             etag: None,
@@ -630,13 +921,23 @@ where
             q_block2: false,
             block2: None,
             observe: OutgoingObserve::Off,
+            observe_target: None,
             deadline_ms: None,
             _dest: core::marker::PhantomData,
         }
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> App<P, T, N, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -652,11 +953,23 @@ where
     ///
     /// When `BLOCK_WISE` and Block2 / Q-Block2 assembled, copies the RX
     /// body into an App hold and returns [`Response::body`] borrowed from
-    /// that hold (released from the Engine, capped at
-    /// [`super::RESPONSE_BODY`]). A later [`Self::take_response`] or
+    /// that hold (released from the Engine). Representations above
+    /// [`super::RESPONSE_BODY`] fail with [`CallFailure::ResponseBodyBounds`],
+    /// even when a custom Engine profile can assemble more bytes. A later [`Self::take_response`] or
     /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
     /// [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
+    /// Plaintext/DTLS notifications obey RFC 7641 serial-number ordering
+    /// and its strict 128-second fallback. Stale CON notifications are ACKed
+    /// without replacing data or refreshing Max-Age. OSCORE notifications use
+    /// authenticated Partial-IV ordering instead. For block-wise notifications,
+    /// ordering is established by the first accepted block, before completion.
+    /// Max-Age expiry does not cancel the subscription. Use the retained
+    /// `received_at_ms` and `max_age_secs` (default 60 seconds when absent)
+    /// to assess representation freshness against the same monotonic clock.
+    /// A response without Observe ends the subscription; explicit cancellation
+    /// and deadlines also release it. Unrecognized plaintext CON responses
+    /// receive Reset so the peer can stop notifying.
     /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
     /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
     /// terminal outcome; no synthetic CoAP response code is invented.
@@ -665,11 +978,21 @@ where
     /// retain the first accepted fragment's header metadata; no response is
     /// exposed until assembly completes. Metadata and assembled bytes borrow App.
     pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
+            super::oscore::cancel(&mut self.oscore, call.token());
         }
         if let Some(id) = body {
+            if rx_body_payload(&self.engine, id)
+                .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+            {
+                release_rx_body(&mut self.engine, id);
+                return Some(Err(CallFailure::ResponseBodyBounds));
+            }
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
                 P::store(&mut self.assembled, bytes);
             }
@@ -680,6 +1003,89 @@ where
         }
         Some(response)
     }
+    /// Collect a complete representation into caller-owned storage.
+    ///
+    /// Enable [`super::AppBuilder::full_responses`] before bind to retain full
+    /// ordinary datagrams and bodies larger than the legacy assembled hold.
+    /// An insufficient buffer leaves the reply and all bytes available for a
+    /// later attempt; no bytes are copied and no partial success is returned.
+    /// Metadata borrows App; `payload()` (and block `body()`) borrows `output`.
+    /// The nested outcome distinguishes local Call failure from remote 4.xx/5.xx.
+    /// Block2 / Q-Block2 require block-wise storage. Without it, the Call
+    /// fails with [`CallFailure::BlockTransfer`] containing
+    /// [`BlockTransferError::NoBodyPools`], rather than returning one fragment.
+    pub fn take_response_into<'a>(
+        &'a mut self,
+        call: Call,
+        output: &'a mut [u8],
+    ) -> Result<Option<Result<Response<'a>, CallFailure>>, ResponseBufferError> {
+        let Some(row) = self.inbox.completed(call) else {
+            return Ok(None);
+        };
+        let body = row.body;
+        let datagram = row.datagram;
+        if let Ok(meta) = row.meta {
+            let bytes = if let Some(body) = body {
+                self.engine
+                    .rx_body_payload(body)
+                    .ok_or(ResponseBufferError::Unavailable)?
+            } else if let Some(rx) = datagram {
+                self.engine
+                    .decode_rx(rx)
+                    .map_err(|_| ResponseBufferError::Unavailable)?
+                    .payload()
+            } else {
+                if meta.payload_src_len > meta.payload_len {
+                    return Err(ResponseBufferError::Unavailable);
+                }
+                &meta.payload[..usize::from(meta.payload_len)]
+            };
+            if bytes.len() > output.len() {
+                return Err(ResponseBufferError::TooSmall {
+                    required: bytes.len(),
+                    available: output.len(),
+                });
+            }
+        }
+        // Copy before releasing the occupied storage; bounds were proven above.
+        let len = if let Some(body) = body {
+            let bytes = self
+                .engine
+                .rx_body_payload(body)
+                .ok_or(ResponseBufferError::Unavailable)?;
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Some(rx) = datagram {
+            let parsed = self
+                .engine
+                .decode_rx(rx)
+                .map_err(|_| ResponseBufferError::Unavailable)?;
+            let bytes = parsed.payload();
+            output[..bytes.len()].copy_from_slice(bytes);
+            bytes.len()
+        } else if let Ok(meta) = row.meta {
+            let len = usize::from(meta.payload_len);
+            output[..len].copy_from_slice(&meta.payload[..len]);
+            len
+        } else {
+            0
+        };
+        if let Some(rx) = self.inbox.take_datagram(call) {
+            let _ = self.engine.release_rx(rx);
+        }
+        let (response, _) = self.inbox.take(call).expect("completed reply");
+        if let Some(body) = body {
+            let _ = self.engine.release_rx_body(body);
+        }
+        if !client_observe_live(&self.engine, call) {
+            self.lives.remove(call);
+            super::oscore::cancel(&mut self.oscore, call.token());
+        }
+        Ok(Some(response.map(|response| {
+            response.with_complete_payload(&output[..len], body.is_some())
+        })))
+    }
+
     /// Cancel an active call and reclaim its exchange, body, Observe and OSCORE
     /// state. The next `take_response` yields `Err(CallFailure::Cancelled)`.
     /// No wire message is sent; use `Outgoing::deregister` for Observe signaling.
@@ -703,13 +1109,27 @@ where
     }
 }
 
-impl<'a, P, T, const N: usize, Dest, const BLOCK_WISE: bool> Outgoing<'a, P, T, N, Dest, BLOCK_WISE>
+impl<
+    'a,
+    P,
+    T,
+    const N: usize,
+    Dest,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
     /// Destination endpoint (Token matching uses this peer).
     #[must_use]
-    pub fn to(self, peer: Endpoint) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE> {
+    pub fn to(
+        self,
+        peer: Endpoint,
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
         Outgoing {
             app: self.app,
             code: self.code,
@@ -718,6 +1138,8 @@ where
             path: self.path,
             payload: self.payload,
             content_format: self.content_format,
+            echo: self.echo,
+            no_response: self.no_response,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -729,6 +1151,7 @@ where
             q_block2: self.q_block2,
             block2: self.block2,
             observe: self.observe,
+            observe_target: self.observe_target,
             deadline_ms: self.deadline_ms,
             _dest: core::marker::PhantomData,
         }
@@ -747,6 +1170,9 @@ where
     /// Request body. A payload that does not fit one datagram is sent as
     /// Block1 (or Q-Block1 after [`.q_block1`](Self::q_block1)) when
     /// block-wise is enabled.
+    /// Initial classic Block1 sizing tries at most seven sizes against the
+    /// configured TX capacity, including security overhead. Later block-number
+    /// or security-sequence growth can still refuse a continuation.
     #[must_use]
     pub const fn payload(mut self, payload: &'a [u8]) -> Self {
         self.payload = payload;
@@ -757,6 +1183,43 @@ where
     #[must_use]
     pub const fn content_format(mut self, format: ContentFormat) -> Self {
         self.content_format = Some(format);
+        self
+    }
+
+    /// Express disinterest in selected response classes (RFC 7967).
+    ///
+    /// An explicit zero bitmap is retained on the wire. Server suppression is
+    /// optional: returned responses remain observable. Silence is never reported
+    /// as success; use [`Self::deadline`] for a partial mask, or [`App::cancel`]
+    /// to cease listening when suppressing all classes. Empty ACKs only stop RTO.
+    /// Zero is also retained on every Block1 or Q-Block1 upload fragment.
+    /// Classic Block1 also supports error-only masks 8, 16 and 24: successful
+    /// Continue responses still advance the upload. Suppressed errors leave the
+    /// outcome unknown; deadline or cancellation bounds the local wait without
+    /// proving success. A peer may still return a selected error response.
+    /// Q-Block1 permits masks 2, 16 and 18 for CON and NON. CON uses transport
+    /// ACKs; NON masks 2/18 pace each new ten-payload set after a sampled 2..=3s
+    /// delay unless Continue arrives first. Poll sends at most one timed set,
+    /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
+    /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
+    /// Observe registration remain explicit App boundaries.
+    #[must_use]
+    pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
+        self.no_response = Some(value);
+        self
+    }
+
+    /// Echo a server-provided freshness challenge (RFC 9175).
+    ///
+    /// The caller must use this only for the endpoint that supplied the Echo,
+    /// and preserve its security context and Inner/Outer protection class.
+    /// App retains the value on every upload fragment and download continuation.
+    /// Use [`Response::echo_option`] after a 4.01 response or preemptive challenge;
+    /// retries are explicit so the caller can decide whether an unsafe operation
+    /// is still fresh. This setter does not authenticate a challenge or retry a call.
+    #[must_use]
+    pub const fn echo(mut self, echo: crate::message::Echo) -> Self {
+        self.echo = Some(echo);
         self
     }
 
@@ -781,27 +1244,39 @@ where
         self
     }
 
-    /// ETag option (conditional GET / validation).
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`]; conditional upload retention is not implemented.
+    /// ETag cache validator (1..=8 bytes), distinct from a write precondition.
+    /// Classic/Q-Block1 FETCH retains this validator on every fragment, with the
+    /// existing 512-byte canonical selection bound. Other fragmented methods
+    /// return [`Error::ConditionalUploadUnsupported`]. First-fragment sizing tries
+    /// at most seven block sizes against the actual plaintext/protected TX limit.
+    /// Later option or Partial-IV growth can still refuse; no security state rewinds.
+    /// The handler validates the complete selection and may return 2.03 Valid.
+    /// FETCH Block2 follow-ups repeat the full selection
+    /// and must fit one datagram; their size failure terminates the Call.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
         self
     }
 
-    /// If-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-Match option, retained on every Block1/Q-Block1 fragment and reissue.
+    /// An empty tag requires any current representation. The receiving handler
+    /// evaluates the precondition against its current representation when it
+    /// commits the complete body; intermediate ACKs do not prove it has passed.
     #[must_use]
     pub const fn if_match(mut self, tag: &'a [u8]) -> Self {
         self.if_match = Some(tag);
         self
     }
 
-    /// If-None-Match option.
-    /// A payload requiring Block1/Q-Block1 fragmentation returns
-    /// [`Error::ConditionalUploadUnsupported`], before sending, rather than losing the condition.
+    /// If-None-Match option. Block1/Q-Block1 send it only on NUM0 and retain
+    /// it for complete-body handler evaluation. The handler checks current
+    /// existence atomically with its application effect; partial ACKs are not success.
+    /// Q-Block1 retains the condition even when NUM0 arrives after later blocks.
+    /// With OSCORE and one Token, the client accepts only its latest request
+    /// binding: a response to an older reordered fragment may remain unknown.
+    /// Missing-block reports and fresh selective reissues preserve this security
+    /// boundary. Use a deadline and check current state when retrying an uncertain effect.
     #[must_use]
     pub const fn if_none_match(mut self) -> Self {
         self.if_none_match = true;
@@ -840,13 +1315,20 @@ where
 
     /// Send a large body with Q-Block1 (windowed) instead of classic Block1.
     /// Requires [`Self::request_tag`]; absent tags are refused before I/O.
+    /// CON uploads keep one payload outstanding and advance on its matching
+    /// empty ACK. [`Self::non`] keeps each payload NON and sends bounded sets.
+    /// Valid 4.08 missing-block reports for NON uploads reissue at most one
+    /// payload set, preserving the original ranges and request options.
+    /// Malformed, oversized or unsent-range reports are silently discarded.
+    /// This per-upload limit does not establish endpoint-wide congestion control.
     #[must_use]
     pub const fn q_block1(mut self) -> Self {
         self.q_block1 = true;
         self
     }
 
-    /// Ask for Q-Block2 (NUM 0, SZX 1024). The peer may still use classic Block2.
+    /// Ask for the entire Q-Block2 body (NUM 0, M=1, SZX 1024).
+    /// The peer may still use classic Block2.
     #[must_use]
     pub const fn q_block2(mut self) -> Self {
         self.q_block2 = true;
@@ -855,67 +1337,120 @@ where
 
     /// GET/FETCH Observe=0 (register). Later notifications use the same
     /// [`Call`] / [`App::take_response`](App::take_response).
+    /// App retains up to 512 encoded bytes of canonical request identity
+    /// (excluding ETag and Observe) for exact cancellation matching. Larger
+    /// requests are refused before I/O; use Engine for caller-owned retention.
+    /// Repeated subscriptions to the same peer and cache-key target return the
+    /// existing Call without I/O, new state, or deadline changes (RFC 7641 §3.1).
+    /// FETCH payloads distinguish selections; ETag, NoCacheKey options and block
+    /// controls do not create a second subscription. The caller distributes the
+    /// single response stream to its consumers. Use [`Self::reregister_call`]
+    /// to refresh the request explicitly; cancellation ends the shared Call.
     #[must_use]
     pub const fn observe(mut self) -> Self {
         self.observe = OutgoingObserve::Register;
+        self.observe_target = None;
         self
     }
 
-    /// GET/FETCH Observe=1 (deregister). Reuses the Token of an existing
-    /// subscribe to the same path and peer when one is live.
+    /// Refresh a specific live subscription with Observe=0 and the same Token.
+    /// Repeat the original method, path, options and payload; ETags may differ.
+    /// Mismatch is refused before I/O. Notification ordering and the existing
+    /// absolute deadline survive the refresh (a new deadline may shorten it).
+    /// Pending transmissions and queued representations are retired before send.
+    /// On send failure, the local subscription terminates with
+    /// [`CallFailure::ReregistrationFailed`]; remote state remains uncertain.
+    /// The caller schedules refresh, including RFC 7641 section 3.3's randomized
+    /// delay after Max-Age. App does not automatically refresh subscriptions.
+    #[must_use]
+    pub const fn reregister_call(mut self, call: Call) -> Self {
+        self.observe = OutgoingObserve::Register;
+        self.observe_target = Some(call);
+        self
+    }
+
+    /// GET/FETCH Observe=1 (deregister). Reuses the uniquely matching live Call.
+    /// Repeat the registration request's method, path, options and payload;
+    /// ETags may differ. A mismatch or ambiguous match is refused before I/O.
+    /// [`Self::deregister_call`] also validates the explicit Call handle.
+    /// After validation, cancellation retires the old local subscription,
+    /// queued notifications and pending transmissions. If sending fails,
+    /// `take_response` reports [`CallFailure::CancellationFailed`]; remote
+    /// cancellation is uncertain and must not be assumed successful.
     #[must_use]
     pub const fn deregister(mut self) -> Self {
         self.observe = OutgoingObserve::Deregister;
+        self.observe_target = None;
+        self
+    }
+
+    /// Cancel a specific subscription, with the same request checks as
+    /// [`Self::deregister`]. The Call must still be live at the selected peer.
+    #[must_use]
+    pub const fn deregister_call(mut self, call: Call) -> Self {
+        self.observe = OutgoingObserve::Deregister;
+        self.observe_target = Some(call);
         self
     }
 }
 
-impl<P, T, const N: usize, const BLOCK_WISE: bool> Outgoing<'_, P, T, N, Present, BLOCK_WISE>
+impl<
+    P,
+    T,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
 {
     /// Encode the request, record the Exchange, and send.
     ///
-    /// `now_ms` starts CON RTO on Engine (caller clock; jitter is 0). Later
+    /// `now_ms` starts CON RTO on Engine with injected random jitter. Later
     /// [`App::poll`](App::poll) sends Due retransmits when that clock
-    /// advances. Returns a [`Call`] for
-    /// [`App::take_response`](App::take_response). Tokens and Message IDs are
-    /// App counters — this crate does not call an OS RNG. A payload that does
+    /// advances. Returns a [`Call`] for [`App::take_response`](App::take_response).
+    /// Production Tokens use eight injected random bytes; Message IDs use a
+    /// randomly initialized counter and bounded reuse guard. See
+    /// [`super::AppBuilder::randomness`]. This crate does not call an OS RNG. A payload that does
     /// not fit one datagram starts Block1 / Q-Block1 when block-wise is on.
     ///
-    /// [`Error::Saturated`] if four Calls are already outstanding (inbox /
-    /// lives cap) and this Token is not one of them.
+    /// On failure, local request state is retired, including any partial
+    /// upload and OSCORE request binding. An error does not prove that the
+    /// peer received no datagrams or performed no action; retry policy must
+    /// account for that uncertainty. Security sequence numbers are not reset.
+    ///
+    /// [`Error::Saturated`] if the configured client Call table is full and
+    /// this Token is not one of its retained Calls. No reply is evicted.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
         }
+        if self.code == Code::FETCH && self.content_format.is_none() {
+            return Err(Error::FetchContentFormatRequired);
+        }
         let dest = self.dest.expect("typestate: to() was called");
         let path = self.path.map_err(|_| Error::Path)?;
         let observe = self.observe;
-        let token = match observe {
-            OutgoingObserve::Deregister => reuse_observe_token(self.app, path, dest),
-            OutgoingObserve::Off | OutgoingObserve::Register => self.app.next_token(),
-        };
-        if observe == OutgoingObserve::Deregister {
-            take_client_observe(&mut self.app.engine, ObserveKey::new(token, dest));
+        let refreshing = observe == OutgoingObserve::Register && self.observe_target.is_some();
+        let replacing = observe == OutgoingObserve::Deregister || refreshing;
+        if observe != OutgoingObserve::Off && !matches!(self.code, Code::GET | Code::FETCH) {
+            return Err(Error::ObserveMethodUnsupported);
         }
-        if !self.app.lives.can_admit(token, dest) {
-            return Err(Error::Saturated);
-        }
-        if self.q_block1 && self.request_tag.is_absent() {
-            return Err(Error::RequestTagRequired);
-        }
-        if !self.request_tag.is_absent()
-            && self
-                .app
-                .lives
-                .rows
-                .iter()
-                .flatten()
-                .any(|live| live.call.peer == dest && live.request_tag == self.request_tag)
+        if self
+            .no_response
+            .is_some_and(|value| !matches!(value.get(), 0 | 2 | 16 | 18))
+            && self.q_block1
         {
-            return Err(Error::RequestTagInUse);
+            return Err(Error::NoResponseUploadUnsupported);
+        }
+        if self.no_response.is_some_and(|value| value.get() != 0)
+            && observe == OutgoingObserve::Register
+        {
+            return Err(Error::NoResponseObserveUnsupported);
         }
         let queries = self.queries;
         let query_n = usize::from(self.query_n);
@@ -924,16 +1459,29 @@ where
                 EncodeError::OptionValueTooLong,
             )));
         }
+        let if_match = BodyTag::from_first(self.if_match).map_err(|_| {
+            Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
+        })?;
+        if self.etag.is_some_and(<[u8]>::is_empty) {
+            return Err(Error::Message(SlotMessageError::Parse(
+                crate::error::ParseError::BadOptionFormat(crate::message::OptionNumber::ETAG),
+            )));
+        }
+        let etag = BodyTag::from_first(self.etag).map_err(|_| {
+            Error::Message(SlotMessageError::Encode(EncodeError::OptionValueTooLong))
+        })?;
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
-        let spec = ClientSend {
+        let mut spec = ClientSend {
             dest,
             ty: self.ty,
             code: self.code,
-            token,
+            token: Token::EMPTY,
             path: path.segments(),
             payload: self.payload,
             content_format: self.content_format,
+            echo: self.echo,
+            no_response: self.no_response,
             accept: self.accept,
             request_tag: self.request_tag,
             etag: self.etag,
@@ -945,6 +1493,105 @@ where
             block2: self.block2,
             observe,
         };
+        let request_identity = if observe == OutgoingObserve::Off && self.code != Code::FETCH {
+            None
+        } else {
+            Some(
+                request_identity_identity(&spec).map_err(|error| match error {
+                    EncodeError::BufferTooSmall if observe == OutgoingObserve::Off => {
+                        Error::FetchRequestTooLarge
+                    }
+                    EncodeError::BufferTooSmall => Error::ObserveRequestTooLarge,
+                    other => Error::Message(SlotMessageError::Encode(other)),
+                })?,
+            )
+        };
+        if observe == OutgoingObserve::Register && !refreshing {
+            let identity = request_identity.as_ref().expect("Observe identity");
+            if let Some(existing) = self.app.lives.rows.iter().flatten().find(|live| {
+                live.call.peer == dest
+                    && live.observe == OutgoingObserve::Register
+                    && live.due_ms != 0
+                    && (!self.app.inbox.contains(live.call)
+                        || client_observe_live(&self.app.engine, live.call))
+                    && live
+                        .request_identity
+                        .as_ref()
+                        .is_some_and(|original| original.same_target(identity))
+            }) {
+                return Ok(existing.call);
+            }
+        }
+        if !replacing && self.app.lives.rows.iter().all(Option::is_some) {
+            return Err(Error::Saturated);
+        }
+        let token = if replacing {
+            self.app
+                .lives
+                .observe_call::<T::Error>(
+                    dest,
+                    request_identity.expect("Observe identity"),
+                    self.observe_target,
+                    |call| {
+                        !self.app.inbox.contains(call)
+                            || client_observe_live(&self.app.engine, call)
+                    },
+                )
+                .map_err(|error| {
+                    if refreshing {
+                        Error::ObserveRefreshMismatch
+                    } else {
+                        error
+                    }
+                })?
+                .token()
+        } else {
+            self.app.next_token()?
+        };
+        if !self.app.lives.can_admit(token, dest) {
+            return Err(Error::Saturated);
+        }
+        if self.q_block1 && self.request_tag.is_absent() {
+            return Err(Error::RequestTagRequired);
+        }
+        if !self.request_tag.is_absent()
+            && self.app.lives.rows.iter().flatten().any(|live| {
+                live.call.peer == dest
+                    && live.request_tag == self.request_tag
+                    && live.call.token != token
+            })
+        {
+            return Err(Error::RequestTagInUse);
+        }
+        let prior = refreshing
+            .then(|| self.app.lives.get(Call::new(token, dest)))
+            .flatten();
+        let deadline_ms = match (self.deadline_ms, prior.and_then(|live| live.deadline_ms)) {
+            (Some(new), Some(old)) => Some(new.min(old)),
+            (new, old) => new.or(old),
+        };
+        if deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+            return Err(Error::DeadlineElapsed);
+        }
+        spec.token = token;
+        if replacing {
+            // A new request reuses this Token. Do not retain old CONs, body
+            // fragments or authenticated request bindings under that identity.
+            abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
+            fail_call(
+                &mut self.app.engine,
+                &mut self.app.inbox,
+                &mut self.app.lives,
+                &mut self.app.oscore,
+                Call::new(token, dest),
+                if refreshing {
+                    CallFailure::ReregistrationFailed
+                } else {
+                    CallFailure::CancellationFailed
+                },
+                true,
+            );
+        }
         let call = send_client(
             &mut self.app.engine,
             &mut self.app.io,
@@ -952,41 +1599,85 @@ where
             &mut self.app.oscore,
             now_ms,
             spec,
-        )?;
+        );
+        let call = match call {
+            Ok(call) => call,
+            Err(error) => {
+                abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
+                return Err(error);
+            }
+        };
+        if replacing {
+            if let Some(rx) = self.app.inbox.take_datagram(call) {
+                let _ = self.app.engine.release_rx(rx);
+            }
+            self.app.inbox.discard(call);
+        }
         self.app.lives.insert(LiveCall {
             call,
             queries: retained_queries,
             accept: self.accept,
             request_tag: self.request_tag,
+            if_match,
+            if_none_match: self.if_none_match,
+            etag,
             path,
             code: self.code,
             ty: self.ty,
             content_format: self.content_format,
+            echo: self.echo,
+            no_response: self.no_response,
             observe,
-            deadline_ms: self.deadline_ms,
+            observed: prior.and_then(|live| live.observed),
+            observed_format: prior.and_then(|live| live.observed_format),
+            request_identity,
+            deadline_ms,
+            q_pace_ms: 0,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
                 Transmission::EXCHANGE_LIFETIME_MS
             })),
         });
+        arm_q_pacing(
+            &self.app.engine,
+            &mut self.app.lives,
+            &self.app.ids,
+            now_ms,
+            call,
+        );
         Ok(call)
     }
 }
 
 impl<
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-    T,
+    T: DatagramIo,
     const N: usize,
     const BLOCK_WISE: bool,
-> App<P, T, N, BLOCK_WISE>
+    S: super::AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
 {
-    fn next_token(&mut self) -> Token {
-        self.tokens = self.tokens.wrapping_add(1);
-        if self.tokens == 0 {
-            self.tokens = 1;
+    fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
+        for _ in 0..8 {
+            let token = self
+                .ids
+                .token(&mut |bytes| self.io.fill_random(bytes))
+                .map_err(Error::Identity)?;
+            if !self
+                .lives
+                .rows
+                .iter()
+                .flatten()
+                .any(|live| live.call.token() == token)
+            {
+                return Ok(token);
+            }
         }
-        Token::from_checked(&self.tokens.to_be_bytes())
+        Err(Error::Identity(super::IdentityError::TokenExhausted))
     }
 }
 
@@ -998,6 +1689,8 @@ struct ClientSend<'a> {
     path: &'a [&'a str],
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
     etag: Option<&'a [u8]>,
@@ -1010,27 +1703,18 @@ struct ClientSend<'a> {
     observe: OutgoingObserve,
 }
 
-fn send_client<Mem, T>(
-    engine: &mut Engine<Mem>,
-    io: &mut T,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
-    now_ms: u64,
-    spec: ClientSend<'_>,
-) -> Result<Call, Error<T::Error>>
-where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
-    T: DatagramIo,
-{
-    if spec.path.len() > MAX_PATH_SEGMENTS {
-        return Err(Error::Path);
-    }
-    let mid = ids.next();
+// One option builder feeds both wire encoding and exact cancellation identity.
+fn with_client_options<R>(
+    spec: &ClientSend<'_>,
+    identity_only: bool,
+    use_options: impl FnOnce(&[Opt<'_>]) -> R,
+) -> Result<R, EncodeError> {
     let cf = spec.content_format.map(ContentFormat::encode);
+    let no_response = spec.no_response.map(crate::message::NoResponse::encode);
     let acc = spec.accept.map(ContentFormat::encode);
     let q2 = spec
         .q_block2
-        .then(|| BlockValue::new(0, false, BlockValue::SZX_MAX))
+        .then(|| BlockValue::new(0, true, BlockValue::SZX_MAX))
         .and_then(Result::ok)
         .map(BlockValue::encode);
     let b2 = spec.block2.map(BlockValue::encode);
@@ -1039,20 +1723,24 @@ where
         if let Some(tag) = spec.if_match {
             push_opt(&mut opts, Opt::if_match(tag))?;
         }
-        if let Some(tag) = spec.etag {
-            push_opt(&mut opts, Opt::etag(tag))?;
+        if !identity_only {
+            if let Some(tag) = spec.etag {
+                push_opt(&mut opts, Opt::etag(tag))?;
+            }
         }
         if spec.if_none_match {
             push_opt(&mut opts, Opt::if_none_match())?;
         }
-        match spec.observe {
-            OutgoingObserve::Register => {
-                push_opt(&mut opts, Opt::observe_register())?;
+        if !identity_only {
+            match spec.observe {
+                OutgoingObserve::Register => {
+                    push_opt(&mut opts, Opt::observe_register())?;
+                }
+                OutgoingObserve::Deregister => {
+                    push_opt(&mut opts, Opt::observe_deregister())?;
+                }
+                OutgoingObserve::Off => {}
             }
-            OutgoingObserve::Deregister => {
-                push_opt(&mut opts, Opt::observe_deregister())?;
-            }
-            OutgoingObserve::Off => {}
         }
         for segment in spec.path {
             push_opt(&mut opts, Opt::uri_path(segment))?;
@@ -1072,30 +1760,99 @@ where
         if let Some(ref encoded) = q2 {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
         }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
+        }
+        if let Some(echo) = spec.echo.as_ref() {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
         if let Some(tag) = spec.request_tag.as_slice() {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
         Ok(())
     })();
-    if let Err(e) = filled {
-        return Err(Error::Message(SlotMessageError::Encode(e)));
+    filled?;
+    Ok(use_options(opts.as_slice()))
+}
+
+fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
+    with_client_options(spec, true, |options| {
+        let mut identity = ObserveRequest {
+            bytes: [0; OBSERVE_REQUEST_BYTES],
+            len: 0,
+        };
+        let message = Message::new(Type::Confirmable, spec.code, MessageId::new(0))
+            .with_options(options)
+            .with_payload(spec.payload);
+        identity.len = crate::message::encode(&message, &mut identity.bytes)?;
+        Ok(identity)
+    })?
+}
+
+fn send_client<Mem, T, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    spec: ClientSend<'_>,
+) -> Result<Call, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    if spec.path.len() > MAX_PATH_SEGMENTS {
+        return Err(Error::Path);
     }
+    let mid = ids.next_for(engine, io, now_ms)?;
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    let msg = Message::new(spec.ty, spec.code, mid)
-        .with_token(spec.token)
-        .with_options(opts.as_slice())
-        .with_payload(spec.payload);
-    match super::oscore::encode_request(oscore, engine, tx, &msg) {
-        Ok(_) => finish_client_send(engine, io, tx, spec.dest, spec.ty, now_ms, mid)
-            .map(|()| Call::new(spec.token, spec.dest)),
+    let encoded = with_client_options(&spec, false, |options| {
+        let msg = Message::new(spec.ty, spec.code, mid)
+            .with_token(spec.token)
+            .with_options(options)
+            .with_payload(spec.payload);
+        super::oscore::encode_request(oscore, engine, tx, &msg)
+    });
+    let encoded = match encoded {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(Error::Message(SlotMessageError::Encode(error)));
+        }
+    };
+    match encoded {
+        Ok(_) => finish_client_send(
+            engine,
+            io,
+            tx,
+            spec.dest,
+            spec.ty,
+            now_ms,
+            mid,
+            ids.jitter(),
+        )
+        .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            // These conditions cannot be dropped while changing to Block1.
-            // Until the App retains their transfer-specific semantics, refuse
-            // fragmentation instead of turning a conditional write into an
-            // unconditional one (RFC 7959 section 2.10).
-            if spec.if_match.is_some() || spec.if_none_match || spec.etag.is_some() {
+            // Classic Block1 requires 2.xx Continue. This bounded App combination
+            // supports only the defined error-class bits; undefined bits are an
+            // API boundary, not a wire-validity judgment. CON Q uploads use
+            // transport ACKs, so their admitted 2/18 masks do not hide progress.
+            if !spec.q_block1
+                && spec.no_response.is_some_and(|value| {
+                    value.get()
+                        & !(crate::message::NoResponse::SUPPRESS_4
+                            | crate::message::NoResponse::SUPPRESS_5)
+                        != 0
+                })
+            {
+                let _ = engine.release_tx(tx);
+                return Err(Error::NoResponseUploadUnsupported);
+            }
+            // FETCH retains fragmented cache-validator semantics.
+            // An ETag is not an If-Match write precondition.
+            if spec.etag.is_some() && spec.code != Code::FETCH {
                 let _ = engine.release_tx(tx);
                 return Err(Error::ConditionalUploadUnsupported);
             }
@@ -1118,8 +1875,14 @@ where
                 spec.payload,
                 spec.request_tag,
                 spec.content_format,
+                spec.echo,
+                spec.no_response,
+                spec.if_match,
+                spec.etag,
+                spec.if_none_match,
                 spec.q_block1,
                 tx,
+                mid,
             )
         }
         Err(e) => {
@@ -1130,11 +1893,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_client_block1<Mem, T>(
+fn send_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1146,18 +1909,68 @@ fn send_client_block1<Mem, T>(
     payload: &[u8],
     request_tag: BodyTag,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     q_block1: bool,
     tx: SlotId,
+    mid: MessageId,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
+    // At most seven candidate SZX values. Only size misses try a smaller
+    // prefix. Protection may consume sequence numbers; never rewind them.
+    let mut initial_szx = BlockValue::SZX_MAX;
+    loop {
+        let size = 1usize << (initial_szx + 4);
+        let count = payload.len().min(size);
+        let block = BlockValue::new(0, count < payload.len(), initial_szx)
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?;
+        match encode_block1_request(
+            engine,
+            oscore,
+            tx,
+            ty,
+            code,
+            mid,
+            token,
+            path,
+            queries,
+            accept,
+            content_format,
+            echo,
+            no_response,
+            if_match,
+            etag,
+            if_none_match,
+            block,
+            q_block1,
+            request_tag,
+            u32::try_from(payload.len()).ok(),
+            &payload[..count],
+        ) {
+            Ok(()) => break,
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if initial_szx > 0 =>
+            {
+                initial_szx -= 1
+            }
+            Err(error) => {
+                let _ = engine.release_tx(tx);
+                return Err(error);
+            }
+        }
+    }
     let key = BlockKey::new(token, dest).with_identity(request_tag);
     let started = if q_block1 {
-        engine.start_q_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_q_block1(key, payload, initial_szx)
     } else {
-        engine.start_block1(key, payload, BlockValue::SZX_MAX)
+        engine.start_block1(key, payload, initial_szx)
     };
     let body = match started {
         Ok(id) => id,
@@ -1172,44 +1985,50 @@ where
             return Err(Error::Block(e));
         }
     };
-    let outcome = if q_block1 {
-        issue_q_block1_window(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            body,
-            Some(tx),
-            None,
-        )
-        .map(|_| ())
+    // The first datagram already owns its MID, jitter and protected RequestRef.
+    // Advance the admitted body once and send those exact bytes. A NON Q set
+    // continues only after that successful send; CON waits for its matching ACK.
+    let first = if q_block1 {
+        engine.next_q_block1(body)
     } else {
-        issue_block1(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            dest,
-            ty,
-            code,
-            token,
-            path,
-            queries,
-            accept,
-            content_format,
-            body,
-            Some(tx),
-        )
+        engine.next_block1(body)
+    };
+    let outcome = match first {
+        Ok(issued) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+            .and_then(|()| {
+                if q_block1 && ty == Type::NonConfirmable && !issued.complete() {
+                    issue_q_block1_window(
+                        engine,
+                        io,
+                        ids,
+                        oscore,
+                        now_ms,
+                        dest,
+                        ty,
+                        code,
+                        token,
+                        path,
+                        queries,
+                        accept,
+                        content_format,
+                        echo,
+                        no_response,
+                        if_match,
+                        etag,
+                        if_none_match,
+                        body,
+                        None,
+                        None,
+                    )
+                    .map(|_| ())
+                } else {
+                    Ok(())
+                }
+            }),
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            Err(Error::Block(error))
+        }
     };
     if outcome.is_err() {
         let _ = engine.release_tx_body(body);
@@ -1219,29 +2038,40 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn complete_client<Mem, T>(
+pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    response_state: super::oscore::ResponseState,
+    full_responses: bool,
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_>,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + Exchanges
+        + BodySlots
+        + ObserveSlots
+        + crate::storage::DedupSlots,
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
-    let via_observe = engine
-        .lookup_observe(ObserveKey::new(parsed.token(), peer))
-        .is_some();
+    let via_observe = matching_observe(engine, parsed, peer);
     if via_exchange.is_none() && !via_observe {
+        let outcome = if parsed.ty() == Type::Confirmable {
+            super::send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
         let _ = engine.release_rx(rx);
-        return Ok(());
+        return outcome;
     }
     // RFC 7252 sections 5.4.1 and 4.2: reject the response, not an
     // otherwise matching ACK. No inbox/body/Observe state may accept it.
@@ -1261,11 +2091,52 @@ where
         let _ = engine.release_rx(rx);
         return outcome;
     }
+    let call = Call::new(parsed.token(), peer);
+    let fresh = super::oscore::is_active(oscore) || lives.observe_fresh(call, parsed, now_ms);
+    if !lives.observe_format_admissible(call, parsed, now_ms, super::oscore::is_active(oscore)) {
+        let outcome = if parsed.ty() == Type::Confirmable {
+            super::send_empty_rst(engine, io, peer, parsed.message_id())
+        } else {
+            Ok(())
+        };
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ObserveFormatMismatch,
+            true,
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
     if parsed.ty() == Type::Confirmable {
         if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {
             let _ = engine.release_rx(rx);
             return Err(e);
         }
+    }
+    if let Err(error) = super::oscore::commit_response(oscore, response_state) {
+        let _ = engine.release_rx(rx);
+        return Err(error);
+    }
+    // A matching piggybacked ACK ends retransmission even if its Observe
+    // value is stale. A delayed NON/CON notification cannot acknowledge a
+    // concurrently refreshed request merely by sharing its Token.
+    if parsed.ty() == Type::Acknowledgement {
+        if let Some(entry) = via_exchange {
+            if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
+                let _ = engine.release_tx(tx);
+            }
+        }
+    }
+    // ACK stale CON notifications too, but do not refresh their lifetime,
+    // replace the inbox, or alter assembly. OSCORE already authenticated and
+    // ordered notifications by Partial IV (RFC 8613 section 4.1.3.5.2).
+    if !fresh {
+        let _ = engine.release_rx(rx);
+        return Ok(());
     }
     // Piggybacked ACK shares the request MID. A separate CON/NON response
     // uses a new MID; stop RTO using the exchange's request MID.
@@ -1278,16 +2149,63 @@ where
         let _ = engine.release_tx(tx);
     }
 
-    if let Some(body) = engine.lookup_tx_body(lives.upload_key(Call::new(parsed.token(), peer))) {
+    if let Some(body) = upload_body(engine, lives.upload_key(Call::new(parsed.token(), peer))) {
         if let Some(transfer) = engine.tx_body_transfer(body) {
             if matches!(
                 transfer.role(),
                 BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
             ) {
-                if parsed.code() == Code::CONTINUE {
-                    let outcome = continue_block1_tx(
+                if transfer.role() == BlockRole::OutgoingQBlock1
+                    && parsed.code() == Code::REQUEST_ENTITY_INCOMPLETE
+                    && parsed.content_format() == Some(Ok(ContentFormat::MISSING_BLOCKS))
+                    && lives
+                        .get(Call::new(parsed.token(), peer))
+                        .is_some_and(|live| live.ty == Type::NonConfirmable)
+                {
+                    let outcome = reissue_qblock1_missing(
                         engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
                     );
+                    if outcome.is_err() {
+                        abandon_send(engine, oscore, parsed.token(), peer);
+                        fail_call(
+                            engine,
+                            inbox,
+                            lives,
+                            oscore,
+                            Call::new(parsed.token(), peer),
+                            CallFailure::ContinuationFailed,
+                            true,
+                        );
+                    }
+                    let _ = engine.release_rx(rx);
+                    return outcome;
+                }
+                if parsed.code() == Code::CONTINUE {
+                    let outcome = continue_block1_tx(
+                        engine,
+                        io,
+                        lives,
+                        ids,
+                        oscore,
+                        now_ms,
+                        parsed.token(),
+                        parsed.block1().and_then(Result::ok),
+                        parsed.q_block1().and_then(Result::ok),
+                        peer,
+                        body,
+                    );
+                    if outcome.is_err() {
+                        abandon_send(engine, oscore, parsed.token(), peer);
+                        fail_call(
+                            engine,
+                            inbox,
+                            lives,
+                            oscore,
+                            Call::new(parsed.token(), peer),
+                            CallFailure::ContinuationFailed,
+                            true,
+                        );
+                    }
                     let _ = engine.release_rx(rx);
                     return outcome;
                 }
@@ -1318,20 +2236,27 @@ where
     if parsed.block2().is_some() {
         match engine.apply_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 finish_assembled(
                     engine,
                     inbox,
                     lives,
+                    oscore,
                     parsed,
                     peer,
                     rx,
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1356,6 +2281,18 @@ where
                     peer,
                     progress.id(),
                 );
+                if outcome.is_err() {
+                    abandon_send(engine, oscore, parsed.token(), peer);
+                    fail_call(
+                        engine,
+                        inbox,
+                        lives,
+                        oscore,
+                        Call::new(parsed.token(), peer),
+                        CallFailure::ContinuationFailed,
+                        true,
+                    );
+                }
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
@@ -1363,7 +2300,6 @@ where
                 let _ = engine.release_rx(rx);
                 return Ok(());
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,
@@ -1381,21 +2317,28 @@ where
     } else if parsed.q_block2().next().is_some() {
         match engine.apply_q_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 finish_assembled(
                     engine,
                     inbox,
                     lives,
+                    oscore,
                     parsed,
                     peer,
                     rx,
                     progress.id(),
                     metadata,
                     via_exchange.is_some(),
+                    full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
+                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                if let Some(previous) = inbox.take_datagram(call) {
+                    let _ = engine.release_rx(previous);
+                }
                 match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
                 {
                     Ok(Some(previous)) if previous != progress.id() => {
@@ -1425,10 +2368,21 @@ where
                 } else {
                     Ok(())
                 };
+                if outcome.is_err() {
+                    abandon_send(engine, oscore, parsed.token(), peer);
+                    fail_call(
+                        engine,
+                        inbox,
+                        lives,
+                        oscore,
+                        Call::new(parsed.token(), peer),
+                        CallFailure::ContinuationFailed,
+                        true,
+                    );
+                }
                 let _ = engine.release_rx(rx);
                 return outcome;
             }
-            Err(BlockTransferError::MissingBlock | BlockTransferError::NoBodyPools) => {}
             Err(e) => {
                 fail_call(
                     engine,
@@ -1445,6 +2399,7 @@ where
         }
     }
 
+    lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
     accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
     take_exchange(engine, parsed, peer);
     store_reply(
@@ -1454,25 +2409,52 @@ where
         metadata,
         None,
     );
-    let _ = engine.release_rx(rx);
+    if full_responses {
+        if let Some(row) = inbox.rows.iter_mut().flatten().find(|row| row.call == call) {
+            row.datagram = Some(rx);
+        } else {
+            let _ = engine.release_rx(rx);
+        }
+    } else {
+        let _ = engine.release_rx(rx);
+    }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_assembled<Mem>(
+fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &ClientLives,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     rx: SlotId,
     body: SlotId,
     metadata: ReplyMeta,
     via_exchange: bool,
+    full_responses: bool,
 ) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots,
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     let call = Call::new(parsed.token(), peer);
+    if !full_responses
+        && engine
+            .rx_body_payload(body)
+            .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
+    {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ResponseBodyBounds,
+            true,
+        );
+        let _ = engine.release_rx(rx);
+        return;
+    }
     let metadata = inbox.partial_meta(call, body).unwrap_or(metadata);
     let original = crate::message::decode(&metadata.header[..usize::from(metadata.header_len)])
         .expect("encoded response header");
@@ -1495,13 +2477,16 @@ fn finish_assembled<Mem>(
     let _ = engine.release_rx(rx);
 }
 
-fn store_reply<Mem: Storage + BodySlots>(
+fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
+    inbox: &mut ClientInbox<CALLS>,
     call: Call,
     meta: ReplyMeta,
     body: Option<SlotId>,
 ) {
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
             if let Some(id) = prev {
@@ -1516,6 +2501,27 @@ fn store_reply<Mem: Storage + BodySlots>(
             }
         }
     }
+}
+
+/// Check unencrypted routing fields before touching protected response state.
+pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots>(
+    engine: &Engine<Mem>,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+) -> bool {
+    matching_exchange(engine, parsed, peer).is_some() || matching_observe(engine, parsed, peer)
+}
+
+fn matching_observe<Mem: Storage + ObserveSlots>(
+    engine: &Engine<Mem>,
+    parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+) -> bool {
+    parsed.code().is_response()
+        && matches!(parsed.ty(), Type::Confirmable | Type::NonConfirmable)
+        && engine
+            .lookup_observe(ObserveKey::new_client(parsed.token(), peer))
+            .is_some()
 }
 
 fn matching_exchange<Mem: Storage + Exchanges>(
@@ -1548,12 +2554,12 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block2_continue<Mem, T>(
+fn send_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    lives: &ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -1579,17 +2585,18 @@ where
         parsed.token(),
         peer,
         Some(block),
+        &[],
         None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_q_block2_continue<Mem, T>(
+fn send_q_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    lives: &ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -1615,39 +2622,136 @@ where
         parsed.token(),
         peer,
         None,
-        Some(block),
+        &[block],
+        None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_followup<Mem, T>(
+pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    recover: crate::storage::QBlockRecover,
+) -> Result<bool, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    let call = Call::new(recover.key().token(), recover.key().endpoint());
+    if lives.get(call).is_none() {
+        return Ok(false);
+    }
+    let mut nums = [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let count = recover.copy_missing_nums(&mut nums);
+    let mut blocks = [BlockValue::new(0, false, 0).expect("valid block");
+        crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    for (block, num) in blocks.iter_mut().zip(&nums[..count]) {
+        *block = BlockValue::new(*num, false, recover.szx())
+            .map_err(BlockTransferError::from)
+            .map_err(Error::Block)?;
+    }
+    let outcome = send_followup(
+        engine,
+        io,
+        lives,
+        ids,
+        oscore,
+        now_ms,
+        call.token(),
+        call.peer(),
+        None,
+        &blocks[..count],
+        Some(Type::NonConfirmable),
+    );
+    if outcome.is_err() {
+        abandon_send(engine, oscore, call.token(), call.peer());
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    outcome.map(|()| true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    lives: &ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     token: Token,
     peer: Endpoint,
     block2: Option<BlockValue>,
-    q_block2: Option<BlockValue>,
+    q_block2: &[BlockValue],
+    recovery_ty: Option<Type>,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges,
     T: DatagramIo,
 {
     let live = lives.get(Call::new(token, peer));
-    let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
+    let ty = recovery_ty.unwrap_or_else(|| live.map(|live| live.ty).unwrap_or(Type::Confirmable));
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
-    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let mut opts = OptionsBuilder::<
+        { CLIENT_OPTION_SLOTS + crate::storage::BlockTransfer::MAX_PAYLOADS as usize - 1 },
+    >::new();
     let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
+    let no_response = live
+        .and_then(|live| live.no_response)
+        .map(crate::message::NoResponse::encode);
     let b2 = block2.map(BlockValue::encode);
-    let q2 = q_block2.map(BlockValue::encode);
+    let mut q2 = [encode_uint(0); crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    if q_block2.len() > q2.len() {
+        return Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::OptionsFull,
+        )));
+    }
+    for (encoded, block) in q2.iter_mut().zip(q_block2) {
+        *encoded = block.encode();
+    }
+    let fetch = live
+        .as_ref()
+        .filter(|live| live.code == Code::FETCH)
+        .and_then(|live| live.request_identity.as_ref())
+        .map(|identity| {
+            crate::message::decode(&identity.bytes[..identity.len])
+                .expect("encoded request identity")
+        });
+    let cf = live
+        .and_then(|live| live.content_format)
+        .map(ContentFormat::encode);
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(live) = live.as_ref() {
-            if live.observe == OutgoingObserve::Register {
-                push_opt(&mut opts, Opt::observe_register())?;
+            if let Some(tag) = live.if_match.as_slice() {
+                push_opt(&mut opts, Opt::if_match(tag))?;
             }
+            if live.if_none_match {
+                push_opt(&mut opts, Opt::if_none_match())?;
+            }
+            // RFC 9177 section 4.4: Q missing requests avoid ETag validation
+            // replies (2.03) without payload. Classic Block2 retains it.
+            if q_block2.is_empty() {
+                if let Some(tag) = live.etag.as_slice() {
+                    push_opt(&mut opts, Opt::etag(tag))?;
+                }
+            }
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(live) = live.as_ref() {
             for segment in live.path.segments() {
                 push_opt(&mut opts, Opt::uri_path(segment))?;
             }
@@ -1663,8 +2767,14 @@ where
         if let Some(ref encoded) = b2 {
             push_opt(&mut opts, Opt::block2(encoded))?;
         }
-        if let Some(ref encoded) = q2 {
+        for encoded in &q2[..q_block2.len()] {
             push_opt(&mut opts, Opt::q_block2(encoded))?;
+        }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
+        }
+        if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
         }
         if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
             push_opt(&mut opts, Opt::request_tag(tag))?;
@@ -1674,10 +2784,16 @@ where
     if let Err(e) = filled {
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
-    let mid = ids.next();
+    let mid = ids.next_for(engine, io, now_ms)?;
     let msg = Message::new(ty, code, mid)
         .with_token(token)
-        .with_options(opts.as_slice());
+        .with_options(opts.as_slice())
+        .with_payload(
+            fetch
+                .as_ref()
+                .map(|request| request.payload())
+                .unwrap_or(&[]),
+        );
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
@@ -1696,20 +2812,278 @@ where
             return Err(e.into());
         }
     }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
     super::finish_send(engine, io, tx, peer, pending)?;
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn continue_block1_tx<Mem, T>(
+fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     parsed: &ParsedMessage<'_>,
+    peer: Endpoint,
+    body: SlotId,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: DatagramIo,
+{
+    let mut nums = [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+    let Ok(count) = crate::message::MissingBlocks::decode(parsed.payload(), &mut nums) else {
+        return Ok(()); // RFC 9177 section 5: silently drop malformed ordering.
+    };
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return Ok(());
+    };
+    // Preflight the entire report, including only previously issued payloads.
+    // A valid first NUM cannot cause output before an invalid later NUM.
+    for &num in &nums[..count] {
+        if num >= transfer.next_num() || engine.reissue_q_block1(body, num).is_err() {
+            return Ok(());
+        }
+    }
+    let Some(live) = lives.get(Call::new(parsed.token(), peer)) else {
+        return Ok(());
+    };
+    let mut queries = [""; MAX_PATH_SEGMENTS];
+    let mut query_n = 0;
+    for query in live.queries.values() {
+        queries[query_n] = query;
+        query_n += 1;
+    }
+    for &num in &nums[..count] {
+        let issued = engine.reissue_q_block1(body, num).map_err(Error::Block)?;
+        send_block1_issued(
+            engine,
+            io,
+            ids,
+            oscore,
+            now_ms,
+            peer,
+            Type::NonConfirmable,
+            live.code,
+            parsed.token(),
+            live.path.segments(),
+            &queries[..query_n],
+            live.accept,
+            live.content_format,
+            live.echo,
+            live.no_response,
+            live.if_match.as_slice(),
+            live.etag.as_slice(),
+            live.if_none_match,
+            issued,
+            true,
+            None,
+        )?;
+    }
+    if count != 0 {
+        arm_q_pacing(engine, lives, ids, now_ms, live.call);
+    }
+    Ok(())
+}
+
+// Only success-suppressed NON uploads use timer progression. The last packet's
+// bounded unbiased 0..=1000ms jitter sample also schedules its next payload set.
+fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
+    engine: &Engine<Mem>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &AppIds,
+    now_ms: u64,
+    call: Call,
+) {
+    let body = upload_body(engine, lives.upload_key(call));
+    let ready = body
+        .and_then(|body| engine.tx_body_transfer(body))
+        .is_some_and(|t| {
+            t.role() == BlockRole::OutgoingQBlock1
+                && !t.is_complete()
+                && t.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1
+        });
+    if let Some(live) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|live| live.call == call)
+    {
+        live.q_pace_ms = if ready
+            && live.ty == Type::NonConfirmable
+            && live
+                .no_response
+                .is_some_and(|mask| matches!(mask.get(), 2 | 18))
+        {
+            now_ms
+                .checked_add(u64::from(
+                    crate::message::QBlockTransmission::NON_TIMEOUT_MS + ids.jitter(),
+                ))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+    }
+}
+
+/// At most one due payload set per poll, oldest deadline first. Missed time does
+/// not accumulate send credit. Ingress runs first so valid Continue/recovery can
+/// disarm or rearm this opportunity before selection.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pace_qblock1<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    let Some(live) = lives
+        .rows
+        .iter()
+        .flatten()
+        .filter(|live| live.q_pace_ms != 0 && live.q_pace_ms <= now_ms)
+        .min_by_key(|live| live.q_pace_ms)
+        .copied()
+    else {
+        return Ok(());
+    };
+    // Clear before attempting: every success rearms from now, every failure
+    // retires the Call without changing the uncertainty of remote effects.
+    if let Some(row) = lives
+        .rows
+        .iter_mut()
+        .flatten()
+        .find(|row| row.call == live.call)
+    {
+        row.q_pace_ms = 0;
+    }
+    let Some(body) = upload_body(engine, lives.upload_key(live.call)) else {
+        return Ok(());
+    };
+    let result = (|| {
+        engine.pace_q_block1(body).map_err(Error::Block)?;
+        continue_block1_tx(
+            engine,
+            io,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            live.call.token(),
+            None,
+            None,
+            live.call.peer(),
+            body,
+        )
+    })();
+    if result.is_err() {
+        abandon_send(engine, oscore, live.call.token(), live.call.peer());
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            live.call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    mid: MessageId,
+    peer: Endpoint,
+) -> Result<(), Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+    T: DatagramIo,
+{
+    // Called only after a matching pending CON was taken. Duplicate/wrong
+    // endpoint/MID ACKs cannot drive the next payload.
+    let Some(entry) = exchange_for_mid(engine, mid, peer) else {
+        return Ok(());
+    };
+    let call = Call::new(entry.token(), peer);
+    let Some(live) = lives.get(call) else {
+        return Ok(());
+    };
+    if live.ty != Type::Confirmable {
+        return Ok(());
+    }
+    let Some(body) = upload_body(engine, lives.upload_key(call)) else {
+        return Ok(());
+    };
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return Ok(());
+    };
+    if transfer.role() != BlockRole::OutgoingQBlock1 || transfer.is_complete() {
+        return Ok(());
+    }
+    let outcome = (|| {
+        if transfer.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1 {
+            // Every earlier payload was individually ACKed before the next
+            // was issued, so this ACK confirms the entire current set.
+            engine
+                .ack_q_block1(body, transfer.num())
+                .map_err(Error::Block)?;
+        }
+        continue_block1_tx(
+            engine,
+            io,
+            lives,
+            ids,
+            oscore,
+            now_ms,
+            call.token(),
+            None,
+            None,
+            peer,
+            body,
+        )
+    })();
+    if outcome.is_err() {
+        abandon_send(engine, oscore, call.token(), peer);
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::ContinuationFailed,
+            true,
+        );
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    lives: &mut ClientLives<CALLS>,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    token: Token,
+    block1: Option<BlockValue>,
+    q_ack: Option<BlockValue>,
     peer: Endpoint,
     body: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -1720,14 +3094,26 @@ where
     let Some(transfer) = engine.tx_body_transfer(body) else {
         return Ok(());
     };
+    if let Some(preferred) = block1 {
+        if transfer.role() == BlockRole::OutgoingBlock1 && preferred.szx() < transfer.szx() {
+            engine
+                .adopt_smaller_block1(body, preferred.szx())
+                .map_err(Error::Block)?;
+        }
+    }
     if transfer.is_complete() {
         return Ok(());
     }
-    let live = lives.get(Call::new(parsed.token(), peer));
+    let live = lives.get(Call::new(token, peer));
     let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
     let code = live.map(|live| live.code).unwrap_or(Code::PUT);
     let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
+    let echo = live.and_then(|live| live.echo);
+    let no_response = live.and_then(|live| live.no_response);
+    let if_match = live.as_ref().and_then(|live| live.if_match.as_slice());
+    let etag = live.as_ref().and_then(|live| live.etag.as_slice());
+    let if_none_match = live.is_some_and(|live| live.if_none_match);
     let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
     let mut queries = [""; MAX_PATH_SEGMENTS];
     let mut query_n = 0;
@@ -1740,7 +3126,7 @@ where
     let accept = live.and_then(|live| live.accept);
     match transfer.role() {
         BlockRole::OutgoingBlock1 => {
-            take_exchange(engine, parsed, peer);
+            let _ = engine.take_exchange(ExchangeKey::new(token, peer));
             issue_block1(
                 engine,
                 io,
@@ -1750,17 +3136,41 @@ where
                 peer,
                 ty,
                 code,
-                parsed.token(),
+                token,
                 segments,
                 &queries[..query_n],
                 accept,
                 content_format,
+                echo,
+                no_response,
+                if_match,
+                etag,
+                if_none_match,
                 body,
                 None,
             )
         }
         BlockRole::OutgoingQBlock1 => {
-            if let Some(Ok(q)) = parsed.q_block1() {
+            let paced = ty == Type::NonConfirmable
+                && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
+            if paced {
+                if let Some(q) = q_ack {
+                    if transfer
+                        .window_base()
+                        .checked_add(u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) - 1)
+                        != Some(q.num())
+                        || q.szx() != transfer.szx()
+                        || !q.more()
+                    {
+                        return Ok(());
+                    }
+                } else if transfer.window_mask() != 0 {
+                    // A response without the current set's valid Continue must
+                    // neither grant send credit nor postpone its pacing timer.
+                    return Ok(());
+                }
+            }
+            if let Some(q) = q_ack {
                 engine.ack_q_block1(body, q.num()).map_err(Error::Block)?;
             }
             issue_q_block1_window(
@@ -1772,27 +3182,34 @@ where
                 peer,
                 ty,
                 code,
-                parsed.token(),
+                token,
                 segments,
                 &queries[..query_n],
                 accept,
                 content_format,
+                echo,
+                no_response,
+                if_match,
+                etag,
+                if_none_match,
                 body,
                 None,
-                Some((parsed.token(), peer)),
+                Some((token, peer)),
             )
-            .map(|_| ())
+            .map(|_| ())?;
+            arm_q_pacing(engine, lives, ids, now_ms, Call::new(token, peer));
+            Ok(())
         }
         _ => Ok(()),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_block1<Mem, T>(
+fn issue_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1802,6 +3219,11 @@ fn issue_block1<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     tx: Option<SlotId>,
 ) -> Result<(), Error<T::Error>>
@@ -1824,6 +3246,11 @@ where
         queries,
         accept,
         content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
         issued,
         false,
         tx,
@@ -1831,11 +3258,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn issue_q_block1_window<Mem, T>(
+fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     first_ty: Type,
@@ -1845,6 +3272,11 @@ fn issue_q_block1_window<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     body: SlotId,
     mut tx: Option<SlotId>,
     take_first: Option<(Token, Endpoint)>,
@@ -1854,7 +3286,6 @@ where
     T: DatagramIo,
 {
     let mut sent = false;
-    let mut extra = 0u16;
     loop {
         let issued = match engine.next_q_block1(body) {
             Ok(issued) => issued,
@@ -1866,11 +3297,7 @@ where
                 let _ = engine.take_exchange(ExchangeKey::new(tok, ep));
             }
         }
-        let ty = if extra == 0 {
-            first_ty
-        } else {
-            Type::NonConfirmable
-        };
+        let ty = first_ty;
         send_block1_issued(
             engine,
             io,
@@ -1885,24 +3312,30 @@ where
             queries,
             accept,
             content_format,
+            echo,
+            no_response,
+            if_match,
+            etag,
+            if_none_match,
             issued,
             true,
             tx.take(),
         )?;
         sent = true;
-        extra = extra.saturating_add(1);
-        if issued.complete() {
+        // CON uploads have one outstanding payload; the matching empty ACK
+        // opens the next send. NON retains its bounded payload-set burst.
+        if first_ty == Type::Confirmable || issued.complete() {
             return Ok(true);
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_block1_issued<Mem, T>(
+fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    ids: &mut Ids,
-    oscore: &mut super::oscore::Field,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
@@ -1912,6 +3345,11 @@ fn send_block1_issued<Mem, T>(
     queries: &[&str],
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
     issued: OutgoingBlock,
     q_block1: bool,
     tx: Option<SlotId>,
@@ -1934,13 +3372,86 @@ where
         Some(tx) => tx,
         None => engine.acquire_tx().ok_or(Error::Saturated)?,
     };
-    let mid = ids.next();
+    let mid = match ids.next_for(engine, io, now_ms) {
+        Ok(mid) => mid,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(error);
+        }
+    };
+    if let Err(error) = encode_block1_request(
+        engine,
+        oscore,
+        tx,
+        ty,
+        code,
+        mid,
+        token,
+        path,
+        queries,
+        accept,
+        content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
+        issued.block(),
+        q_block1,
+        tag,
+        size1,
+        &chunk[..n],
+    ) {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+
+    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_block1_request<Mem, E, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    tx: SlotId,
+    ty: Type,
+    code: Code,
+    mid: MessageId,
+    token: Token,
+    path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
+    content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
+    block: BlockValue,
+    q_block1: bool,
+    tag: BodyTag,
+    size1: Option<u32>,
+    payload: &[u8],
+) -> Result<(), Error<E>>
+where
+    Mem: Storage + DatagramSlots,
+{
     let cf = content_format.map(ContentFormat::encode);
     let acc = accept.map(ContentFormat::encode);
-    let blk = issued.block().encode();
+    let blk = block.encode();
     let size = size1.map(encode_uint);
+    let no_response = no_response.map(crate::message::NoResponse::encode);
     let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
     let filled = (|| -> Result<(), EncodeError> {
+        if let Some(value) = if_match {
+            push_opt(&mut opts, Opt::if_match(value))?;
+        }
+        if let Some(value) = etag {
+            push_opt(&mut opts, Opt::etag(value))?;
+        }
+        if if_none_match && block.num() == 0 {
+            push_opt(&mut opts, Opt::if_none_match())?;
+        }
         for segment in path {
             push_opt(&mut opts, Opt::uri_path(segment))?;
         }
@@ -1961,26 +3472,28 @@ where
         if let Some(ref encoded) = size {
             push_opt(&mut opts, Opt::size1(encoded))?;
         }
+        if let Some(ref value) = no_response {
+            push_opt(&mut opts, Opt::no_response(value))?;
+        }
+        if let Some(echo) = echo.as_ref() {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
         if let Some(tag) = tag.as_slice() {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
         Ok(())
     })();
     if let Err(e) = filled {
-        let _ = engine.release_tx(tx);
         return Err(Error::Message(SlotMessageError::Encode(e)));
     }
     let msg = Message::new(ty, code, mid)
         .with_token(token)
         .with_options(opts.as_slice())
-        .with_payload(&chunk[..n]);
-    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(e);
-    }
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid)
+        .with_payload(payload);
+    super::oscore::encode_request(oscore, engine, tx, &msg)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_client_send<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -1989,6 +3502,7 @@ fn finish_client_send<Mem, T>(
     ty: Type,
     now_ms: u64,
     mid: MessageId,
+    jitter: u32,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges,
@@ -2005,7 +3519,7 @@ where
             return Err(e.into());
         }
     }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid));
+    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, jitter));
     match super::finish_send(engine, io, tx, dest, pending) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -2013,6 +3527,48 @@ where
             Err(e)
         }
     }
+}
+
+// A send can fail after earlier Q-Block datagrams went out. No Call is
+// returned, so retire all local state owned by this request. Never rewind
+// OSCORE sequence numbers: a transport error does not prove non-delivery.
+fn abandon_send<Mem, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    token: Token,
+    peer: Endpoint,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+{
+    let _ = engine.take_exchange(ExchangeKey::new(token, peer));
+    for i in 0..engine.capacities().tx_datagram_slots {
+        let id = SlotId::from_index(i);
+        let Some(pending) = engine.pending_con(id) else {
+            continue;
+        };
+        if engine.tx_endpoint(id) == Some(peer)
+            && engine
+                .decode_tx(id)
+                .is_ok_and(|message| message.token() == token && message.code().is_request())
+        {
+            let _ = engine.take_pending_con(pending.message_id(), peer);
+            let _ = engine.release_tx(id);
+        }
+    }
+    for i in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(i);
+        if engine.tx_body_transfer(id).is_some_and(|transfer| {
+            transfer.key().token() == token
+                && transfer.key().endpoint() == peer
+                && matches!(
+                    transfer.role(),
+                    BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+                )
+        }) {
+            let _ = engine.release_tx_body(id);
+        }
+    }
+    super::oscore::cancel(oscore, token);
 }
 
 fn drop_exchange_for_tx<Mem: Storage + Exchanges>(engine: &mut Engine<Mem>, tx: SlotId) {
@@ -2049,6 +3605,12 @@ fn copy_tx_range<Mem: Storage + BodySlots>(
     Ok(issued.len())
 }
 
+fn upload_body<Mem: Storage + BodySlots>(engine: &Engine<Mem>, key: BlockKey) -> Option<SlotId> {
+    engine
+        .lookup_tx_body_role(key, BlockRole::OutgoingBlock1)
+        .or_else(|| engine.lookup_tx_body_role(key, BlockRole::OutgoingQBlock1))
+}
+
 fn rx_body_payload<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) -> Option<&[u8]> {
     engine.rx_body_payload(id)
 }
@@ -2058,50 +3620,13 @@ fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotI
 }
 
 fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
-    let key = ObserveKey::new(call.token(), call.peer());
+    let key = ObserveKey::new_client(call.token(), call.peer());
     engine.lookup_observe(key).is_some()
 }
 
-fn take_client_observe<Mem: Storage + ObserveSlots>(engine: &mut Engine<Mem>, key: ObserveKey) {
-    let _ = engine.take_observe(key);
-}
-
-fn reuse_observe_token<P, T, const N: usize, const BLOCK_WISE: bool>(
-    app: &mut App<P, T, N, BLOCK_WISE>,
-    path: Path<'static>,
-    dest: Endpoint,
-) -> Token
-where
-    P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-{
-    if let Some(token) = app.lives.token_for(path, dest) {
-        return token;
-    }
-    let resource = ObserveResource::from_path(path.segments());
-    observe_token_on(&app.engine, resource, dest).unwrap_or_else(|| app.next_token())
-}
-
-fn observe_token_on<Mem>(
-    engine: &Engine<Mem>,
-    resource: ObserveResource,
-    dest: Endpoint,
-) -> Option<Token>
-where
-    Mem: Storage + ObserveSlots,
-{
-    let n = engine.capacities().observe_entries;
-    (0..n).find_map(|i| {
-        engine
-            .observe_interest(SlotId::from_index(i))
-            .and_then(|row| {
-                (row.endpoint() == dest && row.resource() == resource).then_some(row.token())
-            })
-    })
-}
-
-fn accept_client_observe<Mem>(
+fn accept_client_observe<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    lives: &ClientLives,
+    lives: &ClientLives<CALLS>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
     now_ms: u64,
@@ -2109,34 +3634,32 @@ fn accept_client_observe<Mem>(
 ) where
     Mem: Storage + ObserveSlots,
 {
-    let key = ObserveKey::new(parsed.token(), peer);
+    let key = ObserveKey::new_client(parsed.token(), peer);
     let live = lives.get(Call::new(parsed.token(), peer));
     if live.is_some_and(|live| live.observe == OutgoingObserve::Deregister) {
         let _ = engine.take_observe(key);
         return;
     }
-    if parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
-        let resource = live
-            .map(|live| ObserveResource::from_path(live.path.segments()))
-            .unwrap_or(ObserveResource::NONE);
-        let _ = engine
-            .insert_observe(ObserveInterest::new(parsed.token(), peer).with_resource(resource));
+    let subscribed = live.is_some_and(|live| live.observe == OutgoingObserve::Register)
+        || engine.lookup_observe(key).is_some();
+    if subscribed && parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
+        let _ = engine.insert_observe(ObserveInterest::new_client(parsed.token(), peer));
         let max_age = parsed
             .max_age()
             .and_then(Result::ok)
             .unwrap_or(super::DEFAULT_MAX_AGE_SECS);
         let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-    } else if via_exchange {
+    } else if via_exchange || subscribed {
         let _ = engine.take_observe(key);
     }
 }
 
 /// Retransmission give-up completes the call rather than silently losing it.
-pub(crate) fn give_up_client<Mem>(
+pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     tx: SlotId,
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
@@ -2177,12 +3700,37 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn fail_call<Mem>(
+// Retire a timed-out Q download in the same poll that reclaims its body.
+// The inbox must not keep a partial SlotId that another transfer can reuse.
+pub(crate) fn qblock_give_up<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    key: ExchangeKey,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
+    let call = Call::new(key.token(), key.endpoint());
+    if lives.get(call).is_some() {
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::TimedOut,
+            true,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     call: Call,
     failure: CallFailure,
     release_pending: bool,
@@ -2199,7 +3747,10 @@ fn fail_call<Mem>(
             }
         }
     }
-    let _ = engine.take_observe(ObserveKey::new(call.token(), call.peer()));
+    let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer()));
+    if let Some(rx) = inbox.take_datagram(call) {
+        let _ = engine.release_rx(rx);
+    }
     if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
         let _ = engine.release_rx_body(body);
     }
@@ -2216,8 +3767,15 @@ fn fail_call<Mem>(
             let _ = engine.release_rx_body(id);
         }
     }
-    if let Some(body) = engine.lookup_tx_body(lives.upload_key(call)) {
-        let _ = engine.release_tx_body(body);
+    if let Some(body) = upload_body(engine, lives.upload_key(call)) {
+        if engine.tx_body_transfer(body).is_some_and(|transfer| {
+            matches!(
+                transfer.role(),
+                BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+            )
+        }) {
+            let _ = engine.release_tx_body(body);
+        }
     }
     super::oscore::cancel(oscore, call.token());
     // Untaken failures occupy the same bounded completion budget as replies.
@@ -2232,11 +3790,11 @@ fn fail_call<Mem>(
     }
 }
 
-pub(crate) fn complete_client_rst<Mem>(
+pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     message_id: MessageId,
     peer: Endpoint,
 ) where
@@ -2259,16 +3817,16 @@ pub(crate) fn complete_client_rst<Mem>(
     }
 }
 
-pub(crate) fn expire_client_exchanges<Mem>(
+pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox,
-    lives: &mut ClientLives,
-    oscore: &mut super::oscore::Field,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let mut due = [None; RESPONSE_INBOX];
+    let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
         let Some(live) = *live else {
             continue;

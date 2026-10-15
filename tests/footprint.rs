@@ -27,6 +27,26 @@ const RETAINED_QUERY_BUDGET: usize = 4 * (256 + 16 + 16);
 // retains an inline payload and endpoint; no assembled-body buffer is hidden here.
 const RETAINED_RESPONSE_BUDGET: usize = 5 * coaptic::app::RESPONSE_OPTION_BYTES + 192;
 
+// Exact cancellation retains a canonical request for each of the four Calls.
+// Includes length/Option alignment; this is protocol metadata, not body pools.
+const OBSERVE_REQUEST_BUDGET: usize = 4 * (coaptic::app::OBSERVE_REQUEST_BYTES + 16);
+
+// Two 9-byte optional tags and If-None-Match per Call, with alignment.
+const RETAINED_CONDITIONS_BUDGET: usize = 4 * 24;
+// Four three-state Observe format values, including potential alignment.
+const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
+
+// Complete-response retention adds one optional RX slot identity per Call.
+// App also retains the deferred generation/deadline, retention flag and padding;
+// zero deferred slots reserve no request/response header arrays.
+const FULL_RESPONSE_STATE_BUDGET: usize =
+    4 * size_of::<Option<coaptic::storage::SlotId>>() + 4 * size_of::<u64>();
+
+#[cfg(feature = "oscore")]
+const SECURITY_CONTEXT_BUDGET: usize = size_of::<Option<coaptic::oscore::SecurityContext>>();
+#[cfg(not(feature = "oscore"))]
+const SECURITY_CONTEXT_BUDGET: usize = 0;
+
 fn assert_datagram_omits_assembled(
     datagram_app: usize,
     block_wise_app: usize,
@@ -38,13 +58,21 @@ fn assert_datagram_omits_assembled(
         "Memory body pools must add RAM ({datagram_mem} !< {block_wise_mem})"
     );
     assert!(
-        datagram_app < block_wise_mem,
-        "datagram App ({datagram_app}) must not include WithBodies Memory ({block_wise_mem})"
+        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET) < block_wise_mem,
+        "datagram App ({datagram_app}), excluding explicit cancellation metadata, must not include WithBodies Memory ({block_wise_mem})"
     );
     let overhead = datagram_app.saturating_sub(datagram_mem);
     assert!(
-        overhead < RESPONSE_BODY + RETAINED_QUERY_BUDGET + RETAINED_RESPONSE_BUDGET,
-        "datagram App must not carry an assembled body beyond its bounded query/response metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
+        overhead
+            < RESPONSE_BODY
+                + RETAINED_QUERY_BUDGET
+                + RETAINED_RESPONSE_BUDGET
+                + OBSERVE_REQUEST_BUDGET
+                + RETAINED_CONDITIONS_BUDGET
+                + OBSERVE_FORMAT_BUDGET
+                + FULL_RESPONSE_STATE_BUDGET
+                + SECURITY_CONTEXT_BUDGET,
+        "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
     let app_delta = block_wise_app - datagram_app;
@@ -149,4 +177,38 @@ fn block_request_identity_sidecar_has_an_explicit_bound() {
         BlockTransfer::REQUEST_IDENTITY_BYTES
     );
     assert!(bytes <= BlockTransfer::REQUEST_IDENTITY_BYTES + 192);
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn protected_recovery_reference_has_a_fixed_sidecar_budget() {
+    let bytes = size_of::<Option<(coaptic::message::Token, coaptic::oscore::RequestRef)>>();
+    println!("protected recovery reference: {bytes} bytes per body sidecar");
+    assert!(bytes <= 24);
+}
+
+#[test]
+fn observe_format_retention_has_a_small_explicit_bound() {
+    assert!(size_of::<Option<Option<coaptic::message::ContentFormat>>>() <= 4);
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn observe_and_download_security_bindings_remain_bounded() {
+    let bytes = size_of::<coaptic::oscore::SecurityContext>();
+    println!("SecurityContext with four registration/download pairs: {bytes} bytes");
+    assert!(size_of::<Option<coaptic::oscore::RequestRef>>() <= 16);
+    assert!(
+        bytes <= 512,
+        "pairwise context exceeded its explicit binding budget: {bytes}"
+    );
+}
+
+#[test]
+fn deferred_headers_are_reserved_only_by_explicit_slot_selection() {
+    type Ordinary = App<profiles::Default, ()>;
+    type Deferred = App<profiles::Default, (), DEFAULT_ROUTES, false, Memory<profiles::Default>, 1>;
+    let added = size_of::<Deferred>() - size_of::<Ordinary>();
+    assert!(added >= 2 * coaptic::app::RESPONSE_OPTION_BYTES);
+    assert!(added < 2048, "one bounded deferred row adds {added} bytes");
 }

@@ -13,11 +13,17 @@ use super::Storage;
 
 /// Caller-owned datagram transport (UDP, test loopback, or a `no_std` radio).
 ///
-/// Implement this on the socket or driver, then
-/// [`crate::app::AppBuilder::bind`]. [`Engine::recv_from`] and
-/// [`Engine::send_tx`] are the Engine-side bind. The core does not own a
-/// socket. `recv` writes into the caller buffer; `Ok(None)` is idle
-/// (timeout or would-block).
+/// Available without `std` or `alloc`. Implement it on the platform socket or
+/// driver and pass that value to [`crate::app::AppBuilder::bind`], which uses
+/// fixed profile storage. App owns the transport value without requiring a
+/// `Box`; platform network-stack and task allocations remain outside Coaptic's
+/// storage budget. [`Engine::recv_from`] and [`Engine::send_tx`] borrow the
+/// transport directly. `Ok(None)` means timeout or would-block.
+///
+/// Engine work is bounded by storage capacity, not by elapsed time. For a
+/// bounded polling latency, implementations must bound the time spent in both
+/// receive and send (for example, use nonblocking sockets). The caller must
+/// also bound application callbacks and the interval between polls.
 pub trait DatagramIo {
     /// Transport-specific failure. Not a CoAP code.
     type Error;
@@ -32,6 +38,16 @@ pub trait DatagramIo {
 
     /// Send one complete datagram to `dest`; success must report `bytes.len()`.
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error>;
+
+    /// Optional platform entropy, used only by App's explicit stateful binding.
+    /// Fill every byte cryptographically securely in bounded time; return false
+    /// on failure. Never source these bytes from received network packets.
+    /// The default refuses. Transport decorators must forward this method when
+    /// wrapping an entropy-capable transport, or wrap the outermost adapter in
+    /// [`crate::platform::WithEntropy`]. Ordinary Engine I/O never calls it.
+    fn fill_random(&mut self, _bytes: &mut [u8]) -> bool {
+        false
+    }
 }
 
 /// Failure of [`Engine::recv_from`] / [`Engine::send_tx`].
@@ -99,6 +115,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         &mut self,
         io: &mut T,
     ) -> Result<Option<SlotId>, DatagramIoError<T::Error>> {
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics_mut().recv_attempts, 1);
         let id = self.acquire_rx().ok_or(DatagramIoError::Saturated)?;
         let outcome = match self.storage_mut().rx_payload_mut(id) {
             Some(buf) => io.recv(buf),
@@ -121,9 +139,13 @@ impl<S: Storage + DatagramSlots> Engine<S> {
                     return Err(DatagramIoError::Slot(e));
                 }
                 Metrics::inc(&mut self.metrics_mut().rx_accepted);
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().rx_wire_bytes, n);
                 Ok(Some(id))
             }
             Ok(None) => {
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().recv_idle, 1);
                 let _ = self.release_rx(id);
                 Ok(None)
             }
@@ -172,6 +194,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         match outcome {
             Ok(n) => {
                 Metrics::inc(&mut self.metrics_mut().tx_ok);
+                #[cfg(feature = "diagnostics")]
+                super::WorkMetrics::add(&mut self.work_metrics_mut().tx_wire_bytes, n);
                 Ok(n)
             }
             Err(e) => {
@@ -185,8 +209,12 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 /// Receives into scratch with one extra byte so exact-capacity datagrams are
 /// accepted and oversized datagrams cannot become valid-looking prefixes.
 /// Uses default-profile-sized stack scratch; larger caller buffers use a
-/// fallible temporary allocation of `buf.len() + 1` bytes. Native receive errors
+/// fallible temporary allocation of `buf.len() + 1` bytes only with `alloc`.
+/// Without `alloc`, larger buffers return `InvalidInput` before socket I/O.
+/// Native receive errors
 /// (including platform-specific truncation errors) are preserved.
+/// Use [`UdpSocketIo`] with caller-supplied scratch to avoid that temporary
+/// allocation when receiving larger datagrams.
 #[cfg(feature = "std")]
 impl DatagramIo for std::net::UdpSocket {
     type Error = std::io::Error;
@@ -194,35 +222,115 @@ impl DatagramIo for std::net::UdpSocket {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         const STACK_BYTES: usize =
             <super::profiles::Default as super::MemoryProfile>::RX_DATAGRAM_BYTES + 1;
-        let required = buf.len().checked_add(1).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "receive buffer too large")
-        })?;
+        let required = buf
+            .len()
+            .checked_add(1)
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
         let mut stack = [0; STACK_BYTES];
+        #[cfg(feature = "alloc")]
         let mut heap = std::vec::Vec::new();
         let scratch = if required <= stack.len() {
             &mut stack[..required]
         } else {
-            heap.try_reserve_exact(required)
-                .map_err(std::io::Error::other)?;
-            heap.resize(required, 0);
-            heap.as_mut_slice()
-        };
-        match self.recv_from(scratch) {
-            Ok((n, _)) if n > buf.len() => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "datagram exceeds receive capacity",
-            )),
-            Ok((n, from)) => {
-                buf[..n].copy_from_slice(&scratch[..n]);
-                Ok(Some((n, Endpoint::from(from))))
+            #[cfg(feature = "alloc")]
+            {
+                heap.try_reserve_exact(required)
+                    .map_err(std::io::Error::other)?;
+                heap.resize(required, 0);
+                heap.as_mut_slice()
             }
-            Err(e) if is_idle_io(&e) => Ok(None),
-            Err(e) => Err(e),
-        }
+            #[cfg(not(feature = "alloc"))]
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        };
+        recv_udp(self, buf, scratch)
     }
 
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
         self.send_to(bytes, std::net::SocketAddr::from(dest))
+    }
+}
+
+/// Standard UDP transport with reusable caller-supplied receive scratch.
+///
+/// Scratch must contain at least one byte more than each destination buffer.
+/// It can be an array, a borrowed slice or storage allocated once by the caller.
+/// This adapter neither grows nor allocates scratch during receive. Custom
+/// `AsMut` implementations and the OS network stack control their own memory.
+/// Accepted packets are still copied into the destination; this is not zero-copy.
+/// Socket blocking, timeout and nonblocking settings are retained.
+///
+/// ```no_run
+/// use coaptic::storage::UdpSocketIo;
+/// use std::net::UdpSocket;
+/// let socket = UdpSocket::bind("127.0.0.1:5683")?;
+/// socket.set_nonblocking(true)?;
+/// let mut scratch = [0; 2049];
+/// let transport = UdpSocketIo::new(socket, &mut scratch[..])?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[cfg(feature = "std")]
+pub struct UdpSocketIo<S> {
+    socket: std::net::UdpSocket,
+    scratch: S,
+}
+
+#[cfg(feature = "std")]
+impl<S: AsMut<[u8]>> UdpSocketIo<S> {
+    /// Own the socket and scratch. Empty scratch is refused.
+    pub fn new(socket: std::net::UdpSocket, mut scratch: S) -> std::io::Result<Self> {
+        if scratch.as_mut().is_empty() {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        }
+        Ok(Self { socket, scratch })
+    }
+
+    /// Access the socket for endpoint inspection or configuration.
+    #[must_use]
+    pub const fn socket(&self) -> &std::net::UdpSocket {
+        &self.socket
+    }
+
+    /// Recover the socket and caller storage.
+    #[must_use]
+    pub fn into_parts(self) -> (std::net::UdpSocket, S) {
+        (self.socket, self.scratch)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<S: AsMut<[u8]>> DatagramIo for UdpSocketIo<S> {
+    type Error = std::io::Error;
+
+    fn recv(&mut self, buf: &mut [u8]) -> std::io::Result<Option<(usize, Endpoint)>> {
+        recv_udp(&self.socket, buf, self.scratch.as_mut())
+    }
+
+    fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> std::io::Result<usize> {
+        self.socket.send_to(bytes, std::net::SocketAddr::from(dest))
+    }
+}
+
+#[cfg(feature = "std")]
+fn recv_udp(
+    socket: &std::net::UdpSocket,
+    buf: &mut [u8],
+    scratch: &mut [u8],
+) -> std::io::Result<Option<(usize, Endpoint)>> {
+    let required = buf
+        .len()
+        .checked_add(1)
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    let scratch = scratch
+        .get_mut(..required)
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    match socket.recv_from(scratch) {
+        Ok((n, _)) if n > buf.len() => Err(std::io::ErrorKind::InvalidData.into()),
+        Ok((n, from)) => {
+            buf[..n].copy_from_slice(&scratch[..n]);
+            Ok(Some((n, Endpoint::from(from))))
+        }
+        Err(e) if is_idle_io(&e) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -425,6 +533,139 @@ mod udp_tests {
     use std::time::Duration;
 
     #[test]
+    fn reusable_udp_scratch_rejects_oversize_without_exposing_prefix() {
+        for address in ["127.0.0.1:0", "[::1]:0"] {
+            let sender = UdpSocket::bind(address).unwrap();
+            let socket = UdpSocket::bind(address).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let dest = socket.local_addr().unwrap();
+            let mut scratch = [0; 2049];
+            let mut receiver = UdpSocketIo::new(socket, &mut scratch[..]).unwrap();
+            for capacity in [0, 64, 1472, 2048] {
+                let mut output = std::vec![0xA5; capacity];
+                for extra in [0, 1, 100] {
+                    let payload = std::vec![0x39; capacity + extra];
+                    sender.send_to(&payload, dest).unwrap();
+                    output.fill(0xA5);
+                    let got = receiver.recv(&mut output);
+                    if extra == 0 {
+                        assert_eq!(
+                            got.unwrap(),
+                            Some((capacity, sender.local_addr().unwrap().into()))
+                        );
+                        assert_eq!(output, payload);
+                    } else {
+                        assert!(got.is_err());
+                        assert!(output.iter().all(|b| *b == 0xA5));
+                    }
+                    sender.send_to(b"", dest).unwrap();
+                    assert_eq!(receiver.recv(&mut output).unwrap().unwrap().0, 0);
+                }
+            }
+            receiver.socket().set_nonblocking(true).unwrap();
+            assert_eq!(receiver.recv(&mut [0; 2048]).unwrap(), None);
+            let (socket, _) = receiver.into_parts();
+            assert_eq!(socket.local_addr().unwrap(), dest);
+        }
+    }
+
+    #[test]
+    fn insufficient_scratch_does_not_consume_the_datagram() {
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let dest = socket.local_addr().unwrap();
+        let mut receiver = UdpSocketIo::new(socket, [0; 65]).unwrap();
+        sender.send_to(&[0x39; 64], dest).unwrap();
+        let mut too_large = [0xA5; 65];
+        assert_eq!(
+            receiver.recv(&mut too_large).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        assert_eq!(too_large, [0xA5; 65]);
+        let mut fits = [0; 64];
+        assert_eq!(receiver.recv(&mut fits).unwrap().unwrap().0, 64);
+        assert_eq!(fits, [0x39; 64]);
+        assert!(
+            matches!(UdpSocketIo::new(sender, [0; 0]), Err(e) if e.kind() == std::io::ErrorKind::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn reusable_udp_scratch_sends_to_the_requested_peer() {
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sender = socket.local_addr().unwrap();
+        let mut io = UdpSocketIo::new(socket, [0; 65]).unwrap();
+        assert_eq!(
+            io.send(peer.local_addr().unwrap().into(), b"packet")
+                .unwrap(),
+            6
+        );
+        let mut bytes = [0; 64];
+        let (n, from) = peer.recv_from(&mut bytes).unwrap();
+        assert_eq!(&bytes[..n], b"packet");
+        assert_eq!(from, sender);
+    }
+
+    #[test]
+    fn reusable_udp_delivers_a_complete_app_block2_body() {
+        use crate::message::{BlockValue, Message, MessageId, Opt, Token, Type, decode};
+        use crate::{App, Code, Response, get};
+        static BODY: [u8; 2000] = [0x5A; 2000];
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let destination = socket.local_addr().unwrap();
+        let mut app = App::builder()
+            .routes::<1>()
+            .block_wise::<true>()
+            .randomness(|bytes| {
+                bytes.fill(0x39);
+                true
+            })
+            .route("large", get(|_| Response::content(&BODY).etag(b"body")))
+            .allow_plaintext()
+            .bind(UdpSocketIo::new(socket, [0; 1473]).unwrap())
+            .unwrap();
+        let token = Token::new(b"body").unwrap();
+        let mut complete = std::vec::Vec::new();
+        for number in 0..2 {
+            let selected = BlockValue::new(number, false, 6).unwrap().encode();
+            let options = [Opt::uri_path("large"), Opt::block2(&selected)];
+            let mid = MessageId::new(number as u16 + 1);
+            let request = Message::con(Code::GET, mid, token).with_options(&options);
+            let mut bytes = [0; 1472];
+            let n = request.encode(&mut bytes).unwrap();
+            peer.send_to(&bytes[..n], destination).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while app.metrics().rx_accepted <= number {
+                assert!(std::time::Instant::now() < deadline);
+                app.poll(u64::from(number)).unwrap();
+            }
+            let (n, from) = peer.recv_from(&mut bytes).unwrap();
+            assert_eq!(from, destination);
+            let response = decode(&bytes[..n]).unwrap();
+            assert_eq!(response.ty(), Type::Acknowledgement);
+            assert_eq!(response.code(), Code::CONTENT);
+            assert_eq!(response.message_id(), mid);
+            assert_eq!(response.token(), token);
+            assert_eq!(response.etag().next(), Some(&b"body"[..]));
+            let block = response.block2().unwrap().unwrap();
+            assert_eq!(block.num(), number);
+            assert_eq!(block.more(), number == 0);
+            complete.extend_from_slice(response.payload());
+        }
+        assert_eq!(complete, BODY);
+    }
+
+    #[test]
     fn udp_exact_capacity_oversize_and_recovery_ipv4_ipv6() {
         for address in ["127.0.0.1:0", "[::1]:0"] {
             let sender = UdpSocket::bind(address).unwrap();
@@ -433,12 +674,18 @@ mod udp_tests {
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let dest = receiver.local_addr().unwrap();
-            // Includes zero capacity, built-in profiles and the heap fallback.
-            for capacity in [0, 64, 1472, 2048] {
+            // The large raw-socket fallback is an explicit allocator capability.
+            let capacities = if cfg!(feature = "alloc") {
+                &[0, 64, 1472, 2048][..]
+            } else {
+                &[0, 64, 1472][..]
+            };
+            for &capacity in capacities {
                 let mut output = std::vec![0xA5; capacity];
                 for extra in [0, 1, 100] {
                     let payload = std::vec![0x39; capacity + extra];
                     sender.send_to(&payload, dest).unwrap();
+                    output.fill(0xA5);
                     let got = DatagramIo::recv(&mut receiver, &mut output);
                     if extra == 0 {
                         assert_eq!(
@@ -452,7 +699,7 @@ mod udp_tests {
                             "accepted truncated {address} capacity={capacity} extra={extra}"
                         );
                         // No prefix is exposed, even on Windows native failure.
-                        assert!(output.iter().all(|b| *b == 0x39));
+                        assert!(output.iter().all(|b| *b == 0xA5));
                     }
                     sender.send_to(b"", dest).unwrap();
                     assert_eq!(
