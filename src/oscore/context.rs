@@ -4,7 +4,10 @@ use crate::message::Token;
 
 use super::aead;
 use super::header::PartialIv;
-use super::{Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WINDOW};
+use super::{
+    Error, KEY_LEN, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, NONCE_LEN, REPLAY_WINDOW,
+    SenderReservationError,
+};
 
 /// Recipient replay-window checkpoint for caller-owned durable storage.
 ///
@@ -40,6 +43,29 @@ impl ReplayCheckpoint {
     #[must_use]
     pub const fn parts(self) -> (u64, u32) {
         (self.left, self.received)
+    }
+
+    /// Check that `next` preserves every sequence rejected by this checkpoint.
+    ///
+    /// This key-independent comparison lets durable adapters validate an update
+    /// without deriving another security context. It neither authenticates the
+    /// checkpoint's context identity nor detects a valid old storage snapshot;
+    /// the caller must establish those separately. Equal checkpoints are valid.
+    /// Neither checkpoint is changed on success or refusal.
+    pub fn validate_successor(self, next: Self) -> Result<(), Error> {
+        if next.left < self.left {
+            return Err(Error::ReplayRollback);
+        }
+        let shift = next.left - self.left;
+        let retained = if shift >= REPLAY_WINDOW {
+            0
+        } else {
+            self.received >> shift as u32
+        };
+        if retained & !next.received != 0 {
+            return Err(Error::ReplayRollback);
+        }
+        Ok(())
     }
 }
 
@@ -128,8 +154,9 @@ impl Id {
 
 /// Pairwise OSCORE context: keys, Sender Sequence Number, replay window.
 ///
-/// You own this value. [`crate::App`] stores it only after
-/// [`crate::App::set_oscore`]. A live context is intentionally not `Clone`:
+/// You own this value. Provision it through [`crate::app::AppBuilder::oscore`]
+/// before binding; [`crate::App::set_oscore`] supports later replacement.
+/// A live context is intentionally not `Clone`:
 /// copying its sender state could reuse a nonce (RFC 8613 section 7.2.1).
 ///
 /// ```compile_fail
@@ -138,7 +165,22 @@ impl Id {
 ///     let _duplicate = context.clone();
 /// }
 /// ```
-pub struct SecurityContext {
+pub type SecurityContext = BoundedSecurityContext<{ super::LIVE_REQUESTS }>;
+
+/// One pairwise context with a caller-selected inline request-binding table.
+///
+/// `REQUESTS` bounds distinct live outbound Tokens, independently of App Calls.
+/// Zero retains authentication and server response support but refuses outbound
+/// requests. No table growth or allocation occurs; operations scan at most
+/// `REQUESTS` entries. Keys, replay and sender state have the same ownership
+/// contract as [`SecurityContext`]. Layouts that exceed the address space are
+/// refused by Rust before execution:
+///
+/// ```compile_fail
+/// use coaptic::oscore::BoundedSecurityContext;
+/// const TOO_LARGE: usize = core::mem::size_of::<BoundedSecurityContext<{ usize::MAX }>>();
+/// ```
+pub struct BoundedSecurityContext<const REQUESTS: usize> {
     sender_id: Id,
     recipient_id: Id,
     id_context: [u8; MAX_ID_CONTEXT_LEN],
@@ -147,9 +189,10 @@ pub struct SecurityContext {
     recipient_key: [u8; KEY_LEN],
     common_iv: [u8; NONCE_LEN],
     sender_seq: u64,
+    sender_reserved_end: u64,
     replay_left: u64,
     replay_bits: u32,
-    live: [Option<LiveRequest>; super::LIVE_REQUESTS],
+    live: [Option<LiveRequest>; REQUESTS],
 }
 
 /// Token→[`RequestRef`] row. Observe registrations keep the row so
@@ -159,11 +202,13 @@ struct LiveRequest {
     token: Token,
     request: RequestRef,
     observe: bool,
+    observe_request: Option<RequestRef>,
+    response_no_piv: bool,
     notify_no_piv: bool,
     notify_number: Option<u64>,
 }
 
-impl core::fmt::Debug for SecurityContext {
+impl<const REQUESTS: usize> core::fmt::Debug for BoundedSecurityContext<REQUESTS> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SecurityContext")
             .field("key_material", &"[REDACTED]")
@@ -172,7 +217,20 @@ impl core::fmt::Debug for SecurityContext {
     }
 }
 
-impl SecurityContext {
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+    /// Maximum distinct live request Tokens, including retained Observe registrations.
+    #[must_use]
+    pub const fn request_capacity(&self) -> usize {
+        REQUESTS
+    }
+
+    /// Inline request-table bytes, including metadata and padding, excluding key/replay
+    /// state, other App fields, temporary stack, and caller-owned platform memory.
+    #[must_use]
+    pub const fn request_metadata_bytes(&self) -> usize {
+        core::mem::size_of::<[Option<LiveRequest>; REQUESTS]>()
+    }
+
     /// Derive Sender Key, Recipient Key, and Common IV.
     pub fn derive(params: DeriveParams<'_>) -> Result<Self, Error> {
         if params.master_secret.is_empty() || params.master_secret.len() > 64 {
@@ -235,9 +293,10 @@ impl SecurityContext {
             recipient_key,
             common_iv,
             sender_seq: 0,
+            sender_reserved_end: u64::MAX,
             replay_left: 0,
             replay_bits: 0,
-            live: [None; super::LIVE_REQUESTS],
+            live: [None; REQUESTS],
         })
     }
 
@@ -291,6 +350,8 @@ impl SecurityContext {
     /// the caller must durably reserve numbers before using them and restore
     /// recipient replay protection separately. Deriving the same context again
     /// starts at zero and is not a safe restart procedure by itself.
+    /// On a guarded context this never extends the reserved upper bound; see
+    /// [`Self::restore_sender_reservation`] and [`Self::reserve_sender_sequences`].
     pub const fn set_sender_seq(&mut self, seq: u64) -> Result<(), Error> {
         if seq < self.sender_seq {
             return Err(Error::SequenceRollback);
@@ -300,6 +361,90 @@ impl SecurityContext {
         }
         self.sender_seq = seq;
         Ok(())
+    }
+
+    /// Enable guarded sender reservations and resume after the last durable range.
+    ///
+    /// `exclusive_end` must be the latest authenticated, rollback-protected upper
+    /// bound stored for this exact key/context epoch. Every number below it is
+    /// skipped, including unused numbers from before restart. Use zero only for
+    /// a context whose sender key has never been used. Refuses bounds below the
+    /// current counter or an already granted range, and bounds above `2^40`;
+    /// refusal leaves the context unchanged.
+    ///
+    /// No new sender Partial IV can be used until
+    /// [`Self::reserve_sender_sequences`] commits another range. Guarding cannot
+    /// be disabled on this context. [`Self::set_sender_seq`] may skip numbers but
+    /// does not grant them. Ordinary responses without a new Partial IV use the
+    /// authenticated request nonce and do not consume this range.
+    ///
+    /// This does not recover recipient replay protection or live request/Observe
+    /// bindings. Restore replay state separately before receiving with reused
+    /// keys. If durable state freshness is uncertain, provision a fresh context.
+    pub const fn restore_sender_reservation(&mut self, exclusive_end: u64) -> Result<(), Error> {
+        if exclusive_end < self.sender_seq
+            || (self.sender_reserved_end != u64::MAX && exclusive_end < self.sender_reserved_end)
+        {
+            return Err(Error::SequenceRollback);
+        }
+        if exclusive_end > (1u64 << 40) {
+            return Err(Error::SequenceExhausted);
+        }
+        self.sender_seq = exclusive_end;
+        self.sender_reserved_end = exclusive_end;
+        Ok(())
+    }
+
+    /// Exclusive end of the granted sender range, or `None` for an unguarded context.
+    ///
+    /// Unguarded contexts retain the caller-managed sequence contract of
+    /// [`Self::set_sender_seq`]. New contexts are unguarded until
+    /// [`Self::restore_sender_reservation`] is called.
+    #[must_use]
+    pub const fn sender_reservation_end(&self) -> Option<u64> {
+        if self.sender_reserved_end == u64::MAX {
+            None
+        } else {
+            Some(self.sender_reserved_end)
+        }
+    }
+
+    /// Grant `additional` sender sequences only after durable storage succeeds.
+    ///
+    /// First enable guarding with [`Self::restore_sender_reservation`]. The
+    /// callback receives the new exclusive upper bound; atomically persist it
+    /// with this context's authenticated epoch identity and anti-rollback state.
+    /// Return `Ok(())` only after the write is durable across power loss, not
+    /// merely queued or cached. The callback is synchronous and called once;
+    /// no allocation or storage backend is imposed by this crate.
+    ///
+    /// A successful call extends the granted range from the greater of the old
+    /// upper bound and current counter. It does not change the counter or live
+    /// bindings. Zero, overflow, and sequence-space exhaustion fail before the
+    /// callback runs. A callback error leaves the counter and granted range
+    /// unchanged. If a write succeeds but its acknowledgment is lost, recovery
+    /// must use the actual durable upper bound and skip the entire old range.
+    /// Failed protection still spends any sequence it consumed; retransmit
+    /// retained protected bytes instead of encrypting with an old sequence.
+    pub fn reserve_sender_sequences<E>(
+        &mut self,
+        additional: u64,
+        persist: impl FnOnce(u64) -> Result<(), E>,
+    ) -> Result<u64, SenderReservationError<E>> {
+        let Some(end) = self.sender_reservation_end() else {
+            return Err(SenderReservationError::NotEnabled);
+        };
+        if additional == 0 {
+            return Err(SenderReservationError::InvalidSize);
+        }
+        let end = end
+            .max(self.sender_seq)
+            .checked_add(additional)
+            .filter(|end| *end <= (1u64 << 40))
+            .ok_or(SenderReservationError::SequenceExhausted)?;
+        persist(end).map_err(SenderReservationError::Persistence)?;
+        self.sender_reserved_end = end;
+        Ok(end)
     }
 
     /// Whether `kid` (and optional `kid context`) selects this Recipient Context.
@@ -315,11 +460,15 @@ impl SecurityContext {
         }
     }
 
+    pub(crate) fn has_live_requests(&self) -> bool {
+        self.live.iter().any(Option::is_some)
+    }
+
     /// Remember `(token, request)` for the matching response.
     ///
     /// Replaces an existing row for `token`. The table holds
-    /// [`crate::oscore::LIVE_REQUESTS`] (4) bindings — the same cap as the
-    /// App client inbox. A fifth distinct Token is [`Error::Saturated`].
+    /// `REQUESTS` bindings, independently of the configured App client capacity.
+    /// Another distinct Token returns [`Error::Saturated`] without eviction.
     pub fn remember(&mut self, token: Token, request: RequestRef) -> Result<(), Error> {
         self.remember_live(token, request, false)
     }
@@ -334,6 +483,8 @@ impl SecurityContext {
             token,
             request,
             observe,
+            observe_request: observe.then_some(request),
+            response_no_piv: false,
             notify_no_piv: false,
             notify_number: None,
         };
@@ -352,7 +503,61 @@ impl SecurityContext {
         Err(Error::Saturated)
     }
 
-    /// Look up a request binding by Token.
+    // A body request replaces only the latest response binding. Its parent
+    // Observe registration and notification replay history remain authoritative.
+    pub(crate) fn remember_download(
+        &mut self,
+        token: Token,
+        request: RequestRef,
+    ) -> Result<(), Error> {
+        if let Some(row) = self
+            .live
+            .iter_mut()
+            .flatten()
+            .find(|row| row.token == token && row.observe)
+        {
+            row.request = request;
+            row.response_no_piv = false;
+            return Ok(());
+        }
+        self.remember(token, request)
+    }
+
+    pub(crate) fn observe_request(&self, token: Token) -> Option<RequestRef> {
+        self.live
+            .iter()
+            .flatten()
+            .find(|row| row.token == token)
+            .and_then(|row| row.observe_request)
+    }
+
+    pub(crate) fn response_without_piv_fresh(&self, token: Token) -> Result<(), Error> {
+        let row = self
+            .live
+            .iter()
+            .flatten()
+            .find(|row| row.token == token)
+            .ok_or(Error::Context)?;
+        if row.response_no_piv {
+            Err(Error::Replay)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn accept_response_without_piv(&mut self, token: Token) -> Result<(), Error> {
+        self.response_without_piv_fresh(token)?;
+        self.live
+            .iter_mut()
+            .flatten()
+            .find(|row| row.token == token)
+            .ok_or(Error::Context)?
+            .response_no_piv = true;
+        Ok(())
+    }
+
+    /// Look up the latest request binding by Token.
+    /// Observe download follow-ups retain the original registration separately.
     #[must_use]
     pub fn lookup(&self, token: Token) -> Option<RequestRef> {
         self.live
@@ -360,7 +565,7 @@ impl SecurityContext {
             .find_map(|row| row.and_then(|r| (r.token == token).then_some(r.request)))
     }
 
-    /// Whether this Token is an in-flight Observe registration.
+    /// Whether this Token retains an Observe registration, including during body downloads.
     #[must_use]
     pub fn is_observe(&self, token: Token) -> bool {
         self.live
@@ -378,6 +583,27 @@ impl SecurityContext {
         None
     }
 
+    /// Read-only admission check; App commits only after response ACK succeeds.
+    pub(crate) fn notification_fresh(
+        &self,
+        token: Token,
+        piv: Option<PartialIv>,
+    ) -> Result<(), Error> {
+        let row = self
+            .live
+            .iter()
+            .find_map(|row| row.as_ref().filter(|r| r.token == token))
+            .ok_or(Error::Context)?;
+        if match piv {
+            None => row.notify_no_piv,
+            Some(piv) => row.notify_number.is_some_and(|n| piv.seq() <= n),
+        } {
+            Err(Error::Replay)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Replay-protect an Observe notification (RFC 8613 §7.4.1).
     ///
     /// At most one notification without Partial IV. A Partial IV must be
@@ -390,33 +616,25 @@ impl SecurityContext {
         token: Token,
         piv: Option<PartialIv>,
     ) -> Result<(), Error> {
+        self.notification_fresh(token, piv)?;
         let row = self
             .live
             .iter_mut()
             .find_map(|row| row.as_mut().filter(|r| r.token == token))
             .ok_or(Error::Context)?;
         match piv {
-            None => {
-                if row.notify_no_piv {
-                    return Err(Error::Replay);
-                }
-                row.notify_no_piv = true;
-                Ok(())
-            }
-            Some(piv) => {
-                let seq = piv.seq();
-                if row.notify_number.is_some_and(|n| seq <= n) {
-                    return Err(Error::Replay);
-                }
-                row.notify_number = Some(seq);
-                Ok(())
-            }
+            None => row.notify_no_piv = true,
+            Some(piv) => row.notify_number = Some(piv.seq()),
         }
+        Ok(())
     }
 
     pub(crate) fn take_sender_piv(&mut self) -> Result<PartialIv, Error> {
         if self.sender_seq >= (1 << 40) {
             return Err(Error::SequenceExhausted);
+        }
+        if self.sender_seq >= self.sender_reserved_end {
+            return Err(Error::SequenceUnreserved);
         }
         let piv = PartialIv::from_seq(self.sender_seq)?;
         self.sender_seq += 1;
@@ -457,21 +675,16 @@ impl SecurityContext {
     /// sequence numbers, and account for lost live bindings/Observe state.
     /// This comparison cannot detect an old checkpoint in a freshly derived
     /// context. Use a fresh cryptographic context if recovery is uncertain
-    /// (RFC 8613 section 7.5). App does not provide a durable pre-handler barrier;
-    /// use the lower-level unprotect API to commit before application effects.
+    /// (RFC 8613 section 7.5). [`crate::App::poll_with_oscore_checkpoint`] provides
+    /// a durable inbound-request barrier. With the lower-level unprotect API,
+    /// commit the updated checkpoint yourself before application effects.
+    /// If that lower-level commit fails, stop using the live context until
+    /// recovery; its in-memory replay window has already advanced. Termination
+    /// after a successful commit can leave the effect unapplied. Exactly-once
+    /// effects require a caller-owned transaction joining replay and application
+    /// state, or durable operation receipts across fresh security sessions.
     pub fn restore_replay(&mut self, checkpoint: ReplayCheckpoint) -> Result<(), Error> {
-        if checkpoint.left < self.replay_left {
-            return Err(Error::ReplayRollback);
-        }
-        let shift = checkpoint.left - self.replay_left;
-        let retained = if shift >= REPLAY_WINDOW {
-            0
-        } else {
-            self.replay_bits >> shift as u32
-        };
-        if retained & !checkpoint.received != 0 {
-            return Err(Error::ReplayRollback);
-        }
+        self.replay_checkpoint().validate_successor(checkpoint)?;
         self.replay_left = checkpoint.left;
         self.replay_bits = checkpoint.received;
         Ok(())

@@ -1,16 +1,27 @@
-//! Stand-alone [`no_std`] CoAP library: an approachable [`App`] face over
-//! messages and bounded storage.
+//! CoAP from microcontrollers to cloud services.
 //!
-//! Crate-root types are the happy path: [`App`], [`Request`], [`Response`],
-//! [`Call`], [`Outgoing`], [`get`] / [`put`] / [`post`] / [`delete`] /
-//! [`fetch`] / [`patch`] / [`ipatch`], [`Endpoint`], [`profiles`],
-//! [`Code`], [`ContentFormat`], [`Method`], [`ProblemDetails`], and the
-//! errors from [`bind`](app::AppBuilder::bind) / [`App::poll`] /
-//! [`Outgoing::send`]. Engine slots, tables, Block/Q-Block types,
-//! [`Ids`](message::Ids), and [`DatagramIo`](storage::DatagramIo) live in
-//! [`storage`] / [`message`].
+//! Rust, [`no_std`], and no heap allocation by default; optional `alloc` and `std`.
+//! [`App`] serves resources and exchanges messages through one client/server API.
+//! OSCORE protection is required by default; EDHOC provisioning is optional.
 //!
-//! # Happy path
+//! # Platform integration
+//!
+//! The core is independent of a microcontroller, board SDK or operating system.
+//! Constrained devices use fixed storage without allocation or the standard
+//! library. Applications supply [`storage::DatagramIo`], secure randomness,
+//! provisioned credentials and a monotonic clock, and drive [`App::poll`].
+//! The same service code can use a device adapter or a host transport.
+//! Our physical constrained-device qualification uses an ESP32-S3; other targets
+//! need their own integration and qualification evidence.
+//!
+//! # Client and server
+//!
+//! Apps require a provisioned pairwise OSCORE context before binding. Supply
+//! authenticated credentials from your provisioning system as
+//! `provisioned_credentials` below; the hidden doctest credentials are fixtures.
+//! Persist sender-sequence reservations before reuse of a key after restart.
+//! Explicit `AppBuilder::allow_plaintext` is available for unprotected tests
+//! and compatibility; disabling Cargo defaults never silently permits plaintext.
 //!
 //! ```text
 //! RX slot (+ body) --view--> Request
@@ -23,6 +34,8 @@
 //! ```
 //!
 //! ```
+//! # #[cfg(feature = "oscore")]
+//! # {
 //! use coaptic::{App, Request, Response, get, profiles};
 //! # use coaptic::storage::DatagramIo;
 //! # use coaptic::Endpoint;
@@ -39,10 +52,16 @@
 //!     Response::content(b"21.5")
 //! }
 //!
+//! # let provisioned_credentials = coaptic::oscore::DeriveParams {
+//! #     master_secret: &[0x42; 16], master_salt: &[], sender_id: &[1],
+//! #     recipient_id: &[2], id_context: &[],
+//! # };
+//! let context = coaptic::oscore::SecurityContext::derive(provisioned_credentials).unwrap();
 //! let mut app = App::profile::<profiles::Default>()
 //!     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 //!     .block_wise::<true>()
 //!     .route("sensors/temp", get(get_temp))
+//!     .oscore(context)
 //!     .bind(NullIo)
 //!     .unwrap();
 //! app.poll(0).unwrap();
@@ -51,6 +70,7 @@
 //! let call = app.get("sensors/temp").to(peer).send(0).unwrap();
 //! app.poll(0).unwrap();
 //! let _response = app.take_response(call);
+//! # }
 //! ```
 //!
 //! Path arguments accept both `"sensors/temp"` and `&["sensors", "temp"]`
@@ -69,6 +89,28 @@
 //! (RFC 9177, Content-Format 272). Caller-owned Echo issuance and verification use
 //! [`app::AppBuilder::echo_policy`].
 //!
+//! # One interface, adjustable resources
+//!
+//! [`App::with_resources`] selects one configuration from [`resources`], then
+//! binds routes, security and platform I/O. Presets support fixed storage or,
+//! with `alloc`, bounded heap storage with an explicit byte limit. Customize
+//! resource bounds before constructing the App; the configured builder has no
+//! resource overrides. [`memory_profile!`] defines custom fixed pool sizes.
+//! `std` and `alloc` remain independent. Existing [`App::builder`] and
+//! [`App::profile`] construction is retained for compatibility.
+//!
+//! The configured path retains complete responses by default. Collect them
+//! with [`App::take_response_into`] and caller-owned output. Short buffers refuse
+//! without consuming or partially copying the reply. Observe shares the client
+//! Call budget. The single OSCORE context defaults to four live request bindings;
+//! [`resources::Resources::security_requests`] configures that independent bound.
+//! Larger storage is not a security-association or throughput guarantee.
+//!
+//! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],
+//! [`DeferredReply`] and [`App::complete`]. The empty ACK is only reception.
+//! Domain work and durable state stay outside the App; bounded request metadata,
+//! separate-response retransmission and Block2 snapshots stay inside it.
+//!
 //! # What you own
 //!
 //! The socket ([`storage::DatagramIo`]), the clock (`now_ms` into
@@ -79,6 +121,9 @@
 //! cryptographically secure entropy through [`app::AppBuilder::randomness`]
 //! for Tokens, the initial Message ID and retransmission jitter. The library
 //! itself does not call an OS RNG.
+//! [`platform::CheckedClock`] wraps a fallible, stateful platform timer and rejects
+//! backward readings. Use one clock epoch for all timed App operations and
+//! propagate clock errors before sending or polling.
 //!
 //! # Modules
 //!
@@ -94,45 +139,40 @@
 //!   [`App::metrics`](App::metrics)). Advanced:
 //!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
 //! - `oscore` — pairwise OSCORE (feature `oscore`): caller-owned
-//!   `SecurityContext`, `App::set_oscore`.
+//!   `SecurityContext`, `AppBuilder::oscore` before bind.
+//! - `provisioning` — authenticated EDHOC bootstrap (feature `edhoc`) with
+//!   installed peer pins, explicit confirmation and fresh volatile OSCORE keys.
 //! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
 //!   [`profiles::Constrained`] (1152).
 //!
-//! Protocol copies: [`knowledge/rfcs/`][rfcs]. Architecture planning:
-//! [GitHub project][plan]. This rustdoc does not restate wire format.
-//! Integration tests live under `tests/` and `crates/coaptic-plugtest`.
-//! Timed mixed-stack dogfood + Observe notify collect:
-//! `cargo run -p coaptic-plugtest --bin dogfood`. CI compares `--iterations 2`
-//! against `crates/coaptic-plugtest/baselines/` (`--compare`; Metrics floors
-//! fail, including mixed-pair Block assemble sums; wall timings print as
-//! delta; `progress` is informational).
-//!
-//! # Future / backlog
+//! # Scope
 //!
 //! Protocol support and qualification are tracked separately in the
 //! repository issues. Passing individual scenarios does not establish full RFC
 //! conformance. Engine BERT (SZX 7) codecs exist; App does not expose them.
 //! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
 //! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
-//! window). `App::set_oscore` attaches it; Engine does not store keys.
+//! window). `AppBuilder::oscore` attaches it before bind; Engine does not store keys.
 //! Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy
-//! hop-by-hop), and first-party DTLS remain backlog — the
-//! `coaptic-plugtest` harness (feature `dtls`) wraps webrtc-dtls as a
-//! [`DatagramIo`](storage::DatagramIo). Inner Block-wise (Block1/Block2:
+//! hop-by-hop), and first-party DTLS are not supported.
+//! Inner Block-wise (Block1/Block2:
 //! fragment then protect) and Dual-class Max-Age / No-Response / ETag
-//! placement are on the App path. Alternative networks (6LoWPAN,
-//! LoRaWAN, …) are the same future / backlog.
+//! placement are on the App path. Network adapters such as 6LoWPAN and LoRaWAN
+//! are not supplied by this library.
 //!
 //! # Features
 //!
 //! - `alloc` — enable the allocator. Off by default.
-//! - `std` — enable the standard library. Implies `alloc`.
+//! - `std` — enable OS networking and standard error integration; independent of `alloc`.
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
-//!   `ccm` / `hkdf` / `sha2`. Off by default so the crate stays zero-dep.
+//!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
+//!   `--no-default-features` retains the zero-dependency Engine and requires
+//!   explicit plaintext opt-out for App construction without cryptography.
+//! - `edhoc` — optional pinned P-256 EDHOC method 3 / suite 2 provisioning.
+//!   Implies `oscore`, stays `no_std` and uses fixed storage without an allocator.
+//!   Install trusted credentials and supply fresh entropy through the caller.
 //!
 //! [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-prelude
-//! [rfcs]: https://github.com/jeffglousher/coaptic/tree/main/knowledge/rfcs
-//! [plan]: https://github.com/users/jeffglousher/projects/2
 
 #![no_std]
 #![deny(unsafe_code)]
@@ -150,13 +190,18 @@ pub mod error;
 pub mod message;
 #[cfg(feature = "oscore")]
 pub mod oscore;
+pub mod platform;
+#[cfg(feature = "edhoc")]
+pub mod provisioning;
 pub mod storage;
 
+pub use app::resources;
 pub use storage::profiles;
 
 pub use app::{
-    App, Call, CallFailure, EchoCheck, EchoDecision, EchoPolicy, Error, Method, Outgoing, Request,
-    Response, ResponseError, delete, fetch, get, ipatch, patch, post, put,
+    App, Call, CallFailure, DeferredReply, EchoCheck, EchoDecision, EchoPolicy, Error, Method,
+    Outgoing, Request, Response, ResponseBufferError, ResponseError, delete, fetch, get, ipatch,
+    patch, post, put,
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};

@@ -7,7 +7,7 @@ use crate::message::{
 };
 
 use super::aead::{self, Aad};
-use super::context::{RequestRef, SecurityContext};
+use super::context::{BoundedSecurityContext, RequestRef};
 use super::header::{self, OptionClass, OscoreHeader, PartialIv};
 use super::{Error, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, MAX_PIV_LEN, TAG_LEN};
 
@@ -16,9 +16,9 @@ const OPT_SLOTS: usize = 16;
 /// Inner plaintext / ciphertext scratch.
 const INNER: usize = 1280;
 
-/// Plug-in a caller can implement instead of [`SecurityContext`].
+/// Plug-in a caller can implement instead of [`super::SecurityContext`].
 ///
-/// [`crate::App::set_oscore`] takes [`SecurityContext`]. Use this trait when
+/// [`crate::App::set_oscore`] takes a matching [`BoundedSecurityContext`]. Use this trait when
 /// you drive protect/unprotect yourself (tests, a later group-OSCORE
 /// context, or a side table of pairwise contexts).
 pub trait OscoreContext {
@@ -49,7 +49,7 @@ pub trait OscoreContext {
     ) -> Result<ParsedMessage<'a>, Error>;
 }
 
-impl OscoreContext for SecurityContext {
+impl<const REQUESTS: usize> OscoreContext for BoundedSecurityContext<REQUESTS> {
     fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
         protect_request(self, plain, out)
     }
@@ -81,7 +81,7 @@ impl OscoreContext for SecurityContext {
     }
 }
 
-impl SecurityContext {
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Protect `plain` as an OSCORE request. See [`OscoreContext::protect_request`].
     pub fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
         protect_request(self, plain, out)
@@ -131,9 +131,9 @@ impl SecurityContext {
     }
 }
 
-/// See [`SecurityContext::protect_request`].
-pub fn protect_request(
-    ctx: &mut SecurityContext,
+/// See [`super::SecurityContext::protect_request`].
+pub fn protect_request<const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     out: &mut [u8],
 ) -> Result<usize, Error> {
@@ -144,14 +144,13 @@ pub fn protect_request(
     let request = ctx.request_ref(piv);
     let nonce = ctx.request_nonce(piv);
     let aad = Aad::new(request.kid(), piv.as_bytes())?;
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     let kid_ctx = if ctx.id_context().is_empty() {
@@ -172,13 +171,24 @@ pub fn protect_request(
         out,
     )?;
     let observe = plain.options().iter().any(is_observe);
-    ctx.remember_live(plain.token(), request, observe)?;
+    if !observe
+        && plain.options().iter().any(|option| {
+            matches!(
+                option.number(),
+                OptionNumber::BLOCK2 | OptionNumber::Q_BLOCK2
+            )
+        })
+    {
+        ctx.remember_download(plain.token(), request)?;
+    } else {
+        ctx.remember_live(plain.token(), request, observe)?;
+    }
     Ok(n)
 }
 
-/// See [`SecurityContext::unprotect_request`].
-pub fn unprotect_request<'a>(
-    ctx: &mut SecurityContext,
+/// See [`super::SecurityContext::unprotect_request`].
+pub fn unprotect_request<'a, const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     protected: &ParsedMessage<'_>,
     out: &'a mut [u8],
 ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
@@ -205,6 +215,10 @@ pub fn unprotect_request<'a>(
         &mut plaintext,
     )?;
     ctx.replay_accept(piv.seq());
+    let code = Code::from_raw(*plaintext[..pt_len].first().ok_or(Error::MessageLength)?);
+    if !code.is_request() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
@@ -218,13 +232,13 @@ pub fn unprotect_request<'a>(
     // Caller (App) holds `request` on the inbound exchange for
     // `protect_response`. The live Token table is the client in-flight
     // set (`protect_request` → `unprotect_response`); do not remember
-    // here or sequential server Tokens saturate `LIVE_REQUESTS`.
+    // here or sequential server Tokens saturate the outbound binding table.
     Ok((inner, request))
 }
 
-/// See [`SecurityContext::protect_response`].
-pub fn protect_response(
-    ctx: &SecurityContext,
+/// See [`super::SecurityContext::protect_response`].
+pub fn protect_response<const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     request: RequestRef,
     out: &mut [u8],
@@ -234,14 +248,13 @@ pub fn protect_response(
     }
     let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
     let nonce = aead::nonce(ctx.common_iv(), request.kid(), request.piv());
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     encode_outer(
@@ -259,8 +272,8 @@ pub fn protect_response(
 }
 
 /// Protect a response and optionally include a new Partial IV.
-pub fn protect_response_piv(
-    ctx: &mut SecurityContext,
+pub fn protect_response_piv<const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     request: RequestRef,
     out: &mut [u8],
@@ -271,14 +284,13 @@ pub fn protect_response_piv(
     let piv = ctx.take_sender_piv()?;
     let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
     let nonce = ctx.request_nonce(piv);
-    let mut plaintext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut plaintext)?;
     let mut ciphertext = [0u8; INNER];
-    let ct_len = aead::seal(
+    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
         aad.as_bytes(),
-        &plaintext[..pt_len],
+        pt_len,
         &mut ciphertext,
     )?;
     encode_outer(
@@ -295,39 +307,80 @@ pub fn protect_response_piv(
     )
 }
 
-/// See [`SecurityContext::unprotect_response`].
-pub fn unprotect_response<'a>(
-    ctx: &SecurityContext,
+/// See [`super::SecurityContext::unprotect_response`].
+pub fn unprotect_response<'a, const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
     protected: &ParsedMessage<'_>,
     request: RequestRef,
     out: &'a mut [u8],
 ) -> Result<ParsedMessage<'a>, Error> {
+    unprotect_response_candidates(ctx, protected, request, None, out).map(|(message, _)| message)
+}
+
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+    pub(crate) fn unprotect_bound_response<'a>(
+        &self,
+        protected: &ParsedMessage<'_>,
+        out: &'a mut [u8],
+    ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+        let request = self.lookup(protected.token()).ok_or(Error::Context)?;
+        let observation = self
+            .observe_request(protected.token())
+            .filter(|old| *old != request);
+        unprotect_response_candidates(self, protected, request, observation, out)
+    }
+}
+
+fn unprotect_response_candidates<'a, const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
+    protected: &ParsedMessage<'_>,
+    request: RequestRef,
+    fallback: Option<RequestRef>,
+    out: &'a mut [u8],
+) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
     let header = parse_protected(protected)?;
     if protected.payload().len() < TAG_LEN {
         return Err(Error::MessageLength);
     }
-    let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
-    let nonce = match header.piv {
-        Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
-        None => aead::nonce(ctx.common_iv(), request.kid(), request.piv()),
-    };
     let mut plaintext = [0u8; INNER];
-    let pt_len = aead::open(
-        ctx.recipient_key(),
-        &nonce,
-        aad.as_bytes(),
-        protected.payload(),
-        &mut plaintext,
-    )?;
+    let mut accepted = None;
+    // At most two AEAD attempts, using the same fixed scratch. Decode and
+    // admission happen only after authentication identifies the request.
+    for candidate in [Some(request), fallback].into_iter().flatten() {
+        let aad = Aad::new(candidate.kid(), candidate.piv().as_bytes())?;
+        let nonce = match header.piv {
+            Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
+            None => aead::nonce(ctx.common_iv(), candidate.kid(), candidate.piv()),
+        };
+        match aead::open(
+            ctx.recipient_key(),
+            &nonce,
+            aad.as_bytes(),
+            protected.payload(),
+            &mut plaintext,
+        ) {
+            Ok(len) => {
+                accepted = Some((len, candidate));
+                break;
+            }
+            Err(Error::Decrypt) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let (len, request) = accepted.ok_or(Error::Decrypt)?;
+    let code = Code::from_raw(*plaintext[..len].first().ok_or(Error::MessageLength)?);
+    if !code.is_response() {
+        return Err(Error::MessageCode);
+    }
     let n = stitch_inner(
         protected.ty(),
         protected.message_id(),
         protected.token(),
         protected.options(),
-        &plaintext[..pt_len],
+        &plaintext[..len],
         out,
     )?;
-    Ok(decode(&out[..n])?)
+    Ok((decode(&out[..n])?, request))
 }
 
 fn parse_protected<'a>(protected: &ParsedMessage<'a>) -> Result<OscoreHeader<'a>, Error> {

@@ -241,7 +241,9 @@ impl ObserveKey {
 /// Advanced Engine path helpers use a non-cryptographic hash. It is not an
 /// exact or adversarial resource identity. App instead assigns opaque route
 /// identities after exact path-segment comparison; those identities are local
-/// to its immutable site. Do not construct an Engine path hash to address an
+/// to its site slots. Remaining identities survive route removal; copies of a
+/// removed route identity become invalid and must be discarded before slot reuse.
+/// Do not construct an Engine path hash to address an
 /// App route. [`Self::NONE`] means no resource was recorded.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ObserveResource {
@@ -463,12 +465,15 @@ pub struct ObserveInterest {
     key: ObserveKey,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
+    block2_max_szx: Option<u8>,
     seq: u32,
     pending: bool,
     deleted: bool,
     lifetime: Option<ObserveLifetime>,
     confirm_due_ms: Option<u64>,
     notify_hold: Option<ObserveNotifyHold>,
+    superseded: [MessageId; crate::message::Transmission::MAX_RETRANSMIT as usize],
+    superseded_len: u8,
     #[cfg(feature = "oscore")]
     oscore: Option<crate::oscore::RequestRef>,
 }
@@ -483,12 +488,15 @@ impl ObserveInterest {
             key: ObserveKey::new(token, endpoint),
             resource: ObserveResource::NONE,
             content_format: None,
+            block2_max_szx: None,
             seq: 0,
             pending: false,
             deleted: false,
             lifetime: None,
             confirm_due_ms: None,
             notify_hold: None,
+            superseded: [MessageId::new(0); crate::message::Transmission::MAX_RETRANSMIT as usize],
+            superseded_len: 0,
             #[cfg(feature = "oscore")]
             oscore: None,
         }
@@ -551,6 +559,18 @@ impl ObserveInterest {
         }
     }
 
+    /// App-owned early Block2 negotiation; raw Engine interests default to none.
+    pub(crate) const fn block2_max_szx(self) -> Option<u8> {
+        self.block2_max_szx
+    }
+
+    pub(crate) const fn with_block2_max_szx(self, block2_max_szx: Option<u8>) -> Self {
+        Self {
+            block2_max_szx,
+            ..self
+        }
+    }
+
     /// OSCORE request binding for protected notifications, if any.
     #[cfg(feature = "oscore")]
     #[must_use]
@@ -581,7 +601,8 @@ impl ObserveInterest {
 
     /// Last library-assigned notification sequence (24-bit).
     ///
-    /// Zero after register, before the first [`Self::take_due`]. See
+    /// Zero for a new registration; App re-registration continues the previous
+    /// sequence for the same peer, Token and route. See
     /// `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
     pub const fn seq(self) -> u32 {
@@ -626,20 +647,27 @@ impl ObserveInterest {
 
     /// Absolute millisecond time when a CON notify becomes mandatory, if any.
     ///
-    /// Set when the first NON is recorded, or reset by each CON. See
+    /// Set when the first NON is recorded, reset by each CON, or zero when
+    /// the caller explicitly requires the next notification to use CON. See
     /// `knowledge/rfcs/rfc7641.txt` §4.5.
     #[must_use]
     pub const fn confirm_due_ms(self) -> Option<u64> {
         self.confirm_due_ms
     }
 
-    /// Whether `now_ms` is at or past the 24-hour NON-confirm deadline.
+    /// Whether confirmation is due by time or explicitly required by the caller.
     #[must_use]
     pub const fn must_confirm(self, now_ms: u64) -> bool {
         match self.confirm_due_ms {
             Some(due) => now_ms >= due,
             None => false,
         }
+    }
+
+    /// Keep an explicit CON choice until a successful CON resets its deadline.
+    /// Zero is due even at the first caller clock tick; no arithmetic can wrap.
+    pub(crate) fn require_confirmation(&mut self) {
+        self.confirm_due_ms = Some(0);
     }
 
     /// Colocated NSTART / NON-rate hold, if set.
@@ -674,6 +702,7 @@ impl ObserveInterest {
         if self.key.is_client() {
             return;
         }
+        self.superseded_len = 0;
         if confirmable {
             // A previous representation's Max-Age must not end CON delivery.
             self.lifetime = None;
@@ -692,6 +721,35 @@ impl ObserveInterest {
     /// Clear the NSTART / NON-rate hold. Does not drop the row.
     pub fn clear_notify_hold(&mut self) {
         self.notify_hold = None;
+        self.superseded_len = 0;
+    }
+
+    /// Prior CON MIDs retained only during the current supersession chain.
+    /// Old ACKs do not complete or extend the current delivery. Exact-endpoint
+    /// RSTs can cancel it until current ACK, cancellation, or give-up.
+    #[must_use]
+    pub fn superseded_con_mids(&self) -> &[MessageId] {
+        &self.superseded[..usize::from(self.superseded_len)]
+    }
+
+    pub(crate) fn supersede_con(mut self, now_ms: u64, mid: MessageId) -> Option<Self> {
+        let old = self.notify_hold?.con_mid()?;
+        if !self.pending
+            || self.deleted
+            || self.key.is_client()
+            || usize::from(self.superseded_len) == self.superseded.len()
+            || mid == old
+            || self.superseded_con_mids().contains(&mid)
+        {
+            return None;
+        }
+        self.take_due()?;
+        self.superseded[usize::from(self.superseded_len)] = old;
+        self.superseded_len += 1;
+        self.notify_hold = Some(ObserveNotifyHold::con(mid));
+        self.lifetime = None;
+        self.confirm_due_ms = Some(now_ms.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS));
+        Some(self)
     }
 
     /// Surface and clear a due lifetime. Only CON-wait expiry clears pending
@@ -709,6 +767,7 @@ impl ObserveInterest {
         if matches!(life, ObserveLifetime::Unacked { .. }) {
             self.pending = false;
             self.notify_hold = None;
+            self.superseded_len = 0;
         }
         Some(life)
     }
@@ -756,6 +815,33 @@ impl From<ObserveKey> for ObserveInterest {
             ..Self::new(key.token(), key.endpoint())
         }
     }
+}
+
+pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
+    storage: &S,
+    pending: super::PendingCon,
+    original: ObserveInterest,
+    replacement: ObserveInterest,
+    bytes: &[u8],
+) -> Result<SlotId, super::PendingReplaceError> {
+    use super::PendingReplaceError;
+    let id = storage
+        .lookup_observe(original.key())
+        .ok_or(PendingReplaceError::Stale)?;
+    if storage.observe_interest(id) != Some(original)
+        || original.endpoint() != pending.endpoint()
+        || original.notify_hold().and_then(|h| h.con_mid()) != Some(pending.message_id())
+        || replacement.key() != original.key()
+    {
+        return Err(PendingReplaceError::Stale);
+    }
+    let parsed = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    if replacement.notify_hold().and_then(|h| h.con_mid()) != Some(parsed.message_id())
+        || parsed.token() != original.token()
+    {
+        return Err(PendingReplaceError::InvalidMessage);
+    }
+    Ok(id)
 }
 
 /// Typed insert / lookup / remove / take on an Observe Interest Table.

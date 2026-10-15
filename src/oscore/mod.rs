@@ -15,20 +15,27 @@
 //!
 //! # Caller contract
 //!
-//! 1. Provision the Master Secret (and optional salt / ID Context) out of
-//!    band. This crate does not mint secrets or call an OS RNG.
+//! 1. Provision the Master Secret (and optional salt / ID Context) through an
+//!    authenticated channel. The optional `edhoc` feature supplies authenticated
+//!    bootstrap through `crate::provisioning` with installed peer pins and
+//!    caller-supplied entropy. The library does not call an OS RNG.
 //! 2. Give each endpoint distinct Sender / Recipient IDs (they are mirrors).
 //! 3. Durably reserve sender sequences before use and restore recipient replay
 //!    protection before accepting traffic with reused keys. See
-//!    [`SecurityContext::set_sender_seq`], [`ReplayCheckpoint`] and
+//!    [`SecurityContext::restore_sender_reservation`] and
+//!    [`SecurityContext::reserve_sender_sequences`] for enforced sender ranges,
+//!    or [`SecurityContext::set_sender_seq`] for caller-managed sequencing.
+//!    Recipient recovery uses [`ReplayCheckpoint`] and
 //!    [`SecurityContext::restore_replay`]. Checkpoint storage, context identity,
-//!    freshness and commit-before-effects are caller responsibilities. App has
-//!    no durable pre-handler checkpoint barrier. If state recovery is uncertain,
+//!    freshness and durable storage are caller responsibilities. Use
+//!    [`crate::App::poll_with_oscore_checkpoint`] for an enforced pre-handler
+//!    inbound-request checkpoint barrier. If state recovery is uncertain,
 //!    establish a fresh cryptographic context (RFC 8613 section 7.5 / Appendix B).
 //! 4. Keep the context for the lifetime of the pairwise association. App
 //!    holds it only if you call [`crate::App::set_oscore`].
-//! 5. At most [`LIVE_REQUESTS`] (4) in-flight Token→[`RequestRef`] rows.
-//!    A fifth distinct Token is [`Error::Saturated`] — no silent eviction.
+//! 5. [`SecurityContext`] defaults to [`LIVE_REQUESTS`] (4) live request bindings.
+//!    [`BoundedSecurityContext`] selects another fixed bound. Excess distinct
+//!    Tokens return [`Error::Saturated`] without eviction.
 //!
 //! App with a context attached is fail-closed: a non-empty datagram without
 //! an OSCORE option is rejected (unprotected 4.01 on a request; a plain
@@ -56,7 +63,7 @@
 //!
 //! # What this slice does not do
 //!
-//! Group OSCORE, other AEAD/HKDF algorithms, EDHOC / ACE key establishment,
+//! Group OSCORE, other AEAD/HKDF algorithms, ACE key establishment,
 //! Outer Block-wise over OSCORE (proxy hop-by-hop), and first-party DTLS
 //! (still harness `DatagramIo` only).
 //!
@@ -109,7 +116,7 @@
 //! # }
 //! ```
 
-mod aead;
+pub(crate) mod aead;
 mod cbor;
 mod context;
 mod error;
@@ -119,8 +126,10 @@ mod protect;
 #[cfg(test)]
 mod tests;
 
-pub use context::{DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext};
-pub use error::Error;
+pub use context::{
+    BoundedSecurityContext, DeriveParams, ReplayCheckpoint, RequestRef, SecurityContext,
+};
+pub use error::{Error, SenderReservationError};
 pub use header::{OscoreHeader, PartialIv};
 pub use protect::{
     OscoreContext, protect_request, protect_response, unprotect_request, unprotect_response,
@@ -144,13 +153,10 @@ pub const REPLAY_WINDOW: u64 = 32;
 pub const AEAD_AES_CCM_16_64_128: i32 = 10;
 /// OSCORE version in the AAD (this RFC).
 pub const OSCORE_VERSION: u8 = 1;
-/// In-flight Token→[`RequestRef`] bindings on [`SecurityContext`].
+/// Default request-binding capacity of the [`SecurityContext`] compatibility alias.
 ///
-/// Client-side: [`protect_request`] remembers so a later
-/// [`unprotect_response`] can look up the request Partial IV. Observe
-/// registrations keep the row for notifications. Same cap as the App
-/// client inbox. [`SecurityContext::remember`] returns
-/// [`Error::Saturated`] when a fifth distinct Token arrives. The server
-/// holds [`RequestRef`] on the inbound exchange / Observe interest, not
-/// in this table.
+/// [`BoundedSecurityContext`] and [`crate::resources::Resources::security_requests`]
+/// select an independent bound. Client requests retain Token bindings, including
+/// Observe registrations. Saturation refuses a new distinct Token without eviction.
+/// Server response bindings remain on the inbound exchange / Observe interest.
 pub const LIVE_REQUESTS: usize = 4;

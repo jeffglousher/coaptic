@@ -9,8 +9,8 @@ use core::fmt;
 /// of [`crate::Outgoing::to`], and the match key (with Token) for a
 /// [`crate::Call`].
 ///
-/// This type does not use [`std::net`] on the default `no_std` path. The
-/// `std` feature adds conversions. IPv6 scope identifiers are retained as
+/// The `std` feature adds conversions to and from `std::net` addresses.
+/// IPv6 scope identifiers are retained as
 /// part of peer identity; flow information is not retained and converts to zero.
 ///
 /// ```

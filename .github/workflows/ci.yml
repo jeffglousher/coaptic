@@ -23,55 +23,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.85.0
       - run: cargo check --locked -p coaptic --no-default-features
       - run: cargo check --locked -p coaptic --all-features
-
-  cross-build:
-    name: no_std code generation (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [thumbv6m-none-eabi, thumbv7em-none-eabi, riscv32imac-unknown-none-elf, wasm32-unknown-unknown]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-          targets: ${{ matrix.target }}
-      - run: python3 tools/qualification/cross_build.py --target ${{ matrix.target }} --output ${{ runner.temp }}/cross-build.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: cross-build-${{ matrix.target }}
-          path: ${{ runner.temp }}/cross-build.json
-          if-no-files-found: error
-
-  seeded-qualification:
-    name: seeded qualification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: 1.97.1
-      - run: python3 tools/qualification/seeded.py --output ${{ runner.temp }}/seeded.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: seeded-qualification
-          path: ${{ runner.temp }}/seeded.json
-          if-no-files-found: error
 
   fmt:
     name: fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
           components: rustfmt
@@ -82,21 +45,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo clippy -p coaptic-plugtest --all-targets --features dtls,oscore -- -D warnings
 
   test:
     name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -106,31 +68,44 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
-      - run: cargo test -p coaptic-plugtest --features dtls,oscore
-      - run: cargo run -p coaptic-plugtest --bin dogfood -- --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood.json
-      - run: cargo run -p coaptic-plugtest --features oscore --bin dogfood -- --oscore --iterations 2 --compare crates/coaptic-plugtest/baselines/dogfood-oscore.json
+      - run: cargo test --features std --test std_fixed_storage
+      - run: cargo check --locked --example fixed_service
+      - run: cargo test --locked --example fixed_service
+      - name: Run the README client and server
+        shell: bash
+        run: |
+          cargo build --locked --example server --example client --features std
+          target/debug/examples/server &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          target/debug/examples/client
+      - run: cargo run --locked --example oscore_pair --features std
+      - run: cargo test --locked --example oscore_pair --features std
+      - run: cargo run --locked --example oscore_pair --features std,alloc -- --alloc
+      - run: cargo test --locked --example oscore_pair --features std,alloc
 
   doc:
     name: doc
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: --cfg docsrs
+      RUSTDOCFLAGS: --cfg docsrs -D warnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --no-deps --no-default-features
       - run: cargo doc --no-deps --all-features
 
-  # Tarball check only — do not use `cargo publish --dry-run` here.
-  # After 0.1.0 is live, dry-run of the same version fails CI.
+  # Tarball check only â€” do not use `cargo publish --dry-run` here.
+  # After a version is published, dry-run of that same version fails CI.
   package:
     name: package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -144,38 +119,10 @@ jobs:
           fi
       - run: cargo package -p coaptic --locked
 
-  process-interop:
-    name: independent process interop
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev
-      - name: Pin independent C peer source
-        run: |
-          git init "$RUNNER_TEMP/libcoap"
-          git -C "$RUNNER_TEMP/libcoap" fetch --depth 1 https://github.com/obgm/libcoap.git 7cf7465b784baded4de183290c547d582becfd28
-          git -C "$RUNNER_TEMP/libcoap" checkout --detach FETCH_HEAD
-      - name: Build separate peer executables
-        run: |
-          cargo clippy --locked -p peer-coaptic -p peer-coap-rs --all-targets -- -D warnings
-          cargo test --locked -p peer-coaptic -p peer-coap-rs
-          cargo build --locked --release -p peer-coaptic -p peer-coap-rs
-          cmake -S tools/interop/libcoap -B target/libcoap-peer -G Ninja -DLIBCOAP_SOURCE="$RUNNER_TEMP/libcoap" -DCMAKE_BUILD_TYPE=Release -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl -DENABLE_OSCORE=ON
-          cmake --build target/libcoap-peer --parallel 2
-      - name: Supervisor and fault-injection tests
-        run: python3 -m unittest discover -s tools/interop -p 'test_*.py'
-      - name: Wire interoperability, reliability and timing
-        run: python3 tools/interop/run.py --coaptic target/release/peer-coaptic --coap-rs target/release/peer-coap-rs --libcoap target/libcoap-peer/peer-libcoap --iterations 100 --build-note "all peers Release; Ubuntu hosted runner" --output target/process-interop.json
-      - name: Retain measurements and fault evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: process-interop
-          path: target/process-interop.json
-          if-no-files-found: warn
+  validation:
+    name: Companion validation
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@93e34bba8154b1f841d39570cc4a02db44f58673
+    with:
+      suite_revision: 93e34bba8154b1f841d39570cc4a02db44f58673
+      library_repository: ${{ github.repository }}
+      library_revision: ${{ github.sha }}
