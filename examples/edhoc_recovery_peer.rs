@@ -408,7 +408,10 @@ fn run() -> Result<(), String> {
                 RecoveryError::Bootstrap(PollError::Io(error))
                     if error.kind() == io::ErrorKind::WouldBlock => {}
                 RecoveryError::Bootstrap(
-                    PollError::Timeout | PollError::Provisioning(_) | PollError::Rejected,
+                    PollError::Timeout
+                    | PollError::Provisioning(_)
+                    | PollError::Rejected
+                    | PollError::PeerAbort(_),
                 ) => {
                     println!(
                         "{{\"candidate_failed\":true,\"error\":\"{error:?}\",\"sessions\":{sessions}}}"

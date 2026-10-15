@@ -33,6 +33,7 @@ impl std::error::Error for IdentityError {}
 #[derive(Clone, Copy)]
 pub(super) enum Source {
     Random(RandomSource),
+    Io { initial_mid: u16 },
     Test,
 }
 
@@ -49,6 +50,7 @@ impl AppIds {
         let source = source.ok_or(BuildError::RandomnessRequired)?;
         let next_mid = match source {
             Source::Test => 1,
+            Source::Io { initial_mid } => initial_mid,
             Source::Random(fill) => {
                 let mut bytes = [0; 2];
                 if !fill(&mut bytes) {
@@ -67,7 +69,10 @@ impl AppIds {
         })
     }
 
-    pub(super) fn token(&mut self) -> Result<Token, IdentityError> {
+    pub(super) fn token(
+        &mut self,
+        io_random: &mut impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<Token, IdentityError> {
         match self.source {
             Source::Test => {
                 self.test_token = self
@@ -76,9 +81,9 @@ impl AppIds {
                     .ok_or(IdentityError::TokenExhausted)?;
                 Ok(Token::from_checked(&self.test_token.to_be_bytes()))
             }
-            Source::Random(fill) => {
+            Source::Random(_) | Source::Io { .. } => {
                 let mut bytes = [0; 8];
-                if !fill(&mut bytes) {
+                if !self.fill(&mut bytes, io_random) {
                     return Err(IdentityError::RandomnessUnavailable);
                 }
                 Ok(Token::from_checked(&bytes))
@@ -86,9 +91,10 @@ impl AppIds {
         }
     }
 
-    pub(super) fn next_for<E, S>(
+    pub(super) fn next_for<E, S, T: crate::storage::DatagramIo>(
         &mut self,
         engine: &crate::storage::Engine<S>,
+        io: &mut T,
         now_ms: u64,
     ) -> Result<MessageId, super::Error<E>>
     where
@@ -103,17 +109,23 @@ impl AppIds {
         {
             return Err(super::Error::Identity(IdentityError::MessageIdExhausted));
         }
-        self.next(now_ms)
+        self.next(now_ms, &mut |bytes| io.fill_random(bytes))
     }
 
-    pub(super) fn next<E>(&mut self, now_ms: u64) -> Result<MessageId, super::Error<E>> {
+    pub(super) fn next<E>(
+        &mut self,
+        now_ms: u64,
+        io_random: &mut impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<MessageId, super::Error<E>> {
         if self.issued == 65_536
             && now_ms.saturating_sub(self.last_mid_ms)
                 < u64::from(Transmission::EXCHANGE_LIFETIME_MS)
         {
             return Err(super::Error::Identity(IdentityError::MessageIdExhausted));
         }
-        let jitter = self.sample_jitter().map_err(super::Error::Identity)?;
+        let jitter = self
+            .sample_jitter(io_random)
+            .map_err(super::Error::Identity)?;
         if self.issued == 65_536 {
             self.issued = 0;
         }
@@ -129,15 +141,26 @@ impl AppIds {
         self.jitter
     }
 
-    fn sample_jitter(&self) -> Result<u32, IdentityError> {
-        let Source::Random(fill) = self.source else {
+    fn fill(&self, bytes: &mut [u8], io_random: &mut impl FnMut(&mut [u8]) -> bool) -> bool {
+        match self.source {
+            Source::Random(fill) => fill(bytes),
+            Source::Io { .. } => io_random(bytes),
+            Source::Test => false,
+        }
+    }
+
+    fn sample_jitter(
+        &self,
+        io_random: &mut impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<u32, IdentityError> {
+        if matches!(self.source, Source::Test) {
             return Ok(0);
-        };
+        }
         let width = Transmission::ACK_RANDOM_SPAN_MS + 1;
         let limit = u32::MAX - (u32::MAX % width);
         for _ in 0..8 {
             let mut bytes = [0; 4];
-            if !fill(&mut bytes) {
+            if !self.fill(&mut bytes, io_random) {
                 return Err(IdentityError::RandomnessUnavailable);
             }
             let value = u32::from_be_bytes(bytes);
@@ -170,7 +193,7 @@ mod tests {
         let mut ids = AppIds::new(Some(Source::Random(fill))).unwrap();
         for value in 0..=1000 {
             VALUE.store(value, Ordering::SeqCst);
-            ids.next::<()>(0).unwrap();
+            ids.next::<()>(0, &mut |_| false).unwrap();
             assert_eq!(ids.jitter(), value);
             assert_eq!(Transmission::initial_timeout_ms(ids.jitter()), 2000 + value);
         }
@@ -178,7 +201,7 @@ mod tests {
         CALLS.store(0, Ordering::SeqCst);
         let issued = ids.issued;
         assert_eq!(
-            ids.next::<()>(0),
+            ids.next::<()>(0, &mut |_| false),
             Err(super::super::Error::Identity(
                 IdentityError::RandomnessUnavailable
             ))
@@ -193,16 +216,16 @@ mod tests {
         let mut seen = [false; 65536];
         for i in 0..65536 {
             let now = if i == 65534 { 5000 } else { 1000 };
-            let mid = ids.next::<()>(now).unwrap().get() as usize;
+            let mid = ids.next::<()>(now, &mut |_| false).unwrap().get() as usize;
             assert!(!seen[mid]);
             seen[mid] = true;
         }
         assert_eq!(
-            ids.next::<()>(251_999),
+            ids.next::<()>(251_999, &mut |_| false),
             Err(super::super::Error::Identity(
                 IdentityError::MessageIdExhausted
             ))
         );
-        assert_eq!(ids.next::<()>(252_000).unwrap().get(), 1);
+        assert_eq!(ids.next::<()>(252_000, &mut |_| false).unwrap().get(), 1);
     }
 }

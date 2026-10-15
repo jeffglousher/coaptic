@@ -2,13 +2,14 @@
 
 use core::{convert::Infallible, fmt};
 
-use super::super::{ConnectionId, Identity, PinnedPeer, Principal, Session};
+use super::super::{ConnectionId, Identity, PeerError, PinnedPeer, Principal, Session};
 use super::{
-    ClientState, CoapProvisioner, CompletedCacheMatch, DATAGRAM_CAPACITY, EXCHANGE_LIFETIME_MS,
-    Exchange, Operation, PollError, ResponseAck, Role, Status, request_metadata,
+    ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
+    EXCHANGE_LIFETIME_MS, Exchange, Operation, OptionRole, PollError, ResponseAck, Role, Status,
+    flush_control, has_unsupported_critical, queue_control, request_metadata, request_path,
     same_mid_namespace, send,
 };
-use crate::message::{Message as CoapMessage, MessageId, decode};
+use crate::message::{Code, Message as CoapMessage, MessageId, Type, decode};
 use crate::storage::{DatagramIo, Endpoint};
 
 /// Failure of a bounded replacement handshake; the caller's live App is untouched.
@@ -28,6 +29,7 @@ enum CachedRole {
         operations: [Operation; 3],
         acks: [Option<ResponseAck>; 3],
         pending: u8,
+        peer_error_slot: Option<usize>,
     },
     Server {
         exchanges: [Option<Exchange>; 2],
@@ -40,15 +42,29 @@ struct Cache {
     expires: u64,
     replies: bool,
     role: CachedRole,
+    control: Option<Control>,
 }
 
 impl Cache {
     fn from_controller(controller: CoapProvisioner<'_>, expires: u64, replies: bool) -> Self {
+        let mut control = controller.control;
+        if !replies {
+            if let Some(control) = &mut control {
+                control.pending = false;
+            }
+        }
+        let expires = control
+            .as_ref()
+            .map_or(expires, |control| expires.max(control.expires));
         let role = match controller.role {
             Role::Client(client) => CachedRole::Client {
                 operations: [client.ids.first, client.ids.second, client.ids.echo],
                 acks: client.acks,
                 pending: if replies { client.pending_acks } else { 0 },
+                peer_error_slot: match client.state {
+                    ClientState::Aborted { slot, .. } => Some(slot),
+                    _ => None,
+                },
             },
             Role::Server(server) => CachedRole::Server {
                 exchanges: server.exchanges,
@@ -60,6 +76,7 @@ impl Cache {
             expires,
             replies,
             role,
+            control,
         }
     }
 
@@ -68,6 +85,13 @@ impl Cache {
             return CompletedCacheMatch::NoMatch;
         }
         let mid = MessageId::new(u16::from_be_bytes([bytes[2], bytes[3]]));
+        if bytes.len() <= DATAGRAM_CAPACITY
+            && self.control.as_ref().is_some_and(|control| {
+                decode(bytes).is_ok_and(|message| control.owns(message, now))
+            })
+        {
+            return CompletedCacheMatch::RefusedMid;
+        }
         match &self.role {
             CachedRole::Client {
                 operations, acks, ..
@@ -110,6 +134,14 @@ impl Cache {
         if !self.replies {
             return false;
         }
+        if let Some(control) = &mut self.control {
+            if decode(bytes)
+                .is_ok_and(|message| control.owns(message, now) && control.can_replay(message))
+            {
+                control.pending = true;
+                return true;
+            }
+        }
         match &mut self.role {
             CachedRole::Client { acks, pending, .. } => {
                 for (index, ack) in acks.iter().enumerate() {
@@ -139,12 +171,29 @@ impl Cache {
         false
     }
 
+    fn peer_error(&self) -> Option<PeerError<'_>> {
+        let CachedRole::Client {
+            acks,
+            peer_error_slot: Some(slot),
+            ..
+        } = &self.role
+        else {
+            return None;
+        };
+        PeerError::parse(
+            decode(acks[*slot].as_ref()?.response.as_slice())
+                .ok()?
+                .payload(),
+        )
+    }
+
     fn pending(&self) -> bool {
-        match &self.role {
-            CachedRole::Client { pending, .. } | CachedRole::Server { pending, .. } => {
-                *pending != 0
+        self.control.as_ref().is_some_and(|c| c.pending)
+            || match &self.role {
+                CachedRole::Client { pending, .. } | CachedRole::Server { pending, .. } => {
+                    *pending != 0
+                }
             }
-        }
     }
 
     fn flush<T: DatagramIo>(
@@ -154,6 +203,7 @@ impl Cache {
         now: u64,
     ) -> Result<bool, PollError<T::Error>> {
         let mut progress = false;
+        progress |= flush_control(&mut self.control, io, endpoint, now)?;
         match &mut self.role {
             CachedRole::Client { acks, pending, .. } => {
                 for (index, ack) in acks.iter().enumerate() {
@@ -221,10 +271,16 @@ pub struct CoapRecovery<'a, const CACHES: usize = 2> {
     candidate: Option<CoapProvisioner<'a>>,
     candidate_exposed: bool,
     candidate_expires: Option<u64>,
+    control: Option<Control>,
     caches: [Option<Cache>; CACHES],
 }
 
 impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
+    /// Initial admission retains one identifier-only refusal control, separate
+    /// from candidate and completion-cache storage. Flush before more admission;
+    /// sent controls retain their MID until the original exchange lifetime ends.
+    pub const CONTROL_CAPACITY: usize = 1;
+
     /// Creates an idle controller that accepts the first supported message 1.
     /// Zero cache capacity is refused before any entropy or network operation.
     pub fn new(
@@ -246,6 +302,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             candidate: None,
             candidate_exposed: false,
             candidate_expires: None,
+            control: None,
             caches: core::array::from_fn(|_| None),
         })
     }
@@ -303,6 +360,10 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     /// A fresh supported message 1 may create one responder candidate if space
     /// is available. It does not change the active App or authenticated identity.
     /// A terminal candidate failure is quarantined without evicting old caches.
+    /// Unsupported critical Confirmable POSTs at the EDHOC resource queue 4.02
+    /// before payload parsing or entropy. One refusal owner remains reserved
+    /// across candidate termination and application handoff; it cannot renew its
+    /// lifetime. A pending control must be flushed before admitting more input.
     pub fn ingest(
         &mut self,
         bytes: &[u8],
@@ -317,7 +378,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         }
         for cache in self.caches.iter_mut().flatten() {
             match cache.classify(bytes, now_ms) {
-                CompletedCacheMatch::ExactDuplicate => {
+                CompletedCacheMatch::ExactDuplicate | CompletedCacheMatch::RefusedMid => {
                     return Ok(if cache.queue(bytes, now_ms) {
                         Status::Progress
                     } else {
@@ -326,6 +387,24 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                 }
                 CompletedCacheMatch::MidCollision => return Ok(Status::Ignored),
                 CompletedCacheMatch::NoMatch => {}
+            }
+        }
+        if bytes.len() > DATAGRAM_CAPACITY {
+            return Ok(Status::Ignored);
+        }
+        let Ok(message) = decode(bytes) else {
+            return Ok(Status::Ignored);
+        };
+        if let Some(control) = &mut self.control {
+            if control.pending {
+                return Ok(Status::Ignored);
+            }
+            if control.owns(message, now_ms) {
+                if !control.can_replay(message) {
+                    return Ok(Status::Ignored);
+                }
+                control.pending = true;
+                return Ok(Status::Progress);
             }
         }
         if let Some(candidate) = &mut self.candidate {
@@ -337,12 +416,31 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             let result = candidate.ingest(bytes, endpoint, now_ms, entropy, authorize);
             return self.finish_candidate_result(result);
         }
-        if self.handoff.is_some() || bytes.len() > DATAGRAM_CAPACITY {
+        if message.ty() == Type::Confirmable
+            && message.code() == Code::POST
+            && has_unsupported_critical(message, OptionRole::Request)
+            && request_path(message)
+        {
+            return queue_control(
+                &mut self.control,
+                now_ms,
+                ControlKind::BadOption(Operation {
+                    mid: message.message_id(),
+                    token: message.token(),
+                }),
+            )
+            .map(|queued| {
+                if queued {
+                    Status::Progress
+                } else {
+                    Status::Ignored
+                }
+            })
+            .map_err(|failure| RecoveryError::Bootstrap(failure.error()));
+        }
+        if self.handoff.is_some() {
             return Ok(Status::Ignored);
         }
-        let Ok(message) = decode(bytes) else {
-            return Ok(Status::Ignored);
-        };
         let payload = message.payload();
         if !request_metadata(message) || payload.first() != Some(&0xf5) {
             return Ok(Status::Ignored);
@@ -383,6 +481,8 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     ) -> Result<Status, RecoveryError<T::Error>> {
         self.check_time(now_ms).map_err(widen)?;
         let mut progress = false;
+        progress |= flush_control(&mut self.control, io, self.endpoint, now_ms)
+            .map_err(RecoveryError::Bootstrap)?;
         for cache in self.caches.iter_mut().flatten() {
             progress |= cache
                 .flush(io, self.endpoint, now_ms)
@@ -428,7 +528,10 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     /// Both old and new application IDs remain reserved until handoff confirmation.
     /// The compact completion cache retains no EDHOC handshake crypto state.
     pub fn take_session(&mut self) -> Option<Session> {
-        if self.handoff.is_some() || self.caches.iter().flatten().any(Cache::pending) {
+        if self.handoff.is_some()
+            || self.control.as_ref().is_some_and(|control| control.pending)
+            || self.caches.iter().flatten().any(Cache::pending)
+        {
             return None;
         }
         let slot = self.caches.iter().position(Option::is_none)?;
@@ -465,6 +568,8 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     /// Cancels a candidate without changing the live App or evicting any cache.
     /// An attempt exposed to the transport retains its ID and duplicate metadata
     /// until its original lifetime; a never-transmitted attempt needs no quarantine.
+    /// A recognized peer abort retains ACK/diagnostic ownership even if cancelled
+    /// before its first successful ACK send; flush continues that bounded work.
     pub fn discard_candidate(&mut self, now_ms: u64) -> Result<bool, RecoveryError> {
         self.check_time(now_ms)?;
         let present = self.candidate.is_some();
@@ -490,6 +595,24 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         self.handoff.is_some()
     }
 
+    /// The current candidate's error or most recently retained peer abort.
+    /// This unauthenticated diagnostic survives candidate retirement until its
+    /// cache expires. It does not replace or revoke the caller's active App.
+    #[must_use]
+    pub fn peer_error(&self) -> Option<PeerError<'_>> {
+        self.candidate
+            .as_ref()
+            .and_then(CoapProvisioner::peer_error)
+            .or_else(|| {
+                self.caches
+                    .iter()
+                    .flatten()
+                    .filter(|cache| cache.peer_error().is_some())
+                    .max_by_key(|cache| cache.expires)
+                    .and_then(Cache::peer_error)
+            })
+    }
+
     /// The earliest exact send, candidate wait, or completion-cache deadline.
     /// Expiration never releases the caller's confirmed active connection ID.
     #[must_use]
@@ -498,6 +621,14 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             .candidate
             .as_ref()
             .and_then(CoapProvisioner::next_deadline);
+        if let Some(control) = &self.control {
+            let deadline = if control.pending {
+                self.last_now
+            } else {
+                control.expires
+            };
+            next = Some(next.map_or(deadline, |previous| previous.min(deadline)));
+        }
         for cache in self.caches.iter().flatten() {
             let deadline = if cache.pending() {
                 self.last_now
@@ -560,6 +691,13 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             return Err(RecoveryError::Bootstrap(PollError::Clock));
         }
         self.last_now = now;
+        if self
+            .control
+            .as_ref()
+            .is_some_and(|control| now >= control.expires)
+        {
+            self.control = None;
+        }
         for cache in &mut self.caches {
             if cache.as_ref().is_some_and(|cache| now >= cache.expires) {
                 *cache = None;
@@ -589,6 +727,9 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         if let Some(deadline) = candidate.expires {
             expires = expires.max(deadline);
         }
+        if let Some(control) = &candidate.control {
+            expires = expires.max(control.expires);
+        }
         match &candidate.role {
             Role::Client(client) => {
                 for ack in client.acks.iter().flatten() {
@@ -601,13 +742,14 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                 }
             }
         }
-        if self.candidate_exposed && now < expires {
+        let peer_aborted = candidate.peer_error().is_some();
+        if (self.candidate_exposed || peer_aborted) && now < expires {
             let slot = self
                 .caches
                 .iter()
                 .position(Option::is_none)
                 .expect("reserved cache slot");
-            self.caches[slot] = Some(Cache::from_controller(candidate, expires, false));
+            self.caches[slot] = Some(Cache::from_controller(candidate, expires, peer_aborted));
         }
         self.candidate_exposed = false;
     }

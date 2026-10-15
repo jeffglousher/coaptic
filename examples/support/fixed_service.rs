@@ -1,6 +1,6 @@
 //! The same fixed-storage protected service for a device or host transport.
 //!
-//! This is platform-independent application code, not ESP32 firmware. The caller
+//! This application code is independent of a microcontroller or board SDK. The caller
 //! supplies bounded datagram I/O, secure randomness and a fresh or safely restored
 //! OSCORE context, then drives `poll` with a monotonic millisecond clock. Retained
 //! credentials need durable sender reservations and replay checkpoints; see
@@ -8,7 +8,7 @@
 
 use coaptic::{
     App, BuildError, Code, Request, Response, app::RandomSource, get, oscore::SecurityContext,
-    post, profiles,
+    post, profiles, resources,
 };
 
 pub const TELEMETRY: [u8; 200] = [b'x'; 200];
@@ -22,14 +22,17 @@ pub fn echo(request: Request<'_>) -> Response<'static> {
         .unwrap_or_else(|_| Response::new(Code::REQUEST_ENTITY_TOO_LARGE))
 }
 
-/// Bind fixed default-profile storage without enabling body pools or allocation.
+/// Bind fixed constrained-profile storage without enabling body pools or allocation.
 /// No plaintext opt-out is present: the supplied context protects both routes.
+pub type Service<T> =
+    App<profiles::Constrained, T, 4, false, coaptic::storage::Memory<profiles::Constrained>, 0, 1>;
+
 pub fn server<T>(
     io: T,
     context: SecurityContext,
     secure_random: RandomSource,
-) -> Result<App<profiles::Default, T>, BuildError> {
-    App::builder()
+) -> Result<Service<T>, BuildError> {
+    App::with_resources(resources::SmallDevice::new())
         .randomness(secure_random)
         .oscore(context)
         .route("telemetry", get(telemetry))

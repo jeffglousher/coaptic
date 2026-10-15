@@ -10,7 +10,9 @@ pub enum Error {
     #[cfg(feature = "oscore")]
     Oscore(coaptic::oscore::Error),
     Entropy,
+    Arguments(&'static str),
     Clock,
+    CheckedClock(coaptic::platform::ClockError<core::num::TryFromIntError>),
     UnexpectedReply,
     Timeout,
     Utf8(core::str::Utf8Error),
@@ -27,7 +29,9 @@ impl core::fmt::Display for Error {
             #[cfg(feature = "oscore")]
             Self::Oscore(error) => write!(f, "OSCORE: {error:?}"),
             Self::Entropy => f.write_str("OS entropy unavailable"),
+            Self::Arguments(message) => f.write_str(message),
             Self::Clock => f.write_str("millisecond clock overflow"),
+            Self::CheckedClock(error) => write!(f, "{error}"),
             Self::UnexpectedReply => f.write_str("unexpected response"),
             Self::Timeout => f.write_str("exchange timed out"),
             Self::Utf8(error) => write!(f, "response text: {error}"),
@@ -53,3 +57,7 @@ convert!(coaptic::app::CallFailure, Call);
 #[cfg(feature = "oscore")]
 convert!(coaptic::oscore::Error, Oscore);
 convert!(core::str::Utf8Error, Utf8);
+convert!(
+    coaptic::platform::ClockError<core::num::TryFromIntError>,
+    CheckedClock
+);

@@ -13,6 +13,7 @@ const OTHER: Endpoint = Endpoint::v4([192, 0, 2, 3], 5683);
 #[derive(Default)]
 struct Io {
     sent: Vec<Vec<u8>>,
+    destinations: Vec<Endpoint>,
     fail: bool,
     short: bool,
 }
@@ -24,8 +25,9 @@ impl DatagramIo for Io {
         panic!("recovery never receives application traffic")
     }
 
-    fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+    fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
         self.sent.push(bytes.to_vec());
+        self.destinations.push(endpoint);
         if self.fail {
             Err(9)
         } else if self.short {
@@ -144,6 +146,611 @@ fn packet(bytes: &[u8], ty: Type, mid: MessageId, token: Token, payload: &[u8]) 
         .encode(&mut output)
         .unwrap();
     output[..len].to_vec()
+}
+
+fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
+    let p = decode(bytes).unwrap();
+    let mut options: Vec<_> = p.options().collect();
+    options.push(Opt::new(OptionNumber::new(99), &[]));
+    options.sort_by_key(|o| o.number());
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::con(Code::POST, MessageId::new(mid), p.token())
+        .with_options(&options)
+        .with_payload(p.payload())
+        .encode(&mut out)
+        .unwrap();
+    out[..len].to_vec()
+}
+
+#[test]
+fn peer_error_recovery_preserves_live_owner_ack_cache_and_fresh_authentication() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<3>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<3>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let (_, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+    let old_principal = *old_client.principal();
+    let active = client.active_connection_id();
+    let mut ci = Io::default();
+    client.start(10, entropy(5)).unwrap();
+    client.flush(&mut ci, 10).unwrap();
+    let m1 = ci.last();
+    let p = decode(&m1).unwrap();
+    let options = [Opt::new(OptionNumber::CONTENT_FORMAT, &[64])];
+    let mut bytes = [0; DATAGRAM_CAPACITY];
+    let mid = MessageId::new(900);
+    let len = CoapMessage::new(Type::Confirmable, Code::INTERNAL_SERVER_ERROR, mid)
+        .with_token(p.token())
+        .with_options(&options)
+        .with_payload(&[1, 0x63, b'b', b'a', b'd'])
+        .encode(&mut bytes)
+        .unwrap();
+    let error = bytes[..len].to_vec();
+    assert_eq!(
+        client.ingest(&error, SERVER, 11, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    ci.fail = true;
+    assert_eq!(
+        client.flush(&mut ci, 11),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    assert!(client.has_candidate());
+    ci.fail = false;
+    assert_eq!(
+        client.flush(&mut ci, 12),
+        Err(RecoveryError::Bootstrap(PollError::PeerAbort(
+            super::super::super::PeerErrorCode::Unspecified
+        )))
+    );
+    assert!(!client.has_candidate());
+    assert_eq!(client.active_connection_id(), active);
+    assert_eq!(*old_client.principal(), old_principal);
+    assert!(client.take_session().is_none());
+    assert_eq!(client.peer_error().unwrap().diagnostic(), Some("bad"));
+    let ack = ci.last();
+    assert_eq!(ack, [0x60, 0, 3, 0x84]);
+    assert_eq!(*ci.destinations.last().unwrap(), SERVER);
+    let mut changed = error.clone();
+    *changed.last_mut().unwrap() = b'x';
+    assert_eq!(
+        client.ingest(&changed, SERVER, 13, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert_eq!(
+        client.ingest(&error, SERVER, 13, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    ci.short = true;
+    assert_eq!(
+        client.flush(&mut ci, 13),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    assert_eq!(ci.last(), ack);
+    ci.short = false;
+    client.flush(&mut ci, 14).unwrap();
+    assert_eq!(ci.last(), ack);
+    // Recovery is an explicit caller decision; a forged error never starts it.
+    let (_, fresh_client, fresh_server) = exchange(&mut client, &mut server, 15, 7);
+    let (old_client, _) = old_client.into_parts();
+    let (old_server, _) = old_server.into_parts();
+    let (fresh_client, _) = fresh_client.into_parts();
+    let (fresh_server, _) = fresh_server.into_parts();
+    assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+    assert_ne!(old_server.sender_key(), fresh_server.sender_key());
+    assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+    assert_eq!(fresh_client.recipient_key(), fresh_server.sender_key());
+    client.flush(&mut ci, 11 + EXCHANGE_LIFETIME_MS).unwrap();
+    assert!(client.peer_error().is_none());
+}
+
+#[test]
+fn initial_admission_critical_refusal_is_bounded_and_recovers_through_handoff() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let bad = critical_request(&m1, 900);
+    assert_eq!(
+        server.ingest(&bad, CLIENT, 10, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    assert!(!server.has_candidate());
+    assert!(server.caches.iter().all(Option::is_none));
+    assert_eq!(server.next_deadline(), Some(10));
+    // No pending owner can be overwritten, and no crypto work is admitted until flush.
+    assert_eq!(
+        server.ingest(&m1, CLIENT, 11, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    si.fail = true;
+    assert_eq!(
+        server.flush(&mut si, 11),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    let saved = si.last();
+    let parsed = decode(&saved).unwrap();
+    assert_eq!(parsed.ty(), Type::Acknowledgement);
+    assert_eq!(parsed.code(), Code::BAD_OPTION);
+    assert_eq!(parsed.message_id(), MessageId::new(900));
+    assert_eq!(parsed.token(), decode(&bad).unwrap().token());
+    assert!(parsed.payload().is_empty());
+    assert_eq!(parsed.options().count(), 0);
+    assert!(saved.len() <= 12);
+    si.fail = false;
+    si.short = true;
+    assert_eq!(
+        server.flush(&mut si, 12),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    assert_eq!(server.flush(&mut si, 13), Ok(Status::Progress));
+    assert_eq!(si.last(), saved);
+    assert!(si.destinations.iter().all(|endpoint| *endpoint == CLIENT));
+    assert_eq!(server.next_deadline(), Some(10 + EXCHANGE_LIFETIME_MS));
+    assert_eq!(
+        server.ingest(
+            &critical_request(&m1, 901),
+            CLIENT,
+            14,
+            no_entropy,
+            no_authorization
+        ),
+        Ok(Status::Ignored)
+    );
+    assert!(!server.has_candidate());
+    // A distinct valid MID can use the sole candidate/cache slot while the refusal lives.
+    assert_eq!(
+        server.ingest(&m1, CLIENT, 15, entropy(4), no_authorization),
+        Ok(Status::Progress)
+    );
+    server.flush(&mut si, 15).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 15, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 15).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 15, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 15).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 15, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 15).unwrap();
+    let client_session = client.take_session().unwrap();
+    // A refused-MID mutation retains the original token/reply and blocks handoff until drained.
+    let p = decode(&m1).unwrap();
+    let changed = packet(
+        &m1,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        p.payload(),
+    );
+    assert_eq!(
+        server.ingest(&changed, CLIENT, 16, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    assert!(server.take_session().is_none());
+    server.flush(&mut si, 16).unwrap();
+    assert_eq!(si.last(), saved);
+    let server_session = server.take_session().unwrap();
+    assert!(client.confirm_handoff());
+    assert!(server.confirm_handoff());
+    let active = server.active_connection_id();
+    let (client_context, _) = client_session.into_parts();
+    let (server_context, _) = server_session.into_parts();
+    assert_eq!(client_context.sender_key(), server_context.recipient_key());
+    assert_eq!(client_context.recipient_key(), server_context.sender_key());
+    assert_eq!(client_context.common_iv(), server_context.common_iv());
+    assert_eq!(
+        server.ingest(&changed, CLIENT, 17, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    server.flush(&mut si, 17).unwrap();
+    assert_eq!(si.last(), saved);
+    assert_eq!(server.active_connection_id(), active);
+    assert!(!server.has_candidate());
+    assert_eq!(
+        server.control.as_ref().unwrap().expires,
+        10 + EXCHANGE_LIFETIME_MS
+    );
+}
+
+#[test]
+fn initial_admission_refusal_rejects_unrelated_and_opposite_role_traffic() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let bad = critical_request(&ci.last(), 900);
+    let p = decode(&bad).unwrap();
+    let non = packet(
+        &bad,
+        Type::NonConfirmable,
+        p.message_id(),
+        p.token(),
+        p.payload(),
+    );
+    let mut opposite = bad.clone();
+    opposite[1] = Code::CHANGED.as_raw();
+    let mut oversized = bad.clone();
+    oversized.resize(DATAGRAM_CAPACITY + 1, 0);
+    for bytes in [&non[..], &opposite, &oversized, &[0x40, 2]] {
+        assert_eq!(
+            server.ingest(bytes, CLIENT, 0, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+    }
+    assert_eq!(
+        server.ingest(&bad, OTHER, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    let options = [
+        Opt::new(OptionNumber::URI_PATH, b"other"),
+        Opt::new(OptionNumber::new(99), &[]),
+    ];
+    let mut out = [0; DATAGRAM_CAPACITY];
+    let len = CoapMessage::con(Code::POST, p.message_id(), p.token())
+        .with_options(&options)
+        .encode(&mut out)
+        .unwrap();
+    assert_eq!(
+        server.ingest(&out[..len], CLIENT, 0, no_entropy, no_authorization),
+        Ok(Status::Ignored)
+    );
+    assert!(server.control.is_none());
+    // Critical option handling precedes EDHOC payload parsing.
+    let empty = packet(&bad, Type::Confirmable, p.message_id(), p.token(), &[]);
+    assert_eq!(
+        server.ingest(&empty, CLIENT, 1, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    server.flush(&mut si, 1).unwrap();
+    for bytes in [&non[..], &opposite] {
+        assert_eq!(
+            server.ingest(bytes, CLIENT, 2, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+    }
+    assert_eq!(server.flush(&mut si, 2), Ok(Status::Idle));
+    assert_eq!(si.sent.len(), 1);
+    assert!(!server.has_candidate());
+}
+
+#[test]
+fn initial_admission_refusal_expiry_and_clock_overflow_release_no_crypto_work() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut ci = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let bad = critical_request(&m1, 900);
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut si = Io::default();
+    server
+        .ingest(&bad, CLIENT, 0, no_entropy, no_authorization)
+        .unwrap();
+    assert_eq!(
+        server.flush(&mut si, EXCHANGE_LIFETIME_MS),
+        Ok(Status::Idle)
+    );
+    assert!(si.sent.is_empty());
+    assert!(server.control.is_none());
+    assert_eq!(server.next_deadline(), None);
+    assert_eq!(
+        server.ingest(
+            &m1,
+            CLIENT,
+            EXCHANGE_LIFETIME_MS,
+            entropy(4),
+            no_authorization
+        ),
+        Ok(Status::Progress)
+    );
+    server.flush(&mut si, EXCHANGE_LIFETIME_MS).unwrap();
+    assert_eq!(decode(&si.last()).unwrap().code(), Code::CHANGED);
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, u64::MAX).unwrap();
+    assert_eq!(
+        server.ingest(&bad, CLIENT, u64::MAX, no_entropy, no_authorization),
+        Err(RecoveryError::Bootstrap(PollError::Clock))
+    );
+    assert!(server.control.is_none());
+    assert!(!server.has_candidate());
+    assert!(server.caches.iter().all(Option::is_none));
+    assert_eq!(server.next_deadline(), None);
+}
+
+#[test]
+fn initial_admission_refusal_survives_candidate_retirement_without_renewal() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    let bad = critical_request(&m1, 900);
+    server
+        .ingest(&bad, CLIENT, 10, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 10).unwrap();
+    let saved = si.last();
+    server
+        .ingest(&m1, CLIENT, 11, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 11).unwrap();
+    assert!(server.discard_candidate(12).unwrap());
+    assert!(!server.has_candidate());
+    assert_eq!(
+        server.control.as_ref().unwrap().expires,
+        10 + EXCHANGE_LIFETIME_MS
+    );
+    assert_eq!(
+        server.ingest(
+            &bad,
+            CLIENT,
+            10 + EXCHANGE_LIFETIME_MS - 1,
+            no_entropy,
+            no_authorization
+        ),
+        Ok(Status::Progress)
+    );
+    server
+        .flush(&mut si, 10 + EXCHANGE_LIFETIME_MS - 1)
+        .unwrap();
+    assert_eq!(si.last(), saved);
+    server.flush(&mut si, 10 + EXCHANGE_LIFETIME_MS).unwrap();
+    assert!(server.control.is_none());
+    // The retired handshake still owns its later expiry; the refusal cannot evict it.
+    assert_eq!(server.next_deadline(), Some(11 + EXCHANGE_LIFETIME_MS));
+    assert_eq!(
+        server.ingest(
+            &critical_request(&m1, 901),
+            CLIENT,
+            10 + EXCHANGE_LIFETIME_MS,
+            no_entropy,
+            no_authorization
+        ),
+        Ok(Status::Progress)
+    );
+    assert!(!server.has_candidate());
+    assert_eq!(server.caches.iter().flatten().count(), 1);
+    server.flush(&mut si, 10 + EXCHANGE_LIFETIME_MS).unwrap();
+    assert_eq!(
+        decode(&si.last()).unwrap().message_id(),
+        MessageId::new(901)
+    );
+}
+
+#[test]
+fn initial_admission_critical_mutation_cannot_cross_completed_cache_owner() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<1>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<1>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let ([m1, m2, _, _], _, _) = exchange(&mut client, &mut server, 0, 3);
+    let mut si = Io::default();
+    let mid = decode(&m1).unwrap().message_id().get();
+    assert_eq!(
+        server.ingest(
+            &critical_request(&m1, mid),
+            CLIENT,
+            1,
+            no_entropy,
+            no_authorization
+        ),
+        Ok(Status::Ignored)
+    );
+    assert!(server.control.is_none());
+    assert_eq!(
+        server.ingest(&m1, CLIENT, 1, no_entropy, no_authorization),
+        Ok(Status::Progress)
+    );
+    server.flush(&mut si, 1).unwrap();
+    assert_eq!(si.last(), m2);
+    // A fresh refusal works even when the single completion cache is occupied.
+    assert_eq!(
+        server.ingest(
+            &critical_request(&m1, 900),
+            CLIENT,
+            2,
+            no_entropy,
+            no_authorization
+        ),
+        Ok(Status::Progress)
+    );
+    assert!(!server.has_candidate());
+    server.flush(&mut si, 2).unwrap();
+    assert_eq!(decode(&si.last()).unwrap().code(), Code::BAD_OPTION);
+    assert_eq!(server.caches.iter().flatten().count(), 1);
+}
+
+#[test]
+fn bootstrap_options_recovery_handoff_preserves_refusal_mid_and_failed_send() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<2>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<2>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    let m2 = si.last();
+    let bad = critical_request(&m1, 900);
+    server
+        .ingest(&bad, CLIENT, 100, no_entropy, no_authorization)
+        .unwrap();
+    server.flush(&mut si, 100).unwrap();
+    let saved = si.last();
+    client
+        .ingest(&m2, SERVER, 101, no_entropy, |_| true)
+        .unwrap();
+    client.flush(&mut ci, 101).unwrap();
+    server
+        .ingest(&ci.last(), CLIENT, 101, no_entropy, |_| true)
+        .unwrap();
+    server.flush(&mut si, 101).unwrap();
+    client
+        .ingest(&si.last(), SERVER, 101, no_entropy, |_| true)
+        .unwrap();
+    assert!(server.take_session().is_some());
+    assert!(server.confirm_handoff());
+    assert!(client.take_session().is_some());
+    assert!(client.confirm_handoff());
+    let mut opposite_role = bad.clone();
+    opposite_role[1] = 68;
+    let count = si.sent.len();
+    let cache = server.caches.iter().flatten().next().unwrap();
+    assert_eq!(
+        cache.classify(&opposite_role, 102),
+        CompletedCacheMatch::RefusedMid
+    );
+    assert_eq!(
+        server
+            .ingest(&opposite_role, CLIENT, 102, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Ignored
+    );
+    server.flush(&mut si, 102).unwrap();
+    assert_eq!(si.sent.len(), count);
+    let p = decode(&m1).unwrap();
+    let changed = packet(
+        &m1,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        p.payload(),
+    );
+    assert_eq!(
+        server
+            .ingest(&changed, CLIENT, 102, no_entropy, no_authorization)
+            .unwrap(),
+        Status::Progress
+    );
+    assert!(!server.has_candidate());
+    si.fail = true;
+    assert_eq!(
+        server.flush(&mut si, 102),
+        Err(RecoveryError::Bootstrap(PollError::Io(9)))
+    );
+    assert_eq!(si.last(), saved);
+    si.fail = false;
+    si.short = true;
+    assert_eq!(
+        server.flush(&mut si, 103),
+        Err(RecoveryError::Bootstrap(PollError::ShortSend))
+    );
+    assert_eq!(si.last(), saved);
+    si.short = false;
+    server.flush(&mut si, 104).unwrap();
+    assert_eq!(si.last(), saved);
+    let own_expiry = 100 + EXCHANGE_LIFETIME_MS;
+    server
+        .ingest(
+            &changed,
+            CLIENT,
+            own_expiry - 1,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    server.flush(&mut si, own_expiry - 1).unwrap();
+    assert_eq!(si.last(), saved);
+    let count = si.sent.len();
+    server.flush(&mut si, own_expiry).unwrap();
+    assert_eq!(si.sent.len(), count);
+    let cache = server.caches.iter().flatten().next().unwrap();
+    assert_eq!(
+        cache.classify(&changed, own_expiry),
+        CompletedCacheMatch::NoMatch
+    );
+}
+
+#[test]
+fn bootstrap_options_recovery_retirement_keeps_later_refusal_expiry() {
+    let a = identity(1, 0);
+    let b = identity(2, 1);
+    let mut client = CoapRecovery::<2>::new(&a, b.peer(), SERVER, 0).unwrap();
+    let mut server = CoapRecovery::<2>::new(&b, a.peer(), CLIENT, 0).unwrap();
+    let mut ci = Io::default();
+    let mut si = Io::default();
+    client.start(0, entropy(3)).unwrap();
+    client.flush(&mut ci, 0).unwrap();
+    let m1 = ci.last();
+    server
+        .ingest(&m1, CLIENT, 0, entropy(4), no_authorization)
+        .unwrap();
+    server.flush(&mut si, 0).unwrap();
+    server
+        .ingest(
+            &critical_request(&m1, 900),
+            CLIENT,
+            100,
+            no_entropy,
+            no_authorization,
+        )
+        .unwrap();
+    server.flush(&mut si, 100).unwrap();
+    assert!(server.discard_candidate(EXCHANGE_LIFETIME_MS + 1).unwrap());
+    assert!(!server.has_candidate());
+    assert_eq!(server.next_deadline(), Some(EXCHANGE_LIFETIME_MS + 100));
+    let p = decode(&m1).unwrap();
+    let changed = packet(
+        &m1,
+        Type::Confirmable,
+        MessageId::new(900),
+        Token::from_checked(&[9]),
+        p.payload(),
+    );
+    let count = si.sent.len();
+    assert_eq!(
+        server
+            .ingest(
+                &changed,
+                CLIENT,
+                EXCHANGE_LIFETIME_MS + 99,
+                no_entropy,
+                no_authorization
+            )
+            .unwrap(),
+        Status::Ignored
+    );
+    assert!(!server.has_candidate());
+    server.flush(&mut si, EXCHANGE_LIFETIME_MS + 99).unwrap();
+    assert_eq!(si.sent.len(), count); // retired owners quarantine without replies
+    assert_eq!(
+        server
+            .ingest(
+                &changed,
+                CLIENT,
+                EXCHANGE_LIFETIME_MS + 100,
+                entropy(5),
+                no_authorization
+            )
+            .unwrap(),
+        Status::Progress
+    );
+    assert!(server.has_candidate());
 }
 
 #[test]
@@ -665,10 +1272,12 @@ fn all_compact_ids_reserved_refuses_admission_even_with_a_free_cache_slot() {
             token: Token::from_checked(&[raw]),
         };
         controller.caches[usize::from(raw)] = Some(Cache {
+            control: None,
             local_id: ConnectionId::new(raw).unwrap(),
             expires: EXCHANGE_LIFETIME_MS,
             replies: false,
             role: CachedRole::Client {
+                peer_error_slot: None,
                 operations: [operation; 3],
                 acks: [None, None, None],
                 pending: 0,

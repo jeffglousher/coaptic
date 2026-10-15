@@ -427,7 +427,7 @@ fn app_five_sequential_oscore_gets() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -435,7 +435,7 @@ fn app_five_sequential_oscore_gets() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     for i in 0..=LIVE_REQUESTS {
         let call = client
@@ -515,7 +515,7 @@ fn app_bad_ciphertext_is_silent_drop() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -523,7 +523,7 @@ fn app_bad_ciphertext_is_silent_drop() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let _ = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, mut bytes, n) = client.transport().last_send.expect("protected request");
@@ -562,7 +562,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -570,7 +570,7 @@ fn app_oscore_con_retransmit_replays_protected_ack() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let _ = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected request");
@@ -719,7 +719,7 @@ fn app_oscore_observe_register_notify() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -727,7 +727,7 @@ fn app_oscore_observe_register_notify() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected register");
@@ -848,7 +848,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -856,7 +856,7 @@ fn first_notify_without_piv_after_register_is_accepted() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
     let (_, req_bytes, req_n) = client.transport().last_send.expect("protected register");
@@ -940,7 +940,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -948,7 +948,7 @@ fn app_plain_notify_does_not_complete_oscore_observe() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("obs").observe().to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("register");
@@ -1064,7 +1064,7 @@ fn oscore_block_and_qblock_mix_is_per_side() {
             .allow_plaintext()
             .bind(WideLoopback::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         let mut client = client_c1();
         let mut opts = OptionsBuilder::<8>::new();
         opts.push(Opt::uri_path("upload")).unwrap();
@@ -1454,7 +1454,7 @@ fn app_oscore_block2_get_assembles() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -1462,7 +1462,7 @@ fn app_oscore_block2_get_assembles() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("large").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected GET");
@@ -1508,7 +1508,7 @@ fn app_oscore_block1_put_assembles() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -1516,11 +1516,23 @@ fn app_oscore_block1_put_assembles() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
+    assert!(matches!(
+        client
+            .put("upload")
+            .payload(&LARGE)
+            .to(server_ep)
+            .no_response(crate::message::NoResponse::new(2))
+            .send(0),
+        Err(crate::app::Error::NoResponseUploadUnsupported)
+    ));
+    assert!(client.transport().last_send.is_none());
+    assert_eq!(client.engine_mut().tx_occupied(), 0);
     let call = client
         .put("upload")
         .payload(&LARGE)
+        .no_response(crate::message::NoResponse::DEFAULT)
         .content_format(ContentFormat::OCTET_STREAM)
         .to(server_ep)
         .send(0)
@@ -1564,7 +1576,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -1572,7 +1584,7 @@ fn app_plain_block2_does_not_complete_oscore_call() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("large").to(server_ep).send(0).unwrap();
     pump_oscore_block(&mut client, &mut server, client_ep, server_ep, 0);
@@ -1634,7 +1646,7 @@ fn app_oscore_max_age_etag_stay_inner() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -1642,7 +1654,7 @@ fn app_oscore_max_age_etag_stay_inner() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected request");
@@ -1681,7 +1693,7 @@ fn app_plain_etag_max_age_does_not_complete_oscore_call() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let call = client.get("tv1").to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected request");
@@ -1824,7 +1836,7 @@ fn exhausted_sender_seq_is_oscore_error_not_block1() {
         .unwrap();
     let mut ctx = client_c1();
     ctx.set_sender_seq(1 << 40).unwrap();
-    client.set_oscore(ctx);
+    client.set_oscore(&mut Some(ctx)).unwrap();
 
     let err = client
         .put("tv1")
@@ -1861,7 +1873,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -1869,7 +1881,7 @@ fn exhausted_sender_seq_on_notify_is_oscore_error_not_block2() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
 
     let _ = client.get("obs").observe().to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("register");
@@ -1924,7 +1936,7 @@ fn app_oscore_qblock_recovery_refuses_plaintext_in_both_directions() {
             .allow_plaintext()
             .bind(Loopback::default())
             .unwrap();
-        app.set_oscore(server_c1());
+        app.set_oscore(&mut Some(server_c1())).unwrap();
         // Advanced Engine injection deliberately omits authenticated request
         // references; timed App recovery must still refuse plaintext.
         for (num, payload) in [(0, &b"0123456789abcdef"[..]), (2, &b"01234567"[..])] {
@@ -2349,7 +2361,7 @@ fn cancelled_calls_reclaim_oscore_bindings_without_reusing_sender_sequence() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    app.set_oscore(client_c1());
+    app.set_oscore(&mut Some(client_c1())).unwrap();
     for i in 0..12 {
         let call = app.get("value").to(peer).send(i).unwrap();
         assert!(app.oscore().unwrap().lookup(call.token()).is_some());
@@ -2394,14 +2406,14 @@ fn app_echo_challenge_and_explicit_retry_stay_inner_in_same_oscore_context() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let mut challenge = None;
     for attempt in 0..2 {
         let mut request = client.get("value").to(server_ep);
@@ -2450,14 +2462,14 @@ fn app_client_no_response_stays_inner_and_unsuppressed_error_is_delivered() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let call = client
         .put("value")
         .to(server_ep)
@@ -2518,7 +2530,7 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
                     last_token: None,
                 })
                 .unwrap();
-            app.set_oscore(client_c1());
+            app.set_oscore(&mut Some(client_c1())).unwrap();
             for i in 0..12 {
                 let request = app.get("value").to(peer);
                 let request = if confirmable { request } else { request.non() };
@@ -2612,7 +2624,7 @@ fn protected_partial_upload_failure_releases_all_request_state() {
                     token: None,
                 })
                 .unwrap();
-            app.set_oscore(client_c1());
+            app.set_oscore(&mut Some(client_c1())).unwrap();
             for i in 0..12 {
                 let before = app.oscore().unwrap().sender_seq();
                 app.transport_mut().sends = 0;
@@ -2713,27 +2725,42 @@ fn outer_observe_cannot_replace_protected_registration_or_notification() {
 
 #[test]
 fn protected_observe_cancellation_selects_one_subscription_and_releases_binding() {
-    use crate::{App, Request, Response, get, profiles};
-    fn value(_: Request<'_>) -> Response<'static> {
-        Response::content(b"value").observe(0)
+    use crate::{App, profiles};
+    // Explicit capable peer: unlike App's requestless route source, this
+    // fixture retains the selected request binding for each query.
+    fn reply(
+        server: &mut SecurityContext,
+        wire: &[u8],
+        query: &str,
+        register: bool,
+    ) -> ([u8; 256], usize, RequestRef) {
+        let mut inner = [0; 256];
+        let (request, reference) = server
+            .unprotect_request(&decode(wire).unwrap(), &mut inner)
+            .unwrap();
+        assert_eq!(request.uri_query().next(), Some(Ok(query)));
+        assert_eq!(request.observe(), Some(Ok(u32::from(!register))));
+        let options = [Opt::observe_register()];
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(request.token())
+            .with_options(if register { &options } else { &[] })
+            .with_payload(b"value");
+        let mut bytes = [0; 256];
+        let n = server
+            .protect_response_with_piv(&response, reference, &mut bytes)
+            .unwrap();
+        (bytes, n, reference)
     }
-    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
-    let mut server = App::profile::<profiles::Default>()
-        .deterministic_for_tests()
-        .block_wise::<false>()
-        .route("obs", get(value))
-        .allow_plaintext()
-        .bind(Loopback::default())
-        .unwrap();
-    server.set_oscore(server_c1());
+    let mut server = server_c1();
+    let mut bindings = [None; 2];
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let mut calls = [None; 2];
     for (i, query) in ["a", "b"].into_iter().enumerate() {
         let call = client
@@ -2744,9 +2771,8 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
             .send(i as u64)
             .unwrap();
         let (_, bytes, n) = client.transport().last_send.unwrap();
-        server.transport_mut().inbox = Some((client_ep, bytes, n));
-        server.poll(i as u64).unwrap();
-        let (_, bytes, n) = server.transport().last_send.unwrap();
+        let (bytes, n, reference) = reply(&mut server, &bytes[..n], query, true);
+        bindings[i] = Some(reference);
         client.transport_mut().inbox = Some((server_ep, bytes, n));
         client.poll(i as u64).unwrap();
         assert!(
@@ -2783,9 +2809,8 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
     );
     let (_, bytes, n) = client.transport().last_send.unwrap();
     assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
-    server.transport_mut().inbox = Some((client_ep, bytes, n));
-    server.poll(2).unwrap();
-    let (_, bytes, n) = server.transport().last_send.unwrap();
+    let (bytes, n, _) = reply(&mut server, &bytes[..n], "a", false);
+    bindings[0] = None;
     assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(2).unwrap();
@@ -2799,13 +2824,17 @@ fn protected_observe_cancellation_selects_one_subscription_and_releases_binding(
     );
     assert!(client.oscore().unwrap().lookup(a.token()).is_none());
     assert!(client.oscore().unwrap().lookup(b.token()).is_some());
-    assert_eq!(
-        server
-            .notify(10, &["obs"], Response::content(b"only b"))
-            .unwrap(),
-        1
-    );
-    let (_, bytes, n) = server.transport().last_send.unwrap();
+    assert!(bindings[0].is_none());
+    let seq = encode_uint(1);
+    let opts = [Opt::observe(&seq)];
+    let notification = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(300))
+        .with_token(b.token())
+        .with_options(&opts)
+        .with_payload(b"only b");
+    let mut bytes = [0; 256];
+    let n = server
+        .protect_response_with_piv(&notification, bindings[1].unwrap(), &mut bytes)
+        .unwrap();
     assert_eq!(decode(&bytes[..n]).unwrap().token(), b.token());
     client.transport_mut().inbox = Some((server_ep, bytes, n));
     client.poll(10).unwrap();
@@ -2838,7 +2867,7 @@ fn dual_role_protected_observe_uses_independent_same_token_relations() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    a.set_oscore(client_c1());
+    a.set_oscore(&mut Some(client_c1())).unwrap();
     let mut b = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
@@ -2846,7 +2875,7 @@ fn dual_role_protected_observe_uses_independent_same_token_relations() {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    b.set_oscore(server_c1());
+    b.set_oscore(&mut Some(server_c1())).unwrap();
     let ac = a.get("obs").observe().to(be).send(0).unwrap();
     transfer(&a, &mut b, ae, 0);
     transfer(&b, &mut a, be, 0);
@@ -2921,14 +2950,14 @@ fn protected_delete_delivers_terminal_notification_before_releasing_client_bindi
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let observe = client.get("obs").observe().to(server_ep).send(0).unwrap();
     let (_, bytes, n) = client.transport().last_send.unwrap();
     server.transport_mut().inbox = Some((client_ep, bytes, n));
@@ -3010,7 +3039,7 @@ fn exercise_notification_reset_isolation(now: u64, ty: Type) {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    a.set_oscore(client_c1());
+    a.set_oscore(&mut Some(client_c1())).unwrap();
     let mut b = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
@@ -3018,7 +3047,7 @@ fn exercise_notification_reset_isolation(now: u64, ty: Type) {
         .allow_plaintext()
         .bind(Loopback::default())
         .unwrap();
-    b.set_oscore(server_c1());
+    b.set_oscore(&mut Some(server_c1())).unwrap();
     let ac = a.get("obs").observe().to(be).send(0).unwrap();
     transfer(&a, &mut b, ae, 0);
     transfer(&b, &mut a, be, 0);
@@ -3144,7 +3173,7 @@ fn protected_continuation_failures_release_bindings_without_sequence_reuse() {
                         short,
                     })
                     .unwrap();
-                app.set_oscore(client_c1());
+                app.set_oscore(&mut Some(client_c1())).unwrap();
                 let mut remote = server_c1();
                 let other = app
                     .get("other")
@@ -3425,6 +3454,52 @@ fn restored_recipient_checkpoint_refuses_old_authenticated_requests() {
 }
 
 #[test]
+fn replay_checkpoint_successor_preserves_seen_sequences_at_window_and_sequence_bounds() {
+    use super::ReplayCheckpoint;
+    let end = 1u64 << 40;
+    let states = [
+        (0, 0),
+        (0, 1),
+        (0, u32::MAX),
+        (1, u32::MAX),
+        (31, 1),
+        (32, 0),
+        (32, u32::MAX),
+        (33, 1),
+        (end - 32, u32::MAX),
+        (end - 1, 1),
+        (end, 0),
+    ];
+    for (left, bits) in states {
+        let before = ReplayCheckpoint::from_parts(left, bits).unwrap();
+        for (next_left, next_bits) in states {
+            let next = ReplayCheckpoint::from_parts(next_left, next_bits).unwrap();
+            let mut safe = next_left >= left;
+            for bit in 0..32 {
+                if bits & (1 << bit) == 0 {
+                    continue;
+                }
+                let sequence = left + bit;
+                let rejected = sequence < next_left
+                    || (sequence - next_left < 32
+                        && next_bits & (1 << (sequence - next_left)) != 0);
+                safe &= rejected;
+            }
+            assert_eq!(
+                before.validate_successor(next),
+                if safe {
+                    Ok(())
+                } else {
+                    Err(Error::ReplayRollback)
+                }
+            );
+            assert_eq!(before.parts(), (left, bits));
+            assert_eq!(next.parts(), (next_left, next_bits));
+        }
+    }
+}
+
+#[test]
 fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
     let mut random = 0x0086_1375_0032_u64;
     for _ in 0..256 {
@@ -3448,6 +3523,7 @@ fn replay_checkpoint_restore_never_reopens_rejected_sequences_model() {
             && refused
                 .iter()
                 .all(|seq| *seq < left || (*seq - left < 32 && bits & (1 << (*seq - left)) != 0));
+        assert_eq!(before.validate_successor(candidate).is_ok(), safe);
         assert_eq!(context.restore_replay(candidate).is_ok(), safe);
         if safe {
             for seq in refused {
@@ -3502,7 +3578,7 @@ fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        client.set_oscore(client_c1());
+        client.set_oscore(&mut Some(client_c1())).unwrap();
         let mut server = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
@@ -3510,7 +3586,7 @@ fn app_oscore_qblock2_distinct_pivs_reorder_corruption_replay_and_cleanup() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         for cycle in 0..6 {
             let now = cycle * 10;
             let call = client
@@ -3605,7 +3681,7 @@ fn app_oscore_qblock2_sequence_exhaustion_releases_body_without_plaintext_fallba
         .unwrap();
     let mut context = server_c1();
     context.set_sender_seq((1u64 << 40) - 1).unwrap();
-    server.set_oscore(context);
+    server.set_oscore(&mut Some(context)).unwrap();
     server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
     assert_eq!(
         server.poll(0),
@@ -3648,7 +3724,7 @@ fn app_oscore_qblock2_accepts_one_no_piv_response_then_fresh_piv() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let call = client.get("large").q_block2().to(peer).send(0).unwrap();
     let wire = client.transport_mut().sent.remove(0);
     let request = decode(&wire).unwrap();
@@ -3738,7 +3814,7 @@ fn app_oscore_repeated_qblock2_selection_preserves_inner_ranges_and_distinct_piv
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
     server.poll(0).unwrap();
     assert_eq!(server.transport().sent.len(), 4);
@@ -3803,7 +3879,7 @@ fn app_oscore_qblock1_missing_metadata_returns_protected_bad_request() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
         server.poll(0).unwrap();
         assert_eq!(server.transport().sent.len(), 1);
@@ -3850,7 +3926,7 @@ fn app_oscore_qblock1_ack_continue_and_complete_follow_payload_set() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         for num in 0..11 {
             let q = BlockValue::from_size(num, num < 10, 16).unwrap().encode();
             let size = encode_uint(BODY.len() as u32);
@@ -3954,7 +4030,7 @@ fn app_oscore_qblock2_exhaustion_retires_binding_or_accepts_deadline_completion(
                 .allow_plaintext()
                 .bind(QWire::default())
                 .unwrap();
-            client.set_oscore(client_c1());
+            client.set_oscore(&mut Some(client_c1())).unwrap();
             let request = if is_fetch {
                 client
                     .fetch("large/part")
@@ -4111,7 +4187,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let mut server = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
@@ -4126,7 +4202,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     for iteration in 0..6 {
         let now = iteration * 10000;
         client.transport_mut().sent.clear();
@@ -4136,6 +4212,7 @@ fn app_oscore_confirmable_qupload_recovers_lost_ack_and_completes_repeatedly() {
             .q_block1()
             .request_tag(crate::storage::BodyTag::new(&[iteration as u8]).unwrap())
             .payload(&LARGE)
+            .no_response(crate::message::NoResponse::DEFAULT)
             .to(server_ep)
             .send(now)
             .unwrap();
@@ -4202,7 +4279,7 @@ fn app_oscore_confirmable_qupload_failed_continuation_retires_binding() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     for now in 0..12 {
         let call = client
             .put("upload")
@@ -4260,7 +4337,7 @@ fn app_oscore_qblock2_failed_empty_ack_replays_without_reentering_handler() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
     server.transport_mut().fail_send = true;
     assert!(server.poll(0).is_err());
@@ -4294,13 +4371,14 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let call = client
         .put("upload")
         .q_block1()
         .non()
         .request_tag(crate::storage::BodyTag::new(b"tag").unwrap())
         .payload(&LARGE)
+        .no_response(crate::message::NoResponse::DEFAULT)
         .to(peer)
         .send(0)
         .unwrap();
@@ -4352,6 +4430,10 @@ fn app_oscore_missing_report_retains_binding_for_refusal_and_protected_reissue()
     assert_eq!(outer.ty(), Type::NonConfirmable);
     let (inner, recovery_ref) = server.unprotect_request(&outer, &mut scratch).unwrap();
     assert_eq!(inner.q_block1().unwrap().unwrap().num(), 1);
+    assert_eq!(
+        inner.no_response(),
+        Some(Ok(crate::message::NoResponse::DEFAULT))
+    );
     assert_eq!(inner.payload(), &LARGE[1024..]);
     assert_eq!(inner.request_tag().next(), Some(&b"tag"[..]));
     let final_reply = Message::new(Type::NonConfirmable, Code::CHANGED, MessageId::new(600))
@@ -4422,7 +4504,7 @@ fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         server.transport_mut().inbox = Some((peer, wire[..n].to_vec()));
         server.poll(0).unwrap();
         assert_eq!(server.transport().sent.len(), 1);
@@ -4456,7 +4538,7 @@ fn app_oscore_fetch_format_refusal_is_protected_and_precedes_body_admission() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let seq = client.oscore().unwrap().sender_seq();
     assert_eq!(
         client.fetch("search").to(peer).send(0),
@@ -4478,7 +4560,7 @@ fn protected_response_matching_preserves_live_state_until_expected_peer_and_mid(
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        client.set_oscore(client_c1());
+        client.set_oscore(&mut Some(client_c1())).unwrap();
         let outgoing = client.get("value").to(peer);
         let outgoing = if case == 2 {
             outgoing.non()
@@ -4586,7 +4668,7 @@ fn protected_response_rejection_and_failed_ack_preserve_pending_call() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        client.set_oscore(client_c1());
+        client.set_oscore(&mut Some(client_c1())).unwrap();
         let call = client.get("value").to(peer).send(0).unwrap();
         let sent = client.transport_mut().sent.remove(0);
         let request = decode(&sent).unwrap();
@@ -4660,7 +4742,7 @@ fn protected_four_call_capacity_includes_uncollected_replies_and_recovers_repeat
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let mut server = server_c1();
     let mut scratch = [0; WIRE];
     let mut wire = [0; WIRE];
@@ -4726,7 +4808,7 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
                     .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
-                client.set_oscore(client_c1());
+                client.set_oscore(&mut Some(client_c1())).unwrap();
                 let request = client.get("value").to(peer);
                 let call = if observe {
                     request.observe()
@@ -4825,7 +4907,7 @@ fn protected_con_response_duplicates_are_acked_before_and_after_collection() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        client.set_oscore(client_c1());
+        client.set_oscore(&mut Some(client_c1())).unwrap();
         let request = client.get("value").to(peer);
         let request = match mode {
             1 => request.observe(),
@@ -4923,7 +5005,7 @@ fn protected_response_inline_and_assembled_boundaries_reclaim_state() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let mut server = server_c1();
     let mut scratch = [0; WIRE];
     let mut wire = [0; WIRE];
@@ -5037,7 +5119,7 @@ fn protected_qblock2_aligned_reselection_preserves_windows_and_uses_fresh_pivs()
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    server.set_oscore(server_c1());
+    server.set_oscore(&mut Some(server_c1())).unwrap();
     let key = crate::storage::BlockKey::new(token, peer)
         .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
     let id = server.engine_mut().start_q_block2(key, &BODY, 0).unwrap();
@@ -5168,7 +5250,7 @@ fn protected_qblock1_timed_reports_bind_latest_request_and_reclaim_state() {
                     .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
-                server.set_oscore(server_c1());
+                server.set_oscore(&mut Some(server_c1())).unwrap();
                 let (zero, _) = packet(&mut sender, 0, different_tokens, 100);
                 let (two, _) = packet(&mut sender, 2, different_tokens, 101);
                 let (duplicate, latest) = packet(&mut sender, 2, different_tokens, 102);
@@ -5301,7 +5383,7 @@ fn protected_qblock1_report_sequence_exhaustion_never_sends_plaintext() {
         .unwrap();
     let mut context = server_c1();
     context.set_sender_seq((1u64 << 40) - 1).unwrap();
-    server.set_oscore(context);
+    server.set_oscore(&mut Some(context)).unwrap();
     for num in [0, 2] {
         let q = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
         let size = encode_uint(48);
@@ -5383,7 +5465,7 @@ fn protected_observe_reregistration_continues_sequence_and_replaces_request_bind
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         let mut client = client_c1();
         let options = [Opt::observe_register(), Opt::uri_path("obs")];
         let mut wire = [0; 256];
@@ -5479,14 +5561,14 @@ fn protected_client_reregistration_rebinds_and_reports_send_failure() {
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        server.set_oscore(server_c1());
+        server.set_oscore(&mut Some(server_c1())).unwrap();
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
             .allow_plaintext()
             .bind(QWire::default())
             .unwrap();
-        client.set_oscore(client_c1());
+        client.set_oscore(&mut Some(client_c1())).unwrap();
         for iteration in 0..8u64 {
             let now = iteration * 10_000;
             let call = client.get("obs").observe().to(server_ep).send(now).unwrap();
@@ -5583,7 +5665,7 @@ fn protected_observe_format_refusal_precedes_replay_commit_and_body_admission() 
                 .allow_plaintext()
                 .bind(QWire::default())
                 .unwrap();
-            client.set_oscore(client_c1());
+            client.set_oscore(&mut Some(client_c1())).unwrap();
             let call = client.get("obs").observe().to(peer).send(0).unwrap();
             let request = client.transport_mut().sent.remove(0);
             let mut server = server_c1();
@@ -5697,7 +5779,7 @@ fn protected_observe_download_retains_registration_binding_across_followups() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let call = client.get("obs").observe().to(peer).send(0).unwrap();
     let initial = client.transport_mut().sent.remove(0);
     let mut server = server_c1();
@@ -5916,14 +5998,14 @@ fn protected_large_server_notifications_assemble_and_recover_from_send_failure()
                     .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
-                server.set_oscore(server_c1());
+                server.set_oscore(&mut Some(server_c1())).unwrap();
                 let mut client = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
                     .allow_plaintext()
                     .bind(QWire::default())
                     .unwrap();
-                client.set_oscore(client_c1());
+                client.set_oscore(&mut Some(client_c1())).unwrap();
                 let call = client
                     .get("obs")
                     .observe()
@@ -6077,7 +6159,7 @@ fn protected_observe_aggregation_preserves_binding_sequence_and_queued_reply() {
         .allow_plaintext()
         .bind(QWire::default())
         .unwrap();
-    client.set_oscore(client_c1());
+    client.set_oscore(&mut Some(client_c1())).unwrap();
     let call = client.get("obs").observe().non().to(peer).send(0).unwrap();
     client.transport_mut().sent.clear();
     let reference = client.oscore().unwrap().lookup(call.token()).unwrap();
@@ -6188,6 +6270,9 @@ fn older_concurrent_request_binding_is_not_authenticated() {
 
 #[path = "replay_tests.rs"]
 mod replay_barrier;
+
+#[path = "progress_tests.rs"]
+mod rejected_traffic_progress;
 
 #[path = "checkpoint_q_tests.rs"]
 mod checkpoint_q;

@@ -40,6 +40,8 @@ pub enum ResponseError {
     PayloadTruncated,
     /// Deferred completion metadata exceeds its bounded retained header.
     DeferredMetadataBounds,
+    /// A deferred Observe retry changes the initial attempted Content-Format.
+    DeferredObserveFormat,
     /// ETag must contain 1 through 8 bytes.
     EtagLength,
     /// Location-Path exceeds eight segments or a segment exceeds 255 bytes.
@@ -54,6 +56,7 @@ impl core::fmt::Display for ResponseError {
         f.write_str(match self {
             Self::PayloadTruncated => "response payload exceeds its copy bound",
             Self::DeferredMetadataBounds => "deferred response metadata exceeds App bounds",
+            Self::DeferredObserveFormat => "deferred Observe retry changes Content-Format",
             Self::EtagLength => "ETag must contain 1 through 8 bytes",
             Self::LocationPathBounds => "Location-Path exceeds its count or byte bound",
             Self::LocationQueryBounds => "Location-Query exceeds its count or byte bound",
@@ -687,10 +690,12 @@ impl<'a> Response<'a> {
 
     /// Set Observe sequence.
     ///
-    /// On a successful GET/FETCH with Observe=0 this opts the handler into
+    /// On a successful queryless GET with Observe=0 this opts the handler into
     /// registration ([`App`](super::App) writes sequence 0 on the wire).
     /// [`App::notify`](super::App::notify) overwrites this with the table
     /// sequence. Mutating in place avoids copying the payload.
+    /// App server FETCH and query-bearing GET responses omit Observe:
+    /// request-specific selection ownership for notifications is not implemented.
     #[must_use]
     pub const fn observe(mut self, sequence: u32) -> Self {
         self.set_observe(sequence);

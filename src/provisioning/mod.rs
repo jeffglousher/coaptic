@@ -30,6 +30,7 @@ mod enrollment;
 mod identity;
 mod lakers;
 mod managed;
+mod peer_error;
 mod receipt;
 mod trust;
 
@@ -48,6 +49,7 @@ pub use managed::{
     ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
     ManagedRefreshError, PolicyValidity,
 };
+pub use peer_error::{PeerError, PeerErrorCode};
 pub use receipt::{
     OperationId, Receipt, ReceiptError, ReceiptStore, TelemetryOperation, commit_telemetry,
 };

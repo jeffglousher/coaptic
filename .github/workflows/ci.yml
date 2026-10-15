@@ -68,6 +68,9 @@ jobs:
       - run: cargo test --no-default-features --features oscore
       - run: cargo test --no-default-features --features alloc,oscore
       - run: cargo test --no-default-features --features std
+      - run: cargo test --features std --test std_fixed_storage
+      - run: cargo check --locked --example fixed_service
+      - run: cargo test --locked --example fixed_service
       - name: Run the README client and server
         shell: bash
         run: |
@@ -77,18 +80,22 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           target/debug/examples/client
       - run: cargo run --locked --example oscore_pair --features std
+      - run: cargo test --locked --example oscore_pair --features std
+      - run: cargo run --locked --example oscore_pair --features std,alloc -- --alloc
+      - run: cargo test --locked --example oscore_pair --features std,alloc
 
   doc:
     name: doc
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: --cfg docsrs
+      RUSTDOCFLAGS: --cfg docsrs -D warnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --no-deps --no-default-features
       - run: cargo doc --no-deps --all-features
 
   # Tarball check only â€” do not use `cargo publish --dry-run` here.
@@ -114,8 +121,8 @@ jobs:
 
   validation:
     name: Companion validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@656759fd9989f61eea3fe593c265ccca97c6c469
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@93e34bba8154b1f841d39570cc4a02db44f58673
     with:
-      suite_revision: 656759fd9989f61eea3fe593c265ccca97c6c469
+      suite_revision: 93e34bba8154b1f841d39570cc4a02db44f58673
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}

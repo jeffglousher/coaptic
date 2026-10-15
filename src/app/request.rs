@@ -23,6 +23,8 @@ pub enum PathError {
     TooLong,
     /// An empty segment (`""`, `"sensors//temp"`, or a trailing `/`).
     EmptySegment,
+    /// A decoded Uri-Path segment is `"."` or `".."` (RFC 7252 section 5.10.1).
+    DotSegment,
 }
 
 /// Convert a bind or client path into Uri-Path segments without allocating.
@@ -32,6 +34,8 @@ pub enum PathError {
 /// Empty segments (`""`, `"sensors//temp"`, trailing `/`) are
 /// [`PathError::EmptySegment`]. Used by [`super::AppBuilder::route`] and
 /// [`crate::App::get`] / [`crate::App::put`].
+/// Decoded `"."` and `".."` segments are [`PathError::DotSegment`]. Inputs
+/// are decoded segment values, not URI references: literal `%2E` stays `%2E`.
 pub trait IntoPath {
     /// Fill `out` with Uri-Path segments. Returns the count.
     fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError>;
@@ -62,6 +66,7 @@ impl IntoPath for &'static str {
 /// segments). Empty segments (`"sensors//temp"`, trailing `/`) are
 /// [`PathError::EmptySegment`]. More segments than `out.len()` is
 /// [`PathError::TooLong`].
+/// Decoded `"."` and `".."` segments are [`PathError::DotSegment`].
 pub fn split_path(path: &'static str, out: &mut [&'static str]) -> Result<usize, PathError> {
     let rest = path.trim_start_matches('/');
     if rest.is_empty() {
@@ -72,6 +77,7 @@ pub fn split_path(path: &'static str, out: &mut [&'static str]) -> Result<usize,
         if segment.is_empty() {
             return Err(PathError::EmptySegment);
         }
+        reject_dot_segment(segment)?;
         if n >= out.len() {
             return Err(PathError::TooLong);
         }
@@ -92,15 +98,25 @@ fn path_from_segments(
         if segment.is_empty() {
             return Err(PathError::EmptySegment);
         }
+        reject_dot_segment(segment)?;
         out[i] = *segment;
     }
     Ok(segments.len())
 }
 
+fn reject_dot_segment(segment: &str) -> Result<(), PathError> {
+    if matches!(segment, "." | "..") {
+        Err(PathError::DotSegment)
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathError> {
     let mut segs = [""; MAX_PATH_SEGMENTS];
     let n = path.fill_path(&mut segs)?;
-    Path::from_segments(&segs[..n])
+    let segments = segs.get(..n).ok_or(PathError::TooLong)?;
+    Path::from_segments(segments)
 }
 
 /// Borrowed view of one inbound request.
@@ -128,6 +144,7 @@ pub struct Request<'a> {
     peer: Endpoint,
     method: Option<Method>,
     body: Option<&'a [u8]>,
+    retained_if_none_match: bool,
 }
 
 impl<'a> Request<'a> {
@@ -144,7 +161,13 @@ impl<'a> Request<'a> {
             peer,
             method,
             body,
+            retained_if_none_match: false,
         })
+    }
+
+    pub(crate) fn with_retained_if_none_match(mut self, retained: bool) -> Self {
+        self.retained_if_none_match = retained;
+        self
     }
 
     /// Request method, if `code` is a known class-0 method.
@@ -285,16 +308,25 @@ impl<'a> Request<'a> {
         self.message.if_match()
     }
 
-    /// Whether If-None-Match is present.
+    /// Effective If-None-Match, including NUM0 metadata on a complete
+    /// Block1/Q-Block1 body. [`Self::message`] still exposes only the current datagram.
     #[must_use]
     pub fn if_none_match(&self) -> bool {
-        self.message.if_none_match()
+        self.retained_if_none_match || self.message.if_none_match()
     }
 
-    /// Classify If-Match / If-None-Match. The library does not invent 4.12.
+    /// Classify effective If-Match / If-None-Match against the current state.
+    /// The handler checks this atomically with its effect; the library does not
+    /// invent 4.12. Complete Block1/Q-Block1 includes the retained NUM0 condition.
     #[must_use]
     pub fn precondition(&self, exists: bool, etag: Option<&[u8]>) -> Precondition {
-        self.message.precondition(exists, etag)
+        if self.retained_if_none_match && exists {
+            return Precondition::FailedIfNoneMatch;
+        }
+        match self.message.precondition(exists, etag) {
+            Precondition::Unconditional if self.retained_if_none_match => Precondition::Satisfied,
+            result => result,
+        }
     }
 
     /// Block1, if present.
@@ -339,7 +371,7 @@ impl<'a> Request<'a> {
         self.message.no_response()
     }
 
-    /// Full decoded datagram. Advanced: remaining options, Block2, …
+    /// Current decoded datagram, without retained NUM0 conditions. Advanced: remaining options, Block2, …
     #[must_use]
     pub const fn message(&self) -> ParsedMessage<'a> {
         self.message
@@ -370,6 +402,7 @@ impl<'a> Path<'a> {
             if segment.is_empty() {
                 return Err(PathError::EmptySegment);
             }
+            reject_dot_segment(segment)?;
             path.segs[i] = segment;
         }
         path.len = segments.len() as u8;
@@ -380,6 +413,7 @@ impl<'a> Path<'a> {
         let mut path = Self::empty();
         for segment in parsed.uri_path() {
             let segment = segment.map_err(|_| PathError::BadUtf8)?;
+            reject_dot_segment(segment)?;
             let i = usize::from(path.len);
             if i >= MAX_PATH_SEGMENTS {
                 return Err(PathError::TooLong);

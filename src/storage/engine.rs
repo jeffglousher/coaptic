@@ -447,6 +447,21 @@ impl<S: Storage + DedupSlots> Engine<S> {
 }
 
 impl<S: Storage + PendingCons> Engine<S> {
+    /// Atomically replace one exact pending CON, retaining its slot and RTO.
+    ///
+    /// See [`PendingCons::replace_pending_con`] for staging, MID selection,
+    /// refusal guarantees and higher-layer ownership responsibilities.
+    pub fn replace_pending_con(
+        &mut self,
+        expected: PendingCon,
+        bytes: &[u8],
+    ) -> Result<PendingCon, super::PendingReplaceError> {
+        let replacement = self.storage.replace_pending_con(expected, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(replacement)
+    }
+
     /// Record occupied TX `id` as a pending CON (`message_id` + `endpoint`).
     ///
     /// Initializes RTO from [`crate::message::Transmission`] using caller `now_ms`
@@ -548,7 +563,14 @@ impl<S: Storage + PendingCons> Engine<S> {
 
     /// Next pending CON whose timeout is due at caller `now_ms`, if any.
     ///
-    /// Scans pending TX slots in index order (O(n)). Skips the scan when
+    /// The owned fixed and allocated backends scan pending TX slots round-robin
+    /// (O(n)), independently of slot acquisition order. A continuously due owner
+    /// receives an event within TX-slot-count committed event opportunities.
+    /// Empty/not-yet-due scans leave the cursor unchanged; a committed event
+    /// advances it even if a later send fails. Pinned bytes do not prevent
+    /// pending-sidecar progress. This bounds event selection, not wire delivery
+    /// or progress without caller polling. Custom backends define their policy.
+    /// Skips the scan when
     /// the TX pool is empty. On [`Retransmit::Due`], doubles the timeout
     /// and increments attempts. On [`Retransmit::GiveUp`], clears pending.
     /// Does not send — [`crate::App::poll`] sends Due and releases GiveUp.
@@ -872,9 +894,26 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         message_id: MessageId,
         endpoint: Endpoint,
     ) -> Option<ObserveInterest> {
-        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint)?;
+        let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint).or_else(|| {
+            self.superseded_observe_notify(message_id, endpoint)
+                .and_then(|row| self.lookup_observe(row.key()))
+        })?;
         let interest = self.storage.observe_interest(id)?;
         self.take_observe(interest.key())
+    }
+
+    pub(crate) fn superseded_observe_notify(
+        &self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+    ) -> Option<ObserveInterest> {
+        (0..self.storage.capacities().observe_entries).find_map(|index| {
+            let row = self.storage.observe_interest(SlotId::from_index(index))?;
+            (!row.key().is_client()
+                && row.endpoint() == endpoint
+                && row.superseded_con_mids().contains(&message_id))
+            .then_some(row)
+        })
     }
 
     /// First interest whose colocated lifetime is due at `now_ms`, if any.
@@ -963,7 +1002,19 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// Marks the row due, then [`ObserveInterest::take_due`]. `None` when
     /// the slot is free. Does not encode or send.
     pub fn next_observe_seq(&mut self, id: SlotId) -> Option<u32> {
+        self.next_observe_seq_with_confirmation(id, false)
+    }
+
+    /// Assign a sequence and optionally retain an explicit CON requirement.
+    pub(crate) fn next_observe_seq_with_confirmation(
+        &mut self,
+        id: SlotId,
+        confirmable: bool,
+    ) -> Option<u32> {
         let mut interest = self.storage.observe_interest(id)?;
+        if confirmable && !interest.key().is_client() {
+            interest.require_confirmation();
+        }
         interest.mark_due();
         let seq = interest.take_due()?;
         self.storage.set_observe_interest(id, interest).ok()?;
@@ -1076,6 +1127,22 @@ impl<S: Storage + ObserveSlots> Engine<S> {
             )
             .ok()?;
         Some(id)
+    }
+}
+
+impl<S: Storage + PendingCons + ObserveSlots> Engine<S> {
+    pub(crate) fn supersede_observe_con(
+        &mut self,
+        pending: PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+    ) -> Result<(), super::PendingReplaceError> {
+        self.storage
+            .replace_observe_con(pending, original, replacement, bytes)?;
+        #[cfg(feature = "diagnostics")]
+        super::WorkMetrics::add(&mut self.work_metrics.raw_tx_copied_bytes, bytes.len());
+        Ok(())
     }
 }
 
@@ -1237,6 +1304,53 @@ impl<S: Storage + BodySlots> Engine<S> {
             transfer.oscore_request = Some((token, request));
             let _ = self.storage.set_rx_body_transfer(id, transfer);
         }
+    }
+
+    // A future NON Q1 datagram may refresh the authenticated report owner only
+    // after the same immutable checks as accepted data. The bytes stay discarded.
+    pub(crate) fn validated_q1_future_rx(&self, rx: SlotId) -> Result<SlotId, BlockTransferError>
+    where
+        S: DatagramSlots + BodySlots,
+    {
+        let endpoint = self.storage.rx_endpoint(rx).ok_or(SlotError::NotOccupied)?;
+        let parsed =
+            crate::message::decode(self.storage.rx_payload(rx).ok_or(SlotError::NotOccupied)?)?;
+        if parsed.ty() != crate::message::Type::NonConfirmable {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let block = parsed
+            .q_block1()
+            .ok_or(BlockTransferError::MissingBlock)??;
+        let expected = parsed.size1().ok_or(BlockTransferError::MissingSize)??;
+        let tag = RxBlockOpt::QBlock1.read_identity(&parsed)?;
+        if tag.is_absent() || (block.num() != 0 && parsed.if_none_match()) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let key = BlockKey::new(parsed.token(), endpoint).with_identity(tag);
+        let id = (0..self.capacities().rx_body_slots.unwrap_or(0))
+            .find_map(|i| {
+                let id = SlotId::from_index(i);
+                let transfer = self.storage.rx_body_transfer(id)?;
+                same_body_identity(transfer, key, BlockRole::IncomingQBlock1).then_some(id)
+            })
+            .ok_or(BlockTransferError::NoTransfer)?;
+        let transfer = self
+            .storage
+            .rx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.expected_len() != Some(expected) {
+            return Err(BlockTransferError::LengthInconsistent);
+        }
+        transfer
+            .request_binding
+            .ok_or(BlockTransferError::IdentityMismatch)?
+            .retain_condition(RequestBinding::from_message(&parsed, block.num())?)?;
+        transfer.validate_q1_future(
+            block,
+            parsed.payload().len(),
+            self.capacities().rx_body_bytes.unwrap_or(0),
+        )?;
+        Ok(id)
     }
 
     /// Arm or clear incoming Q-Block [`super::QBlockReceiveWait`] from caller `now_ms`.
@@ -1796,6 +1910,13 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.next_q_block1(id)
     }
 
+    /// Open a fully issued NON Q-Block1 set after caller-enforced pacing.
+    /// This is not an acknowledgement; body bytes remain available for recovery.
+    #[inline]
+    pub fn pace_q_block1(&mut self, id: SlotId) -> Result<(), BlockTransferError> {
+        self.storage.pace_q_block1(id)
+    }
+
     /// Advance an outgoing Q-Block1 window using the peer Continue NUM.
     ///
     /// `num` is the Q-Block1 NUM from the peer (RFC 9177 §4.3: all blocks
@@ -2132,7 +2253,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         // Profile-sized copy so Constrained does not stack Default 1472.
         let mut tmp = S::RxScratch::default();
-        let (token, block, expected, identity, binding, n) = {
+        let (token, block, expected, identity, mut binding, n) = {
             let parsed =
                 crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
@@ -2167,7 +2288,10 @@ impl<S: Storage + BodySlots> Engine<S> {
                 _ => {}
             }
             let binding = if which.uses_size1() {
-                Some(RequestBinding::from_message(&parsed)?)
+                if block.num() != 0 && parsed.if_none_match() {
+                    return Err(BlockTransferError::IdentityMismatch);
+                }
+                Some(RequestBinding::from_message(&parsed, block.num())?)
             } else {
                 None
             };
@@ -2190,7 +2314,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let key = BlockKey::new(token, endpoint).with_identity(identity);
         let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
         let mut classic_body = None;
-        if let Some(binding) = binding {
+        if let Some(candidate) = binding {
             let role = if matches!(which, RxBlockOpt::Block1) {
                 BlockRole::IncomingBlock1
             } else {
@@ -2203,7 +2327,9 @@ impl<S: Storage + BodySlots> Engine<S> {
                     (transfer.role() == role
                         && transfer.endpoint() == endpoint
                         && transfer.identity().is_absent()
-                        && transfer.request_binding == Some(binding))
+                        && transfer
+                            .request_binding
+                            .is_some_and(|stored| stored.same_options(candidate)))
                     .then_some(id)
                 })
             } else {
@@ -2220,8 +2346,18 @@ impl<S: Storage + BodySlots> Engine<S> {
                     .storage
                     .rx_body_transfer(id)
                     .ok_or(BlockTransferError::NoTransfer)?;
-                if transfer.request_binding != Some(binding) {
-                    return Err(BlockTransferError::IdentityMismatch);
+                let stored = transfer
+                    .request_binding
+                    .ok_or(BlockTransferError::IdentityMismatch)?;
+                let restart = untagged_classic && block.num() == 0 && key != transfer.key();
+                if restart {
+                    if !stored.same_options(candidate) {
+                        return Err(BlockTransferError::IdentityMismatch);
+                    }
+                } else {
+                    // Q may admit NUM0 last. Validate its immutable condition before
+                    // applying bytes, then commit the merged knowledge only on success.
+                    binding = Some(stored.retain_condition(candidate)?);
                 }
                 if untagged_classic {
                     if block.num() == 0 && key != transfer.key() {

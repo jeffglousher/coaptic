@@ -7,7 +7,7 @@ use crate::message::{
 };
 
 use super::aead::{self, Aad};
-use super::context::{RequestRef, SecurityContext};
+use super::context::{BoundedSecurityContext, RequestRef};
 use super::header::{self, OptionClass, OscoreHeader, PartialIv};
 use super::{Error, MAX_ID_CONTEXT_LEN, MAX_ID_LEN, MAX_PIV_LEN, TAG_LEN};
 
@@ -16,9 +16,9 @@ const OPT_SLOTS: usize = 16;
 /// Inner plaintext / ciphertext scratch.
 const INNER: usize = 1280;
 
-/// Plug-in a caller can implement instead of [`SecurityContext`].
+/// Plug-in a caller can implement instead of [`super::SecurityContext`].
 ///
-/// [`crate::App::set_oscore`] takes [`SecurityContext`]. Use this trait when
+/// [`crate::App::set_oscore`] takes a matching [`BoundedSecurityContext`]. Use this trait when
 /// you drive protect/unprotect yourself (tests, a later group-OSCORE
 /// context, or a side table of pairwise contexts).
 pub trait OscoreContext {
@@ -49,7 +49,7 @@ pub trait OscoreContext {
     ) -> Result<ParsedMessage<'a>, Error>;
 }
 
-impl OscoreContext for SecurityContext {
+impl<const REQUESTS: usize> OscoreContext for BoundedSecurityContext<REQUESTS> {
     fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
         protect_request(self, plain, out)
     }
@@ -81,7 +81,7 @@ impl OscoreContext for SecurityContext {
     }
 }
 
-impl SecurityContext {
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Protect `plain` as an OSCORE request. See [`OscoreContext::protect_request`].
     pub fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
         protect_request(self, plain, out)
@@ -131,9 +131,9 @@ impl SecurityContext {
     }
 }
 
-/// See [`SecurityContext::protect_request`].
-pub fn protect_request(
-    ctx: &mut SecurityContext,
+/// See [`super::SecurityContext::protect_request`].
+pub fn protect_request<const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     out: &mut [u8],
 ) -> Result<usize, Error> {
@@ -186,9 +186,9 @@ pub fn protect_request(
     Ok(n)
 }
 
-/// See [`SecurityContext::unprotect_request`].
-pub fn unprotect_request<'a>(
-    ctx: &mut SecurityContext,
+/// See [`super::SecurityContext::unprotect_request`].
+pub fn unprotect_request<'a, const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     protected: &ParsedMessage<'_>,
     out: &'a mut [u8],
 ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
@@ -232,13 +232,13 @@ pub fn unprotect_request<'a>(
     // Caller (App) holds `request` on the inbound exchange for
     // `protect_response`. The live Token table is the client in-flight
     // set (`protect_request` → `unprotect_response`); do not remember
-    // here or sequential server Tokens saturate `LIVE_REQUESTS`.
+    // here or sequential server Tokens saturate the outbound binding table.
     Ok((inner, request))
 }
 
-/// See [`SecurityContext::protect_response`].
-pub fn protect_response(
-    ctx: &SecurityContext,
+/// See [`super::SecurityContext::protect_response`].
+pub fn protect_response<const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     request: RequestRef,
     out: &mut [u8],
@@ -272,8 +272,8 @@ pub fn protect_response(
 }
 
 /// Protect a response and optionally include a new Partial IV.
-pub fn protect_response_piv(
-    ctx: &mut SecurityContext,
+pub fn protect_response_piv<const REQUESTS: usize>(
+    ctx: &mut BoundedSecurityContext<REQUESTS>,
     plain: &Message<'_>,
     request: RequestRef,
     out: &mut [u8],
@@ -307,9 +307,9 @@ pub fn protect_response_piv(
     )
 }
 
-/// See [`SecurityContext::unprotect_response`].
-pub fn unprotect_response<'a>(
-    ctx: &SecurityContext,
+/// See [`super::SecurityContext::unprotect_response`].
+pub fn unprotect_response<'a, const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
     protected: &ParsedMessage<'_>,
     request: RequestRef,
     out: &'a mut [u8],
@@ -317,7 +317,7 @@ pub fn unprotect_response<'a>(
     unprotect_response_candidates(ctx, protected, request, None, out).map(|(message, _)| message)
 }
 
-impl SecurityContext {
+impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     pub(crate) fn unprotect_bound_response<'a>(
         &self,
         protected: &ParsedMessage<'_>,
@@ -331,8 +331,8 @@ impl SecurityContext {
     }
 }
 
-fn unprotect_response_candidates<'a>(
-    ctx: &SecurityContext,
+fn unprotect_response_candidates<'a, const REQUESTS: usize>(
+    ctx: &BoundedSecurityContext<REQUESTS>,
     protected: &ParsedMessage<'_>,
     request: RequestRef,
     fallback: Option<RequestRef>,

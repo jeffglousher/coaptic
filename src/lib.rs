@@ -4,6 +4,16 @@
 //! [`App`] serves resources and exchanges messages through one client/server API.
 //! OSCORE protection is required by default; EDHOC provisioning is optional.
 //!
+//! # Platform integration
+//!
+//! The core is independent of a microcontroller, board SDK or operating system.
+//! Constrained devices use fixed storage without allocation or the standard
+//! library. Applications supply [`storage::DatagramIo`], secure randomness,
+//! provisioned credentials and a monotonic clock, and drive [`App::poll`].
+//! The same service code can use a device adapter or a host transport.
+//! Our physical constrained-device qualification uses an ESP32-S3; other targets
+//! need their own integration and qualification evidence.
+//!
 //! # Client and server
 //!
 //! Apps require a provisioned pairwise OSCORE context before binding. Supply
@@ -81,12 +91,20 @@
 //!
 //! # One interface, adjustable resources
 //!
-//! [`App::builder`] supplies fixed default datagram storage. Profile, body pools,
-//! routes, custom storage and allocator-backed storage remain choices on that
-//! same builder. `alloc` does not require `std`; default remains no allocator.
-//! [`app::AppBuilder::full_responses`] + [`App::take_response_into`] retain and
-//! collect exact complete representations into caller-owned buffers. Short
-//! buffers are refused without consuming or partially copying the reply.
+//! [`App::with_resources`] selects one configuration from [`resources`], then
+//! binds routes, security and platform I/O. Presets support fixed storage or,
+//! with `alloc`, bounded heap storage with an explicit byte limit. Customize
+//! resource bounds before constructing the App; the configured builder has no
+//! resource overrides. [`memory_profile!`] defines custom fixed pool sizes.
+//! `std` and `alloc` remain independent. Existing [`App::builder`] and
+//! [`App::profile`] construction is retained for compatibility.
+//!
+//! The configured path retains complete responses by default. Collect them
+//! with [`App::take_response_into`] and caller-owned output. Short buffers refuse
+//! without consuming or partially copying the reply. Observe shares the client
+//! Call budget. The single OSCORE context defaults to four live request bindings;
+//! [`resources::Resources::security_requests`] configures that independent bound.
+//! Larger storage is not a security-association or throughput guarantee.
 //!
 //! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],
 //! [`DeferredReply`] and [`App::complete`]. The empty ACK is only reception.
@@ -103,6 +121,9 @@
 //! cryptographically secure entropy through [`app::AppBuilder::randomness`]
 //! for Tokens, the initial Message ID and retransmission jitter. The library
 //! itself does not call an OS RNG.
+//! [`platform::CheckedClock`] wraps a fallible, stateful platform timer and rejects
+//! backward readings. Use one clock epoch for all timed App operations and
+//! propagate clock errors before sending or polling.
 //!
 //! # Modules
 //!
@@ -142,7 +163,7 @@
 //! # Features
 //!
 //! - `alloc` — enable the allocator. Off by default.
-//! - `std` — enable the standard library. Implies `alloc`.
+//! - `std` — enable OS networking and standard error integration; independent of `alloc`.
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
 //!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
 //!   `--no-default-features` retains the zero-dependency Engine and requires
@@ -169,10 +190,12 @@ pub mod error;
 pub mod message;
 #[cfg(feature = "oscore")]
 pub mod oscore;
+pub mod platform;
 #[cfg(feature = "edhoc")]
 pub mod provisioning;
 pub mod storage;
 
+pub use app::resources;
 pub use storage::profiles;
 
 pub use app::{

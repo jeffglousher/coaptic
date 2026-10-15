@@ -1582,6 +1582,218 @@ fn well_known_core_small_n_keeps_inline_floor() {
     assert_eq!(body, "</sensors/temperature/celsius>");
 }
 
+#[test]
+fn discovery_uri_preserves_decoded_segment_identity() {
+    const SEGMENTS: [&str; 2] = ["AZaz09-._~!$&'()*+,;=:@", "a/b %2E?#<>\"\0é☃"];
+    let mut site = Site::<1>::new();
+    site.route(&SEGMENTS, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    let body = core::str::from_utf8(response.payload()).unwrap();
+    assert_eq!(
+        body,
+        "</AZaz09-._~!$&'()*+,;=:@/a%2Fb%20%252E%3F%23%3C%3E%22%00%C3%A9%E2%98%83>"
+    );
+    // Resolve the advertised path into decoded CoAP options, independently
+    // checking that URI delimiters do not change the segment sequence.
+    let target = body.strip_prefix("</").unwrap().strip_suffix('>').unwrap();
+    for (encoded, original) in target.split('/').zip(SEGMENTS) {
+        let mut decoded = [0u8; 128];
+        let mut n = 0;
+        let mut bytes = encoded.as_bytes();
+        while let Some((&byte, rest)) = bytes.split_first() {
+            if byte == b'%' {
+                decoded[n] =
+                    u8::from_str_radix(core::str::from_utf8(&rest[..2]).unwrap(), 16).unwrap();
+                bytes = &rest[2..];
+            } else {
+                decoded[n] = byte;
+                bytes = rest;
+            }
+            n += 1;
+        }
+        assert_eq!(&decoded[..n], original.as_bytes());
+    }
+    assert_eq!(target.split('/').count(), SEGMENTS.len());
+}
+
+#[test]
+fn discovery_uri_distinguishes_literal_slash_and_percent_text() {
+    let mut site = Site::<3>::new();
+    site.route(&["a/b"], get(get_temp))
+        .route("a/b", get(get_led))
+        .route(&["%2F"], get(get_temp))
+        .well_known_core();
+    let mut scratch = LinkFormatScratch::<3>::new();
+    let response = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(response.payload(), b"</a%2Fb>,</a/b>,</%252F>");
+}
+
+#[test]
+fn discovery_uri_empty_catalog_needs_no_scratch() {
+    let mut site = Site::<0>::new();
+    site.well_known_core();
+    let response = dispatch_well_known(&site, &mut []);
+    assert_eq!(response.code(), Code::CONTENT);
+    assert_eq!(response.format(), Some(ContentFormat::LINK_FORMAT));
+    assert!(response.payload().is_empty());
+}
+
+#[test]
+fn discovery_uri_wire_reply_ignores_unsupported_unicast_filter() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let query = [Opt::uri_query("rt=missing")];
+    let (wire, n) = encode_req_extra(Code::GET, &[".well-known", "core"], &query, &[]);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["a/b"], get(get_temp))
+        .route(&[], get(get_led))
+        .well_known_core()
+        .allow_plaintext()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let parsed = last_reply(&app);
+    assert_eq!(parsed.code, Code::CONTENT);
+    assert_eq!(parsed.content_format, Some(ContentFormat::LINK_FORMAT));
+    assert_eq!(&parsed.payload[..parsed.payload_len], b"</a%2Fb>,</>");
+}
+
+#[test]
+fn discovery_uri_encoded_capacity_refuses_then_recovers() {
+    let mut site = Site::<1>::new();
+    site.route("é", get(get_temp)).well_known_core();
+    let identity = site.observe_resource(&["é"]);
+    let mut short = [0xA5; 8];
+    let refused = dispatch_well_known(&site, &mut short);
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert_eq!(refused.format(), None);
+    assert_eq!(short, [0xA5; 8]);
+    assert_eq!(site.observe_resource(&["é"]), identity);
+    let mut exact = [0; 9];
+    let recovered = dispatch_well_known(&site, &mut exact);
+    assert_eq!(recovered.code(), Code::CONTENT);
+    assert_eq!(recovered.payload(), b"</%C3%A9>");
+}
+
+#[test]
+fn discovery_uri_expansion_respects_existing_scratch_bound() {
+    const PATH: &str = "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%";
+    assert!(PATH.len() + 3 <= INLINE_PAYLOAD);
+    assert!(PATH.len() * 3 + 3 > INLINE_PAYLOAD);
+    let mut site = Site::<1>::new();
+    site.route(PATH, get(get_temp)).well_known_core();
+    let mut scratch = LinkFormatScratch::<1>::new();
+    let refused = dispatch_well_known(&site, scratch.as_mut());
+    assert_eq!(refused.code(), Code::INTERNAL_SERVER_ERROR);
+    assert!(refused.payload().is_empty());
+    assert!(site.remove_route(PATH).unwrap());
+    site.try_route("ok", get(get_temp)).unwrap();
+    assert_eq!(
+        dispatch_well_known(&site, scratch.as_mut()).payload(),
+        b"</ok>"
+    );
+}
+
+#[test]
+fn discovery_uri_dot_routes_refuse_without_mutation() {
+    use super::{IntoPath, PathError, RouteError};
+    struct DotAdapter;
+    impl IntoPath for DotAdapter {
+        fn fill_path(self, out: &mut [&'static str]) -> Result<usize, PathError> {
+            out[0] = "..";
+            Ok(1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("ok", get(get_temp)).unwrap();
+    let identity = site.observe_resource(&["ok"]);
+    for path in [".", "..", "a/../b", "x/./y"] {
+        assert_eq!(
+            site.try_route(path, get(get_led)).err(),
+            Some(RouteError::Path(PathError::DotSegment))
+        );
+    }
+    assert_eq!(
+        site.try_route(&[".."], get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(
+        site.try_route(DotAdapter, get(get_led)).err(),
+        Some(RouteError::Path(PathError::DotSegment))
+    );
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["ok"]), identity);
+    site.try_route(&["%2E"], get(get_led)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
+fn discovery_uri_inbound_dot_refuses_before_dispatch_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("ok", get(get_temp))
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    for (i, segment) in [".", ".."].into_iter().enumerate() {
+        let raw_mid = 0x2010 + i as u16;
+        let mid = MessageId::new(raw_mid);
+        let (wire, n) = encode_req_mid(Code::GET, &["ok", segment], &[], raw_mid);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.transport_mut().last_send = None;
+        app.poll_with(i as u64, |_, _| panic!("invalid path dispatched"))
+            .unwrap();
+        let (destination, bytes, sent) = app.transport().last_send.expect("fresh refusal");
+        let reply = decode(&bytes[..sent]).unwrap();
+        assert_eq!(destination, peer);
+        assert_eq!(reply.message_id(), mid);
+        assert_eq!(reply.ty(), Type::Acknowledgement);
+        assert_eq!(reply.token(), Token::new(&[0xA1]).unwrap());
+        assert_eq!(reply.code(), Code::BAD_REQUEST);
+    }
+    let (wire, n) = encode_req_mid(Code::GET, &["ok"], &[], 0x2012);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().last_send = None;
+    app.poll(2).unwrap();
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CONTENT);
+    assert_eq!(&reply.payload[..reply.payload_len], b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[""], &[]);
+    let request = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(request.path(), &[""]);
+}
+
+#[test]
+fn discovery_uri_outgoing_dot_refuses_before_io_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_plaintext()
+        .bind(Loopback::default())
+        .unwrap();
+    assert!(matches!(
+        app.get("a/../b").to(peer).send(0),
+        Err(Error::Path)
+    ));
+    assert!(matches!(app.get(&["."]).to(peer).send(0), Err(Error::Path)));
+    assert!(app.transport().last_send.is_none());
+    app.get(&["%2E"]).to(peer).send(0).unwrap();
+    let (_, bytes, n) = app.transport().last_send.unwrap();
+    let parsed = decode(&bytes[..n]).unwrap();
+    assert_eq!(parsed.uri_path().next().unwrap().unwrap(), "%2E");
+}
+
 /// IANA experimental 65000–65535. Even ⇒ elective (LSB clear); unrecognized
 /// critical options (e.g. 65001) are 4.02 before the handler, so this
 /// number is safe to carry through decode and App dispatch.
@@ -1689,6 +1901,321 @@ fn route_slash_path_ignores_leading_slash() {
 fn route_rejects_empty_segments() {
     let mut site = Site::<4>::new();
     site.route("sensors//temp", get(get_temp));
+}
+
+#[test]
+fn checked_routes_refuse_without_mutation_and_replace_when_full() {
+    use super::{PathError, RouteError};
+    let mut site = Site::<1>::new();
+    site.try_route_path("/leds/0", get(get_led)).unwrap();
+    let identity = site.observe_resource(&["leds", "0"]);
+    assert_eq!(
+        site.try_route("new", get(get_temp)).err(),
+        Some(RouteError::Full)
+    );
+    assert_eq!(
+        site.try_route("leds//0", post(post_led)).err(),
+        Some(RouteError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(
+        site.try_route("a/b/c/d/e/f/g/h/i", get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route(&["leds", "0"], post(post_led)).unwrap();
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["leds", "0"]), identity);
+    assert_eq!(
+        site.dispatch(req, &mut [0; 1]).code(),
+        Code::METHOD_NOT_ALLOWED
+    );
+    let (wire, n) = encode_req(Code::POST, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).code(), Code::CHANGED);
+}
+
+#[test]
+fn checked_routes_support_root_and_zero_capacity() {
+    use super::RouteError;
+    let mut empty = Site::<0>::new();
+    assert_eq!(
+        empty.try_route(&[], get(get_led)).err(),
+        Some(RouteError::Full)
+    );
+    assert!(empty.is_empty());
+    let mut site = Site::<1>::new();
+    site.try_route(&[], get(get_led)).unwrap();
+    let (wire, n) = encode_req(Code::GET, &[], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+}
+
+#[test]
+fn checked_routes_refuse_invalid_adapter_count_without_mutation() {
+    use super::{IntoPath, MAX_PATH_SEGMENTS, PathError, RouteError};
+    struct Overreported;
+    impl IntoPath for Overreported {
+        fn fill_path(self, _: &mut [&'static str]) -> Result<usize, PathError> {
+            Ok(MAX_PATH_SEGMENTS + 1)
+        }
+    }
+    let mut site = Site::<2>::new();
+    site.try_route("leds/0", get(get_led)).unwrap();
+    assert_eq!(
+        site.try_route(Overreported, get(get_temp)).err(),
+        Some(RouteError::Path(PathError::TooLong))
+    );
+    assert_eq!(site.len(), 1);
+    let (wire, n) = encode_req(Code::GET, &["leds", "0"], &[]);
+    let req = Request::from_decoded(
+        decode(&wire[..n]).unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        None,
+    )
+    .unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 1]).payload(), b"off");
+    site.try_route("new", get(get_temp)).unwrap();
+    assert_eq!(site.len(), 2);
+}
+
+#[test]
+fn route_removal_preserves_other_identity_dispatch_and_catalog_with_holes() {
+    let mut site = Site::<2>::new();
+    site.route("first", get(get_led))
+        .route("second", get(get_temp))
+        .well_known_core();
+    let second = site.observe_resource(&["second"]);
+    assert!(site.remove_route("first").unwrap());
+    assert!(!site.remove_route("first").unwrap());
+    assert_eq!(site.len(), 1);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["second"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"21.5");
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).payload(), b"</second>");
+    site.try_route("third", get(get_led)).unwrap();
+    assert!(site.is_full());
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &["first"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(site.dispatch(req, &mut [0; 128]).code(), Code::NOT_FOUND);
+    assert!(site.remove_route("third").unwrap());
+    // The original convenience API also inserts into the vacant slot.
+    site.route("fourth", get(get_led));
+    assert_eq!(site.len(), 2);
+    assert_eq!(site.observe_resource(&["second"]), second);
+    let (wire, n) = encode_req(Code::GET, &[".well-known", "core"], &[]);
+    let req = Request::from_decoded(decode(&wire[..n]).unwrap(), peer, None).unwrap();
+    assert_eq!(
+        site.dispatch(req, &mut [0; 128]).payload(),
+        b"</fourth>,</second>"
+    );
+}
+
+#[test]
+fn route_removal_handles_zero_capacity_root_and_exact_segments() {
+    let mut zero = Site::<0>::new();
+    assert_eq!(zero.remove_route(&[]), Ok(false));
+    assert!(zero.is_empty());
+    let mut site = Site::<2>::new();
+    site.route(&["a/b"], get(get_led))
+        .route("a/b", get(get_temp));
+    assert_eq!(site.remove_route("/a/b"), Ok(true));
+    assert_eq!(site.len(), 1);
+    assert!(!site.observe_resource(&["a/b"]).is_none());
+    assert_eq!(site.remove_route(&["a/b"]), Ok(true));
+    assert!(site.is_empty());
+    site.route(&[], get(get_led));
+    assert_eq!(site.remove_route(&[]), Ok(true));
+    assert!(site.is_empty());
+    assert_eq!(
+        site.remove_route("bad//path"),
+        Err(super::PathError::EmptySegment)
+    );
+}
+
+#[test]
+fn route_removal_waits_for_call_cancellation_and_collection_without_io() {
+    use super::{PathError, RouteRemovalError};
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let call = app.get("remote").to(peer).send(0).unwrap();
+    let sent = app.transport().sent_n;
+    let metrics = app.metrics();
+    assert_eq!(app.remove_route("missing"), Ok(false));
+    assert_eq!(
+        app.remove_route("bad//path"),
+        Err(RouteRemovalError::Path(PathError::EmptySegment))
+    );
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().sent_n, sent);
+    assert_eq!(app.metrics(), metrics);
+    assert!(
+        app.site
+            .contains_path(super::request::path_from_into("target").unwrap())
+    );
+    assert!(app.cancel(call));
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::Cancelled
+    );
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("replacement", get(get_temp)).unwrap();
+    assert!(app.get("fresh").to(peer).send(1).is_ok());
+}
+
+#[test]
+fn route_removal_waits_for_deferred_and_duplicate_history_expiry() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .block_wise::<false>()
+        .deferred::<1>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req(Code::POST, &["target"], b"work");
+    app.transport_mut().inbox = Some((peer, wire, n));
+    let mut handle = None;
+    app.poll_with(0, |_, candidate| {
+        handle = candidate;
+        Response::deferred()
+    })
+    .unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert!(app.cancel_deferred(handle.unwrap()));
+    // Cancellation must not erase duplicate history to reclaim configuration early.
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let sent = app.transport().sent_n;
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS))
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    assert_eq!(app.transport().sent_n, sent);
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(app.site.len(), 1);
+}
+
+#[test]
+fn route_removal_waits_for_observe_terminal_response_and_history() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[3]).unwrap();
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<false>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_obs))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["target"],
+        &[Opt::observe_register()],
+        100,
+        token,
+    );
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_some()
+    );
+    let sends = app.transport().send_n;
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.transport().send_n, sends);
+    assert_eq!(
+        app.notify(1, &["target"], Response::not_found()).unwrap(),
+        1
+    );
+    let terminal = last_wide(&app);
+    assert_eq!(terminal.code(), Code::NOT_FOUND);
+    assert_eq!(terminal.ty(), Type::Confirmable);
+    let terminal_mid = terminal.message_id();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    let ack = Message::empty_ack(terminal_mid);
+    let mut wire = [0; WIRE];
+    let n = encode(&ack, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_none()
+    );
+    app.poll(u64::from(Transmission::EXCHANGE_LIFETIME_MS) + 1)
+        .unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    assert_eq!(
+        app.signal(&["fresh"]),
+        0,
+        "freed slot must not inherit observers"
+    );
+}
+
+#[test]
+fn route_removal_waits_for_retained_transfer_body_and_recovers_after_release() {
+    use super::RouteRemovalError;
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .block_wise::<true>()
+        .deterministic_for_tests()
+        .allow_plaintext()
+        .route("target", get(get_led))
+        .bind(RecordIo::default())
+        .unwrap();
+    let key = BlockKey::new(Token::new(&[8]).unwrap(), peer);
+    let block = BlockValue::new(0, true, 0).unwrap();
+    app.engine
+        .apply_block1(key, block, &[7; 16], Some(32))
+        .unwrap();
+    let body = app.engine.lookup_rx_body(key).unwrap();
+    assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
+    assert_eq!(app.engine.lookup_rx_body(key), Some(body));
+    assert_eq!(app.transport().sent_n, 0);
+    app.engine.release_rx_body(body).unwrap();
+    assert_eq!(app.remove_route("target"), Ok(true));
+    app.try_route("fresh", get(get_temp)).unwrap();
+    app.engine
+        .apply_block1(key, block, &[9; 16], Some(32))
+        .unwrap();
+    assert!(app.engine.lookup_rx_body(key).is_some());
 }
 
 #[test]
@@ -4607,7 +5134,7 @@ fn options_full_500_under_oscore_is_protected() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    super::encode_options_full_500::<_, &'static str>(
+    super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,
@@ -4657,7 +5184,7 @@ fn options_full_500_oscore_without_request_is_not_plaintext() {
         .expect("engine");
     let tx = engine.acquire_tx().expect("tx");
     let ctx = Some(server);
-    let err = super::encode_options_full_500::<_, &'static str>(
+    let err = super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
         tx,
         Type::Acknowledgement,
@@ -4961,6 +5488,17 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                 assert_eq!(queries.next(), Some(Ok("version=2")));
                 assert_eq!(queries.next(), None);
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
+                assert_eq!(
+                    parsed.no_response(),
+                    Some(Ok(crate::message::NoResponse::DEFAULT))
+                );
+                assert_eq!(
+                    parsed
+                        .get_option(OptionNumber::NO_RESPONSE)
+                        .unwrap()
+                        .value(),
+                    &[]
+                );
                 assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(
                     parsed.content_format(),
@@ -5007,6 +5545,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             .accept(ContentFormat::OCTET_STREAM)
             .echo(EchoOpt::new(b"challenge").unwrap())
             .content_format(ContentFormat::OCTET_STREAM)
+            .no_response(crate::message::NoResponse::DEFAULT)
             .payload(&LARGE);
         if qblock {
             request = request
@@ -5075,32 +5614,26 @@ fn upload_query_overflow_refuses_without_io_or_body_allocation() {
 }
 
 #[test]
-fn fragmented_conditional_upload_is_refused_instead_of_becoming_unconditional() {
+fn fragmented_etag_refuses_instead_of_becoming_unconditional() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     for qblock in [false, true] {
-        for condition in 0..3 {
-            let mut app = pipe_app();
-            let mut request = app.put("upload").to(peer).payload(&LARGE);
-            if qblock {
-                request = request
-                    .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
-                    .q_block1();
-            }
-            request = match condition {
-                0 => request.if_match(b"version"),
-                1 => request.if_none_match(),
-                _ => request.etag(b"version"),
-            };
-            assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
-            assert_eq!(
-                app.transport().len,
-                0,
-                "no unconditional fragment may escape"
-            );
-            assert_eq!(app.engine_mut().tx_occupied(), 0);
-            let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
-            assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        let mut app = pipe_app();
+        let mut request = app.put("upload").to(peer).payload(&LARGE);
+        if qblock {
+            request = request
+                .request_tag(crate::storage::BodyTag::new(b"upload-1").unwrap())
+                .q_block1();
         }
+        request = request.etag(b"version");
+        assert_eq!(request.send(0), Err(Error::ConditionalUploadUnsupported));
+        assert_eq!(
+            app.transport().len,
+            0,
+            "no unconditional fragment may escape"
+        );
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        let call = app.put("upload").to(peer).payload(&LARGE).send(1).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
     }
 }
 
@@ -6561,6 +7094,52 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
 }
 
 #[test]
+fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
+    use crate::message::NoResponse;
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = pipe_app();
+        for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
+            if mask == 16 || (qblock && mask == 2) || (!qblock && matches!(mask, 8 | 24)) {
+                continue;
+            }
+            let mut request = app
+                .put("upload")
+                .to(peer)
+                .payload(&LARGE)
+                .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+                .no_response(NoResponse::new(mask));
+            if qblock {
+                request = request.q_block1();
+            }
+            assert_eq!(request.send(0), Err(Error::NoResponseUploadUnsupported));
+            assert_eq!(app.transport().len, 0);
+            assert_eq!(app.engine_mut().tx_occupied(), 0);
+            for index in 0..app.engine().capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine()
+                        .tx_body_transfer(crate::storage::SlotId::from_index(index))
+                        .is_none()
+                );
+            }
+        }
+        let mut request = app
+            .put("upload")
+            .to(peer)
+            .payload(&LARGE)
+            .request_tag(crate::storage::BodyTag::new(b"zero").unwrap())
+            .no_response(NoResponse::DEFAULT);
+        if qblock {
+            request = request.q_block1();
+        }
+        let call = request.send(0).unwrap();
+        assert_eq!(poll_until_response(&mut app, call).code, Code::CHANGED);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
 fn no_response_unsupported_upload_and_observe_refuse_before_io() {
     use crate::message::NoResponse;
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -6569,7 +7148,7 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
         app.put("upload")
             .to(peer)
             .payload(&LARGE)
-            .no_response(NoResponse::DEFAULT)
+            .no_response(NoResponse::new(2))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );
@@ -6578,7 +7157,8 @@ fn no_response_unsupported_upload_and_observe_refuse_before_io() {
             .to(peer)
             .payload(b"small")
             .q_block1()
-            .no_response(NoResponse::new(2))
+            .non()
+            .no_response(NoResponse::new(8))
             .send(0),
         Err(Error::NoResponseUploadUnsupported)
     );
@@ -7544,28 +8124,252 @@ fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
         bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) == 0
     }
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for qblock in [false, true] {
+        let mut app = App::profile::<profiles::Default>()
+            .randomness(fill)
+            .block_wise::<true>()
+            .allow_plaintext()
+            .bind(RecordIo::default())
+            .unwrap();
+        for _ in 0..12 {
+            // Both modes retain the first encoded block and its MID/jitter.
+            // Refuse that initial draw before emitting any fragment.
+            DRAWS.store(1, Ordering::SeqCst);
+            let request = app.put("value").to(peer).payload(&[7; 3000]);
+            let result = if qblock {
+                request
+                    .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+                    .q_block1()
+                    .send(0)
+            } else {
+                request.send(0)
+            };
+            assert_eq!(
+                result,
+                Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+            );
+            assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+            assert_eq!(app.transport().sent_n, 0);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+                assert!(
+                    app.engine
+                        .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                        .is_none()
+                );
+            }
+            // Restoring entropy admits fresh work without resetting the App.
+            DRAWS.store(0, Ordering::SeqCst);
+            let fresh = app.get("value").to(peer).send(1).unwrap();
+            assert_eq!(app.transport().sent_n, 1);
+            assert!(app.cancel(fresh));
+            assert!(app.take_response(fresh).unwrap().is_err());
+            app.transport_mut().sent_n = 0;
+        }
+    }
+}
+
+#[test]
+fn entropy_failure_during_classic_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<true>()
         .allow_plaintext()
-        .bind(RecordIo::default())
+        .bind(WideLoopback::default())
         .unwrap();
-    for _ in 0..12 {
-        DRAWS.store(0, Ordering::SeqCst);
-        assert_eq!(
-            app.put("value").to(peer).payload(&[7; 3000]).send(0),
-            Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let encoded = block.encode();
+    let options = [Opt::block1(&encoded)];
+    let reply = Message::new(Type::Acknowledgement, Code::CONTINUE, first.message_id())
+        .with_token(call.token())
+        .with_options(&options);
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
         );
-        assert_eq!(app.transport().sent_n, 0);
-        assert_eq!(app.engine.tx_occupied(), 0);
-        for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
-            assert!(
-                app.engine
-                    .tx_body_transfer(crate::storage::SlotId::from_index(i))
-                    .is_none()
-            );
-        }
     }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let encoded = block.encode();
+        let options = [Opt::block1(&encoded)];
+        let reply = Message::new(
+            Type::Acknowledgement,
+            if index < 2 {
+                Code::CONTINUE
+            } else {
+                Code::CHANGED
+            },
+            sent.message_id(),
+        )
+        .with_token(fresh.token())
+        .with_options(&options);
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+}
+
+#[test]
+fn entropy_failure_during_q_upload_continuation_reclaims_and_recovers() {
+    static DRAWS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AT: AtomicUsize = AtomicUsize::new(1);
+    fn fill(bytes: &mut [u8]) -> bool {
+        bytes.fill(0);
+        bytes.len() != 4 || DRAWS.fetch_add(1, Ordering::SeqCst) != FAIL_AT.load(Ordering::SeqCst)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .randomness(fill)
+        .block_wise::<true>()
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    DRAWS.store(0, Ordering::SeqCst);
+    FAIL_AT.store(1, Ordering::SeqCst);
+    let call = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(0)
+        .unwrap();
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 1);
+    assert_eq!(app.transport().send_n, 1);
+    let first = decode(&app.transport().sends[0][..app.transport().send_lens[0]]).unwrap();
+    let block = first.q_block1().unwrap().unwrap();
+    assert_eq!(block.num(), 0);
+    assert!(block.more());
+    assert_eq!(first.payload(), &[7; 1024]);
+    let reply = Message::new(Type::Acknowledgement, Code::EMPTY, first.message_id());
+    let mut bytes = [0; WIRE];
+    let n = encode(&reply, &mut bytes).unwrap();
+    app.transport_mut().inbox = Some((peer, bytes, n));
+    assert_eq!(
+        app.poll(1),
+        Err(Error::Identity(super::IdentityError::RandomnessUnavailable))
+    );
+    assert_eq!(DRAWS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        app.transport().send_n,
+        1,
+        "failed entropy must not emit continuation"
+    );
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        crate::CallFailure::ContinuationFailed
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    for i in 0..app.engine.capacities().tx_body_slots.unwrap() {
+        assert!(
+            app.engine
+                .tx_body_transfer(crate::storage::SlotId::from_index(i))
+                .is_none()
+        );
+    }
+    FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+    app.transport_mut().send_n = 0;
+    let fresh = app
+        .put("value")
+        .to(peer)
+        .payload(&[7; 3000])
+        .q_block1()
+        .request_tag(crate::storage::BodyTag::new(b"entropy").unwrap())
+        .send(10)
+        .unwrap();
+    let mut received = 0;
+    for index in 0..3 {
+        assert_eq!(app.transport().send_n, index + 1);
+        let sent =
+            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
+        let block = sent.q_block1().unwrap().unwrap();
+        assert_eq!(block.num(), index as u32);
+        let count = if index < 2 { 1024 } else { 952 };
+        assert_eq!(sent.payload(), &[7; 3000][received..received + count]);
+        received += count;
+        let reply = if index < 2 {
+            Message::new(Type::Acknowledgement, Code::EMPTY, sent.message_id())
+        } else {
+            Message::new(Type::Acknowledgement, Code::CHANGED, sent.message_id())
+                .with_token(sent.token())
+        };
+        let mut bytes = [0; WIRE];
+        let n = encode(&reply, &mut bytes).unwrap();
+        app.transport_mut().inbox = Some((peer, bytes, n));
+        app.poll(11 + index as u64).unwrap();
+    }
+    assert_eq!(received, 3000);
+    assert_eq!(
+        app.take_response(fresh).unwrap().unwrap().code(),
+        Code::CHANGED
+    );
+    assert_eq!(app.engine.tx_occupied(), 0);
 }
 
 #[test]
@@ -7607,7 +8411,9 @@ fn mid_reuse_wait_also_requires_pending_transmissions_to_finish() {
     let mut app = record_client();
     let call = app.get("first").to(peer).send(0).unwrap();
     for _ in 1..65536 {
-        app.ids.next_for::<&'static str, _>(&app.engine, 0).unwrap();
+        app.ids
+            .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 0)
+            .unwrap();
     }
     assert_eq!(
         app.get("next").to(peer).non().send(247_000),
@@ -10762,16 +11568,24 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
 
 #[test]
 fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
+    // A synthetic capable peer retains client interoperability coverage;
+    // App server declines FETCH/query Observe until it owns selection.
+    fn capable_reply(wire: &[u8], sequence: u32) -> ([u8; WIRE], usize) {
+        let request = decode(wire).unwrap();
+        let seq = encode_uint(sequence);
+        let cf = encode_uint(0);
+        let opts = [Opt::observe(&seq), Opt::content_format(&cf)];
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+            .with_token(request.token())
+            .with_options(&opts)
+            .with_payload(b"selected");
+        let mut bytes = [0; WIRE];
+        let n = encode(&response, &mut bytes).unwrap();
+        (bytes, n)
+    }
     let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
     let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
     for fetch_request in [false, true] {
-        let mut server = App::profile::<profiles::Default>()
-            .deterministic_for_tests()
-            .block_wise::<false>()
-            .route("obs", get(get_obs).fetch(get_obs))
-            .allow_plaintext()
-            .bind(WideLoopback::default())
-            .unwrap();
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
@@ -10795,9 +11609,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
             .send(0)
             .unwrap();
         let (wire, n) = (client.transport().sends[0], client.transport().send_lens[0]);
-        server.transport_mut().inbox = Some((client_ep, wire, n));
-        server.poll(0).unwrap();
-        let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+        let (wire, n) = capable_reply(&wire[..n], 0);
         client.transport_mut().inbox = Some((server_ep, wire, n));
         client.poll(1).unwrap();
         assert_eq!(
@@ -10843,7 +11655,6 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
         }
         for round in 1..=3u32 {
             client.transport_mut().send_n = 0;
-            server.transport_mut().send_n = 0;
             let request = if fetch_request {
                 client.fetch("obs")
             } else {
@@ -10901,9 +11712,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
                 0,
                 "stale ACK must stop request retransmission"
             );
-            server.transport_mut().inbox = Some((client_ep, wire, n));
-            server.poll(u64::from(round) * 100 + 2).unwrap();
-            let (wire, n) = (server.transport().sends[0], server.transport().send_lens[0]);
+            let (wire, n) = capable_reply(&wire[..n], round);
             client.transport_mut().inbox = Some((server_ep, wire, n));
             client.poll(u64::from(round) * 100 + 3).unwrap();
             assert_eq!(
@@ -11655,7 +12464,7 @@ fn observe_reregistration_after_removal_starts_a_new_relation() {
 }
 
 #[test]
-fn observe_notifications_use_the_path_not_the_query() {
+fn observe_notifications_decline_query_selection_and_recover_queryless() {
     let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
     let peer_b = Endpoint::v4([192, 0, 2, 3], 5683);
     let token_a = Token::new(&[0xa1]).unwrap();
@@ -11685,43 +12494,42 @@ fn observe_notifications_use_the_path_not_the_query() {
     );
     app.transport_mut().inbox = Some((peer_b, wire, n));
     app.poll(1).unwrap();
+    assert!(last_wide(&app).observe().is_none());
     app.transport_mut().send_n = 0;
     assert_eq!(
         app.notify(
             2,
             &["sensors", "temp"],
-            Response::content(b"same").content_format(ContentFormat::TEXT_PLAIN),
+            Response::content(b"wrong").content_format(ContentFormat::TEXT_PLAIN)
         )
         .unwrap(),
-        2
+        0
     );
-    assert_eq!(app.transport().send_n, 2);
-    for index in 0..2 {
-        let parsed =
-            decode(&app.transport().sends[index][..app.transport().send_lens[index]]).unwrap();
-        assert_eq!(parsed.payload(), b"same");
-        assert!(parsed.uri_query().next().is_none());
-    }
+    assert_eq!(app.transport().send_n, 0);
+    assert!(!observe_live(&app, peer_a, token_a));
+    assert!(!observe_live(&app, peer_b, token_b));
     let (wire, n) = encode_wide_token(
         Code::GET,
         &["sensors", "temp"],
-        &[Opt::observe_register(), Opt::uri_query("u=z")],
+        &[Opt::observe_register()],
         0x1203,
         token_a,
     );
     app.transport_mut().inbox = Some((peer_a, wire, n));
     app.poll(3).unwrap();
-    assert_eq!(last_wide(&app).observe(), Some(Ok(2)));
-    assert!(observe_live(&app, peer_a, token_a));
-    assert!(observe_live(&app, peer_b, token_b));
-    let live = (0..app.engine().capacities().observe_entries)
-        .filter(|index| {
-            app.engine()
-                .observe_interest(crate::storage::SlotId::from_index(*index))
-                .is_some()
-        })
-        .count();
-    assert_eq!(live, 2);
+    assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify(
+            4,
+            &["sensors", "temp"],
+            Response::content(b"fresh").content_format(ContentFormat::TEXT_PLAIN)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).payload(), b"fresh");
+    assert!(!observe_live(&app, peer_b, token_b));
 }
 
 #[test]
@@ -12085,7 +12893,7 @@ fn exercise_client_without_block_storage<S: super::AppStorage>(
             .unwrap()
         };
         if protected {
-            app.set_oscore(make(&[1], &[2]));
+            app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
             Some(make(&[2], &[1]))
         } else {
             None
@@ -12430,8 +13238,8 @@ fn canceled_oscore_deferred_response_resets_without_spending_other_call_state() 
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(make(&[1], &[2]));
-    server.set_oscore(make(&[2], &[1]));
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let old = client
         .post("durable")
         .to(peer)
@@ -12559,8 +13367,8 @@ fn deferred_oscore_completion_preserves_authenticated_request_binding() {
         .allow_plaintext()
         .bind(WideLoopback::default())
         .unwrap();
-    client.set_oscore(make(&[1], &[2]));
-    server.set_oscore(make(&[2], &[1]));
+    client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let call = client
         .post("durable")
         .to(peer)
@@ -12658,8 +13466,8 @@ fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
                 })
                 .unwrap()
             };
-            client.set_oscore(make(&[1], &[2]));
-            server.set_oscore(make(&[2], &[1]));
+            client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
         }
         let mut domain_calls = 0;
         // Reuse the same four TX slots while more than eight dedup replies
@@ -12829,13 +13637,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
         1,
     )
     .unwrap();
-    assert!(
-        app.deferred
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.completed.is_some())
-    );
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
     app.transport_mut().send_n = 0;
     let block = BlockValue::from_size(1, false, 1024).unwrap().encode();
     let (wire, n) = encode_wide(Code::POST, &["another"], &[Opt::block2(&block)], 101);
@@ -12847,13 +13649,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
         decode(&io.sends[0][..io.send_lens[0]]).unwrap().code(),
         Code::BAD_REQUEST
     );
-    assert!(
-        app.deferred
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.completed.is_some())
-    );
+    assert!(app.deferred.rows.iter().flatten().any(|row| row.completed));
     app.poll(10).unwrap();
     assert!(app.deferred.rows.iter().all(Option::is_none));
     for i in 0..app.engine().capacities().tx_body_slots.unwrap() {
@@ -12906,7 +13702,7 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
         .allow_plaintext()
         .bind(Failable::default())
         .unwrap();
-    app.set_oscore(make(&[2], &[1]));
+    app.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
     let request = Message::new(Type::Confirmable, Code::POST, MessageId::new(100))
         .with_token(Token::new(b"request").unwrap());
     let mut wire = [0; 256];
@@ -12936,4 +13732,425 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
     )
     .unwrap();
     assert_eq!(app.oscore().unwrap().sender_seq(), 2);
+}
+
+fn explicit_con_app(now: u64) -> App<profiles::Default, WideLoopback> {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 100);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(get_obs).observe(obs_snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(now).unwrap();
+    app.transport_mut().send_n = 0;
+    app
+}
+
+fn inject_observe_control(
+    app: &mut App<profiles::Default, WideLoopback>,
+    peer: Endpoint,
+    mid: MessageId,
+    ty: Type,
+) {
+    let mut wire = [0; WIRE];
+    let n = encode(&Message::new(ty, Code::EMPTY, mid), &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+}
+
+#[test]
+fn explicit_con_notification_resets_adaptive_deadline_without_clock_wrap() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for now in [
+        0,
+        u64::MAX - ObserveTransmission::CONFIRM_INTERVAL_MS - 100,
+        u64::MAX - 100,
+    ] {
+        let mut app = explicit_con_app(now);
+        assert_eq!(
+            app.notify_confirmable(now, &["obs"], obs_snapshot())
+                .unwrap(),
+            1
+        );
+        assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+        let mid = last_wide(&app).message_id();
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+            .unwrap();
+        let due = now.saturating_add(ObserveTransmission::CONFIRM_INTERVAL_MS);
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due)
+        );
+        inject_observe_control(&mut app, peer, mid, Type::Acknowledgement);
+        app.poll(now + 1).unwrap();
+        app.transport_mut().send_n = 0;
+        assert_eq!(app.notify(now + 2, &["obs"], obs_snapshot()).unwrap(), 1);
+        assert_eq!(last_wide(&app).ty(), Type::NonConfirmable);
+        assert_eq!(
+            app.notify_confirmable(now + 3, &["obs"], obs_snapshot())
+                .unwrap(),
+            0
+        );
+        assert_eq!(app.transport().send_n, 1, "explicit CON bypassed NON hold");
+        assert_eq!(
+            app.engine().observe_interest(id).unwrap().confirm_due_ms(),
+            Some(due),
+            "refused send changed adaptive policy"
+        );
+    }
+}
+
+#[test]
+fn explicit_con_notification_send_failure_retries_as_con_and_recovers() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let id = app
+        .engine()
+        .lookup_observe(ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer))
+        .unwrap();
+    app.transport_mut().send_n = 4;
+    assert!(matches!(
+        app.notify_confirmable(0, &["obs"], obs_snapshot()),
+        Err(Error::Io(_))
+    ));
+    let row = app.engine().observe_interest(id).unwrap();
+    assert!(row.must_confirm(0));
+    assert!(row.is_pending());
+    assert_eq!(row.seq(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.metrics().observe_notify, 0);
+    app.transport_mut().send_n = 0;
+    app.poll(1).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(last_wide(&app).payload(), b"obs-snap");
+    assert_eq!(last_wide(&app).observe(), Some(Ok(1)));
+    let mid = last_wide(&app).message_id();
+    inject_observe_control(&mut app, peer, mid, Type::Reset);
+    app.poll(2).unwrap();
+    assert!(!observe_registered(&app, peer));
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(
+        app.notify_confirmable(3, &["obs"], obs_snapshot()).unwrap(),
+        0
+    );
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.transport_mut().send_n = 0;
+    app.poll(4).unwrap();
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+}
+
+#[test]
+fn explicit_con_notification_controls_require_matching_mid_and_endpoint() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_wide(Code::GET, &["obs"], &[Opt::observe_register()], 101);
+    app.transport_mut().inbox = Some((other, wire, n));
+    app.poll(0).unwrap();
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(1, &["obs"], obs_snapshot()).unwrap(),
+        2
+    );
+    let token = Token::new(&[0xa1]).unwrap();
+    let first = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, peer))
+        .unwrap();
+    let second = app
+        .engine()
+        .lookup_observe(ObserveKey::new(token, other))
+        .unwrap();
+    let first_mid = app
+        .engine()
+        .observe_interest(first)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    let second_mid = app
+        .engine()
+        .observe_interest(second)
+        .unwrap()
+        .notify_hold()
+        .unwrap()
+        .con_mid()
+        .unwrap();
+    assert_ne!(first_mid, second_mid);
+    for ty in [Type::Acknowledgement, Type::Reset] {
+        for (endpoint, mid) in [(other, first_mid), (peer, second_mid)] {
+            inject_observe_control(&mut app, endpoint, mid, ty);
+            app.poll(2).unwrap();
+            assert_eq!(
+                app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+                0
+            );
+            assert_eq!(app.transport().send_n, 2);
+            assert!(
+                app.engine()
+                    .observe_interest(first)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+            assert!(
+                app.engine()
+                    .observe_interest(second)
+                    .unwrap()
+                    .is_notify_held(2)
+            );
+        }
+    }
+    inject_observe_control(&mut app, peer, first_mid, Type::Acknowledgement);
+    app.poll(3).unwrap();
+    assert!(
+        !app.engine()
+            .observe_interest(first)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    assert!(
+        app.engine()
+            .observe_interest(second)
+            .unwrap()
+            .is_notify_held(3)
+    );
+    inject_observe_control(&mut app, other, second_mid, Type::Reset);
+    app.poll(4).unwrap();
+    assert!(app.engine().observe_interest(first).is_some());
+    assert!(app.engine().observe_interest(second).is_none());
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    app.transport_mut().send_n = 0;
+    assert_eq!(
+        app.notify_confirmable(5, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn explicit_con_notification_preserves_per_endpoint_admission_and_validation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = explicit_con_app(0);
+    let (wire, n) = encode_nstart_wire(Code::GET, &["obs"], &[Opt::observe_register()], 101, 0xa2);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    app.transport_mut().send_n = 0;
+    assert!(matches!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot().location_path("..")),
+        Err(Error::Response(_))
+    ));
+    for token in [0xa1, 0xa2] {
+        let id = app
+            .engine()
+            .lookup_observe(ObserveKey::new(Token::new(&[token]).unwrap(), peer))
+            .unwrap();
+        let row = app.engine().observe_interest(id).unwrap();
+        assert!(!row.must_confirm(2));
+        assert_eq!(row.seq(), 0);
+    }
+    assert_eq!(
+        app.notify_confirmable(2, &["missing"], obs_snapshot())
+            .unwrap(),
+        0
+    );
+    assert_eq!(app.transport().send_n, 0);
+    assert_eq!(
+        app.notify_confirmable(2, &["obs"], obs_snapshot()).unwrap(),
+        1
+    );
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).ty(), Type::Confirmable);
+    assert_eq!(app.metrics().observe_notify, 1);
+    assert_eq!(app.metrics().nstart_reject, 1);
+}
+
+#[test]
+fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for block_body in [false, true] {
+        let (wire, n) = encode_wide(
+            Code::GET,
+            &["sensors", "temp"],
+            &[Opt::observe_register()],
+            0x1001,
+        );
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+            .allow_plaintext()
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        let key = ObserveKey::new(last_wide(&app).token(), peer);
+        let response = if block_body {
+            Response::content(&[7; 2000])
+                .content_format(ContentFormat::TEXT_PLAIN)
+                .etag(b"large")
+        } else {
+            obs_snapshot()
+        };
+        app.notify_confirmable(1, &["sensors", "temp"], response)
+            .unwrap();
+        let mid = last_wide(&app).message_id();
+        let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
+        let original = app.engine.pending_con(slot).unwrap();
+        let row_id = app.engine.lookup_observe(key).unwrap();
+        let old_row = app.engine.observe_interest(row_id).unwrap();
+        let old_wire = app.transport().sends[1];
+        let old_len = app.transport().send_lens[1];
+        if !block_body {
+            for _ in 1..65536 {
+                app.ids
+                    .next_for::<&'static str, _, _>(&app.engine, &mut app.io, 1)
+                    .unwrap();
+            }
+        }
+        assert_eq!(app.signal(&["sensors", "temp"]), 1);
+        let due = original.rto().next_timeout_ms();
+        let error = app.poll(due).unwrap_err();
+        if block_body {
+            assert_eq!(error, Error::ObserveSupersessionUnsupported);
+        } else {
+            assert_eq!(
+                error,
+                Error::Identity(super::IdentityError::MessageIdExhausted)
+            );
+        }
+        assert_eq!(last_wide(&app).message_id(), mid);
+        assert_eq!(
+            &app.transport().sends[2][..app.transport().send_lens[2]],
+            &old_wire[..old_len]
+        );
+        let after = app.engine.pending_con(slot).unwrap();
+        assert_eq!(after.rto(), original.rto().next_attempt(due).unwrap());
+        let row = app.engine.observe_interest(row_id).unwrap();
+        assert_eq!(row.notify_hold(), old_row.notify_hold());
+        assert_eq!(row.seq(), old_row.seq());
+        assert!(row.is_pending());
+        assert!(row.superseded_con_mids().is_empty());
+        if block_body {
+            let body =
+                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).unwrap();
+            assert_eq!(app.engine.tx_body_payload(body), Some(&[7; 2000][..]));
+        }
+    }
+}
+
+#[test]
+fn deferred_selection_preserves_get_validator_behavior() {
+    let with_tag = [Opt::etag(b"v1"), Opt::uri_path("select")];
+    let no_tag = [Opt::uri_path("select")];
+    for code in [Code::GET, Code::FETCH] {
+        let make = |options: &[Opt<'_>]| {
+            let message =
+                Message::new(Type::NonConfirmable, code, MessageId::new(1)).with_options(options);
+            let mut wire = [0; 64];
+            let n = encode(&message, &mut wire).unwrap();
+            super::DeferredSelection::from_request(&decode(&wire[..n]).unwrap()).unwrap()
+        };
+        assert_eq!(make(&with_tag) == make(&no_tag), code == Code::GET);
+    }
+}
+
+#[test]
+fn fetch_observe_requestless_source_does_not_register_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        if request.payload() == b"b" {
+            Response::content(b"selected-b")
+        } else {
+            Response::content(b"selected-a")
+        }
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", fetch(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let zero = encode_uint(0);
+    let options = [
+        Opt::observe(&zero),
+        Opt::uri_path("obs"),
+        Opt::content_format(&zero),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::FETCH, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options)
+        .with_payload(b"b");
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+}
+
+#[test]
+fn get_observe_requestless_source_does_not_register_query_selection() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        Response::content(if request.uri_query().next() == Some(Ok("b")) {
+            b"selected-b"
+        } else {
+            b"selected-a"
+        })
+    }
+    fn snapshot() -> Response<'static> {
+        Response::content(b"selected-a")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", get(selected).observe(snapshot))
+        .allow_plaintext()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let options = [
+        Opt::observe_register(),
+        Opt::uri_path("obs"),
+        Opt::uri_query("b"),
+    ];
+    let request = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::new(b"b").unwrap())
+        .with_options(&options);
+    let mut wire = [0; WIRE];
+    let n = encode(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(last_wide(&app).payload(), b"selected-b");
+    assert_eq!(last_wide(&app).observe(), None);
+    assert_eq!(app.signal(&["obs"]), 0);
+    app.poll(3000).unwrap();
+    assert_eq!(app.transport().send_n, 1);
+    assert_eq!(
+        last_wide(&app).payload(),
+        b"selected-b",
+        "source cannot recover GET query"
+    );
 }

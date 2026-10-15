@@ -34,7 +34,7 @@ pub enum Error {
     /// Non-empty message has no OSCORE option while a context is attached.
     Unprotected,
     /// The live Token→[`crate::oscore::RequestRef`] table
-    /// ([`crate::oscore::LIVE_REQUESTS`]) is full.
+    /// is full at its configured capacity (four for the default context).
     Saturated,
     /// Partial IV is missing on a request, or too long.
     PartialIv,

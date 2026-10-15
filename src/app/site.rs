@@ -10,12 +10,23 @@ use super::routing::{Method, MethodRouter, ObserveSource};
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
 
+/// Refusal to register a route. Existing routes are unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteError {
+    /// The supplied path is invalid.
+    Path(PathError),
+    /// No slot remains for a new path. Existing paths may still be replaced.
+    Full,
+}
+
 /// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
 ///
 /// The `/.well-known/core` scratch buffer is [`LinkFormatScratch`] /
 /// [`link_format_capacity`]: `N ×` this, floored at [`super::INLINE_PAYLOAD`]
 /// and capped at [`super::RESPONSE_BODY`]. A catalog that still does not
 /// fit is 5.00, never a silently truncated list.
+/// URI percent-encoding can expand each segment byte to three bytes; this
+/// estimate is not a guarantee that every registered path fits discovery.
 pub const LINK_FORMAT_PER_ROUTE: usize = 24;
 
 /// Compile-time `/.well-known/core` payload bytes for a [`Site`] of `N` routes.
@@ -112,6 +123,7 @@ struct Entry {
 /// on the happy path. This is a routing table, not an Engine memory area
 /// and not a shared application bag. `/.well-known/core` uses
 /// [`LinkFormatScratch`] ([`link_format_capacity`]).
+/// Use [`Self::try_route`] for recoverable registration at a resource boundary.
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],
     len: usize,
@@ -173,6 +185,7 @@ impl<const N: usize> Site<N> {
     ///
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`
     /// (leading `/` ignored). Empty segments are rejected.
+    /// Use [`Self::try_route`] to handle refusal without panicking.
     ///
     /// # Panics
     ///
@@ -180,19 +193,89 @@ impl<const N: usize> Site<N> {
     /// [`MAX_PATH_SEGMENTS`] segments, or if a segment is empty.
     pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
         let path = expect_path(path);
+        self.insert_route(path, methods).unwrap_or_else(|_| {
+            panic!("site is full ({N} routes); bind with .routes::<M>() for a larger M")
+        })
+    }
+
+    /// Register or replace a route without panicking on invalid paths or capacity.
+    ///
+    /// Refusal leaves all routes unchanged. Replacing an existing path succeeds
+    /// even when full and retains its local route identity. No allocation occurs.
+    pub fn try_route(
+        &mut self,
+        path: impl IntoPath,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        let path = path_from_into(path).map_err(RouteError::Path)?;
+        self.insert_route(path, methods)
+    }
+
+    /// Checked registration of a static slash-separated path.
+    pub fn try_route_path(
+        &mut self,
+        path: &'static str,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
+        self.try_route(path, methods)
+    }
+
+    fn insert_route(
+        &mut self,
+        path: Path<'static>,
+        methods: MethodRouter,
+    ) -> Result<&mut Self, RouteError> {
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
                 entry.methods = methods;
-                return self;
+                return Ok(self);
             }
         }
-        assert!(
-            self.len < N,
-            "site is full ({N} routes); bind with .routes::<M>() for a larger M"
-        );
-        self.entries[self.len] = Some(Entry { path, methods });
+        if self.len >= N {
+            return Err(RouteError::Full);
+        }
+        let index = self
+            .entries
+            .iter()
+            .position(Option::is_none)
+            .ok_or(RouteError::Full)?;
+        self.entries[index] = Some(Entry { path, methods });
         self.len += 1;
-        self
+        Ok(self)
+    }
+
+    /// Remove a path and reclaim its slot, returning whether it was registered.
+    ///
+    /// Invalid paths leave the table unchanged. Remaining route identities are
+    /// stable; entries are never compacted. Copies of a removed route's advanced
+    /// resource identity become invalid and must not be reused.
+    ///
+    /// A standalone Site owns no protocol state. When borrowing a Site from an
+    /// App, use [`App::remove_route`](super::App::remove_route) instead: it checks
+    /// that App-owned work has drained before an identity can be reused.
+    pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, PathError> {
+        let path = path_from_into(path)?;
+        Ok(self.remove_path(path))
+    }
+
+    pub(crate) fn contains_path(&self, path: Path<'static>) -> bool {
+        self.entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.path.matches(path.segments()))
+    }
+
+    pub(crate) fn remove_path(&mut self, path: Path<'static>) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| {
+            entry
+                .as_ref()
+                .is_some_and(|entry| entry.path.matches(path.segments()))
+        }) else {
+            return false;
+        };
+        self.entries[index] = None;
+        self.len -= 1;
+        true
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
@@ -213,6 +296,9 @@ impl<const N: usize> Site<N> {
     /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Pass
     /// [`LinkFormatScratch`] (or any slice of
     /// [`link_format_capacity`], capped at [`RESPONSE_BODY`]).
+    /// Links encode decoded path segments as URI references without changing
+    /// their boundaries (RFC 6690 section 2 and RFC 7252 section 6.5).
+    /// Unsupported unicast discovery query filters are ignored.
     #[must_use]
     pub fn dispatch<'a>(&self, request: Request<'_>, catalog: &'a mut [u8]) -> Response<'a> {
         for entry in self.entries.iter().flatten() {
@@ -278,6 +364,7 @@ fn expect_path(path: impl IntoPath) -> Path<'static> {
         Err(PathError::EmptySegment) => {
             panic!("URI-Path has an empty segment; omit extra slashes")
         }
+        Err(PathError::DotSegment) => panic!("URI-Path has a forbidden dot segment"),
         Err(PathError::BadUtf8) => unreachable!("static &str is UTF-8"),
     }
 }
@@ -288,9 +375,6 @@ fn path_is_well_known(path: &[&str]) -> bool {
 
 fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Response<'a> {
     let cap = link_format_capacity::<N>().min(storage.len());
-    if cap == 0 {
-        return Response::internal_error();
-    }
     let buf = &mut storage[..cap];
     let mut n = 0usize;
     let mut first = true;
@@ -323,17 +407,48 @@ fn catalog_etag(body: &[u8]) -> [u8; 4] {
     hash.to_be_bytes()
 }
 
-fn link_bytes(segments: &[&str]) -> usize {
+fn link_bytes(segments: &[&str], limit: usize) -> Option<usize> {
     if segments.is_empty() {
-        3
+        (limit >= 3).then_some(3)
     } else {
-        2 + segments.iter().map(|s| 1 + s.len()).sum::<usize>()
+        segments.iter().try_fold(2usize, |total, segment| {
+            let total = total.checked_add(1)?;
+            if total > limit {
+                return None;
+            }
+            segment.as_bytes().iter().try_fold(total, |n, &byte| {
+                let n = n.checked_add(if uri_path_byte_is_literal(byte) { 1 } else { 3 })?;
+                (n <= limit).then_some(n)
+            })
+        })
     }
 }
 
+fn uri_path_byte_is_literal(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'@'
+        )
+}
+
 fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
-    let need = link_bytes(segments);
-    if buf.len().saturating_sub(*n) < need {
+    if link_bytes(segments, buf.len().saturating_sub(*n)).is_none() {
         return false;
     }
     buf[*n] = b'<';
@@ -345,8 +460,18 @@ fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
         for segment in segments {
             buf[*n] = b'/';
             *n += 1;
-            buf[*n..*n + segment.len()].copy_from_slice(segment.as_bytes());
-            *n += segment.len();
+            for &byte in segment.as_bytes() {
+                if uri_path_byte_is_literal(byte) {
+                    buf[*n] = byte;
+                    *n += 1;
+                } else {
+                    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                    buf[*n] = b'%';
+                    buf[*n + 1] = HEX[usize::from(byte >> 4)];
+                    buf[*n + 2] = HEX[usize::from(byte & 15)];
+                    *n += 3;
+                }
+            }
         }
     }
     buf[*n] = b'>';

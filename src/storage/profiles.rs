@@ -11,6 +11,64 @@ use super::memory::MemoryProfile;
 use super::pool::{BodyPool, DatagramPool, DatagramScratch};
 use super::table::{DedupTable, ObserveTable};
 
+/// A profile with only its shared client/server Observe table resized.
+///
+/// Usually selected through [`crate::resources::Resources::observe_entries`].
+/// Other pool dimensions, scratch, Calls and security bindings are unchanged.
+pub struct WithObserve<P, const ENTRIES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, ENTRIES> {
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = P::RxBody;
+    type TxBody = P::TxBody;
+    type Dedup = P::Dedup;
+    type Observe = ObserveTable<ENTRIES>;
+    type Exchange = P::Exchange;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+}
+
+/// A profile with only its duplicate-reply history table resized.
+///
+/// Usually selected through [`crate::resources::Resources::dedup_entries`].
+/// Other pool dimensions, scratch, Calls and security bindings are unchanged.
+pub struct WithDedup<P, const ENTRIES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithDedup<P, ENTRIES> {
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = ENTRIES;
+    const OBSERVE_ENTRIES: usize = P::OBSERVE_ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = P::RxBody;
+    type TxBody = P::TxBody;
+    type Dedup = DedupTable<ENTRIES>;
+    type Observe = P::Observe;
+    type Exchange = P::Exchange;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+}
+
 macro_rules! impl_profile {
     (
         $name:ident
@@ -99,4 +157,80 @@ impl_profile! {
     tx_body = 1, 4096;
     dedup = 4;
     observe = 2;
+}
+
+/// Gateway pool starting sizes; not a peer-count or throughput guarantee.
+pub struct Gateway;
+
+impl_profile! {
+    Gateway
+    rx_dgram = 8, 1472;
+    tx_dgram = 8, 1472;
+    rx_body = 2, 8192;
+    tx_body = 2, 8192;
+    dedup = 16;
+    observe = 8;
+}
+
+/// Host service pool starting sizes. Security associations are independently bounded.
+pub struct Service;
+
+impl_profile! {
+    Service
+    rx_dgram = 32, 1472;
+    tx_dgram = 32, 1472;
+    rx_body = 4, 16384;
+    tx_body = 4, 16384;
+    dedup = 64;
+    observe = 32;
+}
+
+/// Define a custom fixed memory profile with named capacities and matching array types.
+///
+/// Use the resulting type with [`crate::resources::Resources`]. Body dimensions
+/// are instantiated only when block-wise storage is enabled. All dimensions are
+/// compile-time constants; these numbers exclude metadata and stack temporaries.
+///
+/// ```
+/// coaptic::memory_profile! {
+///     pub MyMemory {
+///         rx_datagram: (2, 1152), tx_datagram: (3, 1152),
+///         rx_body: (1, 4096), tx_body: (1, 4096),
+///         dedup: 4, observe: 2,
+///     }
+/// }
+/// let resources = coaptic::resources::Resources::<MyMemory>::new().client_calls::<2>();
+/// let builder = coaptic::App::with_resources(resources);
+/// ```
+#[macro_export]
+macro_rules! memory_profile {
+    ($(#[$meta:meta])* $vis:vis $name:ident {
+        rx_datagram: ($rx_n:expr, $rx_b:expr), tx_datagram: ($tx_n:expr, $tx_b:expr),
+        rx_body: ($rxb_n:expr, $rxb_b:expr), tx_body: ($txb_n:expr, $txb_b:expr),
+        dedup: $dedup:expr, observe: $obs:expr $(,)?
+    }) => {
+        $(#[$meta])*
+        $vis struct $name;
+        impl $crate::storage::MemoryProfile for $name {
+            const RX_DATAGRAM_SLOTS: usize = $rx_n;
+            const RX_DATAGRAM_BYTES: usize = $rx_b;
+            const TX_DATAGRAM_SLOTS: usize = $tx_n;
+            const TX_DATAGRAM_BYTES: usize = $tx_b;
+            const DEDUP_ENTRIES: usize = $dedup;
+            const OBSERVE_ENTRIES: usize = $obs;
+            const RX_BODY_SLOTS: usize = $rxb_n;
+            const RX_BODY_BYTES: usize = $rxb_b;
+            const TX_BODY_SLOTS: usize = $txb_n;
+            const TX_BODY_BYTES: usize = $txb_b;
+            type RxDatagram = $crate::storage::DatagramPool<$rx_n, $rx_b>;
+            type TxDatagram = $crate::storage::DatagramPool<$tx_n, $tx_b>;
+            type RxBody = $crate::storage::BodyPool<$rxb_n, $rxb_b>;
+            type TxBody = $crate::storage::BodyPool<$txb_n, $txb_b>;
+            type Dedup = $crate::storage::DedupTable<$dedup>;
+            type Observe = $crate::storage::ObserveTable<$obs>;
+            type Exchange = $crate::storage::ExchangeTable<$tx_n>;
+            type RxScratch = $crate::storage::DatagramScratch<$rx_b>;
+            type TxScratch = $crate::storage::DatagramScratch<$tx_b>;
+        }
+    };
 }
