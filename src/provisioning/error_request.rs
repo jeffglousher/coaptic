@@ -179,7 +179,7 @@ impl ErrorRequest {
 // A late error needs one retained request buffer. Its payload-free response is
 // reconstructed from the saved MID/token; the earlier completion replies stay
 // in their own slots with their original deadlines.
-pub(super) struct ErrorReceipt {
+pub(in crate::provisioning) struct ErrorReceipt {
     request: Wire,
     expires: u64,
     pending: bool,
@@ -187,7 +187,7 @@ pub(super) struct ErrorReceipt {
 }
 
 impl ErrorReceipt {
-    pub(super) fn matches_new(bytes: &[u8], local_id: ConnectionId) -> bool {
+    pub(in crate::provisioning) fn matches_new(bytes: &[u8], local_id: ConnectionId) -> bool {
         if bytes.len() > DATAGRAM_CAPACITY {
             return false;
         }
@@ -209,7 +209,7 @@ impl ErrorReceipt {
             })
     }
 
-    pub(super) fn new(bytes: &[u8], expires: u64) -> Self {
+    pub(in crate::provisioning) fn new(bytes: &[u8], expires: u64) -> Self {
         Self {
             request: Wire::copy(bytes).expect("bounded admitted error request"),
             expires,
@@ -218,15 +218,15 @@ impl ErrorReceipt {
         }
     }
 
-    pub(super) fn peer_error(&self) -> PeerError<'_> {
+    pub(in crate::provisioning) fn peer_error(&self) -> PeerError<'_> {
         request_peer_error(self.request.as_slice()).expect("admitted final error")
     }
 
-    pub(super) fn pending(&self) -> bool {
+    pub(in crate::provisioning) fn pending(&self) -> bool {
         self.pending
     }
 
-    pub(super) fn next_deadline(&self, now: u64) -> u64 {
+    pub(in crate::provisioning) fn next_deadline(&self, now: u64) -> u64 {
         if self.pending || !self.reported {
             now
         } else {
@@ -234,7 +234,7 @@ impl ErrorReceipt {
         }
     }
 
-    pub(super) fn classify(&self, bytes: &[u8], now: u64) -> CompletedCacheMatch {
+    pub(in crate::provisioning) fn classify(&self, bytes: &[u8], now: u64) -> CompletedCacheMatch {
         if now >= self.expires || bytes.len() < 4 {
             return CompletedCacheMatch::NoMatch;
         }
@@ -249,7 +249,7 @@ impl ErrorReceipt {
         }
     }
 
-    pub(super) fn queue(&mut self, bytes: &[u8], now: u64) -> bool {
+    pub(in crate::provisioning) fn queue(&mut self, bytes: &[u8], now: u64) -> bool {
         if self.classify(bytes, now) != CompletedCacheMatch::ExactDuplicate {
             return false;
         }
@@ -257,7 +257,7 @@ impl ErrorReceipt {
         true
     }
 
-    pub(super) fn flush<T: DatagramIo>(
+    pub(in crate::provisioning) fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
         endpoint: Endpoint,
@@ -286,5 +286,22 @@ impl ErrorReceipt {
             return Err(PollError::PeerAbort(self.peer_error().code()));
         }
         Ok(progress)
+    }
+
+    pub(in crate::provisioning) fn disable(&mut self) {
+        self.pending = false;
+        self.reported = true;
+    }
+
+    pub(in crate::provisioning) fn reserves_message_id(
+        &self,
+        mid: crate::message::MessageId,
+        now: u64,
+    ) -> bool {
+        now < self.expires
+            && decode(self.request.as_slice())
+                .expect("saved error request")
+                .message_id()
+                == mid
     }
 }

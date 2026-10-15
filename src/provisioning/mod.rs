@@ -221,6 +221,17 @@ impl From<lakers::EDHOCError> for InitiatorFailure {
 }
 
 impl MessageFailure {
+    fn response_code(&self) -> crate::message::Code {
+        if matches!(
+            self.error,
+            Error::Entropy | Error::SelfPeer | Error::Derivation
+        ) {
+            crate::message::Code::INTERNAL_SERVER_ERROR
+        } else {
+            crate::message::Code::BAD_REQUEST
+        }
+    }
+
     fn payload(&self) -> &'static [u8] {
         match self.code {
             PeerErrorCode::WrongCipherSuite => &[2, 2],
@@ -549,19 +560,35 @@ impl RegistryResponder {
         resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(Session, Message), Error> {
+        self.receive_message_3_with_error(message, resolve, authorize)
+            .map_err(|failure| failure.error)
+    }
+
+    fn receive_message_3_with_error(
+        self,
+        message: &Message,
+        resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), MessageFailure> {
         let (state, id, ead) = self.state.parse_message_3(&message.buffer()?)?;
         if ead.is_some() {
-            return Err(Error::Profile);
+            return Err(Error::Profile.into());
         }
         let reference = CredentialReference::from_id(&id)?;
-        let peer = resolve(reference).ok_or(Error::Authentication)?;
-        check_reference(&id, &peer)?;
+        let peer = resolve(reference).ok_or(MessageFailure {
+            error: Error::Authentication,
+            code: PeerErrorCode::UnknownCredential,
+        })?;
+        check_reference(&id, &peer).map_err(|error| MessageFailure {
+            error,
+            code: PeerErrorCode::UnknownCredential,
+        })?;
         if peer.public_x() == self.local_public_x {
-            return Err(Error::SelfPeer);
+            return Err(Error::SelfPeer.into());
         }
         let (state, _) = state.verify_message_3(peer.credential())?;
         if !authorize(&peer.principal()) {
-            return Err(Error::Unauthorized);
+            return Err(Error::Unauthorized.into());
         }
         let (mut state, message) = state.prepare_message_4(&None)?;
         let secret = state.edhoc_exporter(0, &[], 16);

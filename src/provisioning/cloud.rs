@@ -13,6 +13,8 @@
 //! windows limit admission work; a keyed, expiring Echo proves reachability
 //! before ephemeral-key work. These limits do not guarantee service against a
 //! distributed flood. The caller must refresh authoritative policy replicas.
+//! Routable failures retain bounded EDHOC error responses. Peer error requests
+//! retain payload-free acknowledgements without changing an installed association.
 
 use core::{cell::Cell, convert::Infallible, fmt};
 
@@ -25,9 +27,11 @@ use crate::message::{
 use crate::oscore::OscoreHeader;
 use crate::storage::{DatagramIo, Endpoint};
 
+use super::coap::{CompletedCacheMatch, ErrorReceipt};
 use super::{
-    ConnectionId, CredentialReference, Error, Identity, Message, PeerTrust, RegistryResponder,
-    Session, Status, TrustGrant, message_1_peer_id,
+    ConnectionId, CredentialReference, Error, Identity, Message, MessageFailure, PeerError,
+    PeerErrorCode, PeerTrust, PollError, RegistryResponder, Session, Status, TrustGrant,
+    message_1_peer_id,
 };
 
 const DATAGRAM_CAPACITY: usize = 384;
@@ -84,6 +88,15 @@ pub enum CloudError<E = Infallible> {
     Capacity,
     /// Startup entropy or a cryptographic transition failed.
     Provisioning(Error),
+    /// A routed unauthenticated peer error was acknowledged; installed Apps remain live.
+    PeerAbort {
+        /// Exact endpoint of the acknowledged error request.
+        endpoint: Endpoint,
+        /// Responder identifier of the aborted bootstrap attempt.
+        local_id: ConnectionId,
+        /// Diagnostic classification; it grants no authority or identity.
+        code: PeerErrorCode,
+    },
     /// A monotonic clock moved backward or a required deadline overflowed.
     Clock,
     /// The listener exhausted its seven-byte identifier namespace.
@@ -183,9 +196,38 @@ struct Exchange {
     mid: MessageId,
     expires: u64,
     queued: bool,
+    notice: Option<Notice>,
+}
+
+#[derive(Clone, Copy)]
+enum Notice {
+    Local(Error),
+    Peer(PeerErrorCode),
+}
+
+impl Notice {
+    fn error<E>(self, endpoint: Endpoint, local_id: ConnectionId) -> CloudError<E> {
+        match self {
+            Self::Local(error) => CloudError::Provisioning(error),
+            Self::Peer(code) => CloudError::PeerAbort {
+                endpoint,
+                local_id,
+                code,
+            },
+        }
+    }
 }
 
 impl Exchange {
+    fn peer_error(&self) -> Option<PeerError<'_>> {
+        if !matches!(self.notice, Some(Notice::Peer(_))) {
+            return None;
+        }
+        let parsed = decode(self.request.as_bytes()).ok()?;
+        let (_, prefix) = ConnectionId::decode_prefix(parsed.payload()).ok()?;
+        PeerError::parse(&parsed.payload()[prefix..])
+    }
+
     fn classify(&mut self, bytes: &[u8], mid: MessageId, now: u64) -> Option<bool> {
         if now >= self.expires || mid != self.mid {
             return None;
@@ -211,12 +253,15 @@ struct Pending {
     ready: Option<Ready>,
     exchanges: [Option<Exchange>; 2],
     expires: u64,
+    final_error: Option<ErrorReceipt>,
 }
 
 struct Retained {
     association: Association,
     exchanges: [Option<Exchange>; 2],
     expires: u64,
+    final_error: Option<ErrorReceipt>,
+    enabled: bool,
 }
 
 struct Challenge {
@@ -323,8 +368,10 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     /// Processes one complete EDHOC datagram without receiving or sending.
     /// Exact endpoint/MID/token/payload duplicates queue exact saved replies.
     /// Changed MID-owned requests, unsupported metadata and exhausted admission
-    /// are ignored without replacing live state. A failed M3 is quarantined
-    /// until its original deadline and cannot trigger repeated expensive work.
+    /// are ignored without replacing live state. A failed M3 and its exact
+    /// refusal are quarantined without repeating credential or cryptographic work.
+    /// Local failures and peer aborts return Progress here; flush sends their
+    /// cached response before reporting the original error or peer diagnostic.
     pub fn ingest(
         &mut self,
         bytes: &[u8],
@@ -346,6 +393,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         let Some(source) = self.admit_datagram(endpoint) else {
             return Ok(Status::Ignored);
         };
+        let reserved_mid = self.reserves_message_id(parsed.message_id(), endpoint, now_ms);
         for pending in self.pending.iter_mut().flatten() {
             if pending.endpoint != endpoint {
                 continue;
@@ -358,6 +406,31 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                         Status::Ignored
                     });
                 }
+            }
+            if let Some(receipt) = &mut pending.final_error {
+                if receipt.classify(bytes, now_ms) != CompletedCacheMatch::NoMatch {
+                    return Ok(if receipt.queue(bytes, now_ms) {
+                        Status::Progress
+                    } else {
+                        Status::Ignored
+                    });
+                }
+            } else if !reserved_mid
+                && pending.ready.is_some()
+                && !pending
+                    .exchanges
+                    .iter()
+                    .flatten()
+                    .any(|exchange| exchange.queued)
+                && ErrorReceipt::matches_new(bytes, pending.local_id)
+            {
+                let expires = now_ms
+                    .checked_add(EXCHANGE_LIFETIME_MS)
+                    .ok_or(CloudError::Clock)?;
+                pending.ready = None;
+                pending.final_error = Some(ErrorReceipt::new(bytes, expires));
+                pending.expires = pending.expires.max(expires);
+                return Ok(Status::Progress);
             }
         }
         for retained in self.retained.iter_mut().flatten() {
@@ -373,13 +446,32 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     });
                 }
             }
+            if let Some(receipt) = &mut retained.final_error {
+                if receipt.classify(bytes, now_ms) != CompletedCacheMatch::NoMatch {
+                    return Ok(if retained.enabled && receipt.queue(bytes, now_ms) {
+                        Status::Progress
+                    } else {
+                        Status::Ignored
+                    });
+                }
+            } else if !reserved_mid
+                && retained.enabled
+                && ErrorReceipt::matches_new(bytes, retained.association.local_id)
+            {
+                let expires = now_ms
+                    .checked_add(EXCHANGE_LIFETIME_MS)
+                    .ok_or(CloudError::Clock)?;
+                retained.final_error = Some(ErrorReceipt::new(bytes, expires));
+                retained.expires = retained.expires.max(expires);
+                return Ok(Status::Progress);
+            }
         }
         let payload = parsed.payload();
         if payload.first() == Some(&0xf5) {
             let Ok(message) = Message::from_slice(&payload[1..]) else {
                 return Ok(Status::Ignored);
             };
-            let Ok(peer_id) = message_1_peer_id(&message) else {
+            let Some(peer_id) = routing_id(&message) else {
                 return Ok(Status::Ignored);
             };
             if self
@@ -409,24 +501,41 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 });
                 return Ok(Status::Progress);
             }
-            if !self.admit_crypto(source) {
-                return Ok(Status::Ignored);
-            }
             let expires = now_ms
                 .checked_add(EXCHANGE_LIFETIME_MS)
                 .ok_or(CloudError::Clock)?;
+            let wrong_suite = super::wrong_selected_suite_peer_id(&message).is_some();
+            let invalid_profile = message_1_peer_id(&message).is_err();
+            if !wrong_suite && !invalid_profile && !self.admit_crypto(source) {
+                return Ok(Status::Ignored);
+            }
             let local_id = self.allocate_id(peer_id)?;
-            let (responder, message) =
+            let result = if wrong_suite {
+                Err(MessageFailure {
+                    error: Error::Profile,
+                    code: PeerErrorCode::WrongCipherSuite,
+                })
+            } else if invalid_profile {
+                Err(Error::Profile.into())
+            } else {
                 RegistryResponder::receive_message_1(self.identity, local_id, &message, entropy)
-                    .map_err(CloudError::Provisioning)?;
+                    .map_err(MessageFailure::from)
+            };
+            let (responder, reply) = match result {
+                Ok((responder, message)) => {
+                    (Some(responder), exchange(bytes, parsed, &message, expires)?)
+                }
+                Err(failure) => (None, error_exchange(bytes, parsed, expires, failure)?),
+            };
             self.pending[slot] = Some(Pending {
                 local_id,
                 peer_id,
                 endpoint,
-                responder: Some(responder),
+                responder,
                 ready: None,
-                exchanges: [Some(exchange(bytes, parsed, &message, expires)?), None],
+                exchanges: [Some(reply), None],
                 expires,
+                final_error: None,
             });
             return Ok(Status::Progress);
         }
@@ -440,10 +549,15 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         }) else {
             return Ok(Status::Ignored);
         };
-        let Ok(message) = Message::from_slice(&payload[prefix_len..]) else {
+        let body = &payload[prefix_len..];
+        let peer_error = PeerError::parse(body);
+        if peer_error.is_some_and(|error| error.code() == PeerErrorCode::WrongCipherSuite)
+            || (peer_error.is_none() && body.first().is_none_or(|byte| byte >> 5 != 2))
+        {
             return Ok(Status::Ignored);
-        };
-        if !self.admit_crypto(source) {
+        }
+        let message = Message::from_slice(body);
+        if peer_error.is_none() && message.is_ok() && !self.admit_crypto(source) {
             return Ok(Status::Ignored);
         }
         let expires = now_ms
@@ -453,17 +567,30 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             .as_mut()
             .expect("selected provisional slot");
         let responder = pending.responder.take().expect("selected message 3 state");
+        if let Some(error) = peer_error {
+            pending.exchanges[1] = Some(Exchange {
+                request: Wire::copy(bytes)?,
+                response: Some(response(parsed, Code::CHANGED, &[], None)?),
+                mid: parsed.message_id(),
+                expires,
+                queued: true,
+                notice: Some(Notice::Peer(error.code())),
+            });
+            pending.expires = pending.expires.max(expires);
+            return Ok(Status::Progress);
+        }
         pending.exchanges[1] = Some(Exchange {
             request: Wire::copy(bytes)?,
             response: None,
             mid: parsed.message_id(),
             expires: pending.expires,
             queued: false,
+            notice: None,
         });
         let reference = Cell::new(None);
         let granted = Cell::new(None);
-        let (session, message) = responder
-            .receive_message_3(
+        let result = message.map_err(MessageFailure::from).and_then(|message| {
+            responder.receive_message_3_with_error(
                 &message,
                 |hint| {
                     reference.set(Some(hint));
@@ -486,7 +613,15 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     true
                 },
             )
-            .map_err(CloudError::Provisioning)?;
+        });
+        let (session, message) = match result {
+            Ok(result) => result,
+            Err(failure) => {
+                pending.exchanges[1] = Some(error_exchange(bytes, parsed, expires, failure)?);
+                pending.expires = pending.expires.max(expires);
+                return Ok(Status::Progress);
+            }
+        };
         let association = Association {
             local_id: pending.local_id,
             peer_id: pending.peer_id,
@@ -520,8 +655,19 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     for exchange in pending.exchanges.iter_mut().flatten() {
                         if send_exchange(io, pending.endpoint, exchange, now_ms)? {
                             self.send_cursor = (index + 1) % count;
-                            return Ok(Status::Progress);
+                            return exchange.notice.map_or(Ok(Status::Progress), |notice| {
+                                Err(notice.error(pending.endpoint, pending.local_id))
+                            });
                         }
+                    }
+                    if let Some(receipt) = &mut pending.final_error {
+                        let sent =
+                            flush_receipt(io, pending.endpoint, pending.local_id, receipt, now_ms);
+                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                            self.send_cursor = (index + 1) % count;
+                            return sent.map(|_| Status::Progress);
+                        }
+                        sent?;
                     }
                 }
             } else if index < P + C {
@@ -529,8 +675,27 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     for exchange in retained.exchanges.iter_mut().flatten() {
                         if send_exchange(io, retained.association.endpoint, exchange, now_ms)? {
                             self.send_cursor = (index + 1) % count;
-                            return Ok(Status::Progress);
+                            return exchange.notice.map_or(Ok(Status::Progress), |notice| {
+                                Err(notice.error(
+                                    retained.association.endpoint,
+                                    retained.association.local_id,
+                                ))
+                            });
                         }
+                    }
+                    if let Some(receipt) = &mut retained.final_error {
+                        let sent = flush_receipt(
+                            io,
+                            retained.association.endpoint,
+                            retained.association.local_id,
+                            receipt,
+                            now_ms,
+                        );
+                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                            self.send_cursor = (index + 1) % count;
+                            return sent.map(|_| Status::Progress);
+                        }
+                        sent?;
                     }
                 }
             } else if let Some(challenge) = &self.challenge {
@@ -584,6 +749,8 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             association: ready.association,
             exchanges: pending.exchanges,
             expires: pending.expires,
+            final_error: pending.final_error,
+            enabled: true,
         });
         Ok(Some(AdmittedSession {
             session,
@@ -675,19 +842,63 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     pub fn reserves_message_id(&self, mid: MessageId, endpoint: Endpoint, now_ms: u64) -> bool {
         self.pending.iter().flatten().any(|item| {
             item.endpoint == endpoint
-                && item
+                && (item
                     .exchanges
                     .iter()
                     .flatten()
                     .any(|exchange| exchange.mid == mid && now_ms < exchange.expires)
+                    || item
+                        .final_error
+                        .as_ref()
+                        .is_some_and(|receipt| receipt.reserves_message_id(mid, now_ms)))
         }) || self.retained.iter().flatten().any(|item| {
             item.association.endpoint == endpoint
-                && item
+                && (item
                     .exchanges
                     .iter()
                     .flatten()
                     .any(|exchange| exchange.mid == mid && now_ms < exchange.expires)
+                    || item
+                        .final_error
+                        .as_ref()
+                        .is_some_and(|receipt| receipt.reserves_message_id(mid, now_ms)))
         })
+    }
+
+    /// Borrow a retained unauthenticated diagnostic for an exact bootstrap route.
+    /// It cannot authorize enrollment, revoke an App or replace its credentials.
+    #[must_use]
+    pub fn peer_error(&self, local_id: ConnectionId, endpoint: Endpoint) -> Option<PeerError<'_>> {
+        if self.blocked {
+            return None;
+        }
+        self.pending
+            .iter()
+            .flatten()
+            .find_map(|item| {
+                if item.local_id != local_id || item.endpoint != endpoint {
+                    return None;
+                }
+                item.final_error
+                    .as_ref()
+                    .map(ErrorReceipt::peer_error)
+                    .or_else(|| {
+                        item.exchanges
+                            .iter()
+                            .flatten()
+                            .find_map(Exchange::peer_error)
+                    })
+            })
+            .or_else(|| {
+                self.retained.iter().flatten().find_map(|item| {
+                    if item.association.local_id != local_id
+                        || item.association.endpoint != endpoint
+                    {
+                        return None;
+                    }
+                    item.final_error.as_ref().map(ErrorReceipt::peer_error)
+                })
+            })
     }
 
     /// Earliest queued-send opportunity or original state expiry.
@@ -703,6 +914,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 .iter()
                 .flatten()
                 .any(|exchange| exchange.queued)
+                || item.final_error.as_ref().is_some_and(ErrorReceipt::pending)
             {
                 self.last_now
             } else {
@@ -716,6 +928,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 .iter()
                 .flatten()
                 .any(|exchange| exchange.queued)
+                || item.final_error.as_ref().is_some_and(ErrorReceipt::pending)
             {
                 self.last_now
             } else {
@@ -733,9 +946,16 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 item.responder = None;
                 item.ready = None;
                 disable(&mut item.exchanges);
+                if let Some(receipt) = &mut item.final_error {
+                    receipt.disable();
+                }
             }
             for item in self.retained.iter_mut().flatten() {
                 disable(&mut item.exchanges);
+                item.enabled = false;
+                if let Some(receipt) = &mut item.final_error {
+                    receipt.disable();
+                }
             }
             self.challenge = None;
             return Err(CloudError::Clock);
@@ -774,6 +994,10 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             } else if let Some(item) = slot {
                 if !current(registry, &item.association) {
                     disable(&mut item.exchanges);
+                    item.enabled = false;
+                    if let Some(receipt) = &mut item.final_error {
+                        receipt.disable();
+                    }
                 }
             }
         }
@@ -892,6 +1116,13 @@ fn metadata(message: ParsedMessage<'_>) -> Option<Option<&[u8]>> {
     }
 }
 
+fn routing_id(message: &Message) -> Option<ConnectionId> {
+    message_1_peer_id(message).ok().or_else(|| {
+        let (_, _, _, cid, _) = super::lakers::parse_message_1(&message.buffer().ok()?).ok()?;
+        ConnectionId::from_lakers(cid).ok()
+    })
+}
+
 fn current(registry: &impl AdmissionRegistry, association: &Association) -> bool {
     registry
         .resolve(association.reference)
@@ -917,7 +1148,50 @@ fn exchange(
         mid: parsed.message_id(),
         expires,
         queued: true,
+        notice: None,
     })
+}
+
+fn error_exchange(
+    bytes: &[u8],
+    parsed: ParsedMessage<'_>,
+    expires: u64,
+    failure: MessageFailure,
+) -> Result<Exchange, CloudError> {
+    Ok(Exchange {
+        request: Wire::copy(bytes)?,
+        response: Some(response(
+            parsed,
+            failure.response_code(),
+            failure.payload(),
+            None,
+        )?),
+        mid: parsed.message_id(),
+        expires,
+        queued: true,
+        notice: Some(Notice::Local(failure.error)),
+    })
+}
+
+fn flush_receipt<T: DatagramIo>(
+    io: &mut T,
+    endpoint: Endpoint,
+    local_id: ConnectionId,
+    receipt: &mut ErrorReceipt,
+    now: u64,
+) -> Result<bool, CloudError<T::Error>> {
+    receipt
+        .flush(io, endpoint, now)
+        .map_err(|error| match error {
+            PollError::Io(error) => CloudError::Io(error),
+            PollError::ShortSend => CloudError::ShortSend,
+            PollError::PeerAbort(code) => CloudError::PeerAbort {
+                endpoint,
+                local_id,
+                code,
+            },
+            _ => unreachable!("error receipts only send an ACK and report its diagnostic"),
+        })
 }
 
 fn response(
@@ -937,7 +1211,11 @@ fn response(
     };
     wire.len = CoapMessage::new(Type::Acknowledgement, code, parsed.message_id())
         .with_token(parsed.token())
-        .with_options(&options)
+        .with_options(if payload.is_empty() && echo.is_none() {
+            &[]
+        } else {
+            &options
+        })
         .with_payload(payload)
         .encode(&mut wire.bytes)
         .map_err(|_| CloudError::Provisioning(Error::Parsing))?;
@@ -979,6 +1257,15 @@ fn widen<E>(error: CloudError) -> CloudError<E> {
     match error {
         CloudError::Capacity => CloudError::Capacity,
         CloudError::Provisioning(error) => CloudError::Provisioning(error),
+        CloudError::PeerAbort {
+            endpoint,
+            local_id,
+            code,
+        } => CloudError::PeerAbort {
+            endpoint,
+            local_id,
+            code,
+        },
         CloudError::Clock => CloudError::Clock,
         CloudError::Identifiers => CloudError::Identifiers,
         CloudError::Io(error) => match error {},

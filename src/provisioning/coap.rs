@@ -37,7 +37,8 @@ mod recovery;
 
 #[path = "error_request.rs"]
 mod error_request;
-use error_request::{ErrorReceipt, ErrorRequest};
+pub(super) use error_request::ErrorReceipt;
+use error_request::ErrorRequest;
 
 pub use recovery::{CoapRecovery, RecoveryError};
 
@@ -1449,14 +1450,7 @@ impl Server {
         failure: MessageFailure,
     ) -> Result<(), Failure> {
         let payload = failure.payload();
-        let code = if matches!(
-            failure.error,
-            Error::Entropy | Error::SelfPeer | Error::Derivation
-        ) {
-            Code::INTERNAL_SERVER_ERROR
-        } else {
-            Code::BAD_REQUEST
-        };
+        let code = failure.response_code();
         self.exchanges[index] = Some(Exchange {
             operation,
             request: Wire::copy(bytes).map_err(Failure::Provisioning)?,

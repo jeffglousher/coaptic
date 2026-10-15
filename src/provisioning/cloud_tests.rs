@@ -6,6 +6,9 @@ use super::*;
 use crate::message::Token;
 use crate::provisioning::{CoapProvisioner, Initiator, TrustAnchor};
 
+#[path = "cloud_error_tests.rs"]
+mod errors;
+
 const SERVER: Endpoint = Endpoint::v4([192, 0, 2, 254], 5683);
 const FIRST: Endpoint = Endpoint::v4([192, 0, 2, 1], 49152);
 const SECOND: Endpoint = Endpoint::v4([192, 0, 2, 2], 49152);
@@ -854,12 +857,16 @@ fn failed_message3_is_quarantined_and_provisional_capacity_cannot_be_overwritten
     let m3 = request(&payload, 11, &[2], None);
     assert_eq!(
         cloud.ingest(&m3, FIRST, 0, &registry, no_entropy),
+        Ok(Status::Progress)
+    );
+    assert_eq!(
+        cloud.flush(&mut io, 0, &registry),
         Err(CloudError::Provisioning(Error::Authentication))
     );
     let lookups = registry.lookups.get();
     assert_eq!(
         cloud.ingest(&m3, FIRST, 1_000, &registry, no_entropy),
-        Ok(Status::Ignored)
+        Ok(Status::Progress)
     );
     assert_eq!(registry.lookups.get(), lookups);
     assert!(cloud.reserves_connection_id(id));
