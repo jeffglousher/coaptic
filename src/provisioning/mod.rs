@@ -200,6 +200,36 @@ impl From<lakers::EDHOCError> for MessageFailure {
     }
 }
 
+struct InitiatorFailure {
+    failure: MessageFailure,
+    peer_id: Option<ConnectionId>,
+}
+
+impl From<Error> for InitiatorFailure {
+    fn from(error: Error) -> Self {
+        Self {
+            failure: error.into(),
+            peer_id: None,
+        }
+    }
+}
+
+impl From<lakers::EDHOCError> for InitiatorFailure {
+    fn from(error: lakers::EDHOCError) -> Self {
+        Error::from(error).into()
+    }
+}
+
+impl MessageFailure {
+    fn payload(&self) -> &'static [u8] {
+        match self.code {
+            PeerErrorCode::WrongCipherSuite => &[2, 2],
+            PeerErrorCode::UnknownCredential => &[3, 0xf5],
+            _ => b"\x01\x6cEDHOC failed",
+        }
+    }
+}
+
 /// An unauthenticated credential lookup hint decoded from EDHOC message 3.
 ///
 /// A trusted registry must resolve it to one unambiguous installed credential.
@@ -274,31 +304,49 @@ impl Initiator {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(InitiatorConfirm, Message), Error> {
+        self.receive_message_2_with_error(message, authorize)
+            .map_err(|failure| failure.failure.error)
+    }
+
+    fn receive_message_2_with_error(
+        self,
+        message: &Message,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(InitiatorConfirm, Message), InitiatorFailure> {
         let message = message.buffer()?;
         let (public_x, _) = lakers::parse_message_2(&message)?;
         crypto::validate_public_x(&public_x)?;
         let (state, cid, id, ead) = self.state.parse_message_2(&message)?;
         let peer_id = ConnectionId::from_lakers(cid)?;
-        if peer_id == self.local_id || ead.is_some() {
-            return Err(Error::Profile);
-        }
-        check_reference(&id, &self.peer)?;
-        let state = state.verify_message_2(self.peer.credential())?;
-        if !authorize(&self.peer.principal()) {
-            return Err(Error::Unauthorized);
-        }
-        let (state, message, _) =
-            state.prepare_message_3(CredentialTransfer::ByReference, &None)?;
-        Ok((
-            InitiatorConfirm {
-                state,
-                peer: self.peer,
-                local_principal: self.local_principal,
-                local_id: self.local_id,
-                peer_id,
-            },
-            Message::from_buffer(&message)?,
-        ))
+        let transition = || -> Result<(InitiatorConfirm, Message), MessageFailure> {
+            if peer_id == self.local_id || ead.is_some() {
+                return Err(Error::Profile.into());
+            }
+            check_reference(&id, &self.peer).map_err(|error| MessageFailure {
+                error,
+                code: PeerErrorCode::UnknownCredential,
+            })?;
+            let state = state.verify_message_2(self.peer.credential())?;
+            if !authorize(&self.peer.principal()) {
+                return Err(Error::Unauthorized.into());
+            }
+            let (state, message, _) =
+                state.prepare_message_3(CredentialTransfer::ByReference, &None)?;
+            Ok((
+                InitiatorConfirm {
+                    state,
+                    peer: self.peer,
+                    local_principal: self.local_principal,
+                    local_id: self.local_id,
+                    peer_id,
+                },
+                Message::from_buffer(&message)?,
+            ))
+        };
+        transition().map_err(|failure| InitiatorFailure {
+            failure,
+            peer_id: Some(peer_id),
+        })
     }
 }
 

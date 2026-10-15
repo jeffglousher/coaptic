@@ -5,9 +5,9 @@ use core::{convert::Infallible, fmt};
 use super::super::{ConnectionId, Identity, PeerError, PinnedPeer, Principal, Session};
 use super::{
     ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
-    EXCHANGE_LIFETIME_MS, Exchange, Operation, OptionRole, PollError, ResponseAck, Role, Status,
-    flush_control, has_unsupported_critical, queue_control, request_metadata, request_path,
-    request_peer_error, same_mid_namespace, send,
+    EXCHANGE_LIFETIME_MS, ErrorRequest, Exchange, Operation, OptionRole, PollError, ResponseAck,
+    Role, Status, flush_control, has_unsupported_critical, queue_control, request_metadata,
+    request_path, request_peer_error, same_mid_namespace, send,
 };
 use crate::message::{Code, Message as CoapMessage, MessageId, Type, decode};
 use crate::storage::{DatagramIo, Endpoint};
@@ -26,10 +26,11 @@ pub enum RecoveryError<E = Infallible> {
 #[allow(clippy::large_enum_variant)]
 enum CachedRole {
     Client {
-        operations: [Operation; 3],
+        operations: [Operation; 4],
         acks: [Option<ResponseAck>; 3],
         pending: u8,
         peer_error_slot: Option<usize>,
+        abort: Option<ErrorRequest>,
     },
     Server {
         exchanges: [Option<Exchange>; 2],
@@ -58,15 +59,25 @@ impl Cache {
             .as_ref()
             .map_or(expires, |control| expires.max(control.expires));
         let role = match controller.role {
-            Role::Client(client) => CachedRole::Client {
-                operations: [client.ids.first, client.ids.second, client.ids.echo],
-                acks: client.acks,
-                pending: if replies { client.pending_acks } else { 0 },
-                peer_error_slot: match client.state {
-                    ClientState::Aborted { slot, .. } => Some(slot),
-                    _ => None,
-                },
-            },
+            Role::Client(client) => {
+                let (peer_error_slot, abort) = match client.state {
+                    ClientState::Aborted { slot, .. } => (Some(slot), None),
+                    ClientState::LocalAbort { request, .. } if replies => (None, Some(request)),
+                    _ => (None, None),
+                };
+                CachedRole::Client {
+                    operations: [
+                        client.ids.first,
+                        client.ids.second,
+                        client.ids.echo,
+                        client.ids.error,
+                    ],
+                    acks: client.acks,
+                    pending: if replies { client.pending_acks } else { 0 },
+                    peer_error_slot,
+                    abort,
+                }
+            }
             Role::Server(server) => CachedRole::Server {
                 exchanges: server.exchanges,
                 pending: if replies { server.pending } else { 0 },
@@ -99,7 +110,10 @@ impl Cache {
         }
         match &self.role {
             CachedRole::Client {
-                operations, acks, ..
+                operations,
+                acks,
+                abort,
+                ..
             } => {
                 for ack in acks.iter().flatten() {
                     if now < ack.expires
@@ -111,6 +125,14 @@ impl Cache {
                         } else {
                             CompletedCacheMatch::MidCollision
                         };
+                    }
+                }
+                if let Some(abort) = abort {
+                    if let Ok(parsed) = decode(bytes) {
+                        let classified = abort.classify(bytes, parsed, now);
+                        if classified != CompletedCacheMatch::NoMatch {
+                            return classified;
+                        }
                     }
                 }
                 if bytes[0] & 0x20 != 0 && operations.iter().any(|operation| operation.mid == mid) {
@@ -148,7 +170,12 @@ impl Cache {
             }
         }
         match &mut self.role {
-            CachedRole::Client { acks, pending, .. } => {
+            CachedRole::Client {
+                acks,
+                pending,
+                abort,
+                ..
+            } => {
                 for (index, ack) in acks.iter().enumerate() {
                     if ack.as_ref().is_some_and(|ack| {
                         now < ack.expires
@@ -160,6 +187,9 @@ impl Cache {
                         *pending |= 1 << index;
                         return true;
                     }
+                }
+                if let Some(abort) = abort {
+                    return decode(bytes).is_ok_and(|parsed| abort.ingest(bytes, parsed, now));
                 }
             }
             CachedRole::Server {
@@ -205,6 +235,21 @@ impl Cache {
                     *pending != 0
                 }
             }
+            || matches!(&self.role, CachedRole::Client { abort: Some(abort), .. } if abort.pending())
+    }
+
+    const fn error_in_flight(&self, now: u64) -> bool {
+        matches!(&self.role, CachedRole::Client { abort: Some(abort), .. } if abort.in_flight(now))
+    }
+
+    fn next_deadline(&self, now: u64) -> u64 {
+        let deadline = if self.pending() { now } else { self.expires };
+        match &self.role {
+            CachedRole::Client {
+                abort: Some(abort), ..
+            } => deadline.min(abort.next_deadline(now)),
+            _ => deadline,
+        }
     }
 
     fn flush<T: DatagramIo>(
@@ -216,7 +261,12 @@ impl Cache {
         let mut progress = false;
         progress |= flush_control(&mut self.control, io, endpoint, now)?;
         match &mut self.role {
-            CachedRole::Client { acks, pending, .. } => {
+            CachedRole::Client {
+                acks,
+                pending,
+                abort,
+                ..
+            } => {
                 for (index, ack) in acks.iter().enumerate() {
                     let bit = 1 << index;
                     if *pending & bit != 0 {
@@ -231,6 +281,9 @@ impl Cache {
                         }
                         *pending &= !bit;
                     }
+                }
+                if let Some(abort) = abort {
+                    progress |= abort.flush(io, endpoint, now)?;
                 }
             }
             CachedRole::Server {
@@ -329,7 +382,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         mut entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(), RecoveryError> {
         self.check_time(now_ms)?;
-        if self.candidate.is_some() || self.handoff.is_some() {
+        if self.has_candidate() || self.handoff.is_some() {
             return Err(RecoveryError::Busy);
         }
         let expires = now_ms
@@ -354,6 +407,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                     if !self.reserves_message_id(mid, self.endpoint, now_ms)
                         && !self.reserves_message_id(mid.wrapping_add(1), self.endpoint, now_ms)
                         && !self.reserves_message_id(mid.wrapping_add(2), self.endpoint, now_ms)
+                        && !self.reserves_message_id(mid.wrapping_add(3), self.endpoint, now_ms)
                     {
                         return true;
                     }
@@ -546,7 +600,11 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     pub fn take_session(&mut self) -> Option<Session> {
         if self.handoff.is_some()
             || self.control.as_ref().is_some_and(|control| control.pending)
-            || self.caches.iter().flatten().any(Cache::pending)
+            || self
+                .caches
+                .iter()
+                .flatten()
+                .any(|cache| cache.pending() || cache.error_in_flight(self.last_now))
         {
             return None;
         }
@@ -599,10 +657,23 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         self.active
     }
 
-    /// Whether a handshake is in flight, including pending confirmation sends.
+    /// Whether bootstrap work is in flight, including retained error requests
+    /// awaiting acknowledgement. Outgoing App CONs must remain quiescent.
     #[must_use]
     pub const fn has_candidate(&self) -> bool {
-        self.candidate.is_some()
+        if self.candidate.is_some() {
+            return true;
+        }
+        let mut index = 0;
+        while index < CACHES {
+            if let Some(cache) = &self.caches[index] {
+                if cache.error_in_flight(self.last_now) {
+                    return true;
+                }
+            }
+            index += 1;
+        }
+        false
     }
 
     /// Whether a returned session still awaits an application handoff decision.
@@ -646,11 +717,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
             next = Some(next.map_or(deadline, |previous| previous.min(deadline)));
         }
         for cache in self.caches.iter().flatten() {
-            let deadline = if cache.pending() {
-                self.last_now
-            } else {
-                cache.expires
-            };
+            let deadline = cache.next_deadline(self.last_now);
             next = Some(next.map_or(deadline, |previous| previous.min(deadline)));
         }
         next
@@ -670,6 +737,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
                     client.ids.first.mid,
                     client.ids.second.mid,
                     client.ids.echo.mid,
+                    client.ids.error.mid,
                 ]
                 .contains(&mid)
                 {
@@ -680,6 +748,34 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         self.caches.iter().flatten().any(|cache| {
             now_ms < cache.expires
                 && matches!(&cache.role, CachedRole::Client { operations, .. } if operations.iter().any(|operation| operation.mid == mid))
+        })
+    }
+
+    pub(in crate::provisioning) fn owns_error_response(
+        &self,
+        bytes: &[u8],
+        endpoint: Endpoint,
+        now: u64,
+    ) -> bool {
+        if endpoint != self.endpoint || bytes.len() > DATAGRAM_CAPACITY {
+            return false;
+        }
+        let Ok(parsed) = decode(bytes) else {
+            return false;
+        };
+        if let Some(candidate) = &self.candidate {
+            if let Role::Client(client) = &candidate.role {
+                if let ClientState::LocalAbort { request, .. } = &client.state {
+                    if request.classify(bytes, parsed, now) != CompletedCacheMatch::NoMatch {
+                        return true;
+                    }
+                }
+            }
+        }
+        self.caches.iter().flatten().any(|cache| {
+            now < cache.expires
+                && matches!(&cache.role, CachedRole::Client { abort: Some(request), .. }
+                if request.classify(bytes, parsed, now) != CompletedCacheMatch::NoMatch)
         })
     }
 

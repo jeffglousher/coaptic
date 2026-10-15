@@ -170,6 +170,76 @@ fn connect(client: &mut Owner<'_>, server: &mut Owner<'_>, now: u64) -> u64 {
 }
 
 #[test]
+fn initiator_error_ack_routes_without_content_format_and_releases_nstart() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    let now = connect(&mut client, &mut server, 0) + 1;
+    let generation = client.trust().checkpoint().anchor();
+    client.connect(now).unwrap();
+    client.poll_with(now, idle).unwrap();
+    server.poll_with(now, idle).unwrap();
+    *network
+        .borrow_mut()
+        .a
+        .front_mut()
+        .unwrap()
+        .0
+        .last_mut()
+        .unwrap() ^= 1;
+    assert!(matches!(
+        client.poll_with(now + 1, idle),
+        Err(ManagedError::Recovery(RecoveryError::Bootstrap(
+            super::super::PollError::Provisioning(super::super::Error::Authentication)
+        )))
+    ));
+    assert!(client.is_connected());
+    assert_eq!(client.trust().checkpoint().anchor(), generation);
+    assert!(client.recovery.as_ref().unwrap().has_candidate());
+    assert!(matches!(
+        client.request(Method::Get, "alive", &[], None, now + 1),
+        Err(ManagedError::Busy)
+    ));
+    assert!(matches!(
+        server.poll_with(now + 2, idle),
+        Err(ManagedError::Recovery(RecoveryError::Bootstrap(
+            super::super::PollError::PeerAbort(super::super::PeerErrorCode::Unspecified)
+        )))
+    ));
+    let reply = network.borrow().a.front().unwrap().0.clone();
+    let p = decode(&reply).unwrap();
+    assert_eq!(p.code(), Code::CHANGED);
+    assert!(p.options().next().is_none());
+    assert!(p.payload().is_empty());
+    client.poll_with(now + 3, idle).unwrap();
+    assert!(!client.recovery.as_ref().unwrap().has_candidate());
+    let call = client
+        .request(Method::Get, "alive", &[], None, now + 3)
+        .unwrap();
+    client.poll_with(now + 3, idle).unwrap();
+    server
+        .poll_with(now + 3, |principal, _, _| {
+            assert_eq!(principal, &a.peer().principal());
+            Response::content(b"authorized")
+        })
+        .unwrap();
+    client.poll_with(now + 3, idle).unwrap();
+    let mut body = [0; 32];
+    assert_eq!(
+        client
+            .take_response_into(call, &mut body, now + 3)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"authorized"
+    );
+    assert!(client.is_connected());
+    assert!(server.is_connected());
+}
+
+#[test]
 fn peer_error_managed_routing_preserves_authorized_app_and_allows_explicit_recovery() {
     reset_mid_seeds();
     let a = identity(1, 1);

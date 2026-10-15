@@ -4,7 +4,7 @@ use std::vec::Vec;
 
 use super::*;
 use crate::message::{Code, Opt, OptionNumber, Token, Type};
-use crate::provisioning::Error;
+use crate::provisioning::{Error, PeerErrorCode};
 
 const CLIENT: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
 const SERVER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -160,6 +160,108 @@ fn critical_request(bytes: &[u8], mid: u16) -> Vec<u8> {
         .encode(&mut out)
         .unwrap();
     out[..len].to_vec()
+}
+
+#[test]
+fn initiator_error_survives_cancellation_preserves_active_session_and_blocks_a_new_con() {
+    for cancel_before_send in [false, true] {
+        let a = identity(1, 0);
+        let b = identity(2, 1);
+        let wrong_reference = identity(2, 9);
+        let mut client = CoapRecovery::<4>::new(&a, b.peer(), SERVER, 0).unwrap();
+        let mut server = CoapRecovery::<4>::new(&b, a.peer(), CLIENT, 0).unwrap();
+        let (_, old_client, old_server) = exchange(&mut client, &mut server, 0, 3);
+        let active = client.active_connection_id();
+        let mut peer = CoapProvisioner::listen_with_id(
+            &wrong_reference,
+            a.peer(),
+            CLIENT,
+            ConnectionId::new(7).unwrap(),
+            10,
+        );
+        let mut ci = Io::default();
+        let mut si = Io::default();
+        client.start(10, entropy(5)).unwrap();
+        client.flush(&mut ci, 10).unwrap();
+        let first = ci.last();
+        let first_mid = decode(&first).unwrap().message_id();
+        peer.ingest(&first, CLIENT, 10, entropy(6), no_authorization)
+            .unwrap();
+        peer.flush(&mut si, 10).unwrap();
+        client
+            .ingest(&si.last(), SERVER, 10, no_entropy, no_authorization)
+            .unwrap();
+        ci.fail = true;
+        if !cancel_before_send {
+            assert_eq!(
+                client.flush(&mut ci, 11),
+                Err(RecoveryError::Bootstrap(PollError::Io(9)))
+            );
+        }
+        assert!(client.discard_candidate(11).unwrap());
+        assert!(
+            client.has_candidate(),
+            "queued outgoing error must keep NSTART occupied"
+        );
+        assert_eq!(client.start(11, no_entropy), Err(RecoveryError::Busy));
+        assert_eq!(
+            client.flush(&mut ci, 11),
+            Err(RecoveryError::Bootstrap(PollError::Io(9)))
+        );
+        let saved = ci.last();
+        let p = decode(&saved).unwrap();
+        assert_eq!(p.message_id(), first_mid.wrapping_add(1));
+        assert_eq!(p.payload(), [7, 3, 0xf5]);
+        let mut ack = [0; 32];
+        let len = CoapMessage::new(Type::Acknowledgement, Code::CHANGED, p.message_id())
+            .with_token(p.token())
+            .encode(&mut ack)
+            .unwrap();
+        assert_eq!(
+            client.ingest(&ack[..len], SERVER, 12, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        assert!(client.has_candidate());
+        ci.fail = false;
+        ci.short = true;
+        assert_eq!(
+            client.flush(&mut ci, 12),
+            Err(RecoveryError::Bootstrap(PollError::ShortSend))
+        );
+        ci.short = false;
+        client.flush(&mut ci, 13).unwrap();
+        assert_eq!(ci.last(), saved);
+        assert_eq!(client.next_deadline(), Some(2013));
+        assert_eq!(
+            client.ingest(&ack[..len], OTHER, 14, no_entropy, no_authorization),
+            Ok(Status::Ignored)
+        );
+        assert!(client.has_candidate());
+        client.flush(&mut ci, 2013).unwrap();
+        assert_eq!(ci.last(), saved);
+        assert!(client.reserves_message_id(first_mid.wrapping_add(3), SERVER, 2013));
+        peer.ingest(&saved, CLIENT, 2013, no_entropy, no_authorization)
+            .unwrap();
+        assert_eq!(
+            peer.flush(&mut si, 2013),
+            Err(PollError::PeerAbort(PeerErrorCode::UnknownCredential))
+        );
+        client
+            .ingest(&si.last(), SERVER, 2014, no_entropy, no_authorization)
+            .unwrap();
+        assert!(!client.has_candidate());
+        assert_eq!(client.active_connection_id(), active);
+        assert!(client.take_session().is_none());
+        let (_, fresh_client, fresh_server) = exchange(&mut client, &mut server, 2015, 7);
+        assert_eq!(fresh_client.principal(), old_client.principal());
+        let (old_client, _) = old_client.into_parts();
+        let (old_server, _) = old_server.into_parts();
+        assert_eq!(old_client.sender_key(), old_server.recipient_key());
+        let (fresh_client, _) = fresh_client.into_parts();
+        let (fresh_server, _) = fresh_server.into_parts();
+        assert_eq!(fresh_client.sender_key(), fresh_server.recipient_key());
+        assert_ne!(old_client.sender_key(), fresh_client.sender_key());
+    }
 }
 
 #[test]
@@ -1534,7 +1636,8 @@ fn all_compact_ids_reserved_refuses_admission_even_with_a_free_cache_slot() {
             replies: false,
             role: CachedRole::Client {
                 peer_error_slot: None,
-                operations: [operation; 3],
+                abort: None,
+                operations: [operation; 4],
                 acks: [None, None, None],
                 pending: 0,
             },
