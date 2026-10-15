@@ -19,7 +19,8 @@
 //! responder failures use error 1 with fixed diagnostic text, or error 3 for an
 //! unknown referenced credential. Matching peer error requests abort the
 //! candidate after a payload-free CoAP acknowledgement; errors never elicit
-//! another EDHOC error. Initiator error requests remain outside this profile.
+//! another EDHOC error. A routable initiator failure sends a bounded error
+//! request using the decoded responder connection ID, including equal-ID errors.
 //!
 //! [`CoapProvisioner::poll`] requires exclusive access to the bootstrap
 //! transport. After handing a session to a new secure App, demultiplex the
@@ -31,6 +32,10 @@
 
 #[path = "recovery.rs"]
 mod recovery;
+
+#[path = "error_request.rs"]
+mod error_request;
+use error_request::ErrorRequest;
 
 pub use recovery::{CoapRecovery, RecoveryError};
 
@@ -177,6 +182,7 @@ struct Ids {
     first: Operation,
     second: Operation,
     echo: Operation,
+    error: Operation,
     first_timeout: u64,
     second_timeout: u64,
 }
@@ -205,12 +211,17 @@ impl Ids {
                 mid: mid.wrapping_add(2),
                 token: Token::from_checked(&seed[2..10]),
             },
+            error: Operation {
+                mid: mid.wrapping_add(3),
+                token: Token::from_checked(&seed[10..18]),
+            },
             first_timeout: 2000 + jitter(seed[18], seed[19]),
             second_timeout: 2000 + jitter(seed[20], seed[21]),
         })
     }
 }
 
+#[derive(Clone, Copy)]
 struct Retry {
     initial: u64,
     interval: u64,
@@ -270,6 +281,11 @@ enum ClientState {
     Aborted {
         code: PeerErrorCode,
         slot: usize,
+        reported: bool,
+    },
+    LocalAbort {
+        error: Error,
+        request: ErrorRequest,
         reported: bool,
     },
     Failed,
@@ -577,6 +593,15 @@ impl<'a> CoapProvisioner<'a> {
                         ClientState::Message2(_) | ClientState::Message4(_)
                     ) {
                         Some(client.retry.deadline(self.last_now))
+                    } else if let ClientState::LocalAbort {
+                        request, reported, ..
+                    } = &client.state
+                    {
+                        Some(if *reported {
+                            request.next_deadline(self.last_now)
+                        } else {
+                            self.last_now
+                        })
                     } else {
                         None
                     }
@@ -640,7 +665,10 @@ impl<'a> CoapProvisioner<'a> {
     }
 
     fn local_abort(&self) -> bool {
-        matches!(&self.role, Role::Server(server) if matches!(server.state, ServerState::Aborted { .. }))
+        match &self.role {
+            Role::Client(client) => matches!(client.state, ClientState::LocalAbort { .. }),
+            Role::Server(server) => matches!(server.state, ServerState::Aborted { .. }),
+        }
     }
 
     /// Sends pending cached bytes, receives at most one datagram, then sends any
@@ -694,8 +722,10 @@ impl<'a> CoapProvisioner<'a> {
     /// Responses remain queued for [`Self::flush`], without receiving App traffic.
     /// Unsupported critical options at this resource queue 4.02; matching
     /// separate Confirmable responses queue Reset before cryptographic work.
-    /// Responder failures queue a bounded EDHOC error before flush reports the
-    /// original [`PollError::Provisioning`]. Error requests terminate the
+    /// Responder failures and routable initiator failures queue a bounded EDHOC
+    /// error before flush reports the original [`PollError::Provisioning`].
+    /// Initiator error requests retain their bounded retries and transport ACKs.
+    /// Incoming error requests terminate the
     /// candidate and queue a payload-free 2.04 acknowledgement before
     /// [`PollError::PeerAbort`]. Exact duplicates remain answerable until expiry.
     /// One pending control blocks further ingest until sent. Its MID remains
@@ -790,6 +820,21 @@ impl<'a> CoapProvisioner<'a> {
                         client.pending_acks &= !bit;
                     }
                 }
+                if let ClientState::LocalAbort {
+                    error,
+                    request,
+                    reported,
+                } = &mut client.state
+                {
+                    if let Err(failure) = request.flush(io, self.endpoint, now_ms) {
+                        if matches!(failure, PollError::Clock) {
+                            self.failure = Some(Failure::Clock);
+                        }
+                        return Err(failure);
+                    }
+                    *reported = true;
+                    return Err(PollError::Provisioning(*error));
+                }
                 if matches!(
                     client.state,
                     ClientState::Message2(_) | ClientState::Message4(_)
@@ -854,6 +899,7 @@ impl<'a> CoapProvisioner<'a> {
             || match &self.role {
                 Role::Client(client) => {
                     client.pending_acks != 0
+                        || matches!(&client.state, ClientState::LocalAbort { request, .. } if request.pending())
                         || (matches!(
                             client.state,
                             ClientState::Message2(_) | ClientState::Message4(_)
@@ -903,6 +949,9 @@ impl<'a> CoapProvisioner<'a> {
                     Role::Client(client) => {
                         client.acks = [None, None, None];
                         client.pending_acks = 0;
+                        if matches!(client.state, ClientState::LocalAbort { .. }) {
+                            client.state = ClientState::Failed;
+                        }
                     }
                     Role::Server(server) => {
                         server.exchanges = [None, None];
@@ -963,6 +1012,9 @@ impl Client {
                     return Ok(false);
                 }
             }
+        }
+        if let ClientState::LocalAbort { request, .. } = &mut self.state {
+            return Ok(request.ingest(bytes, parsed, now));
         }
         if !matches!(
             self.state,
@@ -1079,7 +1131,7 @@ impl Client {
         let until = now
             .checked_add(EXCHANGE_LIFETIME_MS)
             .ok_or(Failure::Clock)?;
-        let message = Message::from_slice(parsed.payload()).map_err(Failure::Provisioning)?;
+        let message = Message::from_slice(parsed.payload());
         let index = match self.state {
             ClientState::Message2(_) => 0,
             _ => 1,
@@ -1087,9 +1139,27 @@ impl Client {
         let state = core::mem::replace(&mut self.state, ClientState::Failed);
         match state {
             ClientState::Message2(state) => {
-                let (state, message) = state
-                    .receive_message_2(&message, &mut input.authorize)
-                    .map_err(Failure::Provisioning)?;
+                let message = message.map_err(Failure::Provisioning)?;
+                let (state, message) =
+                    match state.receive_message_2_with_error(&message, &mut input.authorize) {
+                        Ok(result) => result,
+                        Err(failure) => {
+                            let Some(peer_id) = failure.peer_id else {
+                                return Err(Failure::Provisioning(failure.failure.error));
+                            };
+                            self.queue_error(self.ids.second, peer_id, failure.failure, until)?;
+                            *input.expires = Some(until);
+                            self.acks[index] = Some(ResponseAck {
+                                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                                mid: parsed.message_id(),
+                                expires: until,
+                            });
+                            if parsed.ty() == Type::Confirmable {
+                                self.pending_acks |= 1 << index;
+                            }
+                            return Ok(true);
+                        }
+                    };
                 self.request = request(
                     self.ids.second,
                     state.peer_connection_id().lakers().as_cbor(),
@@ -1101,10 +1171,26 @@ impl Client {
                 self.state = ClientState::Message4(state);
             }
             ClientState::Message4(state) => {
+                let peer_id = state.peer_connection_id();
                 *input.session = Some(
-                    state
-                        .receive_message_4(&message, &mut input.authorize)
-                        .map_err(Failure::Provisioning)?,
+                    match message
+                        .and_then(|message| state.receive_message_4(&message, &mut input.authorize))
+                    {
+                        Ok(session) => session,
+                        Err(error) => {
+                            self.queue_error(self.ids.error, peer_id, error.into(), until)?;
+                            *input.expires = Some(until);
+                            self.acks[index] = Some(ResponseAck {
+                                response: Wire::copy(bytes).map_err(Failure::Provisioning)?,
+                                mid: parsed.message_id(),
+                                expires: until,
+                            });
+                            if parsed.ty() == Type::Confirmable {
+                                self.pending_acks |= 1 << index;
+                            }
+                            return Ok(true);
+                        }
+                    },
                 );
                 self.state = ClientState::Complete;
                 *input.expires = Some(until);
@@ -1120,6 +1206,24 @@ impl Client {
             self.pending_acks |= 1 << index;
         }
         Ok(true)
+    }
+
+    fn queue_error(
+        &mut self,
+        operation: Operation,
+        peer_id: ConnectionId,
+        failure: MessageFailure,
+        until: u64,
+    ) -> Result<(), Failure> {
+        let request =
+            ErrorRequest::new(operation, peer_id, &failure, self.ids.second_timeout, until)
+                .map_err(Failure::Provisioning)?;
+        self.state = ClientState::LocalAbort {
+            error: failure.error,
+            request,
+            reported: false,
+        };
+        Ok(())
     }
 }
 
@@ -1306,11 +1410,7 @@ impl Server {
         until: u64,
         failure: MessageFailure,
     ) -> Result<(), Failure> {
-        let payload: &[u8] = match failure.code {
-            PeerErrorCode::WrongCipherSuite => &[2, 2],
-            PeerErrorCode::UnknownCredential => &[3, 0xf5],
-            _ => b"\x01\x6cEDHOC failed",
-        };
+        let payload = failure.payload();
         let code = if matches!(
             failure.error,
             Error::Entropy | Error::SelfPeer | Error::Derivation

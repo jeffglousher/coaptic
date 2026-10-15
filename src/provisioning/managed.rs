@@ -607,7 +607,8 @@ where
                     let mid = MessageId::new(u16::from_be_bytes([bytes[0], bytes[1]]));
                     return !io.reserved(mid)
                         && !io.reserved(mid.wrapping_add(1))
-                        && !io.reserved(mid.wrapping_add(2));
+                        && !io.reserved(mid.wrapping_add(2))
+                        && !io.reserved(mid.wrapping_add(3));
                 }
                 true
             })
@@ -697,6 +698,9 @@ where
                         || message.code().is_server_error())
                         && format == Some(64))
                     || echo_challenge
+                    || recovery.as_ref().is_some_and(|recovery| {
+                        recovery.owns_error_response(&io.bytes[..len], from, now_ms)
+                    })
                     || (message.code().is_empty()
                         && recovery.as_ref().is_some_and(CoapRecovery::has_candidate))
             });

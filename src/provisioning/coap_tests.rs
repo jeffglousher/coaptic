@@ -7,6 +7,9 @@ use super::*;
 #[path = "coap_error_tests.rs"]
 mod errors;
 
+#[path = "initiator_error_tests.rs"]
+mod initiator_errors;
+
 const CLIENT: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
 const SERVER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
 const OTHER: Endpoint = Endpoint::v4([192, 0, 2, 3], 5683);
@@ -2666,7 +2669,7 @@ fn failed_and_short_sends_preserve_exact_message4_and_withhold_session() {
 }
 
 #[test]
-fn wire_valid_malformed_authentication_consumes_state_without_ack_or_session() {
+fn wire_valid_malformed_authentication_consumes_state_and_sends_an_error_without_session() {
     let a = identity(1, 0);
     let b = identity(2, 1);
     let mut client = CoapProvisioner::start(&a, b.peer(), SERVER, 0, entropy(3)).unwrap();
@@ -2691,17 +2694,22 @@ fn wire_valid_malformed_authentication_consumes_state_without_ack_or_session() {
         &options,
         &payload,
     );
-    let error = client
+    client
         .ingest(&bad, SERVER, 0, no_entropy, no_authorization)
-        .unwrap_err();
-    assert!(matches!(error, PollError::Provisioning(_)));
+        .unwrap();
     assert_eq!(
         client.ingest(&good, SERVER, 0, no_entropy, no_authorization),
-        Err(error)
+        Ok(Status::Ignored)
     );
     assert!(client.take_session().is_none());
     assert_eq!(client_io.attempts.len(), 1);
-    assert_eq!(client.next_deadline(), None);
+    assert_eq!(
+        client.flush(&mut client_io, 0),
+        Err(PollError::Provisioning(Error::Authentication))
+    );
+    assert!(decode(&client_io.attempts[1].1).unwrap().is_empty_ack());
+    assert_eq!(client_io.attempts.len(), 3);
+    assert_eq!(client.next_deadline(), Some(2000));
 }
 
 #[test]
