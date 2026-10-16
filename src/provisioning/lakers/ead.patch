@@ -52,7 +52,7 @@ index 799e192..b35e0df 100644
 +//! `ead.patch` retains complete, validated EAD sequences for authenticated
 +//! processing; the bounded representation and policy hooks are Coaptic-owned.
 diff --git a/shared/mod.rs b/shared/mod.rs
-index 5beccfd..7f1f90f 100644
+index 5beccfd..224d5be 100644
 --- a/shared/mod.rs
 +++ b/shared/mod.rs
 @@ -626,22 +626,2 @@ impl TryInto<EdhocMessageBuffer> for &[u8] {
@@ -119,16 +119,27 @@ index 5beccfd..7f1f90f 100644
 +        EADItem::from_encoded(buffer)
 +            .map(|field| field.optional())
 +            .map_err(|_| EDHOCError::ParsingError)
-@@ -787,2 +735 @@ mod edhoc_parser {
+@@ -761,0 +710,10 @@ mod edhoc_parser {
++    // Routing reads the bounded C_I prefix independently of EAD validation.
++    // Full message/profile validation still precedes crypto.
++    pub fn parse_message_1_routing_id(message: &BufferMessage1) -> Result<ConnId, EDHOCError> {
++        let mut decoder = CBORDecoder::new(message.as_slice());
++        decoder.u8()?;
++        let (_, mut decoder) = parse_suites_i(decoder)?;
++        decoder.bytes_sized(P256_ELEM_LEN)?;
++        Ok(ConnId::from_decoder(&mut decoder)?)
++    }
++
+@@ -787,2 +745 @@ mod edhoc_parser {
 -                // NOTE: since the current implementation only supports one EAD handler,
 -                // we assume only one EAD item
 +                // Preserve the complete validated EAD sequence.
-@@ -858 +805 @@ mod edhoc_parser {
+@@ -858 +815 @@ mod edhoc_parser {
 -            // assume only one EAD item
 +            // Preserve the complete validated EAD sequence.
-@@ -891 +838 @@ mod edhoc_parser {
+@@ -891 +848 @@ mod edhoc_parser {
 -            // assume only one EAD item
 +            // Preserve the complete validated EAD sequence.
-@@ -912 +859 @@ mod edhoc_parser {
+@@ -912 +869 @@ mod edhoc_parser {
 -            // assume only one EAD item
 +            // Preserve the complete validated EAD sequence.

@@ -707,6 +707,16 @@ mod edhoc_parser {
         }
     }
 
+    // Routing reads the bounded C_I prefix independently of EAD validation.
+    // Full message/profile validation still precedes crypto.
+    pub fn parse_message_1_routing_id(message: &BufferMessage1) -> Result<ConnId, EDHOCError> {
+        let mut decoder = CBORDecoder::new(message.as_slice());
+        decoder.u8()?;
+        let (_, mut decoder) = parse_suites_i(decoder)?;
+        decoder.bytes_sized(P256_ELEM_LEN)?;
+        Ok(ConnId::from_decoder(&mut decoder)?)
+    }
+
     pub fn parse_message_1(
         rcvd_message_1: &BufferMessage1,
     ) -> Result<

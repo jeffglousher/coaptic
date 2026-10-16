@@ -26,7 +26,9 @@ boundary. Definite preferred CBOR is required by the EDHOC encoding profile.
   processing sends error 1 and aborts the candidate for an unprocessed critical
   item. First/third-message response errors and second/fourth-message request
   errors retain the existing exact-byte retry and ownership rules. Refusal
-  exposes no initiator session. Registry responders use the same EAD processor.
+  exposes no initiator session. Registry responders use the same EAD processor;
+  bounded prefix-only routing preserves Echo and error handling for an
+  unsupported EAD tail without admitting it to cryptographic processing.
 - **RFC9528-8-EAD:** the public low-level profile can send and process bounded
   EAD in all four messages. Default sequential transport supports padding,
   elective ignore and unknown-critical refusal. Application-specific handlers
