@@ -57,10 +57,11 @@ pub fn run(
         let remote = args.next().ok_or("missing peer address")?;
         let probe = match args.next() {
             None => None,
+            Some(value) if value == "--connect" => Some(peer::Probe::Connect),
             Some(value) if value == "--probe" => Some(peer::Probe::Identity),
             Some(value) if value == "--probe-echo" => Some(peer::Probe::Echo),
             Some(value) if value == "--probe-denied" => Some(peer::Probe::DeniedEcho),
-            _ => return Err("expected --probe, --probe-echo or --probe-denied".into()),
+            _ => return Err("expected --connect, --probe, --probe-echo or --probe-denied".into()),
         };
         if args.next().is_some() {
             return Err("unexpected arguments".into());

@@ -1,6 +1,6 @@
 use coaptic::{
     Code, ContentFormat, Endpoint, Method, Response, profiles,
-    provisioning::{Identity, LocalPairing, ManagedConnection},
+    provisioning::{Identity, LocalPairing, ManagedConnection, ManagedError},
     storage::UdpSocketIo,
 };
 use coaptic_enroll::pairing;
@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Clone, Copy)]
 pub enum Probe {
+    Connect,
     Identity,
     Echo,
     DeniedEcho,
@@ -51,9 +52,10 @@ pub fn run(
     let mut reported = false;
     let mut call = None;
     let mut output = [0; 128];
+    let mut retry_at = 30_000;
     loop {
         let now = started.elapsed().as_millis().try_into()?;
-        connection.poll_with(now, |_, request, _| {
+        let result = connection.poll_with(now, |_, request, _| {
             if request.path() == ["identity"] && request.method() == Some(Method::Get) {
                 Response::content_copy(identity.peer().principal().fingerprint())
             } else if request.path() == ["echo"] && request.method() == Some(Method::Post) {
@@ -71,7 +73,19 @@ pub fn run(
             } else {
                 Response::new(Code::NOT_FOUND)
             }
-        })?;
+        });
+        match result {
+            Ok(()) | Err(ManagedError::Recovery(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
+        if matches!(probe, Some(Probe::Connect)) && !connection.is_connected() && now >= retry_at {
+            retry_at = now.saturating_add(match connection.connect(now) {
+                Ok(()) => 30_000,
+                Err(ManagedError::Busy | ManagedError::Capacity) => 1_000,
+                Err(ManagedError::Recovery(_)) => 5_000,
+                Err(error) => return Err(error.into()),
+            });
+        }
         if connection.is_connected() && !reported {
             println!(
                 "Fresh EDHOC/OSCORE session connected to {}.",
@@ -80,6 +94,7 @@ pub fn run(
             reported = true;
             if let Some(probe) = probe {
                 let (method, path, payload, format) = match probe {
+                    Probe::Connect => continue,
                     Probe::Identity => (Method::Get, "identity", &[][..], None),
                     Probe::Echo | Probe::DeniedEcho => {
                         (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
@@ -94,6 +109,7 @@ pub fn run(
             let response =
                 response.map_err(|error| format!("protected probe failed: {error:?}"))?;
             let valid = match probe.ok_or("missing probe")? {
+                Probe::Connect => return Err("unexpected probe response".into()),
                 Probe::Identity => {
                     response.code() == Code::CONTENT
                         && response.payload() == peer.principal().fingerprint()
@@ -109,7 +125,9 @@ pub fn run(
             println!("Protected probe passed (code {}).", response.code());
             return Ok(());
         }
-        if probe.is_some() && started.elapsed() >= Duration::from_secs(30) {
+        if probe.is_some_and(|probe| !matches!(probe, Probe::Connect))
+            && started.elapsed() >= Duration::from_secs(30)
+        {
             return Err("paired probe deadline".into());
         }
         std::thread::sleep(Duration::from_millis(2));
