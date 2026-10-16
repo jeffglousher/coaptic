@@ -1,0 +1,25 @@
+; Native application records are CBOR v1; WebAuthn standard messages stay in
+; the pinned WebAuthn implementation's own types. No plaintext private key is included.
+operator-record = {
+  version: 1,
+  owner: bstr .size 32,
+  key: any, ; public Passkey serde representation, webauthn-rs exactly 0.5.5
+  counter: 0..4294967295
+}
+public-identity = { key: bstr .size 65, kid: 0..255 }
+device-record = {
+  version: 1,
+  public: public-identity,
+  sealed: bstr ; current-Windows-user DPAPI ciphertext; never a peer-trust anchor
+}
+commissioning-request = {
+  version: 1,
+  device: public-identity,
+  peer: public-identity,
+  owner: bstr .size 32,
+  permissions: bstr .size 32,
+  store: bstr .size 32,
+  revision: 1..18446744073709551615,
+  record_digest: bstr .size 32,
+  nonce: bstr .size 32
+}
