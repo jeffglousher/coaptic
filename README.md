@@ -15,6 +15,13 @@ define the library's supported programming model.
 Version **0.0.10** is available from Git while publication is being prepared.
 `no_std` is supported; `std` and `alloc` are independent optional features.
 
+Development focuses on UDP, OSCORE and EDHOC, including usable provisioning and
+enrollment. Contributions for other transports and security bindings, including
+TCP/TLS/WebSockets/BERT and DTLS, are welcome. These features have no promised
+delivery date and are outside active MVP development. See the
+[architecture and RFC plan](architecture/IETF-RFC-PLAN.md) for scope and
+[DEVELOPMENT.md](DEVELOPMENT.md) for contribution validation.
+
 ## 1. Run a protected exchange
 
 With Git and Rust installed:

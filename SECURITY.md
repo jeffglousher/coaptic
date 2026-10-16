@@ -15,16 +15,23 @@ requires a provisioned context; unprotected operation requires an explicit
 plaintext. See rustdoc for context lifetime and protocol behavior.
 Group OSCORE, other ciphers and library-owned DTLS are not supported. DTLS in
 the [test peers](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/README.md)
-does not add a library DTLS API.
+does not add a library DTLS API. Active development uses UDP with OSCORE and
+EDHOC. Other security bindings are welcome contributions, with a reviewed
+security boundary and validation; they have no MVP delivery promise.
 
 When a context is attached, App is fail-closed: a non-empty message without an OSCORE option is rejected (unprotected 4.01 on a request; a token-matching plain 2.xx, plaintext Observe notification, or unprotected Block1/Block2 completion does not complete a Call). Empty ACK/RST (RFC 7252 reliability) stay unprotected. AEAD / replay / OSCORE-option processing failures are silently dropped without an unprotected error response.
 
-Optional EDHOC provisioning supports pinned P-256 method 3 / suite 2 with
+Optional EDHOC provisioning supports pinned P-256 method 3 / suites 2 and 3 with
 explicit confirmation before handing off fresh OSCORE keys. Applications own
 trusted credentials, secure entropy, authorization, and key custody. Reusing
 an OSCORE key across restarts requires durable sender-sequence reservations
 and replay-state handling as documented by the context and checkpoint APIs.
 Message protection alone does not establish the security of a device or service.
+Self-generated public keys still need an authenticated initial binding to the
+intended peer and owner. Blind first-contact acceptance does not provide that
+authentication. Convenient and hardened enrollment workflows are being selected
+in the [architecture plan](architecture/IETF-RFC-PLAN.md#provisioning-and-enrollment-decisions);
+neither is a delivered deployment workflow yet.
 
 ## Security validation
 
