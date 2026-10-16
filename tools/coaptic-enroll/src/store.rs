@@ -42,14 +42,32 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
     decode(&bytes)
 }
 
-pub struct OperatorStore {
+pub type OperatorStore = RecordStore<Operator>;
+
+pub struct RecordStore<T> {
     _lock: File,
     path: PathBuf,
+    _record: std::marker::PhantomData<T>,
 }
 
 impl OperatorStore {
     /// `directory` must already be private to the authenticated OS administrator.
     pub fn open(directory: &Path) -> Result<Self, Error> {
+        Self::open_named(directory, "operator")
+    }
+}
+
+impl<T: Serialize + DeserializeOwned> RecordStore<T> {
+    /// Open one bounded record under its exclusive process lock.
+    pub fn open_named(directory: &Path, stem: &str) -> Result<Self, Error> {
+        if stem.is_empty()
+            || stem.len() > 32
+            || !stem
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return Err(Error::Input);
+        }
         if !directory.is_dir()
             || directory
                 .symlink_metadata()
@@ -59,7 +77,9 @@ impl OperatorStore {
         {
             return Err(Error::Persistence);
         }
-        for name in ["operator.lock", "operator.cbor"] {
+        let lock_name = format!("{stem}.lock");
+        let record_name = format!("{stem}.cbor");
+        for name in [&lock_name, &record_name] {
             match directory.join(name).symlink_metadata() {
                 Ok(metadata) => {
                     #[cfg(windows)]
@@ -82,22 +102,23 @@ impl OperatorStore {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(directory.join("operator.lock"))
+            .open(directory.join(lock_name))
             .map_err(|_| Error::Persistence)?;
         lock.try_lock().map_err(|_| Error::Persistence)?;
         Ok(Self {
             _lock: lock,
-            path: directory.join("operator.cbor"),
+            path: directory.join(record_name),
+            _record: std::marker::PhantomData,
         })
     }
     pub fn exists(&self) -> bool {
         self.path.exists()
     }
-    pub fn load(&self) -> Result<Operator, Error> {
+    pub fn load(&self) -> Result<T, Error> {
         read(&self.path)
     }
 
-    pub fn initialize(&self, operator: &Operator) -> Result<(), Error> {
+    pub fn initialize(&self, operator: &T) -> Result<(), Error> {
         let bytes = encode(operator)?;
         let mut options = OpenOptions::new();
         options.read(true).write(true).create_new(true);
@@ -111,7 +132,7 @@ impl OperatorStore {
     }
 
     /// Compare exact prior state; confirm the updated counter before approval.
-    pub fn commit(&self, old: &Operator, new: &Operator) -> Result<(), Error> {
+    pub fn commit(&self, old: &T, new: &T) -> Result<(), Error> {
         let old_bytes = encode(old)?;
         let mut file = OpenOptions::new()
             .read(true)

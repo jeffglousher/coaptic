@@ -8,6 +8,15 @@ use coaptic_enroll::{
 #[cfg(windows)]
 use std::path::PathBuf;
 
+#[cfg(all(windows, feature = "development-piv"))]
+mod piv_cli;
+
+#[cfg(windows)]
+mod pairing_cli;
+
+#[cfg(windows)]
+mod serial_cli;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("coaptic-enroll: {error}");
@@ -29,18 +38,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
-            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME"
+            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--probe]"
+        );
+        #[cfg(feature = "development-piv")]
+        println!(
+            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor"
+        );
+        println!(
+            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
         );
         return Ok(());
     }
+    #[cfg(feature = "development-piv")]
+    let development = command == "development-piv-register" || command == "development-piv-check";
+    #[cfg(not(feature = "development-piv"))]
+    let development = false;
     if ![
         "operator-init",
         "operator-check",
         "device-init",
         "device-info",
+        "pair",
+        "revoke",
+        "pairing-init",
+        "pairing-info",
+        "peer",
+        "serial-info",
+        "serial-init",
+        "serial-restart",
+        "serial-pair",
+        "serial-revoke",
     ]
     .iter()
     .any(|value| command == *value)
+        && !development
     {
         return Err("expected operator-init or operator-check REQUEST.cbor".into());
     }
@@ -50,6 +81,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .join("Coaptic")
         .join("Enrollment");
     private_directory(&directory)?;
+    if [
+        "serial-info",
+        "serial-init",
+        "serial-restart",
+        "serial-pair",
+        "serial-revoke",
+    ]
+    .iter()
+    .any(|value| command == *value)
+    {
+        return serial_cli::run(&command, args, &directory);
+    }
+    #[cfg(feature = "development-piv")]
+    if development {
+        return piv_cli::run(&command, args, &directory);
+    }
+    if ["pair", "revoke", "pairing-init", "pairing-info", "peer"]
+        .iter()
+        .any(|value| command == *value)
+    {
+        return pairing_cli::run(&command, args, &directory);
+    }
     if command == "device-init" || command == "device-info" {
         let name = args.next().ok_or("missing device name")?;
         let name = name.to_str().ok_or("invalid device name")?;
@@ -76,7 +129,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             private_directory(&device_directory)?;
-            coaptic_enroll::device::provision(&device_directory, kid)?
+            let identity = coaptic_enroll::device::provision(&device_directory, kid)?;
+            coaptic_enroll::pairing::PairingFile::open(&device_directory)?.initialize(&identity)?;
+            identity
         } else {
             if args.next().is_some() {
                 return Err("unexpected arguments".into());
@@ -159,6 +214,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)]
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(windows)]
+fn device_directory(
+    directory: &std::path::Path,
+    name: &std::ffi::OsStr,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let name = name.to_str().ok_or("invalid device name")?;
+    if name.is_empty()
+        || name.len() > 32
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(
+            "device name must be 1..32 ASCII letters, digits, hyphens or underscores".into(),
+        );
+    }
+    let result = directory.join("Devices").join(name);
+    if !result.is_dir() {
+        return Err("device is not provisioned".into());
+    }
+    private_directory(&result)?;
+    Ok(result)
 }
 
 #[cfg(windows)]
@@ -259,7 +338,15 @@ fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::err
         return Err("private operator DACL unavailable".into());
     }
     let mut targets = vec![directory.to_path_buf()];
-    for name in ["operator.lock", "operator.cbor", "device.cbor"] {
+    for name in [
+        "operator.lock",
+        "operator.cbor",
+        "device.cbor",
+        "piv-development.lock",
+        "piv-development.cbor",
+        "pairing.lock",
+        "pairing.cbor",
+    ] {
         let child = directory.join(name);
         match child.symlink_metadata() {
             Ok(metadata) => {

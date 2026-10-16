@@ -85,7 +85,7 @@ impl Drop for Blob {
     }
 }
 
-fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
+pub(crate) fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
     let source = CRYPTOAPI_BLOB {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
         pbData: input.as_ptr() as *mut u8,
@@ -115,6 +115,14 @@ fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let output = unseal(input)?;
+    if output.len() != 32 {
+        return Err(Error::Input);
+    }
+    Ok(output)
+}
+
+pub(crate) fn unseal(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
     let source = CRYPTOAPI_BLOB {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
         pbData: input.as_ptr() as *mut u8,
@@ -136,7 +144,7 @@ fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
         return Err(Error::Persistence);
     }
     let output = Blob(raw);
-    if output.0.pbData.is_null() || output.0.cbData != 32 {
+    if output.0.pbData.is_null() || output.0.cbData == 0 || output.0.cbData > 16384 {
         return Err(Error::Input);
     }
     // SAFETY: successful DPAPI call initialized cbData bytes; all copies zeroize.

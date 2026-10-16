@@ -27,8 +27,14 @@ use webauthn_rs::prelude::*;
 
 pub mod store;
 
+#[cfg(feature = "development-piv")]
+pub mod development_piv;
+
 #[cfg(windows)]
 pub mod device;
+
+#[cfg(windows)]
+pub mod pairing;
 
 #[cfg(test)]
 mod tests;
@@ -139,6 +145,7 @@ impl PublicIdentity {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     version: u8,
+    pub action: Action,
     pub device: PublicIdentity,
     pub peer: PublicIdentity,
     #[serde(with = "serde_bytes")]
@@ -154,6 +161,14 @@ pub struct Request {
     pub nonce: [u8; 32],
 }
 
+/// The operation approved by the operator, included in every proof commitment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Action {
+    Pair,
+    Revoke,
+}
+
 impl Request {
     pub fn new(
         device: &PinnedPeer,
@@ -165,6 +180,7 @@ impl Request {
     ) -> Result<Self> {
         let value = Self {
             version: 1,
+            action: Action::Pair,
             device: PublicIdentity::from_peer(device),
             peer: PublicIdentity::from_peer(peer),
             owner,
@@ -176,6 +192,45 @@ impl Request {
         };
         value.validate()?;
         Ok(value)
+    }
+
+    /// Bind one physical device's live challenge to the exact policy and action.
+    pub fn for_pairing(
+        challenge: &coaptic::provisioning::PairingChallenge,
+        policy: &EnrollmentPolicy,
+        action: Action,
+    ) -> Result<Self> {
+        let (store, revision, digest) = challenge.expected();
+        let expected =
+            EnrollmentAnchor::from_parts(store, revision, digest).map_err(|_| Error::Input)?;
+        let mut request = Self::new(
+            challenge.device(),
+            policy.peer(),
+            *policy.owner(),
+            *policy.resource_policy(),
+            expected,
+            *challenge.nonce(),
+        )?;
+        request.action = action;
+        Ok(request)
+    }
+
+    /// Refuse a changed live device challenge before consuming a local approval.
+    pub fn matches_pairing(
+        &self,
+        challenge: &coaptic::provisioning::PairingChallenge,
+    ) -> Result<()> {
+        self.validate()?;
+        let (store, revision, digest) = challenge.expected();
+        if self.device.peer()?.principal() != challenge.device().principal()
+            || self.store != store
+            || self.revision != revision
+            || self.record_digest != digest
+            || &self.nonce != challenge.nonce()
+        {
+            return Err(Error::Input);
+        }
+        Ok(())
     }
 
     fn validate(&self) -> Result<()> {
@@ -198,6 +253,10 @@ impl Request {
     pub fn commitment(&self) -> Result<[u8; 32]> {
         self.validate()?;
         let mut hash = blake3::Hasher::new_derive_key("coaptic hardware commissioning request v1");
+        hash.update(&[match self.action {
+            Action::Pair => 0,
+            Action::Revoke => 1,
+        }]);
         hash.update(self.device.peer()?.principal().fingerprint());
         hash.update(self.peer.peer()?.principal().fingerprint());
         for field in [&self.owner, &self.permissions, &self.store, &self.nonce] {
@@ -268,6 +327,15 @@ pub enum CommitError<E> {
 }
 
 impl ApprovedRequest {
+    /// Consume a production FIDO2 approval through an authenticated local
+    /// commissioning sink. The sink must compare the complete live device
+    /// challenge and durably commit its exact owner/peer/permissions/action.
+    pub fn commit_local<T>(self, commit: impl FnOnce(&Request) -> Result<T>) -> Result<T> {
+        if self.started.elapsed() >= TIMEOUT {
+            return Err(Error::Expired);
+        }
+        commit(&self.request)
+    }
     /// Public transaction commitment for review/audit, not an authorization token.
     pub fn commitment(&self) -> Result<[u8; 32]> {
         self.request.commitment()
@@ -281,6 +349,9 @@ impl ApprovedRequest {
     ) -> std::result::Result<EnrollmentAnchor, CommitError<S::Error>> {
         if self.started.elapsed() >= TIMEOUT {
             return Err(CommitError::Approval(Error::Expired));
+        }
+        if self.request.action != Action::Pair {
+            return Err(CommitError::Approval(Error::Input));
         }
         let device = self.request.device.peer().map_err(CommitError::Approval)?;
         if authority.checkpoint().device() != device.principal() {
