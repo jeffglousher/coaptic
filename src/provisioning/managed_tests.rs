@@ -71,6 +71,96 @@ fn identity(value: u8, kid: u8) -> Identity {
     Identity::from_private_key(scalar, kid).unwrap()
 }
 
+#[test]
+fn local_pairing_connects_after_restart_and_keeps_management_on_owner_path() {
+    use crate::provisioning::{EnrollmentPolicy, LocalPairing, PairingRecord};
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let local = |device: &Identity, peer: &Identity, store| {
+        let record = PairingRecord::unpaired(device, [store; 32]).unwrap();
+        let mut pairing = LocalPairing::restore(device, record).unwrap();
+        let challenge = pairing.begin(device, 0, entropy).unwrap();
+        pairing
+            .pair(
+                &challenge,
+                EnrollmentPolicy::new(peer.peer(), [7; 32], [8; 32]).unwrap(),
+                1,
+                |_, _| Ok::<_, ()>(()),
+            )
+            .unwrap();
+        pairing
+    };
+    let pa = local(&a, &b, 3);
+    let pb = local(&b, &a, 4);
+    let mut a_record = [0; 224];
+    let mut b_record = [0; 224];
+    let a_len = pa.checkpoint().encode(&mut a_record).unwrap();
+    let b_len = pb.checkpoint().encode(&mut b_record).unwrap();
+    for _ in 0..2 {
+        let pa =
+            LocalPairing::restore(&a, PairingRecord::decode(&a_record[..a_len]).unwrap()).unwrap();
+        let pb =
+            LocalPairing::restore(&b, PairingRecord::decode(&b_record[..b_len]).unwrap()).unwrap();
+        let network = Rc::new(RefCell::new(Network::default()));
+        let mut client: Owner<'_> = ManagedConnection::from_local_pairing(
+            &a,
+            &pa,
+            SERVER,
+            Io {
+                local: CLIENT,
+                network: network.clone(),
+            },
+            entropy,
+            0,
+        )
+        .unwrap();
+        let mut server: Owner<'_> = ManagedConnection::from_local_pairing(
+            &b,
+            &pb,
+            CLIENT,
+            Io {
+                local: SERVER,
+                network,
+            },
+            entropy,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            client.policy_validity(),
+            PolicyValidity::OfflineLocalStorage
+        );
+        let now = connect(&mut client, &mut server, 0) + 1;
+        let call = client
+            .request(Method::Get, "paired", &[], None, now)
+            .unwrap();
+        client.poll_with(now, idle).unwrap();
+        server
+            .poll_with(now, |principal, _, _| {
+                assert_eq!(*principal, a.peer().principal());
+                Response::content(b"durable pairing")
+            })
+            .unwrap();
+        client.poll_with(now, idle).unwrap();
+        let mut bytes = [0; 32];
+        assert_eq!(
+            client
+                .take_response_into(call, &mut bytes, now)
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .payload(),
+            b"durable pairing"
+        );
+        assert!(matches!(
+            server.revoke(|_, _, _| Ok::<_, ()>(())),
+            Err(TrustCommitError::State(TrustError::LocalPolicy))
+        ));
+        assert!(server.is_connected());
+    }
+}
+
 const BOOTSTRAP_MID_START: u16 = 0x1000;
 const APP_MID_START: u16 = 0x8000;
 const MID_STRIDE: u16 = 0x100;

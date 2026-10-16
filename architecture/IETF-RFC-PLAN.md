@@ -65,12 +65,11 @@ The published specifications contribute distinct parts of the solution:
 Convenient and hardened commissioning both retain authenticated encryption and
 fail-closed authorization. The operator has accepted a physical setup/verification
 step and selected standard FIDO2 operator approval for the default initial
-provisioning workflow and first hardware-key integration. The initial hardware
-target is a likely YubiKey 5C NFC; exact model,
-firmware and capabilities remain unverified. A hardware-key adapter is not yet
-implemented. The default workflow uses the operator's key at initial setup;
-alternative commissioning providers may serve other deployment needs. PIV
-authority signing remains a separate candidate.
+provisioning workflow. The connected development key is a verified YubiKey 4,
+firmware 4.3.3, with PIV and U2F but no FIDO2. The operator explicitly selected a
+separate no-touch PIV development profile for testing; production touch approval
+remains a separate profile. The default workflow uses the operator's key at
+initial setup; alternative commissioning providers may serve other deployment needs.
 
 The default onboarding path must be secure and convenient: guided authenticated
 local pairing, unique credentials and durable permissions, followed by automatic
@@ -129,13 +128,15 @@ counters or exchanges. Long-lived authorization and automatically refreshed
 session keys have separate lifecycles. A short online-authorization lease must
 not impose a periodic operator presence or reconnection requirement on this path.
 
-Current core foundations include `PeerTrust` and
-`PolicyValidity::OfflineProtectedAnchor`; the latter requires a qualified local
-protected monotonic trust authority. Persisting a record beside its counter in
-ordinary rollbackable flash does not meet that assumption. Finish and qualify
-device credential custody, durable commits, local trust/permission restoration,
-known-revocation rollback resistance and automated peer recovery on ESP32. Core
-contracts and in-memory tests do not establish those platform guarantees.
+The normal default uses durable local flash under the operator's physical custody,
+with `LocalPairing` and `PolicyValidity::OfflineLocalStorage`. Restore the same
+identity, owner, permissions and revocation tombstone after ordinary restart.
+Physical flash rollback protection and hardware-backed custody are optional
+hardening. `PeerTrust` with `PolicyValidity::OfflineProtectedAnchor` retains its
+stronger, separately qualified protected monotonic authority contract; a record
+and counter in ordinary flash do not meet it. Qualify actual device commits,
+local trust/permission restoration and automated peer recovery on ESP32. Core
+contracts and in-memory tests alone do not establish those platform guarantees.
 
 Revocation takes effect when an authenticated update reaches the enforcing peer,
 or through authorized local management. A disconnected peer cannot know about an

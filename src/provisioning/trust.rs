@@ -11,6 +11,9 @@
 //! storage. A BLAKE3 record digest identifies the exact committed contents;
 //! it does not authenticate storage or provide monotonicity. A file containing
 //! both a record and its anchor can be rolled back together and is insufficient.
+//! Normal physical-custody devices instead use [`super::LocalPairing`] and
+//! [`super::ManagedConnection::from_local_pairing`], with an explicit local-storage
+//! validity profile. That path makes no protected-anchor or physical rollback claim.
 //!
 //! Capture a [`TrustGrant`] before starting EDHOC, check it in every handshake
 //! authorization callback and check it again when taking the completed session.
@@ -52,6 +55,8 @@ pub enum TrustError {
     Blocked,
     /// No greater generation is representable.
     GenerationExhausted,
+    /// Local pairing changes require its owner-preserving management path.
+    LocalPolicy,
 }
 
 impl fmt::Display for TrustError {
@@ -67,6 +72,7 @@ impl fmt::Display for TrustError {
             Self::StaleGrant => "trust grant is no longer current",
             Self::Blocked => "trust persistence outcome requires verified restoration",
             Self::GenerationExhausted => "trust generation is exhausted",
+            Self::LocalPolicy => "change local pairing after discarding its session owner",
         })
     }
 }
@@ -307,6 +313,19 @@ pub struct PeerTrust {
 }
 
 impl PeerTrust {
+    pub(crate) fn from_local_pairing(
+        identity: &Identity,
+        pairing: &super::LocalPairing,
+    ) -> Result<Self, TrustError> {
+        let record = pairing.trust_record(identity)?;
+        validate_identity(identity, &record)?;
+        Ok(Self {
+            anchor: record.anchor(),
+            record,
+            blocked: false,
+        })
+    }
+
     /// Install the first authenticated peer only after durable persistence.
     ///
     /// `trusted_genesis` must come from a confirmed never-initialized authority.

@@ -30,7 +30,9 @@ mod crypto;
 mod enrollment;
 mod identity;
 mod lakers;
+mod local_pairing;
 mod managed;
+mod pairing_transport;
 mod peer_error;
 mod profile;
 mod receipt;
@@ -51,10 +53,14 @@ pub use enrollment::{
     PolicyServeError, PolicySnapshot, ProtectedPolicyResponse, VerifiedPolicy,
 };
 pub use identity::{Identity, IdentityProvisionError, PinnedPeer, Principal};
+pub use local_pairing::{
+    LocalPairing, PairingChallenge, PairingCommitError, PairingError, PairingRecord, PairingUpdate,
+};
 pub use managed::{
     ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
     ManagedRefreshError, PolicyValidity,
 };
+pub use pairing_transport::{CommissioningDecoder, CommissioningReply, CommissioningRequest};
 pub use peer_error::{PeerError, PeerErrorCode};
 pub use profile::CipherSuite;
 pub use receipt::{
