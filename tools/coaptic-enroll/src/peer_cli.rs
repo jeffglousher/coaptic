@@ -1,5 +1,5 @@
 use coaptic::{
-    Code, Endpoint, Method, Response, profiles,
+    Code, ContentFormat, Endpoint, Method, Response, profiles,
     provisioning::{Identity, LocalPairing, ManagedConnection},
     storage::UdpSocketIo,
 };
@@ -9,12 +9,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy)]
+pub enum Probe {
+    Identity,
+    Echo,
+    DeniedEcho,
+}
+
 pub fn run(
     identity: &Identity,
     pairing: &LocalPairing,
     local: &str,
     remote: &str,
-    probe: bool,
+    probe: Option<Probe>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let peer = pairing.peer()?;
     let permission = pairing
@@ -34,9 +41,12 @@ pub fn run(
     let mut connection = ManagedConnection::<_, profiles::Constrained>::from_local_pairing(
         identity, pairing, endpoint, io, entropy, 0,
     )?;
-    if probe {
+    if probe.is_some() {
         connection.connect(0)?;
     }
+    let mut sample = [0; 36];
+    sample[..4].copy_from_slice(&[0x82, 1, 0x58, 32]);
+    getrandom::fill(&mut sample[4..])?;
     println!("Pairing restored; waiting for peer at {remote}.");
     let mut reported = false;
     let mut call = None;
@@ -52,6 +62,10 @@ pub fn run(
                 } else if request.payload().len() > 128 {
                     Response::new(Code::REQUEST_ENTITY_TOO_LARGE)
                 } else {
+                    println!(
+                        "Protected telemetry received and acknowledged ({} bytes).",
+                        request.payload().len()
+                    );
                     Response::content_copy(request.payload())
                 }
             } else {
@@ -64,8 +78,14 @@ pub fn run(
                 super::super::hex(peer.principal().fingerprint())
             );
             reported = true;
-            if probe {
-                call = Some(connection.request(Method::Get, "identity", &[], None, now)?);
+            if let Some(probe) = probe {
+                let (method, path, payload, format) = match probe {
+                    Probe::Identity => (Method::Get, "identity", &[][..], None),
+                    Probe::Echo | Probe::DeniedEcho => {
+                        (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
+                    }
+                };
+                call = Some(connection.request(method, path, payload, format, now)?);
             }
         }
         if let Some(current) = call
@@ -73,15 +93,23 @@ pub fn run(
         {
             let response =
                 response.map_err(|error| format!("protected probe failed: {error:?}"))?;
-            if response.code() != Code::CONTENT
-                || response.payload() != peer.principal().fingerprint()
-            {
+            let valid = match probe.ok_or("missing probe")? {
+                Probe::Identity => {
+                    response.code() == Code::CONTENT
+                        && response.payload() == peer.principal().fingerprint()
+                }
+                Probe::Echo => response.code() == Code::CONTENT && response.payload() == sample,
+                Probe::DeniedEcho => {
+                    response.code() == Code::FORBIDDEN && response.payload().is_empty()
+                }
+            };
+            if !valid {
                 return Err("protected response differs".into());
             }
             println!("Protected probe passed (code {}).", response.code());
             return Ok(());
         }
-        if probe && started.elapsed() >= Duration::from_secs(30) {
+        if probe.is_some() && started.elapsed() >= Duration::from_secs(30) {
             return Err("paired probe deadline".into());
         }
         std::thread::sleep(Duration::from_millis(2));

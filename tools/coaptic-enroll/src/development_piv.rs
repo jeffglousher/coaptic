@@ -252,13 +252,15 @@ mod tests {
     fn request(operator: &DevelopmentOperator) -> Request {
         let device = Identity::from_private_key([1; 32], 1).unwrap().peer();
         let peer = Identity::from_private_key([2; 32], 2).unwrap().peer();
+        let mut nonce = [0; 32];
+        getrandom::fill(&mut nonce).unwrap();
         Request::new(
             &device,
             &peer,
             operator.owner().unwrap(),
             [3; 32],
             EnrollmentAnchor::from_parts([4; 32], 1, [5; 32]).unwrap(),
-            [6; 32],
+            nonce,
         )
         .unwrap()
     }

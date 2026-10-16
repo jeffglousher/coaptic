@@ -38,7 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
-            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--probe]"
+            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--probe | --probe-echo | --probe-denied]"
         );
         #[cfg(feature = "development-piv")]
         println!(
