@@ -50,7 +50,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .join("Coaptic")
         .join("Enrollment");
     private_directory(&directory)?;
-    let operator_store = OperatorStore::open(&directory)?;
     if command == "device-init" || command == "device-info" {
         let name = args.next().ok_or("missing device name")?;
         let name = name.to_str().ok_or("invalid device name")?;
@@ -99,6 +98,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("Device identity ready. Peer authorization requires commissioning.");
         return Ok(());
     }
+    // Ordinary device-key recovery does not wait on an operator ceremony lock.
+    let operator_store = OperatorStore::open(&directory)?;
     let mut client = WebauthnAuthenticator::new(Win10::default());
     if command == "operator-init" {
         if args.next().is_some() || operator_store.exists() {

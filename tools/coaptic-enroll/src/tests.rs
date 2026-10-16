@@ -61,6 +61,29 @@ fn operator() -> (Operator, WebauthnAuthenticator<SoftPasskey>) {
 }
 
 #[test]
+fn registration_profile_and_restored_counter_are_checked_before_prompting() {
+    let (operator, _) = operator();
+    for field in 0..3 {
+        let mut credential: Credential = operator.key.clone().into();
+        match field {
+            0 => credential.user_verified = false,
+            1 => credential.backup_eligible = true,
+            _ => credential.backup_state = true,
+        }
+        assert!(matches!(
+            credential_counter(&credential.into()),
+            Err(Error::Authentication)
+        ));
+    }
+    let mut mismatched = operator.clone();
+    mismatched.counter += 1;
+    assert!(matches!(
+        mismatched.begin(request(&authority())),
+        Err(Error::Input)
+    ));
+}
+
+#[test]
 fn valid_proof_commits_only_the_bound_device_policy() {
     let mut authority = authority();
     let (operator, mut client) = operator();

@@ -86,7 +86,10 @@ impl Operator {
     /// Begin one fresh, user-verified approval of this exact request.
     pub fn begin(&self, request: Request) -> Result<(RequestChallengeResponse, PendingApproval)> {
         let started = Instant::now();
-        if self.version != 1 || request.owner != self.owner {
+        if self.version != 1
+            || request.owner != self.owner
+            || credential_counter(&self.key)? != self.counter
+        {
             return Err(Error::Input);
         }
         request.validate()?;
@@ -345,11 +348,12 @@ impl PendingRegistration {
         if self.started.elapsed() >= TIMEOUT {
             return Err(Error::Expired);
         }
+        let counter = credential_counter(&key)?;
         Ok(Operator {
             version: 1,
             owner: self.owner,
             key,
-            counter: 0,
+            counter,
         })
     }
 }
@@ -362,6 +366,19 @@ fn verifier() -> Result<Webauthn> {
     WebauthnBuilder::new(RP_ID, &origin())
         .map_err(|_| Error::Input)?
         .rp_name("Coaptic Enrollment")
+        .timeout(TIMEOUT)
         .build()
         .map_err(|_| Error::Input)
+}
+
+// Inspect only the reviewed verifier's public credential metadata. This is not
+// an alternate verifier or authenticator/model attestation. Reject unsuitable
+// credentials before persisting registration, rather than trapping an operator
+// with a credential which can never satisfy the selected approval profile.
+fn credential_counter(key: &Passkey) -> Result<u32> {
+    let credential: Credential = key.clone().into();
+    if !credential.user_verified || credential.backup_eligible || credential.backup_state {
+        return Err(Error::Authentication);
+    }
+    Ok(credential.counter)
 }

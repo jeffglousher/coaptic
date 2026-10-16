@@ -12,7 +12,9 @@ description = "Local hardware-approved commissioning for Coaptic devices"
 
 [dependencies]
 coaptic = { path = "../..", default-features = false, features = ["std", "edhoc"] }
-webauthn-rs = { version = "=0.5.5", default-features = false }
+# Read verified public UV/backup flags and the initial counter after registration.
+# Unchecked credentials are never constructed by the production path.
+webauthn-rs = { version = "=0.5.5", default-features = false, features = ["danger-credential-internals"] }
 openssl = { version = "0.10", features = ["vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
