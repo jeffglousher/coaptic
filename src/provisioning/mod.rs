@@ -28,6 +28,7 @@ mod coap;
 mod connection_id;
 mod crypto;
 mod enrollment;
+mod exporter;
 mod identity;
 mod lakers;
 mod local_pairing;
@@ -52,6 +53,7 @@ pub use enrollment::{
     EnrollmentError, EnrollmentPolicy, OnlinePolicyAuthority, PendingPolicy, PolicyQuery,
     PolicyServeError, PolicySnapshot, ProtectedPolicyResponse, VerifiedPolicy,
 };
+pub use exporter::{Exporter, ExporterError};
 pub use identity::{Identity, IdentityProvisionError, PinnedPeer, Principal};
 pub use local_pairing::{
     LocalPairing, PairingChallenge, PairingCommitError, PairingError, PairingRecord, PairingUpdate,
@@ -408,18 +410,15 @@ impl InitiatorConfirm {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<Session, Error> {
-        let (mut state, ead) = self.state.process_message_4(&message.buffer()?)?;
+        let (state, ead) = self.state.process_message_4(&message.buffer()?)?;
         if ead.is_some() {
             return Err(Error::Profile);
         }
         if !authorize(&self.peer.principal()) {
             return Err(Error::Unauthorized);
         }
-        let secret = state.edhoc_exporter(0, &[], 16);
-        let salt = state.edhoc_exporter(1, &[], 8);
         Session::derive(
-            &secret[..16],
-            &salt[..8],
+            Exporter::new(state.into_prk_exporter()),
             self.local_id,
             self.peer_id,
             self.local_principal,
@@ -505,13 +504,10 @@ impl Responder {
         if !authorize(&self.peer.principal()) {
             return Err(Error::Unauthorized.into());
         }
-        let (mut state, message) = state.prepare_message_4(&None)?;
-        let secret = state.edhoc_exporter(0, &[], 16);
-        let salt = state.edhoc_exporter(1, &[], 8);
+        let (state, message) = state.prepare_message_4(&None)?;
         Ok((
             Session::derive(
-                &secret[..16],
-                &salt[..8],
+                Exporter::new(state.into_prk_exporter()),
                 self.local_id,
                 self.peer_id,
                 self.local_principal,
@@ -622,13 +618,10 @@ impl RegistryResponder {
         if !authorize(&peer.principal()) {
             return Err(Error::Unauthorized.into());
         }
-        let (mut state, message) = state.prepare_message_4(&None)?;
-        let secret = state.edhoc_exporter(0, &[], 16);
-        let salt = state.edhoc_exporter(1, &[], 8);
+        let (state, message) = state.prepare_message_4(&None)?;
         Ok((
             Session::derive(
-                &secret[..16],
-                &salt[..8],
+                Exporter::new(state.into_prk_exporter()),
                 self.local_id,
                 self.peer_id,
                 self.local_principal,
@@ -643,6 +636,7 @@ impl RegistryResponder {
 /// Local and authenticated peer identities with a fresh OSCORE context for one App.
 pub struct Session {
     context: SecurityContext,
+    exporter: Exporter,
     principal: Principal,
     local_principal: Principal,
     suite: CipherSuite,
@@ -650,17 +644,26 @@ pub struct Session {
 
 impl Session {
     fn derive(
-        secret: &[u8],
-        salt: &[u8],
+        exporter: Exporter,
         local_id: ConnectionId,
         peer_id: ConnectionId,
         local_principal: Principal,
         peer: PinnedPeer,
         suite: CipherSuite,
     ) -> Result<Self, Error> {
+        use p256::elliptic_curve::zeroize::Zeroizing;
+
+        let mut secret = Zeroizing::new([0; 16]);
+        let mut salt = Zeroizing::new([0; 8]);
+        exporter
+            .export(0, &[], secret.as_mut())
+            .map_err(|_| Error::Derivation)?;
+        exporter
+            .export(1, &[], salt.as_mut())
+            .map_err(|_| Error::Derivation)?;
         let context = SecurityContext::derive(DeriveParams {
-            master_secret: secret,
-            master_salt: salt,
+            master_secret: secret.as_ref(),
+            master_salt: salt.as_ref(),
             sender_id: peer_id.as_bytes(),
             recipient_id: local_id.as_bytes(),
             id_context: &[],
@@ -668,6 +671,7 @@ impl Session {
         .map_err(|_| Error::Derivation)?;
         Ok(Self {
             context,
+            exporter,
             principal: peer.principal(),
             local_principal,
             suite,
@@ -694,12 +698,35 @@ impl Session {
         &self.local_principal
     }
 
+    /// Application-key exporter for this authenticated, authorized exchange.
+    /// Its lifetime and any exported keys must follow the same current policy
+    /// as the OSCORE context. It is unavailable on incomplete handshake states.
+    ///
+    /// ```compile_fail
+    /// use coaptic::provisioning::InitiatorConfirm;
+    /// fn premature(state: &InitiatorConfirm) {
+    ///     let _ = state.exporter();
+    /// }
+    /// ```
+    #[must_use]
+    pub const fn exporter(&self) -> &Exporter {
+        &self.exporter
+    }
+
     /// Moves the fresh context and peer identity to the caller.
     /// Bind a new secure App and carry this identity into its authorization policy.
     /// Use [`PeerTrust::accept_session`] before this move when enforcing durable
     /// trust; the local identity metadata is no longer available afterward.
     pub fn into_parts(self) -> (SecurityContext, Principal) {
         (self.context, self.principal)
+    }
+
+    /// Moves the fresh context, authenticated peer and application-key exporter.
+    /// Check current local/peer trust and suite policy before this handoff, as
+    /// for [`Self::into_parts`]. The caller owns revocation and destruction of
+    /// both context and exporter, including any application keys it derives.
+    pub fn into_parts_with_exporter(self) -> (SecurityContext, Principal, Exporter) {
+        (self.context, self.principal, self.exporter)
     }
 }
 
