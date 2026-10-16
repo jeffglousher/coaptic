@@ -1,6 +1,6 @@
 extern crate std;
 
-use super::{Identity, PinnedPeer};
+use super::{Identity, IdentityProvisionError, PinnedPeer};
 use crate::provisioning::Error;
 
 fn hex<const N: usize>(value: &str) -> [u8; N] {
@@ -16,6 +16,77 @@ fn scalar_one() -> [u8; 32] {
     let mut scalar = [0; 32];
     scalar[31] = 1;
     scalar
+}
+
+#[test]
+fn provisioning_commits_the_valid_key_before_exposing_its_identity() {
+    let mut calls = 0;
+    let mut stored = None;
+    let identity = Identity::provision(
+        0x2a,
+        |out| {
+            calls += 1;
+            out.fill(0);
+            if calls == 2 {
+                out.copy_from_slice(&scalar_one());
+            }
+            true
+        },
+        |secret, peer| {
+            let restored = Identity::from_private_key(*secret, peer.kid()).unwrap();
+            assert_eq!(restored.peer().principal(), peer.principal());
+            stored = Some(restored);
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(
+        identity.peer().principal(),
+        stored.unwrap().peer().principal()
+    );
+}
+
+#[test]
+fn failed_entropy_or_exhausted_sampling_never_reaches_custody() {
+    for entropy_succeeds in [false, true] {
+        let mut calls = 0;
+        let result = Identity::provision(
+            3,
+            |out| {
+                calls += 1;
+                out.fill(0);
+                entropy_succeeds
+            },
+            |_, _| -> Result<(), ()> { panic!("invalid key reached custody") },
+        );
+        assert!(matches!(
+            result,
+            Err(IdentityProvisionError::State(Error::Entropy))
+                | Err(IdentityProvisionError::State(Error::InvalidKey))
+        ));
+        assert_eq!(calls, if entropy_succeeds { 8 } else { 1 });
+    }
+}
+
+#[test]
+fn ambiguous_custody_returns_no_identity_and_never_retries_the_commit() {
+    let mut commits = 0;
+    let result = Identity::provision(
+        3,
+        |out| {
+            out.copy_from_slice(&scalar_one());
+            true
+        },
+        |_, _| {
+            commits += 1;
+            Err("private backend detail")
+        },
+    );
+    let error = result.unwrap_err();
+    assert!(matches!(error, IdentityProvisionError::Store(_)));
+    assert_eq!(commits, 1);
+    assert!(!std::format!("{error}").contains("private backend detail"));
 }
 
 fn generator() -> [u8; 65] {
