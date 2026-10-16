@@ -395,8 +395,10 @@ where
 ///
 /// Online policy expiration and clock rollback close all owned state before I/O.
 /// A successful refresh always needs fresh authentication. Offline operation
-/// explicitly assumes a qualified protected monotonic anchor; ordinary flash
-/// containing a record and counter does not satisfy that assumption.
+/// selects either durable local custody through [`Self::from_local_pairing`] or
+/// a qualified protected monotonic anchor through [`PolicyValidity::OfflineProtectedAnchor`].
+/// Ordinary flash does not satisfy the protected anchor profile's physical
+/// rollback contract.
 ///
 /// ```compile_fail
 /// use coaptic::provisioning::ManagedConnection;
