@@ -41,13 +41,15 @@ fn authority() -> EnrollmentAuthority<MemoryStore> {
 }
 
 fn request(authority: &EnrollmentAuthority<MemoryStore>) -> Request {
+    let mut nonce = [0; 32];
+    getrandom::fill(&mut nonce).unwrap();
     Request::new(
         &identity(1).peer(),
         &identity(2).peer(),
         [3; 32],
         [4; 32],
         authority.checkpoint().anchor(),
-        [5; 32],
+        nonce,
     )
     .unwrap()
 }
