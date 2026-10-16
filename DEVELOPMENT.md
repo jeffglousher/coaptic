@@ -8,6 +8,32 @@ Use the toolchain in `rust-toolchain.toml`. The library is edition 2024 and
 MSRV 1.85. Test peers have their own dependency requirements. Merges to `main`
 are squash-only and must pass CI.
 
+## Agent delivery loop
+
+1. Resume from the accepted scope and current source/PR state. Use the GitHub
+   Issues/project requirements to choose the next unfinished behavior and its
+   acceptance evidence. Keep the user informed of concrete progress and decisions.
+2. Implement a focused increment and its refusal/recovery paths. Validate the
+   changed behavior locally; use real loopback and the reserved ESP32 when those
+   boundaries need proof. Preserve source identities and limitations in results.
+3. Open a reviewable PR and keep working. CI and review run alongside development:
+   start the next independent requirement or a focused stack, fix known gaps,
+   or investigate failures. For example, prepare the next provisioning increment
+   while its parent PR runs; after the parent merges, rebase and retarget it.
+   Registering a watcher is never a substitute for advancing available work.
+4. Triage failures, review findings, conflicts and stalled tooling yourself.
+   Resolve routine problems within existing authority. Bring the user a concrete
+   decision only when a missing fact, permission or requirement prevents progress;
+   continue work that does not depend on that answer.
+5. When authorized, merge the reviewed change with required CI passing for the
+   intended source. Settle owned branches/output after verifying merge and lack
+   of active consumers, preserve evidence and shared resources, then advance the
+   next accepted requirement. An open PR or passed campaign does not complete
+   an unfinished feature or the overall development scope.
+
+Required validation and release boundaries below remain gates. A dependency
+delays its dependent action; it does not suspend the rest of the assignment.
+
 ## Local validation
 
 ```sh
