@@ -64,23 +64,25 @@ The published specifications contribute distinct parts of the solution:
 
 Convenient and hardened commissioning both retain authenticated encryption and
 fail-closed authorization. The operator has accepted a physical setup/verification
-step and selected standard FIDO2 operator approval as the first hardware-key
-integration. The initial hardware target is a likely YubiKey 5C NFC; exact model,
+step and selected standard FIDO2 operator approval for the default initial
+provisioning workflow and first hardware-key integration. The initial hardware
+target is a likely YubiKey 5C NFC; exact model,
 firmware and capabilities remain unverified. A hardware-key adapter is not yet
-implemented. This selects the first hardware integration, not a mandatory key
-for every deployment. PIV authority signing remains a separate candidate.
+implemented. The default workflow uses the operator's key at initial setup;
+alternative commissioning providers may serve other deployment needs. PIV
+authority signing remains a separate candidate.
 
 The default onboarding path must be secure and convenient: guided authenticated
 local pairing, unique credentials and durable permissions, followed by automatic
 encrypted operation and restart recovery. Support alternative commissioning
-providers behind that contract. Users must not need a security key, a cloud
-account, manual cryptographic parameter selection or disabled message protection
-to complete the default workflow. The exact default verification channel remains
+providers behind that contract. Users must not need a cloud account, recurring
+operator taps, manual cryptographic parameter selection or disabled message
+protection to complete ordinary operation. The exact default verification channel remains
 an implementation decision; physical presence alone or an unverified device name
 does not authenticate a peer.
 
-Additional hardware-key approval, preinstalled organization/manufacturer trust
-and stricter management or authorization-expiry policies are explicit hardening
+Stricter administrative approval, preinstalled organization/manufacturer trust
+and restrictive management or authorization-expiry policies are explicit hardening
 choices. Convenience changes the commissioning effort and policy, not the need
 for authenticated encryption and peer/owner authorization. Verification, storage
 or policy failures must not trigger plaintext or unverified-first-contact fallback.
@@ -111,8 +113,11 @@ remain open in [#365](https://github.com/jeffglousher/coaptic/issues/365) and
 ### Durable offline pairing
 
 Paired devices must communicate directly for long periods without internet or a
-continually reachable enrollment authority. Pairing installs durable, authenticated
-device identities, peer trust and permissions. Ordinary messages, reconnects and
+continually reachable enrollment authority. Initial provisioning establishes each
+device's own unique persistent identity key in qualified device custody and
+installs authenticated peer/owner credentials and permissions. The operator's
+FIDO2 credential authenticates approval of that transaction; it is distinct from
+the device's identity key. Ordinary messages, reconnects and
 unplug/replug or power-cycle recovery require neither a hardware-key tap nor
 another human pairing ceremony. Management tooling must support local authorized
 commissioning; internet availability is not an enrollment prerequisite.
