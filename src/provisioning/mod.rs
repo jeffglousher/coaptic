@@ -15,8 +15,9 @@
 //!
 //! Handshake state and keys have redacted Debug output. Lakers internally
 //! copies key material; this interface does not promise erasure of all copies.
-//! All storage is fixed; larger profiles, EAD and credential discovery are
-//! refused. Transport integration owns retries and must retransmit the exact
+//! All storage is fixed; EAD fields are bounded by [`Ead::CAPACITY`]. Larger
+//! profiles and credential discovery are refused. Transport integration owns
+//! retries and must retransmit the exact
 //! saved message rather than creating a new ephemeral key for a retry.
 //!
 //! The private EDHOC implementation is Lakers v0.8.0 with a pinned parser/MAC
@@ -27,6 +28,7 @@ mod cloud;
 mod coap;
 mod connection_id;
 mod crypto;
+mod ead;
 mod enrollment;
 mod exporter;
 mod identity;
@@ -48,6 +50,7 @@ pub use cloud::{
 };
 pub use coap::{CoapProvisioner, CoapRecovery, PollError, RecoveryError, Status};
 pub use connection_id::ConnectionId;
+pub use ead::{Ead, EadError, EadItem};
 pub use enrollment::{
     AuthenticatedPolicyRequest, AuthorityConnection, AuthorityResponder, BootstrapAuthority,
     EnrollmentError, EnrollmentPolicy, OnlinePolicyAuthority, PendingPolicy, PolicyQuery,
@@ -89,7 +92,7 @@ pub enum Error {
     Entropy,
     /// The message is malformed or exceeds the fixed capacity.
     Parsing,
-    /// The selected method, suite, CID or credential profile is unsupported.
+    /// The method, suite, CID, credential profile or critical EAD is unsupported.
     Profile,
     /// The peer did not authenticate with the installed credential.
     Authentication,
@@ -173,19 +176,19 @@ fn check_reference(id: &lakers::IdCred, peer: &PinnedPeer) -> Result<(), Error> 
 }
 
 fn message_1_peer_id(message: &Message) -> Result<ConnectionId, Error> {
-    let (method, suites, _, cid, ead) =
+    let (method, suites, _, cid, _) =
         lakers::parse_message_1(&message.buffer()?).map_err(|_| Error::Profile)?;
-    if method != 3 || CipherSuite::selected(suites.as_slice()).is_none() || ead.is_some() {
+    if method != 3 || CipherSuite::selected(suites.as_slice()).is_none() {
         return Err(Error::Profile);
     }
     ConnectionId::from_lakers(cid)
 }
 
-// Recognize only a fully parsed message 1 in the selected method/EAD profile.
+// Recognize only a fully parsed message 1 in the selected method profile.
 // A suite refusal does not need ephemeral entropy or an authenticated peer.
 fn wrong_selected_suite_peer_id(message: &Message) -> Option<ConnectionId> {
-    let (method, suites, _, cid, ead) = lakers::parse_message_1(&message.buffer().ok()?).ok()?;
-    if method != 3 || ead.is_some() || CipherSuite::selected(suites.as_slice()).is_some() {
+    let (method, suites, _, cid, _) = lakers::parse_message_1(&message.buffer().ok()?).ok()?;
+    if method != 3 || CipherSuite::selected(suites.as_slice()).is_some() {
         return None;
     }
     ConnectionId::from_lakers(cid).ok()
@@ -315,12 +318,27 @@ impl Initiator {
         suite: CipherSuite,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
+        Self::start_with_suite_and_ead(identity, peer, local_id, suite, &Ead::new(), entropy)
+    }
+
+    /// Start with a locally selected suite and an exact outgoing EAD_1 field.
+    /// The receiving peer has not authenticated this field yet. Reserve the
+    /// local ID as for [`Self::start_with_suite`]; retain exact retry bytes.
+    pub fn start_with_suite_and_ead(
+        identity: &Identity,
+        peer: PinnedPeer,
+        local_id: ConnectionId,
+        suite: CipherSuite,
+        outgoing: &Ead,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
         let crypto = Crypto::fresh_with_suite(suite, entropy)?;
         let mut initiator =
             lakers::EdhocInitiator::new(crypto, EDHOCMethod::StatStat, suite.lakers());
         initiator.set_identity(identity.scalar(), identity.credential());
-        let (state, message) = initiator.prepare_message_1(Some(local_id.lakers()), &None)?;
+        let (state, message) =
+            initiator.prepare_message_1(Some(local_id.lakers()), &outgoing.optional())?;
         Ok((
             Self {
                 state,
@@ -349,13 +367,39 @@ impl Initiator {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(InitiatorConfirm, Message), InitiatorFailure> {
+        self.receive_message_2_processing(message, &Ead::new(), |_, _| false, authorize)
+    }
+
+    /// Authenticate message 2, process non-padding EAD_2 and prepare EAD_3.
+    /// The handler receives the authenticated principal and returns whether it
+    /// recognized and processed an item. False ignores elective items and
+    /// aborts critical items. Padding never reaches the handler. Keep any
+    /// handler state candidate-scoped until the full session is accepted.
+    pub fn receive_message_2_with_ead(
+        self,
+        message: &Message,
+        outgoing: &Ead,
+        process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(InitiatorConfirm, Message), Error> {
+        self.receive_message_2_processing(message, outgoing, process, authorize)
+            .map_err(|failure| failure.failure.error)
+    }
+
+    fn receive_message_2_processing(
+        self,
+        message: &Message,
+        outgoing: &Ead,
+        mut process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(InitiatorConfirm, Message), InitiatorFailure> {
         let message = message.buffer()?;
         let (public_x, _) = lakers::parse_message_2(&message)?;
         crypto::validate_public_x(&public_x)?;
         let (state, cid, id, ead) = self.state.parse_message_2(&message)?;
         let peer_id = ConnectionId::from_lakers(cid)?;
         let transition = || -> Result<(InitiatorConfirm, Message), MessageFailure> {
-            if peer_id == self.local_id || ead.is_some() {
+            if peer_id == self.local_id {
                 return Err(Error::Profile.into());
             }
             check_reference(&id, &self.peer).map_err(|error| MessageFailure {
@@ -363,11 +407,12 @@ impl Initiator {
                 code: PeerErrorCode::UnknownCredential,
             })?;
             let state = state.verify_message_2(self.peer.credential())?;
+            Ead::process(&ead, |item| process(&self.peer.principal(), item))?;
             if !authorize(&self.peer.principal()) {
                 return Err(Error::Unauthorized.into());
             }
             let (state, message, _) =
-                state.prepare_message_3(CredentialTransfer::ByReference, &None)?;
+                state.prepare_message_3(CredentialTransfer::ByReference, &outgoing.optional())?;
             Ok((
                 InitiatorConfirm {
                     state,
@@ -410,10 +455,20 @@ impl InitiatorConfirm {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<Session, Error> {
+        self.receive_message_4_with_ead(message, |_, _| false, authorize)
+    }
+
+    /// Verify mandatory message 4 and process authenticated non-padding EAD_4.
+    /// Handler semantics and candidate-state rules match
+    /// [`Initiator::receive_message_2_with_ead`]. No keys are exposed on refusal.
+    pub fn receive_message_4_with_ead(
+        self,
+        message: &Message,
+        mut process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<Session, Error> {
         let (state, ead) = self.state.process_message_4(&message.buffer()?)?;
-        if ead.is_some() {
-            return Err(Error::Profile);
-        }
+        Ead::process(&ead, |item| process(&self.peer.principal(), item))?;
         if !authorize(&self.peer.principal()) {
             return Err(Error::Unauthorized);
         }
@@ -460,9 +515,33 @@ impl Responder {
         message: &Message,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
+        Self::receive_message_1_with_ead(
+            identity,
+            peer,
+            local_id,
+            message,
+            &Ead::new(),
+            |_| false,
+            entropy,
+        )
+    }
+
+    /// Prepare EAD_2 after processing non-padding EAD_1 with a reserved ID.
+    /// Message 1 is unauthenticated: the handler must grant no trust or durable
+    /// effects. Its true/false semantics match the authenticated EAD handlers.
+    pub fn receive_message_1_with_ead(
+        identity: &Identity,
+        peer: PinnedPeer,
+        local_id: ConnectionId,
+        message: &Message,
+        outgoing: &Ead,
+        process: impl FnMut(EadItem<'_>) -> bool,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
         check_identity(identity, &peer)?;
-        let (responder, message) =
-            RegistryResponder::receive_message_1(identity, local_id, message, entropy)?;
+        let (responder, message) = RegistryResponder::receive_message_1_with_ead(
+            identity, local_id, message, outgoing, process, entropy,
+        )?;
         Ok((
             Self {
                 state: responder.state,
@@ -492,19 +571,41 @@ impl Responder {
         message: &Message,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(Session, Message), MessageFailure> {
+        self.receive_message_3_processing(message, &Ead::new(), |_, _| false, authorize)
+    }
+
+    /// Authenticate message 3, process non-padding EAD_3 and prepare EAD_4.
+    /// Handler semantics and candidate-state rules match
+    /// [`Initiator::receive_message_2_with_ead`]. Retain exact message-4 retries.
+    pub fn receive_message_3_with_ead(
+        self,
+        message: &Message,
+        outgoing: &Ead,
+        process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), Error> {
+        self.receive_message_3_processing(message, outgoing, process, authorize)
+            .map_err(|failure| failure.error)
+    }
+
+    fn receive_message_3_processing(
+        self,
+        message: &Message,
+        outgoing: &Ead,
+        mut process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), MessageFailure> {
         let (state, id, ead) = self.state.parse_message_3(&message.buffer()?)?;
-        if ead.is_some() {
-            return Err(Error::Profile.into());
-        }
         check_reference(&id, &self.peer).map_err(|error| MessageFailure {
             error,
             code: PeerErrorCode::UnknownCredential,
         })?;
         let (state, _) = state.verify_message_3(self.peer.credential())?;
+        Ead::process(&ead, |item| process(&self.peer.principal(), item))?;
         if !authorize(&self.peer.principal()) {
             return Err(Error::Unauthorized.into());
         }
-        let (state, message) = state.prepare_message_4(&None)?;
+        let (state, message) = state.prepare_message_4(&outgoing.optional())?;
         Ok((
             Session::derive(
                 Exporter::new(state.into_prk_exporter()),
@@ -544,14 +645,36 @@ impl RegistryResponder {
         message: &Message,
         entropy: impl FnMut(&mut [u8]) -> bool,
     ) -> Result<(Self, Message), Error> {
+        Self::receive_message_1_with_ead(
+            identity,
+            local_id,
+            message,
+            &Ead::new(),
+            |_| false,
+            entropy,
+        )
+    }
+
+    /// Process unauthenticated EAD_1 and prepare EAD_2 before peer lookup.
+    /// Handler state must remain provisional; message 1 proves no identity.
+    /// False ignores elective items and refuses critical ones before entropy.
+    pub fn receive_message_1_with_ead(
+        identity: &Identity,
+        local_id: ConnectionId,
+        message: &Message,
+        outgoing: &Ead,
+        process: impl FnMut(EadItem<'_>) -> bool,
+        entropy: impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<(Self, Message), Error> {
         message_1_peer_id(message)?;
         let message = message.buffer()?;
         let (method, suites, public_x, cid, ead) = lakers::parse_message_1(&message)?;
         let peer_id = ConnectionId::from_lakers(cid)?;
         let suite = CipherSuite::selected(suites.as_slice()).ok_or(Error::Profile)?;
-        if method != 3 || peer_id == local_id || ead.is_some() {
+        if method != 3 || peer_id == local_id {
             return Err(Error::Profile);
         }
+        Ead::process(&ead, process)?;
         crypto::validate_public_x(&public_x)?;
         let responder = lakers::EdhocResponder::new(
             Crypto::fresh_with_suite(suite, entropy)?,
@@ -563,7 +686,7 @@ impl RegistryResponder {
         let (state, message) = state.prepare_message_2(
             CredentialTransfer::ByReference,
             Some(local_id.lakers()),
-            &None,
+            &outgoing.optional(),
         )?;
         Ok((
             Self {
@@ -598,10 +721,34 @@ impl RegistryResponder {
         resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
         authorize: impl FnOnce(&Principal) -> bool,
     ) -> Result<(Session, Message), MessageFailure> {
+        self.receive_message_3_processing(message, resolve, &Ead::new(), |_, _| false, authorize)
+    }
+
+    /// Resolve and authenticate the peer before processing non-padding EAD_3,
+    /// checking authorization and preparing EAD_4. The handler receives the
+    /// verified full principal; a lookup hint alone never reaches it. Handler
+    /// semantics match [`Initiator::receive_message_2_with_ead`].
+    pub fn receive_message_3_with_ead(
+        self,
+        message: &Message,
+        resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
+        outgoing: &Ead,
+        process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), Error> {
+        self.receive_message_3_processing(message, resolve, outgoing, process, authorize)
+            .map_err(|failure| failure.error)
+    }
+
+    fn receive_message_3_processing(
+        self,
+        message: &Message,
+        resolve: impl FnOnce(CredentialReference) -> Option<PinnedPeer>,
+        outgoing: &Ead,
+        mut process: impl FnMut(&Principal, EadItem<'_>) -> bool,
+        authorize: impl FnOnce(&Principal) -> bool,
+    ) -> Result<(Session, Message), MessageFailure> {
         let (state, id, ead) = self.state.parse_message_3(&message.buffer()?)?;
-        if ead.is_some() {
-            return Err(Error::Profile.into());
-        }
         let reference = CredentialReference::from_id(&id)?;
         let peer = resolve(reference).ok_or(MessageFailure {
             error: Error::Authentication,
@@ -615,10 +762,11 @@ impl RegistryResponder {
             return Err(Error::SelfPeer.into());
         }
         let (state, _) = state.verify_message_3(peer.credential())?;
+        Ead::process(&ead, |item| process(&peer.principal(), item))?;
         if !authorize(&peer.principal()) {
             return Err(Error::Unauthorized.into());
         }
-        let (state, message) = state.prepare_message_4(&None)?;
+        let (state, message) = state.prepare_message_4(&outgoing.optional())?;
         Ok((
             Session::derive(
                 Exporter::new(state.into_prk_exporter()),
@@ -750,6 +898,9 @@ redacted_debug!(
 
 #[cfg(test)]
 mod conn_id_tests;
+
+#[cfg(test)]
+mod ead_tests;
 
 #[cfg(test)]
 mod tests;

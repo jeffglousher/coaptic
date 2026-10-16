@@ -623,28 +623,8 @@ impl TryInto<EdhocMessageBuffer> for &[u8] {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct EADItem {
-    /// EAD label of the item
-    ///
-    /// # Caveats
-    ///
-    /// Currently, only values up to 23 are supported.
-    pub label: u16,
-    pub is_critical: bool,
-    // TODO[ead]: have adjustable (smaller) length for this buffer
-    pub value: Option<EdhocMessageBuffer>,
-}
-
-impl EADItem {
-    pub fn new() -> Self {
-        EADItem {
-            label: 0,
-            is_critical: false,
-            value: None,
-        }
-    }
-}
+// Coaptic owns the bounded complete sequence, including exact encoded bytes.
+pub type EADItem = crate::provisioning::Ead;
 
 mod helpers {
     use super::*;
@@ -688,41 +668,9 @@ mod edhoc_parser {
     use super::*;
 
     pub fn parse_ead(buffer: &[u8]) -> Result<Option<EADItem>, EDHOCError> {
-        trace!("Enter parse_ead");
-        // assuming label is a single byte integer (negative or positive)
-        if let Some((&label, tail)) = buffer.split_first() {
-            let label_res = if CBORDecoder::is_u8(label) {
-                // CBOR unsigned integer (0..=23)
-                Ok((label, false))
-            } else if CBORDecoder::is_i8(label) {
-                // CBOR negative integer (-1..=-24)
-                Ok((label - (CBOR_NEG_INT_1BYTE_START - 1), true))
-            } else {
-                Err(EDHOCError::ParsingError)
-            };
-
-            if let Ok((label, is_critical)) = label_res {
-                let ead_value = if tail.len() > 0 {
-                    // EAD value is present
-                    let mut buffer = EdhocMessageBuffer::new();
-                    buffer.fill_with_slice(tail).unwrap(); // TODO(hax): this *should* not panic due to the buffer sizes passed from upstream functions. can we prove it with hax?
-                    buffer.len = tail.len();
-                    Some(buffer)
-                } else {
-                    None
-                };
-                let ead_item = Some(EADItem {
-                    label: label.into(),
-                    is_critical,
-                    value: ead_value,
-                });
-                Ok(ead_item)
-            } else {
-                Err(EDHOCError::ParsingError)
-            }
-        } else {
-            Err(EDHOCError::ParsingError)
-        }
+        EADItem::from_encoded(buffer)
+            .map(|field| field.optional())
+            .map_err(|_| EDHOCError::ParsingError)
     }
 
     pub fn parse_suites_i(
@@ -784,8 +732,7 @@ mod edhoc_parser {
 
             // if there is still more to parse, the rest will be the EAD_1
             if rcvd_message_1.len > decoder.position() {
-                // NOTE: since the current implementation only supports one EAD handler,
-                // we assume only one EAD item
+                // Preserve the complete validated EAD sequence.
                 let ead_res = parse_ead(decoder.remaining_buffer()?);
                 if let Ok(ead_1) = ead_res {
                     Ok((method, suites_i, g_x, c_i, ead_1))
@@ -855,7 +802,7 @@ mod edhoc_parser {
 
         // if there is still more to parse, the rest will be the EAD_2
         if plaintext_2.len > decoder.position() {
-            // assume only one EAD item
+            // Preserve the complete validated EAD sequence.
             let ead_res = parse_ead(decoder.remaining_buffer()?);
             if let Ok(ead_2) = ead_res {
                 Ok((c_r, id_cred_r, mac_2, ead_2))
@@ -888,7 +835,7 @@ mod edhoc_parser {
 
         // if there is still more to parse, the rest will be the EAD_3
         if plaintext_3.len > decoder.position() {
-            // assume only one EAD item
+            // Preserve the complete validated EAD sequence.
             let ead_res = parse_ead(decoder.remaining_buffer()?);
             if let Ok(ead_3) = ead_res {
                 Ok((id_cred_i, mac_3, ead_3))
@@ -909,7 +856,7 @@ mod edhoc_parser {
         let decoder = CBORDecoder::new(plaintext_4.as_slice());
 
         if plaintext_4.len > decoder.position() {
-            // assume only one EAD item
+            // Preserve the complete validated EAD sequence.
             let ead_res = parse_ead(decoder.remaining_buffer()?);
             if let Ok(ead_4) = ead_res {
                 Ok(ead_4)
