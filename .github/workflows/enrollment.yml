@@ -42,8 +42,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $nativePerl = 'C:\Strawberry\perl\bin\perl.exe'
-          if (-not (Test-Path -LiteralPath $nativePerl)) { throw 'Native Perl unavailable' }
+          $candidates = @('C:\Strawberry\perl\bin\perl.exe') + @((Get-Command perl -All -ErrorAction SilentlyContinue).Source)
+          $nativePerl = $null
+          foreach ($candidate in ($candidates | Select-Object -Unique)) {
+            if ($candidate -and (Test-Path -LiteralPath $candidate) -and ((& $candidate -e 'print $^O') -eq 'MSWin32')) {
+              $nativePerl = $candidate
+              break
+            }
+          }
+          if (-not $nativePerl) { throw 'Native Windows Perl unavailable' }
           "OPENSSL_SRC_PERL=$nativePerl" >> $env:GITHUB_ENV
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
