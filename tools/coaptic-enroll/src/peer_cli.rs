@@ -25,6 +25,8 @@ pub fn run(
     probe: Option<Probe>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let peer = pairing.peer()?;
+    let persistent = probe.is_none() || matches!(probe, Some(Probe::Connect));
+    let initiates = identity.peer().principal().fingerprint() > peer.principal().fingerprint();
     let permission = pairing
         .checkpoint()
         .policy()
@@ -42,7 +44,7 @@ pub fn run(
     let mut connection = ManagedConnection::<_, profiles::Constrained>::from_local_pairing(
         identity, pairing, endpoint, io, entropy, 0,
     )?;
-    if probe.is_some() {
+    if initiates || probe.is_some_and(|probe| !matches!(probe, Probe::Connect)) {
         connection.connect(0)?;
     }
     let mut sample = [0; 36];
@@ -55,7 +57,6 @@ pub fn run(
     let mut retry_at = 30_000;
     let mut next_probe = 0;
     let mut call_started = 0;
-    let persistent = matches!(probe, Some(Probe::Connect));
     loop {
         let now = started.elapsed().as_millis().try_into()?;
         let result = connection.poll_with(now, |_, request, _| {
@@ -153,7 +154,7 @@ pub fn run(
                 Err(error) => return Err(error.into()),
             }
         }
-        if persistent && call.is_none() && now >= retry_at {
+        if persistent && initiates && call.is_none() && now >= retry_at {
             retry_at = now.saturating_add(match connection.connect(now) {
                 Ok(()) => 30_000,
                 Err(ManagedError::Busy | ManagedError::Capacity) => 1_000,
