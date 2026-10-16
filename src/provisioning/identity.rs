@@ -1,6 +1,7 @@
 use core::fmt;
 
 use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::zeroize::Zeroizing;
 use p256::{PublicKey, SecretKey};
 
 use super::{Error, lakers};
@@ -26,6 +27,46 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Generate and durably provision one unique P-256 device identity.
+    ///
+    /// `entropy` must fill its entire output with fresh cryptographically secure
+    /// bytes on success. Rejection sampling uses at most eight calls. `commit`
+    /// receives the private scalar and canonical public credential exactly once,
+    /// after validation, and must return success only after the declared custody
+    /// and power-loss-durable storage boundary has committed the identity.
+    ///
+    /// The store must establish authenticated, never-initialized state and commit
+    /// only if still empty. Missing or corrupt storage and an ambiguous prior
+    /// write do not authorize replacement. Restore an existing identity instead
+    /// of generating another one on restart. This function returns no identity
+    /// after a failed or ambiguous commit; reconcile the store before retrying.
+    ///
+    /// Only the commissioning/storage provider receives private bytes. Do not
+    /// send them to an operator authenticator or include them in public records.
+    /// This key is distinct from an operator's FIDO2 credential and automatically
+    /// derived volatile session keys. Qualified custody and rollback protection
+    /// remain platform responsibilities; key generation does not establish them.
+    pub fn provision<E>(
+        kid: u8,
+        mut entropy: impl FnMut(&mut [u8]) -> bool,
+        commit: impl FnOnce(&[u8; 32], &PinnedPeer) -> Result<(), E>,
+    ) -> Result<Self, IdentityProvisionError<E>> {
+        let mut candidate = Zeroizing::new([0u8; 32]);
+        for _ in 0..8 {
+            if !entropy(&mut candidate[..]) {
+                return Err(IdentityProvisionError::State(Error::Entropy));
+            }
+            let Ok(private_key) = SecretKey::from_slice(&candidate[..]) else {
+                continue;
+            };
+            let peer = PinnedPeer::from_key(private_key.public_key(), kid)
+                .map_err(IdentityProvisionError::State)?;
+            commit(&candidate, &peer).map_err(IdentityProvisionError::Store)?;
+            return Ok(Self { private_key, peer });
+        }
+        Err(IdentityProvisionError::State(Error::InvalidKey))
+    }
+
     /// Import a nonzero private scalar below the P-256 group order.
     ///
     /// `kid` identifies the generated credential within this provisioning profile;
@@ -56,6 +97,26 @@ impl Identity {
         self.peer.public_x()
     }
 }
+
+/// Failure to generate or durably install a device identity.
+#[derive(Debug)]
+pub enum IdentityProvisionError<E> {
+    /// Entropy or private/public credential validation failed before persistence.
+    State(Error),
+    /// Failed or ambiguous custody/storage commit; no usable identity is returned.
+    Store(E),
+}
+
+impl<E: fmt::Display> fmt::Display for IdentityProvisionError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::State(error) => write!(f, "identity generation refused: {error:?}"),
+            Self::Store(_) => f.write_str("identity custody commit failed or is uncertain"),
+        }
+    }
+}
+
+impl<E: core::error::Error + 'static> core::error::Error for IdentityProvisionError<E> {}
 
 impl fmt::Debug for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

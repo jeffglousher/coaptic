@@ -50,7 +50,7 @@ pub use enrollment::{
     EnrollmentError, EnrollmentPolicy, OnlinePolicyAuthority, PendingPolicy, PolicyQuery,
     PolicyServeError, PolicySnapshot, ProtectedPolicyResponse, VerifiedPolicy,
 };
-pub use identity::{Identity, PinnedPeer, Principal};
+pub use identity::{Identity, IdentityProvisionError, PinnedPeer, Principal};
 pub use managed::{
     ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
     ManagedRefreshError, PolicyValidity,
