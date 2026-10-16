@@ -1,0 +1,145 @@
+diff --git a/edhoc.rs b/edhoc.rs
+index 7712e90..d2e753a 100644
+--- a/edhoc.rs
++++ b/edhoc.rs
+@@ -268 +268 @@ pub fn r_prepare_message_4(
+-    ead_4: &Option<EADItem>, // FIXME: make it a list of EADItem
++    ead_4: &Option<EADItem>,
+@@ -294 +294 @@ pub fn i_prepare_message_1(
+-    ead_1: &Option<EADItem>, // FIXME: make it a list of EADItem
++    ead_1: &Option<EADItem>,
+@@ -412 +412 @@ pub fn i_prepare_message_3(
+-    ead_3: &Option<EADItem>, // FIXME: make it a list of EADItem
++    ead_3: &Option<EADItem>,
+@@ -507,31 +507 @@ fn encode_ead_item(ead_1: &EADItem) -> Result<EdhocMessageBuffer, EDHOCError> {
+-    let mut output = EdhocMessageBuffer::new();
+-
+-    // encode label
+-    // FIXME: This only works for values up to 23
+-    let res = if ead_1.is_critical {
+-        // ensure it won't overflow
+-        u8::try_from(ead_1.label)
+-            .ok()
+-            .and_then(|x| x.checked_add(CBOR_NEG_INT_1BYTE_START))
+-            .and_then(|x| x.checked_sub(1))
+-    } else {
+-        ead_1.label.try_into().ok()
+-    };
+-
+-    if let Some(label) = res {
+-        output.content[0] = label;
+-        output.len = 1;
+-
+-        // encode value
+-        if let Some(ead_1_value) = &ead_1.value {
+-            if output.extend_from_slice(ead_1_value.as_slice()).is_ok() {
+-                Ok(output)
+-            } else {
+-                Err(EDHOCError::EadTooLongError)
+-            }
+-        } else {
+-            Ok(output)
+-        }
+-    } else {
+-        Err(EDHOCError::EadLabelTooLongError)
+-    }
++    EdhocMessageBuffer::new_from_slice(ead_1.as_encoded()).map_err(|_| EDHOCError::EadTooLongError)
+diff --git a/mod.rs b/mod.rs
+index 799e192..b35e0df 100644
+--- a/mod.rs
++++ b/mod.rs
+@@ -10,0 +11,2 @@
++//! `ead.patch` retains complete, validated EAD sequences for authenticated
++//! processing; the bounded representation and policy hooks are Coaptic-owned.
+diff --git a/shared/mod.rs b/shared/mod.rs
+index 5beccfd..224d5be 100644
+--- a/shared/mod.rs
++++ b/shared/mod.rs
+@@ -626,22 +626,2 @@ impl TryInto<EdhocMessageBuffer> for &[u8] {
+-#[derive(Clone, Debug)]
+-pub struct EADItem {
+-    /// EAD label of the item
+-    ///
+-    /// # Caveats
+-    ///
+-    /// Currently, only values up to 23 are supported.
+-    pub label: u16,
+-    pub is_critical: bool,
+-    // TODO[ead]: have adjustable (smaller) length for this buffer
+-    pub value: Option<EdhocMessageBuffer>,
+-}
+-
+-impl EADItem {
+-    pub fn new() -> Self {
+-        EADItem {
+-            label: 0,
+-            is_critical: false,
+-            value: None,
+-        }
+-    }
+-}
++// Coaptic owns the bounded complete sequence, including exact encoded bytes.
++pub type EADItem = crate::provisioning::Ead;
+@@ -691,35 +671,3 @@ mod edhoc_parser {
+-        trace!("Enter parse_ead");
+-        // assuming label is a single byte integer (negative or positive)
+-        if let Some((&label, tail)) = buffer.split_first() {
+-            let label_res = if CBORDecoder::is_u8(label) {
+-                // CBOR unsigned integer (0..=23)
+-                Ok((label, false))
+-            } else if CBORDecoder::is_i8(label) {
+-                // CBOR negative integer (-1..=-24)
+-                Ok((label - (CBOR_NEG_INT_1BYTE_START - 1), true))
+-            } else {
+-                Err(EDHOCError::ParsingError)
+-            };
+-
+-            if let Ok((label, is_critical)) = label_res {
+-                let ead_value = if tail.len() > 0 {
+-                    // EAD value is present
+-                    let mut buffer = EdhocMessageBuffer::new();
+-                    buffer.fill_with_slice(tail).unwrap(); // TODO(hax): this *should* not panic due to the buffer sizes passed from upstream functions. can we prove it with hax?
+-                    buffer.len = tail.len();
+-                    Some(buffer)
+-                } else {
+-                    None
+-                };
+-                let ead_item = Some(EADItem {
+-                    label: label.into(),
+-                    is_critical,
+-                    value: ead_value,
+-                });
+-                Ok(ead_item)
+-            } else {
+-                Err(EDHOCError::ParsingError)
+-            }
+-        } else {
+-            Err(EDHOCError::ParsingError)
+-        }
++        EADItem::from_encoded(buffer)
++            .map(|field| field.optional())
++            .map_err(|_| EDHOCError::ParsingError)
+@@ -761,0 +710,10 @@ mod edhoc_parser {
++    // Routing reads the bounded C_I prefix independently of EAD validation.
++    // Full message/profile validation still precedes crypto.
++    pub fn parse_message_1_routing_id(message: &BufferMessage1) -> Result<ConnId, EDHOCError> {
++        let mut decoder = CBORDecoder::new(message.as_slice());
++        decoder.u8()?;
++        let (_, mut decoder) = parse_suites_i(decoder)?;
++        decoder.bytes_sized(P256_ELEM_LEN)?;
++        Ok(ConnId::from_decoder(&mut decoder)?)
++    }
++
+@@ -787,2 +745 @@ mod edhoc_parser {
+-                // NOTE: since the current implementation only supports one EAD handler,
+-                // we assume only one EAD item
++                // Preserve the complete validated EAD sequence.
+@@ -858 +815 @@ mod edhoc_parser {
+-            // assume only one EAD item
++            // Preserve the complete validated EAD sequence.
+@@ -891 +848 @@ mod edhoc_parser {
+-            // assume only one EAD item
++            // Preserve the complete validated EAD sequence.
+@@ -912 +869 @@ mod edhoc_parser {
+-            // assume only one EAD item
++            // Preserve the complete validated EAD sequence.

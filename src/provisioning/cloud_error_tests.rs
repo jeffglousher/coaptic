@@ -175,7 +175,7 @@ fn registry_failures_send_the_correct_exact_error_without_repeating_lookup_or_cr
 
 #[test]
 fn initial_registry_failures_require_echo_and_cache_suite_profile_key_and_entropy_errors() {
-    for case in 0..4 {
+    for case in 0..6 {
         let server = identity(254, 254);
         let client = identity(1, 1);
         let registry = Registry::new(&server, &[&client]);
@@ -186,6 +186,8 @@ fn initial_registry_failures_require_echo_and_cache_suite_profile_key_and_entrop
             0 => payload[2] = 4,
             1 => payload[1] = 0,
             2 => payload[5..37].fill(0xff),
+            4 => payload.extend_from_slice(&[0x38, 24]), // Unsupported critical EAD.
+            5 => payload.extend_from_slice(&[0; 65]),    // Valid padding beyond capacity.
             _ => {}
         }
         let first = request(&payload, 700, b"first", None);

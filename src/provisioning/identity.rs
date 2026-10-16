@@ -7,7 +7,7 @@ use p256::{PublicKey, SecretKey};
 use super::{Error, lakers};
 
 const CREDENTIAL_DOMAIN: &str = "https://github.com/jeffglousher/coaptic credential fingerprint v1";
-const CREDENTIAL_LEN: usize = 82;
+pub(super) const CREDENTIAL_LEN: usize = 82;
 
 /// Caller-provisioned P-256 private identity for the fixed EDHOC profile.
 ///

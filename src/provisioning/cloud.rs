@@ -1118,7 +1118,7 @@ fn metadata(message: ParsedMessage<'_>) -> Option<Option<&[u8]>> {
 
 fn routing_id(message: &Message) -> Option<ConnectionId> {
     message_1_peer_id(message).ok().or_else(|| {
-        let (_, _, _, cid, _) = super::lakers::parse_message_1(&message.buffer().ok()?).ok()?;
+        let cid = super::lakers::parse_message_1_routing_id(&message.buffer().ok()?).ok()?;
         ConnectionId::from_lakers(cid).ok()
     })
 }

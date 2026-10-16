@@ -265,7 +265,7 @@ pub fn r_verify_message_3(
 pub fn r_prepare_message_4(
     state: &ProcessedM3,
     crypto: &mut impl CryptoTrait,
-    ead_4: &Option<EADItem>, // FIXME: make it a list of EADItem
+    ead_4: &Option<EADItem>,
 ) -> Result<(Completed, BufferMessage4), EDHOCError> {
     // compute ciphertext_4
     let plaintext_4 = encode_plaintext_4(&ead_4)?;
@@ -291,7 +291,7 @@ pub fn i_prepare_message_1(
     state: &InitiatorStart,
     crypto: &mut impl CryptoTrait,
     c_i: ConnId,
-    ead_1: &Option<EADItem>, // FIXME: make it a list of EADItem
+    ead_1: &Option<EADItem>,
 ) -> Result<(WaitM2, BufferMessage1), EDHOCError> {
     // Encode message_1 as a sequence of CBOR encoded data items as specified in Section 5.2.1
     let message_1 = encode_message_1(state.method, &state.suites_i, &state.g_x, c_i, ead_1)?;
@@ -409,7 +409,7 @@ pub fn i_prepare_message_3(
     crypto: &mut impl CryptoTrait,
     cred_i: Credential,
     cred_transfer: CredentialTransfer,
-    ead_3: &Option<EADItem>, // FIXME: make it a list of EADItem
+    ead_3: &Option<EADItem>,
 ) -> Result<(WaitM4, BufferMessage3, BytesHashLen), EDHOCError> {
     let id_cred_i = match cred_transfer {
         CredentialTransfer::ByValue => cred_i.by_value()?,
@@ -504,37 +504,7 @@ pub fn i_complete_without_message_4(state: &WaitM4) -> Result<Completed, EDHOCEr
 }
 
 fn encode_ead_item(ead_1: &EADItem) -> Result<EdhocMessageBuffer, EDHOCError> {
-    let mut output = EdhocMessageBuffer::new();
-
-    // encode label
-    // FIXME: This only works for values up to 23
-    let res = if ead_1.is_critical {
-        // ensure it won't overflow
-        u8::try_from(ead_1.label)
-            .ok()
-            .and_then(|x| x.checked_add(CBOR_NEG_INT_1BYTE_START))
-            .and_then(|x| x.checked_sub(1))
-    } else {
-        ead_1.label.try_into().ok()
-    };
-
-    if let Some(label) = res {
-        output.content[0] = label;
-        output.len = 1;
-
-        // encode value
-        if let Some(ead_1_value) = &ead_1.value {
-            if output.extend_from_slice(ead_1_value.as_slice()).is_ok() {
-                Ok(output)
-            } else {
-                Err(EDHOCError::EadTooLongError)
-            }
-        } else {
-            Ok(output)
-        }
-    } else {
-        Err(EDHOCError::EadLabelTooLongError)
-    }
+    EdhocMessageBuffer::new_from_slice(ead_1.as_encoded()).map_err(|_| EDHOCError::EadTooLongError)
 }
 
 fn encode_message_1(

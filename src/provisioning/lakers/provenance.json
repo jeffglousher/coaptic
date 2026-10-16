@@ -107,6 +107,20 @@
       },
       "hash_encoding": "UTF-8 with LF line endings",
       "apply_flags": ["--unidiff-zero"]
+    },
+    {
+      "path": "ead.patch",
+      "stage": "after_exporter_patch",
+      "sha256": "8b1f3e3146f66c6ff88405d269c93d1242c81b709c960ed355f150ac5f4ae528",
+      "base_coaptic_revision": "eca4f1af825afa36ec8fc4940f5738d532eb6caf",
+      "description": "Replace single-item EAD parsing/re-encoding with Coaptic-owned bounded complete sequences; preserve exact authenticated bytes",
+      "outputs": {
+        "edhoc.rs": "eab9780ac734b9af9121a2360d228aa5f75465217fc07782a5a2477a26bad9e2",
+        "shared/mod.rs": "244a1b7257036c72c0fe0b00d1fd936dae172e4ca2bb345551bbe58836949e91",
+        "mod.rs": "f0aa3898c3037b495dc98f5ac848588a789126e2aac6de3d4006aaeffe7076a0"
+      },
+      "hash_encoding": "UTF-8 with LF line endings",
+      "apply_flags": ["--unidiff-zero"]
     }
   ]
 }

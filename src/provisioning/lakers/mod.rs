@@ -8,6 +8,8 @@
 //! after the original vendoring and formatting transformations.
 //! `exporter.patch` adds consuming access to the completed exporter secret;
 //! the public checked exporter and its storage are owned by Coaptic.
+//! `ead.patch` retains complete, validated EAD sequences for authenticated
+//! processing; the bounded representation and policy hooks are Coaptic-owned.
 #![allow(dead_code, deprecated, unexpected_cfgs, unused_imports, missing_docs)]
 #![allow(clippy::all, clippy::pedantic)]
 
