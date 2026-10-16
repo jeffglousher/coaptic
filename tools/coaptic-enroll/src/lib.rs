@@ -25,6 +25,7 @@ use coaptic::provisioning::{
 use serde::{Deserialize, Serialize};
 use webauthn_rs::prelude::*;
 
+pub mod recovery;
 pub mod store;
 
 #[cfg(feature = "development-piv")]

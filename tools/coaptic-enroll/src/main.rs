@@ -45,7 +45,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor"
         );
         println!(
-            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
+            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-recover PORT UNPAIRED_HOST [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
         );
         return Ok(());
     }
@@ -70,6 +70,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "serial-pair",
         "serial-revoke",
         "serial-transfer",
+        "serial-recover",
     ]
     .iter()
     .any(|value| command == *value)
@@ -90,6 +91,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "serial-pair",
         "serial-revoke",
         "serial-transfer",
+        "serial-recover",
     ]
     .iter()
     .any(|value| command == *value)

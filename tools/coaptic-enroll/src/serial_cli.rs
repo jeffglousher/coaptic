@@ -169,7 +169,45 @@ pub fn run(
         return Err("device and host identities must differ".into());
     }
     let started = Instant::now();
+    let recovery = if command == "serial-recover" {
+        Some(coaptic_enroll::recovery::PeerRecovery::new(
+            device_pin.clone(),
+            record.clone(),
+            local.checkpoint(),
+        )?)
+    } else {
+        None
+    };
     let local_challenge = local.begin(&host, 0, |out| getrandom::fill(out).is_ok())?;
+    if let Some(recovery) = recovery {
+        super::pairing_cli::approve(
+            directory,
+            development,
+            |owner| recovery.request(&local_challenge, owner),
+            |request| {
+                let CommissioningReply::State { device, record } = usb
+                    .request(&CommissioningRequest::Inspect)
+                    .map_err(|_| Error::Persistence)?
+                else {
+                    return Err(Error::Persistence);
+                };
+                recovery.commit(
+                    request,
+                    &local_challenge,
+                    (&device, &record),
+                    &mut local,
+                    started
+                        .elapsed()
+                        .as_millis()
+                        .try_into()
+                        .map_err(|_| Error::Expired)?,
+                    |old, next| store.commit(old, next),
+                )
+            },
+        )?;
+        println!("Host pairing recovered from the device's current policy.");
+        return Ok(());
+    }
     let CommissioningReply::Challenge(challenge) = usb.request(&CommissioningRequest::Challenge)?
     else {
         return Err("unexpected device challenge response".into());
