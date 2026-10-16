@@ -103,6 +103,9 @@ impl<E: core::error::Error + 'static> core::error::Error for ManagedError<E> {}
 /// Explicit freshness contract for this owner's installed trust policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyValidity {
+    /// Durable local pairing under physical custody. Survives ordinary restart;
+    /// it does not detect rollback of an entire flash/disk image.
+    OfflineLocalStorage,
     /// The caller supplies a qualified protected monotonic trust anchor.
     OfflineProtectedAnchor,
     /// The freshly authenticated online policy expires at this monotonic time.
@@ -420,6 +423,7 @@ pub struct ManagedConnection<
     P: MemoryProfile + MemoryLayout<false> + AppAssembled<false>,
 {
     identity: &'a Identity,
+    local_pairing: Option<&'a super::LocalPairing>,
     trust: PeerTrust,
     grant: Option<TrustGrant>,
     recovery: Option<CoapRecovery<'a, CACHES>>,
@@ -440,6 +444,33 @@ impl<'a, T: DatagramIo, P, const DEFERRED: usize, const CACHES: usize, const ROU
 where
     P: MemoryProfile + MemoryLayout<false> + AppAssembled<false>,
 {
+    /// Own a normally paired device without requiring an online authority or
+    /// protected monotonic hardware. The immutable borrow prevents management
+    /// changes until this whole session/application owner has been discarded.
+    /// Durable custody and resource permissions remain caller responsibilities.
+    pub fn from_local_pairing(
+        identity: &'a Identity,
+        pairing: &'a super::LocalPairing,
+        endpoint: Endpoint,
+        io: T,
+        randomness: RandomSource,
+        now_ms: u64,
+    ) -> Result<Self, ManagedError<T::Error>> {
+        let trust =
+            PeerTrust::from_local_pairing(identity, pairing).map_err(ManagedError::Trust)?;
+        let mut connection = Self::new(
+            identity,
+            trust,
+            endpoint,
+            io,
+            randomness,
+            PolicyValidity::OfflineLocalStorage,
+            now_ms,
+        )?;
+        connection.local_pairing = Some(pairing);
+        Ok(connection)
+    }
+
     /// Own an already enrolled trust policy and transport without starting I/O.
     pub fn new(
         identity: &'a Identity,
@@ -471,6 +502,7 @@ where
         }
         Ok(Self {
             identity,
+            local_pairing: None,
             trust,
             grant: None,
             recovery: None,
@@ -965,6 +997,9 @@ where
         &mut self,
         commit: impl FnOnce(&TrustAnchor, &TrustRecord, &TrustAnchor) -> Result<(), E>,
     ) -> Result<TrustAnchor, TrustCommitError<E>> {
+        if self.local_pairing.is_some() {
+            return Err(TrustCommitError::State(TrustError::LocalPolicy));
+        }
         let result = self.trust.revoke(commit);
         if result.is_ok() || self.trust.is_blocked() {
             self.discard();
@@ -980,6 +1015,9 @@ where
         enabled: bool,
         commit: impl FnOnce(&TrustAnchor, &TrustRecord, &TrustAnchor) -> Result<(), E>,
     ) -> Result<TrustAnchor, TrustCommitError<E>> {
+        if self.local_pairing.is_some() {
+            return Err(TrustCommitError::State(TrustError::LocalPolicy));
+        }
         let result = self.trust.replace(self.identity, peer, enabled, commit);
         if result.is_ok() || self.trust.is_blocked() {
             self.discard();
@@ -996,6 +1034,9 @@ where
         now_ms: u64,
         refresh: impl FnOnce(&Identity) -> Result<(PeerTrust, PolicyValidity), E>,
     ) -> Result<(), ManagedRefreshError<E>> {
+        if self.local_pairing.is_some() {
+            return Err(ManagedRefreshError::Trust(TrustError::LocalPolicy));
+        }
         self.discard();
         self.refresh_blocked = true;
         if now_ms < self.last_now || now_ms.checked_add(LIFETIME).is_none() {
