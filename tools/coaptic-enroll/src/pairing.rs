@@ -96,6 +96,15 @@ pub fn apply(
                 .revoke(challenge, &request.owner, now_ms, commit)
                 .map_err(|_| Error::Persistence)
         }
+        Action::Transfer => pairing
+            .transfer(
+                challenge,
+                &request.owner,
+                request.pairing_policy()?,
+                now_ms,
+                commit,
+            )
+            .map_err(|_| Error::Persistence),
     }
 }
 
@@ -165,6 +174,73 @@ mod tests {
             std::fs::write(directory.join("pairing.cbor"), [0xff]).unwrap();
             assert!(store.restore(&identity).is_err());
             assert!(store.initialize(&identity).is_err());
+        }
+        std::fs::remove_file(directory.join("pairing.cbor")).unwrap();
+        std::fs::remove_file(directory.join("pairing.lock")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn transfer_store_restores_new_owner_and_refuses_the_old_claim_after_restart() {
+        let mut nonce = [0; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "coaptic-transfer-{:032x}",
+            u128::from_le_bytes(nonce)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let identity = Identity::from_private_key([1; 32], 1).unwrap();
+        let old_peer = Identity::from_private_key([2; 32], 2).unwrap().peer();
+        let new_peer = Identity::from_private_key([3; 32], 3).unwrap().peer();
+        {
+            let store = PairingFile::open(&directory).unwrap();
+            store.initialize(&identity).unwrap();
+            let mut state = store.restore(&identity).unwrap();
+            let challenge = state
+                .begin(&identity, 0, |out| getrandom::fill(out).is_ok())
+                .unwrap();
+            let policy =
+                EnrollmentPolicy::new(old_peer.clone(), [4; 32], permissions(true)).unwrap();
+            apply(
+                &Request::for_pairing(&challenge, &policy, Action::Pair).unwrap(),
+                &challenge,
+                &mut state,
+                1,
+                |old, next| store.commit(old, next),
+            )
+            .unwrap();
+            let challenge = state
+                .begin(&identity, 2, |out| getrandom::fill(out).is_ok())
+                .unwrap();
+            let policy =
+                EnrollmentPolicy::new(new_peer.clone(), [5; 32], permissions(false)).unwrap();
+            let request = Request::for_transfer(&challenge, [4; 32], &policy).unwrap();
+            apply(&request, &challenge, &mut state, 3, |old, next| {
+                store.commit(old, next)
+            })
+            .unwrap();
+        }
+        {
+            let store = PairingFile::open(&directory).unwrap();
+            let mut state = store.restore(&identity).unwrap();
+            assert_eq!(state.checkpoint().revision(), 3);
+            assert_eq!(state.checkpoint().policy().unwrap().owner(), &[5; 32]);
+            assert!(state.permits(&new_peer.principal()));
+            assert!(!state.permits(&old_peer.principal()));
+            let challenge = state
+                .begin(&identity, 0, |out| getrandom::fill(out).is_ok())
+                .unwrap();
+            let policy = EnrollmentPolicy::new(old_peer, [4; 32], permissions(true)).unwrap();
+            assert!(
+                apply(
+                    &Request::for_pairing(&challenge, &policy, Action::Pair).unwrap(),
+                    &challenge,
+                    &mut state,
+                    1,
+                    |_, _| panic!("old claim reached storage")
+                )
+                .is_err()
+            );
         }
         std::fs::remove_file(directory.join("pairing.cbor")).unwrap();
         std::fs::remove_file(directory.join("pairing.lock")).unwrap();

@@ -150,6 +150,10 @@ pub struct Request {
     pub peer: PublicIdentity,
     #[serde(with = "serde_bytes")]
     pub owner: [u8; 32],
+    /// Destination owner for an explicit transfer; zero and omitted otherwise.
+    /// `owner` remains the authenticated current owner releasing the device.
+    #[serde(default, skip_serializing_if = "no_owner", with = "serde_bytes")]
+    pub next_owner: [u8; 32],
     #[serde(with = "serde_bytes")]
     pub permissions: [u8; 32],
     #[serde(with = "serde_bytes")]
@@ -167,6 +171,11 @@ pub struct Request {
 pub enum Action {
     Pair,
     Revoke,
+    Transfer,
+}
+
+fn no_owner(owner: &[u8; 32]) -> bool {
+    *owner == [0; 32]
 }
 
 impl Request {
@@ -184,6 +193,7 @@ impl Request {
             device: PublicIdentity::from_peer(device),
             peer: PublicIdentity::from_peer(peer),
             owner,
+            next_owner: [0; 32],
             permissions,
             store: expected.parts().0,
             revision: expected.parts().1,
@@ -200,6 +210,9 @@ impl Request {
         policy: &EnrollmentPolicy,
         action: Action,
     ) -> Result<Self> {
+        if action == Action::Transfer {
+            return Err(Error::Input);
+        }
         let (store, revision, digest) = challenge.expected();
         let expected =
             EnrollmentAnchor::from_parts(store, revision, digest).map_err(|_| Error::Input)?;
@@ -213,6 +226,37 @@ impl Request {
         )?;
         request.action = action;
         Ok(request)
+    }
+
+    /// Bind the current owner's approval to one exact local ownership transfer.
+    /// The trusted local caller independently verifies the destination owner,
+    /// peer and permissions before prompting; neither owner ID is a bearer key.
+    pub fn for_transfer(
+        challenge: &coaptic::provisioning::PairingChallenge,
+        current_owner: [u8; 32],
+        policy: &EnrollmentPolicy,
+    ) -> Result<Self> {
+        let mut request = Self::for_pairing(challenge, policy, Action::Pair)?;
+        request.action = Action::Transfer;
+        request.next_owner = request.owner;
+        request.owner = current_owner;
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// The exact destination policy covered by this local request's approval.
+    pub fn pairing_policy(&self) -> Result<EnrollmentPolicy> {
+        self.validate()?;
+        EnrollmentPolicy::new(
+            self.peer.peer()?,
+            if self.action == Action::Transfer {
+                self.next_owner
+            } else {
+                self.owner
+            },
+            self.permissions,
+        )
+        .map_err(|_| Error::Input)
     }
 
     /// Refuse a changed live device challenge before consuming a local approval.
@@ -242,6 +286,10 @@ impl Request {
             || self.revision == 0
             || self.nonce == [0; 32]
             || device.public_key()[1..33] == peer.public_key()[1..33]
+            || match self.action {
+                Action::Transfer => self.next_owner == [0; 32] || self.next_owner == self.owner,
+                _ => self.next_owner != [0; 32],
+            }
         {
             return Err(Error::Input);
         }
@@ -256,6 +304,7 @@ impl Request {
         hash.update(&[match self.action {
             Action::Pair => 0,
             Action::Revoke => 1,
+            Action::Transfer => 2,
         }]);
         hash.update(self.device.peer()?.principal().fingerprint());
         hash.update(self.peer.peer()?.principal().fingerprint());
@@ -264,6 +313,9 @@ impl Request {
         }
         hash.update(&self.revision.to_be_bytes());
         hash.update(&self.record_digest);
+        if self.action == Action::Transfer {
+            hash.update(&self.next_owner);
+        }
         Ok(*hash.finalize().as_bytes())
     }
 }

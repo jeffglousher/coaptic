@@ -62,6 +62,124 @@ fn operator() -> (Operator, WebauthnAuthenticator<SoftPasskey>) {
     (pending.finish(&proof).unwrap(), client)
 }
 
+fn transfer_request() -> (
+    coaptic::provisioning::LocalPairing,
+    coaptic::provisioning::PairingChallenge,
+    Request,
+) {
+    use coaptic::provisioning::{LocalPairing, PairingRecord};
+    let device = identity(1);
+    let mut state =
+        LocalPairing::restore(&device, PairingRecord::unpaired(&device, [9; 32]).unwrap()).unwrap();
+    let first = state
+        .begin(&device, 0, |out| getrandom::fill(out).is_ok())
+        .unwrap();
+    state
+        .pair(
+            &first,
+            EnrollmentPolicy::new(identity(2).peer(), [3; 32], [4; 32]).unwrap(),
+            1,
+            |_, _| Ok::<(), ()>(()),
+        )
+        .unwrap();
+    let challenge = state
+        .begin(&device, 2, |out| getrandom::fill(out).is_ok())
+        .unwrap();
+    let policy = EnrollmentPolicy::new(identity(4).peer(), [8; 32], [9; 32]).unwrap();
+    let request = Request::for_transfer(&challenge, [3; 32], &policy).unwrap();
+    (state, challenge, request)
+}
+
+#[test]
+fn transfer_approval_authenticates_current_owner_and_commits_only_the_new_policy() {
+    let (mut state, challenge, request) = transfer_request();
+    let (operator, mut client) = operator();
+    assert_eq!(request.owner, *operator.owner());
+    assert_eq!(request.pairing_policy().unwrap().owner(), &[8; 32]);
+    let (proof_challenge, pending) = operator.begin(request).unwrap();
+    let proof = client.do_authentication(origin(), proof_challenge).unwrap();
+    let approval = pending.finish(&proof, |_, _| Ok(())).unwrap();
+    approval
+        .commit_local(|request| {
+            request.matches_pairing(&challenge)?;
+            assert_eq!(request.action, Action::Transfer);
+            state
+                .transfer(
+                    &challenge,
+                    &request.owner,
+                    request.pairing_policy()?,
+                    3,
+                    |_, _| Ok::<(), ()>(()),
+                )
+                .map_err(|_| Error::Persistence)
+        })
+        .unwrap();
+    assert_eq!(state.checkpoint().policy().unwrap().owner(), &[8; 32]);
+    assert!(!state.permits(&identity(2).peer().principal()));
+    assert!(state.permits(&identity(4).peer().principal()));
+}
+
+#[test]
+fn transfer_destination_and_action_are_bound_and_legacy_pair_requests_stay_unchanged() {
+    let (_, challenge, original) = transfer_request();
+    let (operator, mut client) = operator();
+    for field in 0..3 {
+        let mut changed = original.clone();
+        match field {
+            0 => changed.next_owner = [7; 32],
+            1 => changed.peer = PublicIdentity::from_peer(&identity(5).peer()),
+            _ => changed.permissions = [6; 32],
+        }
+        assert_ne!(
+            original.commitment().unwrap(),
+            changed.commitment().unwrap()
+        );
+        let (a, _) = operator.begin(original.clone()).unwrap();
+        let (_, b) = operator.begin(changed).unwrap();
+        let proof = client.do_authentication(origin(), a).unwrap();
+        assert!(matches!(
+            b.finish(&proof, |_, _| panic!("changed transfer persisted")),
+            Err(Error::Authentication)
+        ));
+    }
+    for field in 0..4 {
+        let mut invalid = original.clone();
+        match field {
+            0 => invalid.next_owner = [0; 32],
+            1 => invalid.next_owner = invalid.owner,
+            2 => invalid.action = Action::Pair,
+            _ => invalid.owner = [2; 32],
+        }
+        assert!(operator.begin(invalid).is_err());
+    }
+    assert!(
+        Request::for_pairing(
+            &challenge,
+            &original.pairing_policy().unwrap(),
+            Action::Transfer
+        )
+        .is_err()
+    );
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&original, &mut bytes).unwrap();
+    let round_trip: Request = ciborium::de::from_reader(&bytes[..]).unwrap();
+    assert_eq!(
+        round_trip.commitment().unwrap(),
+        original.commitment().unwrap()
+    );
+    let legacy = request(&authority());
+    bytes.clear();
+    ciborium::ser::into_writer(&legacy, &mut bytes).unwrap();
+    assert!(
+        !bytes
+            .windows(b"next_owner".len())
+            .any(|part| part == b"next_owner")
+    );
+    let decoded: Request = ciborium::de::from_reader(&bytes[..]).unwrap();
+    assert_eq!(decoded.next_owner, [0; 32]);
+    assert_eq!(decoded.commitment().unwrap(), legacy.commitment().unwrap());
+}
+
 #[test]
 fn registration_profile_and_restored_counter_are_checked_before_prompting() {
     let (operator, _) = operator();
