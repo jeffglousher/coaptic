@@ -1,0 +1,23 @@
+diff --git a/core.rs b/core.rs
+index df7c7c3..be05054 100644
+--- a/core.rs
++++ b/core.rs
+@@ -252,0 +253,5 @@ impl<Crypto: CryptoTrait> EdhocResponderDone<Crypto> {
++    /// Consume completed state, retaining only the application exporter secret.
++    pub(crate) fn into_prk_exporter(self) -> BytesHashLen {
++        self.state.prk_exporter
++    }
++
+@@ -474,0 +480,5 @@ impl<Crypto: CryptoTrait> EdhocInitiatorDone<Crypto> {
++    /// Consume completed state, retaining only the application exporter secret.
++    pub(crate) fn into_prk_exporter(self) -> BytesHashLen {
++        self.state.prk_exporter
++    }
++
+diff --git a/mod.rs b/mod.rs
+index 28140b4..799e192 100644
+--- a/mod.rs
++++ b/mod.rs
+@@ -8,0 +9,2 @@
++//! `exporter.patch` adds consuming access to the completed exporter secret;
++//! the public checked exporter and its storage are owned by Coaptic.

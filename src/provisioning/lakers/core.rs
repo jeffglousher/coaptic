@@ -250,6 +250,11 @@ impl<Crypto: CryptoTrait> EdhocResponderProcessedM3<Crypto> {
 }
 
 impl<Crypto: CryptoTrait> EdhocResponderDone<Crypto> {
+    /// Consume completed state, retaining only the application exporter secret.
+    pub(crate) fn into_prk_exporter(self) -> BytesHashLen {
+        self.state.prk_exporter
+    }
+
     pub fn edhoc_exporter(
         &mut self,
         label: u8,
@@ -472,6 +477,11 @@ impl<'a, Crypto: CryptoTrait> EdhocInitiatorWaitM4<Crypto> {
 }
 
 impl<Crypto: CryptoTrait> EdhocInitiatorDone<Crypto> {
+    /// Consume completed state, retaining only the application exporter secret.
+    pub(crate) fn into_prk_exporter(self) -> BytesHashLen {
+        self.state.prk_exporter
+    }
+
     pub fn edhoc_exporter(
         &mut self,
         label: u8,

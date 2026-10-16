@@ -94,6 +94,19 @@
       "apply_flags": [
         "--unidiff-zero"
       ]
+    },
+    {
+      "path": "exporter.patch",
+      "stage": "after_profile_patch",
+      "sha256": "c298e2a88b8efe6aea25c9de7dad5a831850c9b1336caef22833031885d380e1",
+      "base_coaptic_revision": "1ccd5e3c2cace037f2c461a0c14925c5d797de75",
+      "description": "Consume authenticated completed state to retain only PRK_exporter for Coaptic caller-buffer derivation; no public raw-key or incomplete-handshake access",
+      "outputs": {
+        "core.rs": "8434811e7ea81d886a52eaaa0fafee47727470dff9535780d59c3fba61ff7c2e",
+        "mod.rs": "4c511129f1465303a604a11dd077acfaa6e9a05363ef5e877db0398e7d1cefc7"
+      },
+      "hash_encoding": "UTF-8 with LF line endings",
+      "apply_flags": ["--unidiff-zero"]
     }
   ]
 }

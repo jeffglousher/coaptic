@@ -6,6 +6,8 @@
 //! `provenance.json`.
 //! The bounded suite/profile extension is retained in `profile.patch`, applied
 //! after the original vendoring and formatting transformations.
+//! `exporter.patch` adds consuming access to the completed exporter secret;
+//! the public checked exporter and its storage are owned by Coaptic.
 #![allow(dead_code, deprecated, unexpected_cfgs, unused_imports, missing_docs)]
 #![allow(clippy::all, clippy::pedantic)]
 
