@@ -62,10 +62,30 @@ The published specifications contribute distinct parts of the solution:
   describes manufacturer-trust-assisted enrollment through EDHOC EAD. It remains
   an Internet-Draft, checked 2026-10-16, not a published RFC or an adopted profile.
 
-The interview is selecting convenient and hardened commissioning mechanisms
-that both retain authenticated encryption and fail-closed authorization:
+Convenient and hardened commissioning both retain authenticated encryption and
+fail-closed authorization. The operator has accepted a physical setup/verification
+step and selected standard FIDO2 operator approval as the first hardware-key
+integration. The initial hardware target is a likely YubiKey 5C NFC; exact model,
+firmware and capabilities remain unverified. A hardware-key adapter is not yet
+implemented. This selects the first hardware integration, not a mandatory key
+for every deployment. PIV authority signing remains a separate candidate.
 
-- Convenient candidate: generate a unique device key, authenticate and pin it
+The default onboarding path must be secure and convenient: guided authenticated
+local pairing, unique credentials and durable permissions, followed by automatic
+encrypted operation and restart recovery. Support alternative commissioning
+providers behind that contract. Users must not need a security key, a cloud
+account, manual cryptographic parameter selection or disabled message protection
+to complete the default workflow. The exact default verification channel remains
+an implementation decision; physical presence alone or an unverified device name
+does not authenticate a peer.
+
+Additional hardware-key approval, preinstalled organization/manufacturer trust
+and stricter management or authorization-expiry policies are explicit hardening
+choices. Convenience changes the commissioning effort and policy, not the need
+for authenticated encryption and peer/owner authorization. Verification, storage
+or policy failures must not trigger plaintext or unverified-first-contact fallback.
+
+- Convenient path: generate a unique device key, authenticate and pin it
   through a scanned public-key fingerprint or trusted local commissioning
   channel, then complete EDHOC and an explicit ownership/permission decision.
   Self-generated credentials do not require a public CA, but their first binding
@@ -75,17 +95,49 @@ that both retain authenticated encryption and fail-closed authorization:
   policy, and qualify credential custody and rollback resistance on the platform.
   Hardware-backed custody is a platform capability, not a generic library claim.
 
-These are design candidates, not delivered setup workflows. Blind trust on first
+These are selected requirements and design candidates, not delivered setup
+workflows. Blind trust on first
 use can pin continuity after first contact, but cannot exclude an active attacker
 at that first contact (RFC 9528 Appendix D.5). It is not equivalent to verified
 commissioning and must not become the default or an automatic fallback.
 
 Both paths need explicit decisions for owner claim/transfer, authority trust,
-revocation, replacement, reset/re-enrollment, offline policy, entropy, durable
+revocation, replacement, reset/re-enrollment, entropy, durable
 state and application-effect receipts. Core enrollment authority and trust/store
 contracts exist; authenticated platform providers and the deployed ESP32 workflow
 remain open in [#365](https://github.com/jeffglousher/coaptic/issues/365) and
 [#333](https://github.com/jeffglousher/coaptic/issues/333).
+
+### Durable offline pairing
+
+Paired devices must communicate directly for long periods without internet or a
+continually reachable enrollment authority. Pairing installs durable, authenticated
+device identities, peer trust and permissions. Ordinary messages, reconnects and
+unplug/replug or power-cycle recovery require neither a hardware-key tap nor
+another human pairing ceremony. Management tooling must support local authorized
+commissioning; internet availability is not an enrollment prerequisite.
+
+After restart, restore the qualified identity/trust state and establish fresh
+session keys automatically with EDHOC. The current profile keeps session keys
+volatile; restored identities do not justify restoring old session keys, nonce
+counters or exchanges. Long-lived authorization and automatically refreshed
+session keys have separate lifecycles. A short online-authorization lease must
+not impose a periodic operator presence or reconnection requirement on this path.
+
+Current core foundations include `PeerTrust` and
+`PolicyValidity::OfflineProtectedAnchor`; the latter requires a qualified local
+protected monotonic trust authority. Persisting a record beside its counter in
+ordinary rollbackable flash does not meet that assumption. Finish and qualify
+device credential custody, durable commits, local trust/permission restoration,
+known-revocation rollback resistance and automated peer recovery on ESP32. Core
+contracts and in-memory tests do not establish those platform guarantees.
+
+Revocation takes effect when an authenticated update reaches the enforcing peer,
+or through authorized local management. A disconnected peer cannot know about an
+undelivered remote revocation. Once applied, revoke/regrant, replacement or owner
+changes must invalidate affected grants, sessions, pending work and cached effects
+and survive restart. Optional expiring/online policies retain their own explicit
+contracts; they are not the default durable-pairing requirement.
 
 ## Commitment and document state
 
