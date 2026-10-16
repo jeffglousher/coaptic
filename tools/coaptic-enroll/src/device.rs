@@ -90,8 +90,8 @@ fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
         pbData: input.as_ptr() as *mut u8,
     };
-    let mut output = Blob(CRYPTOAPI_BLOB::default());
-    // SAFETY: DPAPI only reads the input; output is freed on every return path.
+    let mut raw = CRYPTOAPI_BLOB::default();
+    // SAFETY: DPAPI only reads the input. Output ownership transfers on success.
     let ok = unsafe {
         CryptProtectData(
             &source,
@@ -100,12 +100,13 @@ fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output.0,
+            &mut raw,
         )
     };
     if !ok.as_bool() {
         return Err(Error::Persistence);
     }
+    let output = Blob(raw);
     if output.0.pbData.is_null() || output.0.cbData == 0 || output.0.cbData > 16384 {
         return Err(Error::Persistence);
     }
@@ -118,7 +119,7 @@ fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
         pbData: input.as_ptr() as *mut u8,
     };
-    let mut output = Blob(CRYPTOAPI_BLOB::default());
+    let mut raw = CRYPTOAPI_BLOB::default();
     // SAFETY: DPAPI only reads the input and suppresses all interactive prompts.
     let ok = unsafe {
         CryptUnprotectData(
@@ -128,12 +129,13 @@ fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output.0,
+            &mut raw,
         )
     };
     if !ok.as_bool() {
         return Err(Error::Persistence);
     }
+    let output = Blob(raw);
     if output.0.pbData.is_null() || output.0.cbData != 32 {
         return Err(Error::Input);
     }
@@ -156,6 +158,8 @@ mod tests {
         let last = sealed.len() - 1;
         sealed[last] ^= 0x80;
         assert!(unprotect(&sealed).is_err());
+        assert!(unprotect(&[]).is_err());
+        assert!(unprotect(&protect(&[]).unwrap()).is_err());
     }
 
     #[test]
