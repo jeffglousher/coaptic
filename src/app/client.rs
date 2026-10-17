@@ -573,61 +573,61 @@ struct LiveCall {
     deadline_ms: Option<u64>,
     /// Next NON Q1 set may start at this instant; zero means disarmed.
     q_pace_ms: u64,
-}
-
-/// Inline backoff storage reserved per configured client Call, including alignment.
-/// Multiply by the `client_calls` count to account for the whole backoff table.
-/// No heap allocation or additional body storage is used.
-pub const CLIENT_BACKOFF_BYTES: usize = core::mem::size_of::<Option<Backoff>>();
-
-#[derive(Clone, Copy, Debug)]
-struct Backoff {
-    peer: Endpoint,
-    code: Code,
-    path: Path<'static>,
-    queries: RetainedQueries,
-    until_ms: u64,
-}
-impl Backoff {
-    fn matches(
-        &self,
-        peer: Endpoint,
-        code: Code,
-        path: &Path<'_>,
-        queries: &RetainedQueries,
-    ) -> bool {
-        self.peer == peer
-            && self.code == code
-            && self.path.segments() == path.segments()
-            && self.queries.values().eq(queries.values())
-    }
+    /// Cooldown retains this row's request identity, without a second buffer.
+    backoff_until_ms: u64,
+    /// Response collected or Call cancelled; only cooldown identity remains live.
+    retired: bool,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientLives<const CALLS: usize> {
     rows: [Option<LiveCall>; CALLS],
-    backoffs: [Option<Backoff>; CALLS],
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
     pub(super) fn has_protocol_state(&self) -> bool {
-        self.rows.iter().any(Option::is_some)
+        self.rows.iter().flatten().any(|row| !row.retired)
     }
 
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; CALLS],
-            backoffs: [None; CALLS],
         }
     }
 
     fn expire_backoffs(&mut self, now_ms: u64) {
-        for entry in &mut self.backoffs {
-            if entry.is_some_and(|entry| entry.until_ms <= now_ms) {
-                *entry = None;
+        for slot in &mut self.rows {
+            if let Some(row) = slot {
+                if row.backoff_until_ms <= now_ms {
+                    row.backoff_until_ms = 0;
+                    if row.retired {
+                        *slot = None;
+                    }
+                }
             }
         }
+    }
+
+    fn backoff_until(
+        &self,
+        peer: Endpoint,
+        code: Code,
+        path: &Path<'_>,
+        queries: &RetainedQueries,
+    ) -> Option<u64> {
+        self.rows
+            .iter()
+            .flatten()
+            .filter(|row| {
+                row.backoff_until_ms != 0
+                    && row.call.peer == peer
+                    && row.code == code
+                    && row.path.segments() == path.segments()
+                    && row.queries.values().eq(queries.values())
+            })
+            .map(|row| row.backoff_until_ms)
+            .max()
     }
 
     fn record_backoff(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
@@ -650,49 +650,33 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             None => super::DEFAULT_MAX_AGE_SECS,
             Some(Err(_)) => return,
         };
-        let Some(live) = self.get(call) else {
-            return;
-        };
         self.expire_backoffs(now_ms);
         if seconds == 0 {
             return;
         }
-        let until_ms = now_ms.saturating_add(u64::from(seconds) * 1000);
-        if let Some(entry) = self
-            .backoffs
+        if let Some(row) = self
+            .rows
             .iter_mut()
             .flatten()
-            .find(|entry| entry.matches(call.peer, live.code, &live.path, &live.queries))
+            .find(|row| !row.retired && row.call == call)
         {
-            entry.until_ms = entry.until_ms.max(until_ms);
-            return;
+            row.backoff_until_ms = row
+                .backoff_until_ms
+                .max(now_ms.saturating_add(u64::from(seconds) * 1000));
         }
-        // Admission reserves room for every outstanding call's possible backoff.
-        let slot = self
-            .backoffs
-            .iter_mut()
-            .find(|slot| slot.is_none())
-            .expect("reserved backoff row");
-        *slot = Some(Backoff {
-            peer: call.peer,
-            code: live.code,
-            path: live.path,
-            queries: live.queries,
-            until_ms,
-        });
     }
 
     fn can_admit(&self, token: Token, peer: Endpoint) -> bool {
         self.rows.iter().any(|row| match row {
             None => true,
-            Some(live) => live.call.token == token && live.call.peer == peer,
+            Some(live) => !live.retired && live.call.token == token && live.call.peer == peer,
         })
     }
 
     fn insert(&mut self, live: LiveCall) {
         if let Some(existing) = self.rows.iter_mut().find(|row| {
             row.as_ref().is_some_and(|row| {
-                row.call.token == live.call.token && row.call.peer == live.call.peer
+                !row.retired && row.call.token == live.call.token && row.call.peer == live.call.peer
             })
         }) {
             *existing = Some(live);
@@ -705,7 +689,9 @@ impl<const CALLS: usize> ClientLives<CALLS> {
 
     fn get(&self, call: Call) -> Option<LiveCall> {
         self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| row.call.token == call.token && row.call.peer == call.peer)
+            row.filter(|row| {
+                !row.retired && row.call.token == call.token && row.call.peer == call.peer
+            })
         })
     }
 
@@ -781,11 +767,40 @@ impl<const CALLS: usize> ClientLives<CALLS> {
     }
 
     fn remove(&mut self, call: Call) {
-        if let Some(slot) = self.rows.iter_mut().find(|row| {
+        let Some(index) = self.rows.iter().position(|row| {
             row.as_ref()
-                .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
-        }) {
-            *slot = None;
+                .is_some_and(|row| !row.retired && row.call == call)
+        }) else {
+            return;
+        };
+        let row = self.rows[index].as_ref().expect("matched row");
+        if row.backoff_until_ms == 0 {
+            self.rows[index] = None;
+            return;
+        }
+        // Concurrent requests may receive overload before either response is
+        // collected. Merge their retired identities, preserving the longest delay.
+        let other = self.rows.iter().position(|entry| {
+            entry.as_ref().is_some_and(|entry| {
+                entry.retired
+                    && entry.call.peer == row.call.peer
+                    && entry.code == row.code
+                    && entry.path.segments() == row.path.segments()
+                    && entry.queries.values().eq(row.queries.values())
+            })
+        });
+        if let Some(other) = other {
+            let until = row.backoff_until_ms;
+            let entry = self.rows[other].as_mut().expect("matched cooldown");
+            entry.backoff_until_ms = entry.backoff_until_ms.max(until);
+            self.rows[index] = None;
+        } else {
+            let row = self.rows[index].as_mut().expect("matched row");
+            row.retired = true;
+            row.due_ms = 0;
+            row.deadline_ms = None;
+            row.q_pace_ms = 0;
+            row.observe = OutgoingObserve::Off;
         }
     }
 
@@ -1570,17 +1585,12 @@ where
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
         self.app.lives.expire_backoffs(now_ms);
-        if let Some(entry) = self
-            .app
-            .lives
-            .backoffs
-            .iter()
-            .flatten()
-            .find(|entry| entry.matches(dest, self.code, &path, &retained_queries))
+        if let Some(until_ms) =
+            self.app
+                .lives
+                .backoff_until(dest, self.code, &path, &retained_queries)
         {
-            return Err(Error::Backoff {
-                until_ms: entry.until_ms,
-            });
+            return Err(Error::Backoff { until_ms });
         }
         let mut spec = ClientSend {
             dest,
@@ -1632,11 +1642,7 @@ where
                 return Ok(existing.call);
             }
         }
-        if !replacing
-            && self.app.lives.rows.iter().flatten().count()
-                + self.app.lives.backoffs.iter().flatten().count()
-                >= CALLS
-        {
+        if !replacing && self.app.lives.rows.iter().flatten().count() >= CALLS {
             return Err(Error::Saturated);
         }
         let token = if replacing {
@@ -1670,7 +1676,8 @@ where
         }
         if !self.request_tag.is_absent()
             && self.app.lives.rows.iter().flatten().any(|live| {
-                live.call.peer == dest
+                !live.retired
+                    && live.call.peer == dest
                     && live.request_tag == self.request_tag
                     && live.call.token != token
             })
@@ -1747,6 +1754,8 @@ where
             request_identity,
             deadline_ms,
             q_pace_ms: 0,
+            backoff_until_ms: 0,
+            retired: false,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
@@ -3946,12 +3955,13 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
+    lives.expire_backoffs(now_ms);
     let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
         let Some(live) = *live else {
             continue;
         };
-        if inbox.contains(live.call) && !client_observe_live(engine, live.call) {
+        if live.retired || (inbox.contains(live.call) && !client_observe_live(engine, live.call)) {
             continue;
         }
         let failure = if live.deadline_ms.is_some_and(|deadline| now_ms >= deadline) {

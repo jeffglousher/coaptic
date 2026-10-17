@@ -155,8 +155,8 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 pub const DEFAULT_CLIENT_CALLS: usize = 4;
 
 pub use client::{
-    CLIENT_BACKOFF_BYTES, Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing,
-    RESPONSE_OPTION_BYTES, RESPONSE_OPTION_COUNT, ResponseBufferError,
+    Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
+    RESPONSE_OPTION_COUNT, ResponseBufferError,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 use identity::{AppIds, Source as IdentitySource};

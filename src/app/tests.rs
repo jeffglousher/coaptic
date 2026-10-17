@@ -14166,7 +14166,14 @@ fn overload_reply(
     age: Option<&[u8]>,
     now: u64,
 ) {
-    let (_, request, len) = app.transport().sent[app.transport().sent_n - 1].unwrap();
+    let (_, request, len) = app
+        .transport()
+        .sent
+        .iter()
+        .flatten()
+        .copied()
+        .find(|(_, bytes, len)| decode(&bytes[..*len]).unwrap().token() == call.token())
+        .unwrap_or_else(|| app.transport().sent[app.transport().sent_n - 1].unwrap());
     let mid = decode(&request[..len]).unwrap().message_id();
     let mut options = OptionsBuilder::<1>::new();
     if let Some(age) = age {
@@ -14267,6 +14274,72 @@ fn overload_loopback_capacity_is_retained_until_retry_time() {
     );
     assert_eq!(app.get("other").to(peer).send(1), Err(Error::Saturated));
     assert!(app.get("other").to(peer).send(2000).is_ok());
+}
+
+#[test]
+fn overload_concurrent_retirement_merges_identity_and_keeps_longest_delay() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let first = app.get("target").non().to(peer).send(0).unwrap();
+    let second = app.get("target").non().to(peer).send(0).unwrap();
+    overload_reply(&mut app, first, Code::TOO_MANY_REQUESTS, Some(&[4]), 1);
+    overload_reply(&mut app, second, Code::TOO_MANY_REQUESTS, Some(&[2]), 2);
+    app.take_response(first).unwrap().unwrap();
+    app.take_response(second).unwrap().unwrap();
+    assert_eq!(
+        app.get("target").to(peer).send(2002),
+        Err(Error::Backoff { until_ms: 4001 })
+    );
+    // Both cooldowns now reserve one Call, leaving three admissions.
+    for last in 3..6 {
+        assert!(
+            app.get("ready")
+                .non()
+                .to(Endpoint::v4([192, 0, 2, last], 5683))
+                .send(2002)
+                .is_ok()
+        );
+    }
+}
+
+#[test]
+fn overload_completion_and_cooldown_share_one_admission() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Gateway>()
+        .deterministic_for_tests()
+        .client_calls::<2>()
+        .block_wise::<false>()
+        .route("target", get(|_| Response::too_many_requests(2)))
+        .route("ready", get(|_| Response::content(b"ok")))
+        .allow_unprotected()
+        .bind(Echo::default())
+        .unwrap();
+    let first = app.get("target").to(peer).send(0).unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    // An uncollected overload response and its cooldown occupy one slot.
+    let second = app.get("ready").to(peer).send(1).unwrap();
+    app.poll(1).unwrap();
+    app.poll(1).unwrap();
+    assert_eq!(app.take_response(second).unwrap().unwrap().payload(), b"ok");
+    assert!(!app.cancel(first));
+    assert_eq!(
+        app.take_response(first).unwrap().unwrap().code(),
+        Code::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        app.get("target").to(peer).send(2),
+        Err(Error::Backoff { until_ms: 2000 })
+    );
+    // Repeated retirement cannot erase cooldown; ordinary poll expires it.
+    assert!(!app.cancel(first));
+    app.poll(2000).unwrap();
+    assert!(app.get("target").to(peer).send(2000).is_ok());
+    let ready = app
+        .get("ready")
+        .to(Endpoint::v4([192, 0, 2, 3], 5683))
+        .send(2000);
+    assert!(ready.is_ok(), "second slot after expiry: {ready:?}");
 }
 
 #[cfg(feature = "oscore")]
