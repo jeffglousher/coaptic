@@ -97,7 +97,7 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
-///     .allow_plaintext()
+///     .allow_unprotected()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -766,7 +766,7 @@ enum OutgoingObserve {
 /// let mut app = App::profile::<profiles::Default>()
 ///     .randomness(|bytes| getrandom::fill(bytes).is_ok())
 ///     .block_wise::<false>()
-///     .allow_plaintext()
+///     .allow_unprotected()
 ///     .bind(NullIo)
 ///     .unwrap();
 /// let peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -968,7 +968,7 @@ where
     /// `received_at_ms` and `max_age_secs` (default 60 seconds when absent)
     /// to assess representation freshness against the same monotonic clock.
     /// A response without Observe ends the subscription; explicit cancellation
-    /// and deadlines also release it. Unrecognized plaintext CON responses
+    /// and deadlines also release it. Unrecognized unprotected CON responses
     /// receive Reset so the peer can stop notifying.
     /// `None` means pending/unknown/already taken. `Some(Ok(_))` is an actual
     /// remote response, including remote 4.xx/5.xx. `Some(Err(_))` is a local
@@ -1248,7 +1248,7 @@ where
     /// Classic/Q-Block1 FETCH retains this validator on every fragment, with the
     /// existing 512-byte canonical selection bound. Other fragmented methods
     /// return [`Error::ConditionalUploadUnsupported`]. First-fragment sizing tries
-    /// at most seven block sizes against the actual plaintext/protected TX limit.
+    /// at most seven block sizes against the actual unprotected/protected TX limit.
     /// Later option or Partial-IV growth can still refuse; no security state rewinds.
     /// The handler validates the complete selection and may return 2.03 Valid.
     /// FETCH Block2 follow-ups repeat the full selection

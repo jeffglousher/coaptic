@@ -145,7 +145,7 @@ fn fixed() -> Server {
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .deferred_lifetime(40)
     .bind(Io::default())
@@ -387,7 +387,7 @@ fn deferred_qblock2_allocated_exact_budget_preserves_full_snapshot() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let app = App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();
@@ -1047,7 +1047,7 @@ fn non_identity_refusal(repeated: bool) {
                 .block_wise::<true>()
                 .deferred::<2>(),
         )
-        .allow_plaintext()
+        .allow_unprotected()
         .randomness(random_for_refusal)
         .bind(Io::default())
         .unwrap();
@@ -1191,7 +1191,7 @@ fn deferred_qblock2_repeated_allocated_exact_budget() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let server = App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();
@@ -1480,13 +1480,13 @@ fn deferred_qblock2_initial_allocated_exact_budget() {
     for protected in [false, cfg!(feature = "oscore")] {
         assert!(
             App::with_resources(resources().allocated(bytes - 1))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind(Io::default())
                 .is_err()
         );
         let server = App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .deferred_lifetime(40)
             .bind(Io::default())

@@ -53,7 +53,7 @@ fn stateful_entropy_refuses_missing_security_and_second_source_before_callback()
         App::with_resources(SmallDevice::new()).bind_with_entropy(LoopIo::default(), &mut random);
     assert_eq!(result.err(), Some(BuildError::SecurityRequired));
     for deterministic in [false, true] {
-        let builder = App::with_resources(SmallDevice::new()).allow_plaintext();
+        let builder = App::with_resources(SmallDevice::new()).allow_unprotected();
         let builder = if deterministic {
             builder.deterministic_for_tests()
         } else {
@@ -78,7 +78,7 @@ fn stateful_entropy_bind_refusal_releases_borrow_and_allows_retry() {
         bytes.fill(1);
         ready.get()
     };
-    let builder = || App::with_resources(SmallDevice::new()).allow_plaintext();
+    let builder = || App::with_resources(SmallDevice::new()).allow_unprotected();
     assert_eq!(
         builder()
             .bind_with_entropy(LoopIo::default(), &mut random)
@@ -118,7 +118,7 @@ fn stateful_entropy_token_and_jitter_refusal_preserve_capacity_and_recover() {
         true
     };
     let mut app = App::with_resources(SmallDevice::new())
-        .allow_plaintext()
+        .allow_unprotected()
         .route("hello", get(|_: Request<'_>| Response::content(b"hello")))
         .bind_with_entropy(LoopIo::default(), &mut random)
         .unwrap();
@@ -184,7 +184,7 @@ fn stateful_entropy_allocated_configuration_is_bounded_and_recovers() {
     let required = resources.required_heap_bytes().unwrap();
     assert_eq!(
         App::with_resources(SmallDevice::new().allocated(required - 1))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(LoopIo::default(), |b: &mut [u8]| {
                 b.fill(0);
                 true
@@ -197,7 +197,7 @@ fn stateful_entropy_allocated_configuration_is_bounded_and_recovers() {
     );
     let mut counter = 0u8;
     let mut app = App::with_resources(SmallDevice::new().allocated(required))
-        .allow_plaintext()
+        .allow_unprotected()
         .route("hello", get(|_: Request<'_>| Response::content(b"hello")))
         .bind_with_entropy(LoopIo::default(), |b: &mut [u8]| {
             counter += 1;
@@ -284,7 +284,7 @@ fn stateful_entropy_duplicate_tokens_have_a_finite_budget_and_preserve_live_call
     let token_reads = Cell::new(0);
     let mut app = App::profile::<coaptic::profiles::Constrained>()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind_with_entropy(LoopIo::default(), |bytes: &mut [u8]| {
             if bytes.len() == 8 {
                 token_reads.set(token_reads.get() + 1);

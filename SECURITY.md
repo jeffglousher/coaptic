@@ -1,59 +1,52 @@
-# Security Policy
+# Security policy
 
-Report vulnerabilities through GitHub private security advisories:
+Report vulnerabilities through [GitHub private security advisories](https://github.com/jeffglousher/coaptic/security/advisories/new).
+Do not use public issues for vulnerability reports.
 
-https://github.com/jeffglousher/coaptic/security/advisories/new
+## Message protection
 
-Do not open a public issue for a security report.
+Pairwise OSCORE is enabled by default, using a caller-owned `SecurityContext`
+with AES-CCM-16-64-128. Ordinary App construction requires a provisioned context.
+Unprotected operation requires `.allow_unprotected()`; `.allow_plaintext()` is
+its compatibility alias. Disabling Cargo defaults does not disable this check.
 
-## Supported security boundary
+An attached context rejects non-empty messages without OSCORE. Unprotected
+requests receive 4.01; unprotected responses, Observe notifications and block-wise
+completions cannot complete a protected Call. Empty ACK/RST remain unprotected
+as required by CoAP reliability. Authentication, replay and OSCORE-option failures
+are dropped without an unprotected error response.
 
-Pairwise OSCORE is enabled by default and uses caller-owned
-`oscore::SecurityContext` with AES-CCM-16-64-128. Ordinary App construction
-requires a provisioned context; unprotected operation requires an explicit
-`.allow_plaintext()`. Disabling default Cargo features does not silently permit
-plaintext. See rustdoc for context lifetime and protocol behavior.
-Group OSCORE, other ciphers and library-owned DTLS are not supported. DTLS in
-the [test peers](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/README.md)
-does not add a library DTLS API. Active development uses UDP with OSCORE and
-EDHOC. Other security bindings are welcome contributions, with a reviewed
-security boundary and validation; they have no MVP delivery promise.
+Group OSCORE, other ciphers and library-owned DTLS are unsupported. DTLS test
+adapters in the companion repository do not provide a library DTLS API.
 
-When a context is attached, App is fail-closed: a non-empty message without an OSCORE option is rejected (unprotected 4.01 on a request; a token-matching plain 2.xx, plaintext Observe notification, or unprotected Block1/Block2 completion does not complete a Call). Empty ACK/RST (RFC 7252 reliability) stay unprotected. AEAD / replay / OSCORE-option processing failures are silently dropped without an unprotected error response.
+## Identity and persistence
 
-Optional EDHOC provisioning supports pinned P-256 method 3 / suites 2 and 3 with
-explicit confirmation before handing off fresh OSCORE keys. Applications own
-trusted credentials, secure entropy, authorization, and key custody. Reusing
-an OSCORE key across restarts requires durable sender-sequence reservations
-and replay-state handling as documented by the context and checkpoint APIs.
-Message protection alone does not establish the security of a device or service.
-Self-generated public keys still need an authenticated initial binding to the
-intended peer and owner. Blind first-contact acceptance does not provide that
-authentication. Convenient and hardened enrollment workflows are being selected
-in the [architecture plan](architecture/IETF-RFC-PLAN.md#provisioning-and-enrollment-decisions);
-neither is a delivered deployment workflow yet.
+Optional EDHOC supports pinned P-256 method 3, suites 2 and 3, and required message 4
+before releasing fresh OSCORE keys. Applications own authenticated credential
+installation, entropy, owner/resource authorization and key custody. A UUID or
+self-generated key alone does not authenticate a peer at first contact.
 
-## Security validation
+The local pairing profile persists device identity, owner, permissions and
+revocation state, then establishes fresh sessions after restart. Ordinary durable
+flash is the default; physical rollback protection is optional hardening with a
+separate protected-anchor contract. Keep session keys volatile on this path.
+If a deployment reuses OSCORE keys after restart, it must satisfy the sender
+reservation and replay-checkpoint contracts before processing traffic.
 
-The [App harness](https://github.com/jeffglousher/coaptic-validation/blob/main/crates/coaptic-plugtest/README.md)
-exercises protected requests,
-Observe notifications and Inner Block1/Block2, and rejects plaintext completion.
-These harness exchanges are Coaptic-to-Coaptic.
+An applied revocation must survive restart. A disconnected peer cannot enforce
+a remote update it has not received. Durable effects need application-level
+commit/receipt handling in addition to message protection.
 
-The [independent process suite](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/README.md)
-includes libcoap OSCORE interoperability and wrong-key refusal, Coaptic
-replay-state scenarios, and PSK DTLS through test adapters. Its
-[case list and qualification gaps](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/capabilities.json)
-define the tested scope; enabled cases must retain passing evidence in the run
-report. Individual scenarios do not establish full protocol conformance.
+## Evidence and remaining work
 
-Production readiness and end-to-end device security qualification remain in
-progress. Hardware reports in [#202](https://github.com/jeffglousher/coaptic/issues/202)
-and [#333](https://github.com/jeffglousher/coaptic/issues/333) retain exact source
-and firmware identities. The reserved Waveshare ESP32-S3 has passed finite
-protected LAN exchanges and a replay-first software-restart check with privately
-staged pairwise credentials. See the
-[recorded methods and limits](https://github.com/jeffglousher/coaptic/issues/333#issuecomment-6092855382).
-Flash power-loss recovery, hostile valid-snapshot rollback, production key
-custody and the full enrollment/application-effect workflow remain unqualified.
-Test timings and coverage counters are not security or performance guarantees.
+Rustdoc defines the supported API contracts. The companion
+[case inventory](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/capabilities.json)
+records independent peers, directions and gaps. Coaptic-to-Coaptic tests establish
+local behavior; they do not establish independent cryptographic interoperability.
+
+[#365](https://github.com/jeffglousher/coaptic/issues/365) tracks operator approval,
+enrollment and recovery. [#333](https://github.com/jeffglousher/coaptic/issues/333)
+tracks physical persistence, key custody and source-identified device evidence.
+Production touch/user verification, physical transfer/reset recovery and relevant
+power-loss behavior still need qualification. Existing finite reports apply to
+their recorded source and firmware, not automatically to current main.

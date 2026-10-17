@@ -183,13 +183,13 @@ fn budgeted_storage_binds_to_app_and_legacy_allocation_is_fallible() {
     let required = AllocMemory::required_heap_bytes(c).unwrap();
     let memory = AllocMemory::try_new(c, required).unwrap();
     let _app = App::builder()
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind_storage((), memory)
         .unwrap();
     let (error, record) = track(Some(1), || {
         App::builder()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind_alloc((), c)
             .err()
@@ -198,7 +198,7 @@ fn budgeted_storage_binds_to_app_and_legacy_allocation_is_fallible() {
     assert_eq!(record.live, 0);
     assert!(
         App::builder()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind_alloc((), c)
             .is_ok()
@@ -236,7 +236,7 @@ fn configured_heap_refusals_precede_allocation_and_allow_recovery() {
         .unwrap();
     let (error, record) = track(Some(1), || {
         App::with_resources(SmallDevice::new().allocated(required - 1))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(())
             .err()
@@ -254,7 +254,7 @@ fn configured_heap_refusals_precede_allocation_and_allow_recovery() {
     c.rx_datagram_bytes = 1473;
     let (error, record) = track(Some(1), || {
         App::with_resources(SmallDevice::new().allocated(64 * 1024).capacities(c))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(())
             .err()
@@ -264,7 +264,7 @@ fn configured_heap_refusals_precede_allocation_and_allow_recovery() {
 
     let (result, record) = track(None, || {
         App::with_resources(SmallDevice::new().allocated(required))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(())
             .map(drop)
@@ -285,7 +285,7 @@ fn legacy_app_scratch_capacity_refuses_before_allocation() {
         }
         let (result, record) = track(None, || {
             App::builder()
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind_alloc((), c)
                 .map(drop)
@@ -323,7 +323,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
         };
         let (result, record) = track(None, || {
             App::builder()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind_alloc_with_entropy(NoIo, c, &mut random)
                 .map(drop)
         });
@@ -336,7 +336,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
                     .allocated(usize::MAX)
                     .capacities(c),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(NoIo, &mut random)
             .map(drop)
         });
@@ -347,7 +347,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
         let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
         assert_eq!(
             App::builder()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind_storage_with_entropy(NoIo, memory, &mut random)
                 .err(),
             Some(BuildError::SizeMismatch)
@@ -356,7 +356,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
         let c = Capacities::from_profile::<profiles::Default>();
         assert!(
             App::builder()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind_alloc_with_entropy(NoIo, c, &mut random)
                 .is_ok()
         );
@@ -364,7 +364,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
         let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
         assert!(
             App::builder()
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind_storage(NoIo, memory)
                 .is_ok()

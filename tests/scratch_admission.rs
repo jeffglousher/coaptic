@@ -62,7 +62,7 @@ fn refuse<const RR: usize, const RW: usize, const TR: usize, const TW: usize>() 
     let memory = Memory::<Profile<RR, RW, TR, TW>>::default();
     assert_eq!(
         App::builder()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_storage_with_entropy(NoIo, memory, &mut random)
             .err(),
         Some(BuildError::SizeMismatch)
@@ -71,7 +71,7 @@ fn refuse<const RR: usize, const RW: usize, const TR: usize, const TW: usize>() 
     assert_eq!(
         App::profile::<Profile<RR, RW, TR, TW>>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(NoIo, &mut random)
             .err(),
         Some(BuildError::SizeMismatch)
@@ -80,7 +80,7 @@ fn refuse<const RR: usize, const RW: usize, const TR: usize, const TW: usize>() 
     assert!(
         App::profile::<Profile<1472, 1472, 1472, 1472>>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(NoIo, &mut random)
             .is_ok()
     );
@@ -112,7 +112,7 @@ fn admission_preserves_security_and_entropy_ambiguity_precedence() {
     assert_eq!(
         App::profile::<Invalid>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind_with_entropy(NoIo, &mut random)
             .err(),
@@ -121,7 +121,7 @@ fn admission_preserves_security_and_entropy_ambiguity_precedence() {
     assert_eq!(
         App::profile::<Invalid>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(NoIo, &mut random)
             .err(),
         Some(BuildError::SizeMismatch)
@@ -129,7 +129,7 @@ fn admission_preserves_security_and_entropy_ambiguity_precedence() {
     assert_eq!(draws.get(), 0);
     assert_eq!(
         App::builder()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_with_entropy(NoIo, &mut random)
             .err(),
         Some(BuildError::RandomnessUnavailable)

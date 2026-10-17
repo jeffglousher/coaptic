@@ -631,7 +631,7 @@ mod udp_tests {
                 true
             })
             .route("large", get(|_| Response::content(&BODY).etag(b"body")))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(UdpSocketIo::new(socket, [0; 1473]).unwrap())
             .unwrap();
         let token = Token::new(b"body").unwrap();

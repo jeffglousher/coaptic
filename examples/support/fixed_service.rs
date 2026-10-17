@@ -23,7 +23,7 @@ pub fn echo(request: Request<'_>) -> Response<'static> {
 }
 
 /// Bind fixed constrained-profile storage without enabling body pools or allocation.
-/// No plaintext opt-out is present: the supplied context protects both routes.
+/// No unprotected opt-out is present: the supplied context protects both routes.
 pub type Service<T> =
     App<profiles::Constrained, T, 4, false, coaptic::storage::Memory<profiles::Constrained>, 0, 1>;
 

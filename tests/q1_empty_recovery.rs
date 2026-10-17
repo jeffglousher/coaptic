@@ -135,7 +135,7 @@ fn fixed() -> Server {
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -376,7 +376,7 @@ fn q1_empty_windows_allocated_exact_budget_repair_without_growth() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let app = App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();

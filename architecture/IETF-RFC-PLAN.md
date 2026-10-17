@@ -34,7 +34,7 @@ Existing codecs and companion fixtures are not delivered endpoint support.
 
 Resource Directory, proxy/gateway/cache, multicast and standardized ACE
 authorization are being selected individually with the operator. Their previous
-planning entries remain visible below as selection in progress; this interview
+planning entries remain visible below as selection in progress; this scope decision
 has neither adopted all of them into the initial MVP nor declared them complete.
 Selection requires a concrete Coaptic or consumer use case, a security/trust
 model and a bounded implementation and acceptance contract. Discovery does not
@@ -62,14 +62,12 @@ The published specifications contribute distinct parts of the solution:
   describes manufacturer-trust-assisted enrollment through EDHOC EAD. It remains
   an Internet-Draft, checked 2026-10-16, not a published RFC or an adopted profile.
 
-Convenient and hardened commissioning both retain authenticated encryption and
-fail-closed authorization. The operator has accepted a physical setup/verification
-step and selected standard FIDO2 operator approval for the default initial
-provisioning workflow. The connected development key is a verified YubiKey 4,
-firmware 4.3.3, with PIV and U2F but no FIDO2. The operator explicitly selected a
-separate no-touch PIV development profile for testing; production touch approval
-remains a separate profile. The default workflow uses the operator's key at
-initial setup; alternative commissioning providers may serve other deployment needs.
+Commissioning requires authenticated encryption and explicit owner authorization.
+The default initial-approval provider is FIDO2 with a physical verification step.
+A separate no-touch PIV development provider supports the available YubiKey 4;
+production touch/user-verification qualification remains in #365. Approval is
+required at initial setup, not on ordinary restart. Alternative providers must
+preserve the same authenticated transaction and durable trust contract.
 
 The default onboarding path must be secure and convenient: guided authenticated
 local pairing, unique credentials and durable permissions, followed by automatic
@@ -84,7 +82,7 @@ Stricter administrative approval, preinstalled organization/manufacturer trust
 and restrictive management or authorization-expiry policies are explicit hardening
 choices. Convenience changes the commissioning effort and policy, not the need
 for authenticated encryption and peer/owner authorization. Verification, storage
-or policy failures must not trigger plaintext or unverified-first-contact fallback.
+or policy failures must not trigger unprotected traffic or unverified-first-contact fallback.
 
 - Convenient path: generate a unique device key, authenticate and pin it
   through a scanned public-key fingerprint or trusted local commissioning
@@ -96,17 +94,14 @@ or policy failures must not trigger plaintext or unverified-first-contact fallba
   policy, and qualify credential custody and rollback resistance on the platform.
   Hardware-backed custody is a platform capability, not a generic library claim.
 
-These are selected requirements and design candidates, not delivered setup
-workflows. Blind trust on first
-use can pin continuity after first contact, but cannot exclude an active attacker
-at that first contact (RFC 9528 Appendix D.5). It is not equivalent to verified
-commissioning and must not become the default or an automatic fallback.
+Blind trust on first use cannot exclude an active attacker at first contact
+(RFC 9528 Appendix D.5). Initial trust must use the authenticated commissioning
+channel; verification failure must refuse pairing.
 
 Both paths need explicit decisions for owner claim/transfer, authority trust,
 revocation, replacement, reset/re-enrollment, entropy, durable
-state and application-effect receipts. Core enrollment authority and trust/store
-contracts exist; authenticated platform providers and the deployed ESP32 workflow
-remain open in [#365](https://github.com/jeffglousher/coaptic/issues/365) and
+state and application-effect receipts. Core enrollment authority, local pairing, managed reconnection and trust/store
+contracts exist. Remaining platform workflows and physical qualification are tracked in [#365](https://github.com/jeffglousher/coaptic/issues/365) and
 [#333](https://github.com/jeffglousher/coaptic/issues/333).
 
 ### Durable offline pairing
@@ -151,7 +146,7 @@ contracts; they are not the default durable-pairing requirement.
 | --- | --- |
 | Committed | Required for the current protocol milestone. Missing implementation or proof remains an open gap. |
 | Contribution opportunity | Contributions welcome outside active MVP development. No delivery promise or completion gate; adoption requires a supported boundary and reviewed implementation/proof. |
-| Selection in progress | Previously planned role being considered individually in the architecture interview. The initial MVP boundary for it is unresolved, not silently removed or completed. |
+| Selection in progress | Previously planned role being considered individually in the scope review. The initial MVP boundary for it is unresolved, not silently removed or completed. |
 | Interest | Candidate capability with no current completion gate. Adoption requires an explicit scope decision. |
 | Reference | Guidance or a dependency with named applicable uses; not a promise to implement every feature in that document. |
 
@@ -174,8 +169,8 @@ Requirement-specific implementation and direct proof are defined by the linked
 RFC ledgers, whose source references resolve in the same Git revision as the
 ledger. Other profile ratings use the general source baseline below.
 
-The three existing ledgers cover selected discovery requirements, EDHOC CoAP
-options and EDHOC error reception. They map a requirement to applicability,
+The focused ledgers cover discovery, EDHOC CoAP options, error reception,
+exporter operations and external authorization data (EAD). They map a requirement to applicability,
 implementation and focused evidence. They are not a count of implemented
 features or tests, and they do not assess their entire RFCs. Complete the missing
 mapping beside each implementation change, reuse applicable source-bound proof,
@@ -313,7 +308,7 @@ whole-RFC wording is withheld while applicable mandatory requirements remain ope
 | P1 | Bounded association/context ownership and fair progress needed by protocol roles. | [#340](https://github.com/jeffglousher/coaptic/issues/340): capacity/epoch/replay/expiry/cancel isolation, checked refusal and valid-peer recovery. |
 | P2 | Remaining discovery metadata/parsing, Observe/selection/transfer APIs, overload/backoff and extended tokens. | [#519](https://github.com/jeffglousher/coaptic/issues/519), [#520](https://github.com/jeffglousher/coaptic/issues/520), [#340](https://github.com/jeffglousher/coaptic/issues/340), [#516](https://github.com/jeffglousher/coaptic/issues/516): narrow clause-driven implementation and independent directions. |
 | P2 | Missing requirement ledgers and independent evidence for established profiles. | [#200](https://github.com/jeffglousher/coaptic/issues/200), [#202](https://github.com/jeffglousher/coaptic/issues/202): finite requirement inventory; no full-compliance claim from fixture totals. |
-| Selection before scheduling | Proxy/cache/gateway, RD, ACE and base multicast roles. | [#517](https://github.com/jeffglousher/coaptic/issues/517), [#519](https://github.com/jeffglousher/coaptic/issues/519), [#365](https://github.com/jeffglousher/coaptic/issues/365), [#518](https://github.com/jeffglousher/coaptic/issues/518): decide each use case, trust model, supported role and completion contract in the architecture interview. Reliable transports/BERT and DTLS are contribution opportunities outside this queue. |
+| Selection before scheduling | Proxy/cache/gateway, RD, ACE and base multicast roles. | [#517](https://github.com/jeffglousher/coaptic/issues/517), [#519](https://github.com/jeffglousher/coaptic/issues/519), [#365](https://github.com/jeffglousher/coaptic/issues/365), [#518](https://github.com/jeffglousher/coaptic/issues/518): decide each use case, trust model, supported role and completion contract in the scope review. Reliable transports/BERT and DTLS are contribution opportunities outside this queue. |
 
 ## Evidence and implementation anchors
 

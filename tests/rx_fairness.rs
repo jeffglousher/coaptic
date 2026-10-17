@@ -107,7 +107,7 @@ fn packet(mid: u16, path: &str, peer: Endpoint) -> Frame {
 }
 fn fixed() -> Service<AppStore<profiles::Default, false>> {
     App::with_resources(resources::Resources::<profiles::Default>::new())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route(
             "old",
@@ -238,7 +238,7 @@ fn fixed_held_response_and_pinned_slot_do_not_hide_queued_owner() {
 #[cfg(feature = "alloc")]
 fn allocated() -> Service<coaptic::storage::AllocMemory> {
     App::with_resources(resources::Resources::<profiles::Default>::new().allocated(usize::MAX))
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route(
             "old",

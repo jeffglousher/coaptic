@@ -26,7 +26,7 @@ macro_rules! check_discovery_uri_path_refusal {
     ($config:expr) => {{
         use coaptic::app::{PathError, RouteError, get};
         let mut builder = App::with_resources($config)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("ok", get(route_status));
         assert_eq!(
@@ -77,7 +77,7 @@ fn route_removal_reclaims_fixed_builder_and_app_capacity() {
     let mut legacy = App::profile::<coaptic::profiles::Constrained>()
         .block_wise::<false>()
         .routes::<1>()
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("old", get(route_status));
     assert!(legacy.remove_route("old").unwrap());
@@ -86,7 +86,7 @@ fn route_removal_reclaims_fixed_builder_and_app_capacity() {
     assert_eq!(legacy.remove_route("new"), Ok(true));
 
     let mut configured = App::with_resources(resources::SmallDevice::new().routes::<1>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("old", get(route_status));
     assert_eq!(
@@ -116,7 +116,7 @@ fn route_removal_reclaims_allocated_capacity_after_call_recovery() {
             .routes::<1>()
             .allocated(64 * 1024),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("old", get(route_status));
     assert_eq!(builder.remove_route("old"), Ok(true));
@@ -150,7 +150,7 @@ fn checked_routes_preserve_fixed_builders_and_apps_after_refusal() {
         .block_wise::<false>()
         .routes::<1>()
         .deterministic_for_tests()
-        .allow_plaintext();
+        .allow_unprotected();
     legacy.try_route("status", get(route_status)).unwrap();
     assert_eq!(
         legacy.try_route_path("extra", get(route_status)).err(),
@@ -162,7 +162,7 @@ fn checked_routes_preserve_fixed_builders_and_apps_after_refusal() {
 
     let mut configured = App::with_resources(resources::SmallDevice::new().routes::<1>())
         .deterministic_for_tests()
-        .allow_plaintext();
+        .allow_unprotected();
     configured
         .try_route_path("status", get(route_status))
         .unwrap();
@@ -187,7 +187,7 @@ fn checked_routes_preserve_allocated_builder_and_app_after_refusal() {
     let config = resources::SmallDevice::new().routes::<1>();
     let mut builder = App::with_resources(config.allocated(64 * 1024))
         .deterministic_for_tests()
-        .allow_plaintext();
+        .allow_unprotected();
     builder.try_route("status", get(route_status)).unwrap();
     assert_eq!(
         builder.try_route("extra", get(route_status)).err(),
@@ -237,7 +237,7 @@ macro_rules! fixed_preset_test {
                         Some(BuildError::SecurityRequired)
                     );
                     let mut app = App::with_resources(<$preset>::new())
-                        .allow_plaintext()
+                        .allow_unprotected()
                         .deterministic_for_tests()
                         .bind(Idle)
                         .unwrap();
@@ -266,13 +266,13 @@ fn custom_resources_refuse_entropy_failure_and_recover() {
         .client_calls::<2>()
         .deferred::<1>();
     let error = App::with_resources(config)
-        .allow_plaintext()
+        .allow_unprotected()
         .randomness(|_| false)
         .bind(Idle)
         .err();
     assert_eq!(error, Some(BuildError::RandomnessUnavailable));
     let mut app = App::with_resources(resources::Resources::<Custom>::new().client_calls::<0>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Idle)
         .unwrap();
@@ -287,7 +287,7 @@ fn custom_resources_refuse_entropy_failure_and_recover() {
 #[test]
 fn calls_are_customized_before_binding_and_recover_after_expiry() {
     let mut app = App::with_resources(resources::SmallDevice::new().client_calls::<1>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Idle)
         .unwrap();
@@ -327,7 +327,7 @@ fn observe_override_preserves_other_dimensions_and_body_selection() {
     assert_eq!(configured.route_capacity(), 8);
     assert_eq!(configured.deferred_capacity(), 2);
     let mut app = App::with_resources(configured)
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Idle)
         .unwrap();
@@ -352,7 +352,7 @@ fn allocated_observe_override_preserves_custom_pool_dimensions() {
     expected.observe_entries = 9;
     assert_eq!(config.pool_capacities(), expected);
     let app = App::with_resources(config)
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Idle)
         .unwrap();
@@ -365,7 +365,7 @@ fn allocated_presets_require_budget_and_preserve_call_bounds() {
     macro_rules! check {
         ($preset:ty, $calls:expr) => {{
             let error = App::with_resources(<$preset>::new().allocated(0))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind(Idle)
                 .err()
@@ -375,7 +375,7 @@ fn allocated_presets_require_budget_and_preserve_call_bounds() {
                 BuildError::HeapBudgetExceeded { limit: 0, .. }
             ));
             let mut app = App::with_resources(<$preset>::new().allocated(2 * 1024 * 1024))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind(Idle)
                 .unwrap();
@@ -403,7 +403,7 @@ fn incompatible_heap_dimensions_refuse_then_valid_configuration_recovers() {
         .capacities(bodies);
     assert_eq!(
         App::with_resources(config)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Idle)
             .err(),
@@ -416,7 +416,7 @@ fn incompatible_heap_dimensions_refuse_then_valid_configuration_recovers() {
         .capacities(bodies);
     assert_eq!(
         App::with_resources(config)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Idle)
             .err(),
@@ -429,7 +429,7 @@ fn incompatible_heap_dimensions_refuse_then_valid_configuration_recovers() {
         .capacities(large);
     assert_eq!(
         App::with_resources(config)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Idle)
             .err(),
@@ -440,7 +440,7 @@ fn incompatible_heap_dimensions_refuse_then_valid_configuration_recovers() {
         .capacities(base);
     assert!(
         App::with_resources(config)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Idle)
             .is_ok()
@@ -453,7 +453,7 @@ fn security_resource_bound_is_zero_sized_without_oscore() {
     let resources = resources::SmallDevice::new().security_requests::<64>();
     assert_eq!(resources.security_request_capacity(), 64);
     let mut app = App::with_resources(resources)
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Idle)
         .unwrap();

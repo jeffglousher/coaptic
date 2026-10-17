@@ -132,7 +132,7 @@ fn fixed_lifetime(lifetime: u64) -> Server {
             .block_wise::<false>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deferred_lifetime(lifetime)
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).observe(source))
@@ -341,7 +341,7 @@ fn deferred_observe_allocated_exact_budget_has_same_lifecycle() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let app = App::with_resources(resources().allocated(budget))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("obs", coaptic::get(handler).observe(source))
             .bind(Io::default())
@@ -752,7 +752,7 @@ fn deferred_observe_deferred_capacity_and_zero_slots_refuse_without_effects() {
             .block_wise::<false>()
             .deferred::<0>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).observe(source))
     .bind(Io::default())
@@ -882,7 +882,7 @@ fn deferred_observe_blocked_owner_does_not_starve_other_relation() {
             .block_wise::<false>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).observe(source))
     .bind(Io::default())
@@ -1008,7 +1008,7 @@ fn deferred_observe_large_initial_without_etag_refuses_available_body_storage() 
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).observe(source))
     .bind(Io::default())

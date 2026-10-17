@@ -1,4 +1,4 @@
-//! README client; explicitly plaintext on localhost.
+//! README client; explicitly unprotected on localhost.
 
 #[path = "support/host_error.rs"]
 pub mod host_error;
@@ -17,7 +17,7 @@ fn main() -> Result<(), host_error::Error> {
     let mut client = App::builder()
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .full_responses()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(UdpSocketIo::new(socket, [0; 1473])?)?;
 
     let peer = Endpoint::v4([127, 0, 0, 1], 5683);

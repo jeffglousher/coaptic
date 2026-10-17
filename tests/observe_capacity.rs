@@ -247,7 +247,7 @@ fn fixed_shared_observe_lifecycle() {
                         .observe_entries::<$n>()
                         .client_calls::<0>(),
                 )
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .route(
                     "value",
@@ -285,7 +285,7 @@ fn allocated_shared_observe_lifecycle_and_budget() {
         let before = IO_CALLS.with(Cell::get);
         let err = no_alloc(|| {
             App::with_resources(make(required - 1))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind(Io::default())
                 .err()
@@ -300,7 +300,7 @@ fn allocated_shared_observe_lifecycle_and_budget() {
             }
         );
         let app = App::with_resources(make(required))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route(
                 "value",

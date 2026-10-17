@@ -133,7 +133,7 @@ fn fixed_lifetime(lifetime: u64) -> Server {
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deferred_lifetime(lifetime)
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).observe(source))
@@ -404,7 +404,7 @@ fn deferred_observe_block2_allocated_exact_budget_matches_fixed() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let s = App::with_resources(resources().allocated(budget))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("obs", coaptic::get(handler).observe(source))
             .bind(Io::default())
@@ -881,7 +881,7 @@ fn deferred_observe_requested_block2_allocated_preserves_preference() {
         .block_wise::<true>()
         .deferred::<2>();
     let s = App::with_resources(resources.allocated(bytes))
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("obs", coaptic::get(handler).observe(source))
         .bind(Io::default())
@@ -1062,7 +1062,7 @@ fn observe_requested_block2_source_updates_and_exact_retry_preserve_cap() {
                 .block_wise::<true>()
                 .deferred::<2>(),
         )
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("obs", coaptic::get(handler).observe(large))
         .bind(Io::default())
@@ -1178,7 +1178,7 @@ fn deferred_observe_requested_block2_invalid_selectors_refuse_then_recover() {
 #[test]
 fn ordinary_separate_block2_without_body_storage_preserves_small_response() {
     let mut s = App::with_resources(Resources::<Buffers>::new().routes::<1>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("obs", coaptic::get(handler))
         .bind(Io::default())

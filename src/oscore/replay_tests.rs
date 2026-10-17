@@ -315,7 +315,7 @@ fn checkpoint_preflight_failure_and_required_policy_stop_before_io() {
         .block_wise::<true>()
         .deferred::<1>()
         .routes::<3>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(super::Loopback::default());
     assert!(matches!(
         result,

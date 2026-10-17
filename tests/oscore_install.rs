@@ -116,7 +116,7 @@ fn fixed() -> TestApp<AppStore<Buffers, true>> {
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -258,7 +258,7 @@ fn oscore_install_allocated_exact_budget_has_same_refusal_and_recovery() {
         .required_heap_bytes()
         .unwrap();
     let app = App::with_resources(resources().allocated(bytes))
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap();
@@ -343,7 +343,7 @@ fn oscore_install_allocated_protected_call_recovery() {
         .unwrap();
     protected_campaign(
         App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap(),
@@ -410,7 +410,7 @@ fn oscore_install_allocated_observe_requires_drain() {
         .unwrap();
     observe_campaign(
         App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap(),
@@ -554,7 +554,7 @@ fn oscore_install_allocated_deferred_snapshot_requires_drain() {
         .unwrap();
     deferred_campaign(
         App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap(),

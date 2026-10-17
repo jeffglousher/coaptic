@@ -213,7 +213,7 @@ pub(crate) fn is_active<const REQUESTS: usize>(_ctx: &Field<REQUESTS>) -> bool {
     false
 }
 
-/// After decode: unprotect an OSCORE message, or reject plaintext.
+/// After decode: unprotect an OSCORE message, or reject unprotected messages.
 ///
 /// When a context is attached, a message without an OSCORE option is
 /// fail-closed except empty ACK/RST (and other empty code-0.00 control
@@ -335,7 +335,7 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// Encode `msg`, or OSCORE-protect a response bound to `request`.
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
-/// not fall back to plaintext. Size misses stay
+/// not fall back to unprotected traffic. Size misses stay
 /// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
 pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &Field<REQUESTS>,
@@ -365,7 +365,7 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// Protect a notification with a new Partial IV (RFC 8613 §4.1.3.5.2).
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
-/// not fall back to plaintext.
+/// not fall back to unprotected traffic.
 pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
     request: Request,

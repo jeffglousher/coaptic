@@ -148,7 +148,7 @@ fn server() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(replace))
     .bind(Io::default())
@@ -172,7 +172,7 @@ fn client() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -288,12 +288,12 @@ fn if_none_match_classic_bounded_heap_has_same_behavior() {
                 .allocated(bytes)
         };
         let client = App::with_resources(resources())
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();
         let server = App::with_resources(resources())
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("upload", put(replace))
             .bind(Io::default())

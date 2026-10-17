@@ -153,7 +153,7 @@ fn fixed() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(upload))
     .bind(Io::default())
@@ -325,7 +325,7 @@ fn non_q_pacing_allocated_both_peers_exact_budget() {
     for protected in [false, cfg!(feature = "oscore")] {
         let make = || {
             App::with_resources(resources().allocated(bytes))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .route("upload", put(upload))
                 .bind(Io::default())
@@ -556,7 +556,7 @@ fn randomized() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .randomness(entropy)
     .route("upload", put(upload))
     .bind(Io::default())

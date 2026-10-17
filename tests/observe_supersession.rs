@@ -126,12 +126,12 @@ fn client(protected: bool) -> Client {
     let builder = if protected {
         builder.oscore(context(&[1], &[2]))
     } else {
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     #[cfg(not(feature = "oscore"))]
     let builder = {
         assert!(!protected);
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     builder.bind(Io::default()).unwrap()
 }
@@ -152,12 +152,12 @@ fn fixed(protected: bool) -> Client {
     let builder = if protected {
         builder.oscore(context(&[2], &[1]))
     } else {
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     #[cfg(not(feature = "oscore"))]
     let builder = {
         assert!(!protected);
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     builder.bind(Io::default()).unwrap()
 }
@@ -169,7 +169,7 @@ fn allocated(protected: bool) -> Server<coaptic::storage::AllocMemory> {
     let short = resources::Resources::<profiles::Default>::new().allocated(required - 1);
     assert!(matches!(
         App::with_resources(short)
-            .allow_plaintext()
+            .allow_unprotected()
             .randomness(random)
             .bind(Io::default()),
         Err(coaptic::BuildError::HeapBudgetExceeded { .. })
@@ -182,12 +182,12 @@ fn allocated(protected: bool) -> Server<coaptic::storage::AllocMemory> {
     let builder = if protected {
         builder.oscore(context(&[2], &[1]))
     } else {
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     #[cfg(not(feature = "oscore"))]
     let builder = {
         assert!(!protected);
-        builder.allow_plaintext()
+        builder.allow_unprotected()
     };
     builder.bind(Io::default()).unwrap()
 }
