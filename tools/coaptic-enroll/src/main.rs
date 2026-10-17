@@ -38,14 +38,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
-            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--connect | --probe | --probe-echo | --probe-denied]"
+            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\ntransfer DEVICE NEW_PEER VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--connect | --probe | --probe-echo | --probe-denied]"
         );
         #[cfg(feature = "development-piv")]
         println!(
             "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor"
         );
         println!(
-            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
+            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-recover PORT UNPAIRED_HOST [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
         );
         return Ok(());
     }
@@ -60,6 +60,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "device-info",
         "pair",
         "revoke",
+        "transfer",
         "pairing-init",
         "pairing-info",
         "peer",
@@ -68,6 +69,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "serial-restart",
         "serial-pair",
         "serial-revoke",
+        "serial-transfer",
+        "serial-recover",
     ]
     .iter()
     .any(|value| command == *value)
@@ -87,6 +90,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "serial-restart",
         "serial-pair",
         "serial-revoke",
+        "serial-transfer",
+        "serial-recover",
     ]
     .iter()
     .any(|value| command == *value)
@@ -97,9 +102,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if development {
         return piv_cli::run(&command, args, &directory);
     }
-    if ["pair", "revoke", "pairing-init", "pairing-info", "peer"]
-        .iter()
-        .any(|value| command == *value)
+    if [
+        "pair",
+        "revoke",
+        "transfer",
+        "pairing-init",
+        "pairing-info",
+        "peer",
+    ]
+    .iter()
+    .any(|value| command == *value)
     {
         return pairing_cli::run(&command, args, &directory);
     }

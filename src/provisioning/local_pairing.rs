@@ -26,7 +26,7 @@ pub enum PairingError {
     Binding,
     /// No fresh challenge, failed entropy, expired deadline or clock regression.
     Challenge,
-    /// A different owner already holds the device, including after revocation.
+    /// The current owner differs, is absent, or a transfer does not change owner.
     Owner,
     /// Access is disabled, unpaired or blocked by an uncertain write.
     Unauthorized,
@@ -292,6 +292,7 @@ pub struct PairingUpdate {
     challenge: PairingChallenge,
     policy: EnrollmentPolicy,
     revoke: bool,
+    current_owner: Option<[u8; 32]>,
 }
 
 impl PairingUpdate {
@@ -302,7 +303,27 @@ impl PairingUpdate {
             challenge,
             policy,
             revoke,
+            current_owner: None,
         }
+    }
+
+    /// Bind an explicit transfer to the authenticated current owner's approval.
+    /// Both owners, the new peer/permissions and the complete live challenge
+    /// must be covered by that approval. Owner bytes alone authenticate nothing.
+    pub fn transfer(
+        challenge: PairingChallenge,
+        current_owner: [u8; 32],
+        policy: EnrollmentPolicy,
+    ) -> Result<Self, PairingError> {
+        if current_owner == [0; 32] || &current_owner == policy.owner() {
+            return Err(PairingError::Owner);
+        }
+        Ok(Self {
+            challenge,
+            policy,
+            revoke: false,
+            current_owner: Some(current_owner),
+        })
     }
 
     /// Public device challenge bound by the operator approval.
@@ -321,6 +342,13 @@ impl PairingUpdate {
         self.revoke
     }
 
+    /// Current owner releasing the device, only for an explicit transfer.
+    /// The policy names the destination owner. This metadata is not a proof.
+    #[must_use]
+    pub const fn current_owner(&self) -> Option<&[u8; 32]> {
+        self.current_owner.as_ref()
+    }
+
     /// Encode at most 384 bytes of canonical application CBOR v1.
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, PairingError> {
         let mut challenge = [0; CAPACITY];
@@ -329,12 +357,19 @@ impl PairingUpdate {
             bytes: output,
             pos: 0,
         };
-        out.raw(&[0x87, 1, u8::from(self.revoke)])?;
+        if self.current_owner.is_some() {
+            out.raw(&[0x88, 1, 2])?;
+        } else {
+            out.raw(&[0x87, 1, u8::from(self.revoke)])?;
+        }
         out.bytes(&challenge[..len])?;
         out.bytes(&self.policy.peer().public_key())?;
         out.uint(u64::from(self.policy.peer().kid()))?;
         out.bytes(self.policy.owner())?;
         out.bytes(self.policy.resource_policy())?;
+        if let Some(owner) = &self.current_owner {
+            out.bytes(owner)?;
+        }
         Ok(out.pos)
     }
 
@@ -347,10 +382,12 @@ impl PairingUpdate {
             bytes: input,
             pos: 0,
         };
-        read.exact(&[0x87, 1])?;
-        let revoke = match read.uint()? {
-            0 => false,
-            1 => true,
+        let array = read.take(1)?[0];
+        read.exact(&[1])?;
+        let (revoke, transfer) = match (array, read.uint()?) {
+            (0x87, 0) => (false, false),
+            (0x87, 1) => (true, false),
+            (0x88, 2) => (false, true),
             _ => return Err(PairingError::Record),
         };
         read.exact(&[0x58])?;
@@ -363,6 +400,7 @@ impl PairingUpdate {
         let kid = read.uint()?.try_into().map_err(|_| PairingError::Record)?;
         let owner = read.bytes()?;
         let permissions = read.bytes()?;
+        let current_owner = if transfer { Some(read.bytes()?) } else { None };
         read.finish()?;
         let policy = EnrollmentPolicy::new(
             PinnedPeer::from_public_key(&peer, kid).map_err(|_| PairingError::Record)?,
@@ -370,20 +408,22 @@ impl PairingUpdate {
             permissions,
         )
         .map_err(|_| PairingError::Record)?;
-        Ok(Self {
-            challenge,
-            policy,
-            revoke,
-        })
+        match current_owner {
+            Some(owner) => Self::transfer(challenge, owner, policy),
+            None => Ok(Self::new(challenge, policy, revoke)),
+        }
     }
 
-    /// Consume through the owner-preserving local management path.
+    /// Consume through the exact authenticated local management path.
     pub fn apply<E>(
         &self,
         state: &mut LocalPairing,
         now_ms: u64,
         commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), E>,
     ) -> Result<(), PairingCommitError<E>> {
+        if let Some(owner) = &self.current_owner {
+            return state.transfer(&self.challenge, owner, self.policy.clone(), now_ms, commit);
+        }
         if self.revoke {
             if state.record.policy.as_ref().is_none_or(|old| {
                 old.peer().principal() != self.policy.peer().principal()
@@ -541,6 +581,41 @@ impl LocalPairing {
         self.commit(next, commit)
     }
 
+    /// Transfer to an explicitly approved new owner, peer and permissions.
+    /// Authenticate `current_owner` on the privileged local channel and bind its
+    /// approval to this complete challenge and destination policy. The current
+    /// claim remains authoritative after revocation; ordinary `pair` cannot
+    /// transfer it. Stop/discard every old session and App before calling, then
+    /// establish fresh sessions from the committed policy. This never resets
+    /// the device identity, store or revision, and grants no rollback protection.
+    pub fn transfer<E>(
+        &mut self,
+        challenge: &PairingChallenge,
+        current_owner: &[u8; 32],
+        policy: EnrollmentPolicy,
+        now_ms: u64,
+        commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), E>,
+    ) -> Result<(), PairingCommitError<E>> {
+        self.check(challenge, now_ms)
+            .map_err(PairingCommitError::State)?;
+        if self
+            .record
+            .policy
+            .as_ref()
+            .is_none_or(|old| old.owner() != current_owner)
+            || policy.owner() == current_owner
+        {
+            return Err(PairingCommitError::State(PairingError::Owner));
+        }
+        if challenge.device.public_x() == policy.peer().public_x() {
+            return Err(PairingCommitError::State(PairingError::Binding));
+        }
+        let mut next = self.record.clone();
+        next.policy = Some(policy);
+        next.enabled = true;
+        self.commit(next, commit)
+    }
+
     fn check(&mut self, challenge: &PairingChallenge, now_ms: u64) -> Result<(), PairingError> {
         let pending = self.pending.take().ok_or(PairingError::Challenge)?;
         if self.blocked || now_ms < pending.1 || now_ms >= pending.2 || pending.0 != challenge.nonce
@@ -682,6 +757,10 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "local_transfer_tests.rs"]
+mod transfer_tests;
 
 #[cfg(test)]
 mod tests {

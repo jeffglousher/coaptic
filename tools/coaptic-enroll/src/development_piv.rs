@@ -299,6 +299,64 @@ mod tests {
     }
 
     #[test]
+    fn transfer_development_proof_covers_both_owners_and_refuses_rebinding() {
+        use coaptic::provisioning::{EnrollmentPolicy, LocalPairing, PairingRecord};
+        let (operator, key) = fixture();
+        let device = Identity::from_private_key([1; 32], 1).unwrap();
+        let peer = Identity::from_private_key([2; 32], 2).unwrap();
+        let mut state =
+            LocalPairing::restore(&device, PairingRecord::unpaired(&device, [3; 32]).unwrap())
+                .unwrap();
+        let first = state
+            .begin(&device, 0, |out| getrandom::fill(out).is_ok())
+            .unwrap();
+        state
+            .pair(
+                &first,
+                EnrollmentPolicy::new(peer.peer(), operator.owner().unwrap(), [4; 32]).unwrap(),
+                1,
+                |_, _| Ok::<(), ()>(()),
+            )
+            .unwrap();
+        let challenge = state
+            .begin(&device, 2, |out| getrandom::fill(out).is_ok())
+            .unwrap();
+        let destination = EnrollmentPolicy::new(peer.peer(), [9; 32], [5; 32]).unwrap();
+        let request =
+            Request::for_transfer(&challenge, operator.owner().unwrap(), &destination).unwrap();
+        let pending = operator.begin(request.clone()).unwrap();
+        let signature = EcdsaSig::sign(pending.digest(), &key)
+            .unwrap()
+            .to_der()
+            .unwrap();
+        let mut changed = request;
+        changed.next_owner = [8; 32];
+        assert!(matches!(
+            operator
+                .begin(changed)
+                .unwrap()
+                .finish(&signature, |_, _| panic!("rebound transfer persisted")),
+            Err(Error::Authentication)
+        ));
+        let approval = pending.finish(&signature, |_, _| Ok(())).unwrap();
+        approval
+            .commit(|request| {
+                request.matches_pairing(&challenge)?;
+                state
+                    .transfer(
+                        &challenge,
+                        &request.owner,
+                        request.pairing_policy()?,
+                        3,
+                        |_, _| Ok::<(), ()>(()),
+                    )
+                    .map_err(|_| Error::Persistence)
+            })
+            .unwrap();
+        assert_eq!(state.checkpoint().policy().unwrap().owner(), &[9; 32]);
+    }
+
+    #[test]
     fn refuses_replay_changed_request_and_profile_confusion() {
         let (operator, key) = fixture();
         let pending = operator.begin(request(&operator)).unwrap();

@@ -14,10 +14,11 @@ device-record = {
 }
 commissioning-request = {
   version: 1,
-  action: "pair" / "revoke",
+  action: "pair" / "revoke" / "transfer",
   device: public-identity,
   peer: public-identity,
   owner: bstr .size 32,
+  ? next_owner: bstr .size 32, ; nonzero only for transfer, different from owner
   permissions: bstr .size 32,
   store: bstr .size 32,
   revision: 1..18446744073709551615,
@@ -35,3 +36,18 @@ development-piv-operator = {
 }
 
 sealed-pairing = { version: 1, sealed: bstr }
+
+; Core privileged-local updates are at most 384 encoded bytes. The opaque
+; challenge contains the exact device credential, store/revision/digest and nonce.
+; Transport authentication and current-owner approval are external to these bytes.
+pairing-update = [
+  version: 1, action: 0 / 1, challenge: bstr .size (1..224),
+  peer_key: bstr .size 65, peer_kid: 0..255,
+  owner: bstr .size 32, permissions: bstr .size 32
+]
+pairing-transfer = [
+  version: 1, action: 2, challenge: bstr .size (1..224),
+  peer_key: bstr .size 65, peer_kid: 0..255,
+  next_owner: bstr .size 32, permissions: bstr .size 32,
+  current_owner: bstr .size 32
+]

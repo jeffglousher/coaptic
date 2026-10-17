@@ -115,7 +115,7 @@ pub fn run(
     let host = device::restore(&host_directory)?;
     let store = PairingFile::open(&host_directory)?;
     let mut local = store.restore(&host)?;
-    let endpoint = if command == "serial-pair" {
+    let endpoint = if command == "serial-pair" || command == "serial-transfer" {
         let address = args.next().ok_or("missing host IPv4 address:port")?;
         let address = address
             .to_str()
@@ -132,12 +132,27 @@ pub fn run(
     } else {
         None
     };
+    let next_owner = if command == "serial-transfer" {
+        if local.checkpoint().policy().is_some() {
+            return Err(
+                "transfer requires an explicitly provisioned, unpaired destination host".into(),
+            );
+        }
+        Some(super::pairing_cli::parse_owner(
+            &args.next().ok_or("missing new owner commitment")?,
+        )?)
+    } else {
+        None
+    };
     let mut development = false;
     let mut write = true;
     for option in args {
         if option == "--development-no-touch" && !development {
             development = true;
-        } else if option == "--read-only" && write && command == "serial-pair" {
+        } else if option == "--read-only"
+            && write
+            && (command == "serial-pair" || command == "serial-transfer")
+        {
             write = false;
         } else {
             return Err("unexpected or repeated commissioning option".into());
@@ -154,7 +169,45 @@ pub fn run(
         return Err("device and host identities must differ".into());
     }
     let started = Instant::now();
+    let recovery = if command == "serial-recover" {
+        Some(coaptic_enroll::recovery::PeerRecovery::new(
+            device_pin.clone(),
+            record.clone(),
+            local.checkpoint(),
+        )?)
+    } else {
+        None
+    };
     let local_challenge = local.begin(&host, 0, |out| getrandom::fill(out).is_ok())?;
+    if let Some(recovery) = recovery {
+        super::pairing_cli::approve(
+            directory,
+            development,
+            |owner| recovery.request(&local_challenge, owner),
+            |request| {
+                let CommissioningReply::State { device, record } = usb
+                    .request(&CommissioningRequest::Inspect)
+                    .map_err(|_| Error::Persistence)?
+                else {
+                    return Err(Error::Persistence);
+                };
+                recovery.commit(
+                    request,
+                    &local_challenge,
+                    (&device, &record),
+                    &mut local,
+                    started
+                        .elapsed()
+                        .as_millis()
+                        .try_into()
+                        .map_err(|_| Error::Expired)?,
+                    |old, next| store.commit(old, next),
+                )
+            },
+        )?;
+        println!("Host pairing recovered from the device's current policy.");
+        return Ok(());
+    }
     let CommissioningReply::Challenge(challenge) = usb.request(&CommissioningRequest::Challenge)?
     else {
         return Err("unexpected device challenge response".into());
@@ -166,6 +219,8 @@ pub fn run(
     }
     let action = if command == "serial-revoke" {
         Action::Revoke
+    } else if command == "serial-transfer" {
+        Action::Transfer
     } else {
         Action::Pair
     };
@@ -178,6 +233,18 @@ pub fn run(
             .is_some_and(|policy| policy.owner() != &owner)
         {
             return Err(Error::Input);
+        }
+        if action == Action::Transfer {
+            if device_policy
+                .as_ref()
+                .is_none_or(|old| old.owner() != &owner)
+            {
+                return Err(Error::Input);
+            }
+            let policy =
+                EnrollmentPolicy::new(host.peer(), next_owner.ok_or(Error::Input)?, permission)
+                    .map_err(|_| Error::Input)?;
+            return Request::for_transfer(&challenge, owner, &policy);
         }
         let policy = if action == Action::Revoke {
             let policy = device_policy.clone().ok_or(Error::Input)?;
@@ -198,11 +265,13 @@ pub fn run(
     };
     super::pairing_cli::approve(directory, development, make_request, |request| {
         request.matches_pairing(&challenge)?;
-        let policy =
-            EnrollmentPolicy::new(request.peer.peer()?, request.owner, request.permissions)
-                .map_err(|_| Error::Input)?;
-        let update =
-            PairingUpdate::new(challenge.clone(), policy.clone(), action == Action::Revoke);
+        let policy = request.pairing_policy()?;
+        let update = if action == Action::Transfer {
+            PairingUpdate::transfer(challenge.clone(), request.owner, policy.clone())
+                .map_err(|_| Error::Input)?
+        } else {
+            PairingUpdate::new(challenge.clone(), policy.clone(), action == Action::Revoke)
+        };
         // Revocation retains the existing routing hint. The destination itself
         // is not an identity; this value is unused once access is disabled.
         let destination = endpoint.unwrap_or(Endpoint::v4([127, 0, 0, 1], 1));
@@ -219,7 +288,7 @@ pub fn run(
         if committed.store() != record.store()
             || record.revision().checked_add(1) != Some(committed.revision())
             || committed.local_principal() != device_pin.principal().fingerprint()
-            || committed.enabled() != (action == Action::Pair)
+            || committed.enabled() != (action != Action::Revoke)
             || approved.peer().principal() != policy.peer().principal()
             || approved.owner() != policy.owner()
             || approved.resource_policy() != policy.resource_policy()
@@ -231,9 +300,9 @@ pub fn run(
             .as_millis()
             .try_into()
             .map_err(|_| Error::Expired)?;
-        if action == Action::Pair {
+        if action != Action::Revoke {
             let reciprocal =
-                EnrollmentPolicy::new(device_pin.clone(), request.owner, request.permissions)
+                EnrollmentPolicy::new(device_pin.clone(), *policy.owner(), request.permissions)
                     .map_err(|_| Error::Input)?;
             local
                 .pair(&local_challenge, reciprocal, now, |old, next| {

@@ -76,10 +76,17 @@ pub fn run(
             probe,
         );
     }
-    let peer = if command == "pair" {
+    let peer = if command == "pair" || command == "transfer" {
         let peer_name = args.next().ok_or("missing peer device name")?;
         let peer_directory = super::device_directory(directory, &peer_name)?;
         Some(device::restore(&peer_directory)?.peer())
+    } else {
+        None
+    };
+    let next_owner = if command == "transfer" {
+        Some(parse_owner(
+            &args.next().ok_or("missing new owner commitment")?,
+        )?)
     } else {
         None
     };
@@ -88,7 +95,7 @@ pub fn run(
     for option in args {
         if option == "--development-no-touch" && !development {
             development = true;
-        } else if option == "--read-only" && write && command == "pair" {
+        } else if option == "--read-only" && write && (command == "pair" || command == "transfer") {
             write = false;
         } else {
             return Err("unexpected or repeated pairing option".into());
@@ -98,6 +105,8 @@ pub fn run(
     let challenge = state.begin(&identity, 0, |out| getrandom::fill(out).is_ok())?;
     let action = if command == "pair" {
         Action::Pair
+    } else if command == "transfer" {
+        Action::Transfer
     } else {
         Action::Revoke
     };
@@ -106,10 +115,17 @@ pub fn run(
     let make_request = |owner| {
         let policy = match &peer {
             Some(peer) => {
-                EnrollmentPolicy::new(peer.clone(), owner, permissions).map_err(|_| Error::Input)?
+                EnrollmentPolicy::new(peer.clone(), next_owner.unwrap_or(owner), permissions)
+                    .map_err(|_| Error::Input)?
             }
             None => existing.clone().ok_or(Error::Input)?,
         };
+        if action == Action::Transfer {
+            if existing.as_ref().is_none_or(|old| old.owner() != &owner) {
+                return Err(Error::Input);
+            }
+            return Request::for_transfer(&challenge, owner, &policy);
+        }
         if policy.owner() != &owner {
             return Err(Error::Input);
         }
@@ -186,6 +202,12 @@ fn review(request: &Request, development: bool) -> Result<(), Error> {
         super::hex(&request.owner),
         super::hex(&request.permissions)
     );
+    if request.action == Action::Transfer {
+        println!(
+            "Transfer to owner {}. Verify this owner and the destination peer before approval.",
+            super::hex(&request.next_owner)
+        );
+    }
     println!(
         "Transaction {}{}",
         super::hex(&request.commitment()?),
@@ -196,4 +218,21 @@ fn review(request: &Request, development: bool) -> Result<(), Error> {
         }
     );
     Ok(())
+}
+
+pub fn parse_owner(value: &OsStr) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let value = value.to_str().ok_or("invalid new owner commitment")?;
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "new owner must be an independently verified 32-byte hexadecimal commitment".into(),
+        );
+    }
+    let mut owner = [0; 32];
+    for (index, byte) in owner.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)?;
+    }
+    if owner == [0; 32] {
+        return Err("new owner must be nonzero".into());
+    }
+    Ok(owner)
 }
