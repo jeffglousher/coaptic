@@ -586,6 +586,37 @@ pub(crate) struct ClientLives<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
+    pub(super) fn next_timeout<Mem: Storage + Exchanges + ObserveSlots>(
+        &self,
+        engine: &Engine<Mem>,
+        inbox: &ClientInbox<CALLS>,
+    ) -> Option<u64> {
+        self.rows
+            .iter()
+            .flatten()
+            .filter_map(|live| {
+                let mut next = (live.backoff_until_ms != 0).then_some(live.backoff_until_ms);
+                if live.retired {
+                    return next;
+                }
+                if live.q_pace_ms != 0 {
+                    next = Some(next.map_or(live.q_pace_ms, |old| old.min(live.q_pace_ms)));
+                }
+                if !inbox.contains(live.call) || client_observe_live(engine, live.call) {
+                    next = next.into_iter().chain(live.deadline_ms).min();
+                    if live.due_ms != 0
+                        && engine
+                            .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer()))
+                            .is_some()
+                    {
+                        next = Some(next.map_or(live.due_ms, |old| old.min(live.due_ms)));
+                    }
+                }
+                next
+            })
+            .min()
+    }
+
     pub(super) fn has_protocol_state(&self) -> bool {
         self.rows.iter().flatten().any(|row| !row.retired)
     }
