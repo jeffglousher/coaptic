@@ -1,12 +1,14 @@
 # coaptic
 
-CoAP over UDP for constrained devices and host services, written in Rust.
+CoAP over UDP for devices and host services, written in Rust, with explicit
+memory and work bounds for reliable operation.
 Serve resources, send requests, subscribe with Observe and transfer larger
 bodies through one client/server API. OSCORE message protection and fixed storage
 are the defaults. The core supports `no_std`; `std` and `alloc` are independent.
 
-Version **0.0.10** is available from Git while publication is being prepared.
-Development focuses on UDP, OSCORE, EDHOC and durable device provisioning.
+Coaptic is pre-release and available from Git. Current development prioritizes
+completing UDP/OSCORE capabilities, EDHOC, durable provisioning and device/host
+integration. APIs may change directly during development.
 
 ## Run a protected exchange
 
@@ -67,12 +69,21 @@ handlers. The same service can use a microcontroller adapter or a nonblocking
 host UDP socket. `platform::CheckedClock` checks fallible timer reads and refuses
 backward time. Use one clock epoch for all timed App operations.
 
-Select `SmallDevice`, `Device`, `Gateway` or `Service` resources before binding.
-Customize capacities there; use `.allocated(limit)` for bounded heap pools.
+Start device integration with `SmallDevice`: constrained packet pools, four
+routes and one client Call. Customize capacities before binding; choose `Device`,
+`Gateway` or `Service` when the workload needs their larger starting budgets.
+Use `.allocated(limit)` for bounded heap pools.
 The heap limit covers requested pool allocations, not whole-process memory.
 Collect complete replies with `take_response_into` and a caller-owned buffer.
 See rustdoc for resource capacities, response lifetimes, Observe and block-wise
 contracts rather than inferring them from a preset's name.
+
+These are configurations of the same App. Blockwise transfers split larger
+messages across packets and reserve bounded body storage when enabled. A report
+should say, for example, "SmallDevice, OSCORE, blockwise enabled" and name any
+capacity overrides. "Constrained" means predictable resource use, not missing
+capabilities. Pool capacity and App size are only parts of the deployment budget;
+account for stack, scratch and platform transport storage as well.
 
 Our physical target is the Waveshare ESP32-S3, using the companion
 [ESPHome integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification).
