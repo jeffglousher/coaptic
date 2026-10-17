@@ -2797,7 +2797,12 @@ fn qblock2_recover_sent_from_poll() {
             Some(40),
         )
         .expect("2");
+    assert_eq!(app.next_timeout(), Some(0));
     app.poll(0).expect("arm");
+    assert_eq!(
+        app.next_timeout(),
+        Some(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+    );
     assert!(app.transport().last_send.is_none());
     app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
         .expect("poll recover");
@@ -4470,6 +4475,55 @@ fn record_client() -> App<profiles::Default, RecordIo> {
         .expect("bind")
 }
 
+#[test]
+fn next_timeout_observes_retransmission_without_consuming_it() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    assert_eq!(app.next_timeout(), None);
+    let call = app.get("value").to(peer).send(100).unwrap();
+    let first = app.next_timeout().unwrap();
+    assert_eq!(app.next_poll_at(100), Some(first));
+    assert_eq!(app.next_poll_at(first + 1), Some(first + 1));
+    assert!(first >= 100 + u64::from(Transmission::ACK_TIMEOUT_MS));
+    let sent = app.transport().sent_n;
+    assert_eq!(app.next_timeout(), Some(first));
+    assert_eq!(app.transport().sent_n, sent);
+    app.poll(first - 1).unwrap();
+    assert_eq!(app.transport().sent_n, sent);
+    app.poll(first).unwrap();
+    assert_eq!(app.transport().sent_n, sent + 1);
+    assert!(app.next_timeout().unwrap() > first);
+    assert!(app.cancel(call));
+    assert_eq!(app.next_timeout(), None);
+}
+
+#[test]
+fn next_poll_at_retained_ingress_does_not_rotate_or_consume_slots() {
+    let mut app = record_client();
+    assert_eq!(app.next_poll_at(10), None);
+    let rx = app.engine_mut().acquire_rx().unwrap();
+    let cursor = app.engine_mut().rx_cursor();
+    assert_eq!(app.next_poll_at(10), Some(10));
+    assert_eq!(app.next_poll_at(11), Some(11));
+    assert_eq!(app.engine_mut().rx_cursor(), cursor);
+    assert_eq!(app.engine_mut().rx_occupied(), 1);
+    app.engine_mut().release_rx(rx).unwrap();
+    assert_eq!(app.next_poll_at(12), None);
+}
+
+#[test]
+fn next_timeout_excludes_completed_call_deadline_until_collection() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let call = app.get("value").to(peer).deadline(9_000).send(0).unwrap();
+    overload_reply(&mut app, call, Code::CONTENT, None, 1);
+    assert_eq!(app.next_timeout(), None);
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::CONTENT
+    );
+}
+
 fn inject_piggyback_ack(
     app: &mut App<profiles::Default, RecordIo>,
     peer: Endpoint,
@@ -5865,6 +5919,7 @@ fn deadline_refusal_boundary_and_reused_tx_ownership() {
         .send(10)
         .unwrap();
     let second = app.get("other").to(peer).send(11).unwrap();
+    assert_eq!(app.next_timeout(), Some(20));
     app.poll(19).unwrap();
     assert!(app.take_response(first).is_none());
     app.poll(20).unwrap();
@@ -5878,7 +5933,9 @@ fn deadline_refusal_boundary_and_reused_tx_ownership() {
         "expired NON must not free another call's reused TX"
     );
     assert!(client_exchange_live(&app, second));
+    assert!(app.next_timeout().unwrap() > 20);
     assert!(app.cancel(second));
+    assert_eq!(app.next_timeout(), None);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     assert_eq!(
         app.transport().sent_n,
@@ -9087,6 +9144,9 @@ fn failed_delete_keeps_observers_and_pending_non_hold_delays_successful_delete_n
         0,
         "deletion does not discard prior NON pacing hold"
     );
+    let wake = 2 + u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    assert_eq!(app.next_poll_at(4), Some(wake));
+    assert_eq!(app.next_poll_at(wake), Some(wake));
     app.poll(10_000).unwrap();
     assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
     assert_eq!(last_wide(&app).ty(), Type::Confirmable);
@@ -12852,6 +12912,11 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
     app.poll(1).unwrap();
     app.poll(2).unwrap(); // held RX must not be dispatched a second time
     assert_eq!(app.engine_mut().rx_occupied(), 1);
+    assert_eq!(
+        app.next_poll_at(2),
+        None,
+        "held response is not dispatch work"
+    );
     let mut short = [0xA5; 199];
     assert!(matches!(
         app.take_response_into(call, &mut short),
@@ -13164,6 +13229,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
         .unwrap();
         assert!(handle.is_some());
     }
+    assert_eq!(app.next_timeout(), Some(10));
     let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 104);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.poll_with(1, |_, candidate| {
@@ -14196,7 +14262,9 @@ fn overload_backoff_defaults_zero_expiry_and_collection() {
             let mut app = record_client();
             let call = app.get("target").to(peer).send(0).unwrap();
             overload_reply(&mut app, call, code, age, 10);
+            assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+            assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             if delay > 0 {
                 let sent = app.transport().sent_n;
                 assert_eq!(
