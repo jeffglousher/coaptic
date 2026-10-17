@@ -48,5 +48,8 @@ fn udp_overload_backoff_preserves_other_resource_progress() {
             client.get("busy").to(peer).send(now + 1),
             Err(Error::Backoff { .. })
         ));
+        let cooldown = if path == "busy" { now + 2000 } else { 2000 };
+        assert_eq!(client.next_timeout(), Some(cooldown));
+        assert_eq!(client.next_poll_at(now), Some(cooldown));
     }
 }
