@@ -59,11 +59,24 @@ pub enum Error {
     Counter,
     /// Durable operator state was not confirmed; approval is unusable.
     Persistence,
+    /// The device explicitly refused the commissioning request.
+    DeviceRefused(u8),
+    /// The commissioning exchange failed; a device update may have committed.
+    Commissioning(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "operator approval refused: {self:?}")
+        match self {
+            Self::DeviceRefused(code) => {
+                write!(f, "device refused commissioning request (code {code})")
+            }
+            Self::Commissioning(reason) => write!(
+                f,
+                "commissioning exchange failed: {reason}; inspect device state before retrying"
+            ),
+            _ => write!(f, "operator approval refused: {self:?}"),
+        }
     }
 }
 impl std::error::Error for Error {}
