@@ -13229,6 +13229,9 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
         .unwrap();
         assert!(handle.is_some());
     }
+    let full = app.resource_usage();
+    assert_eq!(full.deferred.capacity, 4);
+    assert_eq!(full.deferred.occupied, 4);
     assert_eq!(app.next_timeout(), Some(10));
     let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 104);
     app.transport_mut().inbox = Some((peer, wire, n));
@@ -13244,6 +13247,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
     );
     assert!(app.cancel_deferred(handles[0].unwrap()));
     assert!(!app.cancel_deferred(handles[0].unwrap()));
+    assert_eq!(app.resource_usage().deferred.occupied, 3);
     app.transport_mut().inbox = Some((peer, wire, n));
     let mut new = None;
     // New MID is needed after the refusal's live duplicate history.
@@ -14264,6 +14268,11 @@ fn overload_backoff_defaults_zero_expiry_and_collection() {
             overload_reply(&mut app, call, code, age, 10);
             assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+            let usage = app.resource_usage();
+            assert_eq!(usage.client_cooldowns, usize::from(delay > 0));
+            assert_eq!(usage.client_requests.occupied, usize::from(delay > 0));
+            assert_eq!(usage.completed_replies, 0);
+            assert_eq!(usage.client_replies.occupied, 0);
             assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             if delay > 0 {
                 let sent = app.transport().sent_n;
@@ -14800,6 +14809,9 @@ fn associations_share_endpoint_nstart_and_pinned_revocation_stops_old_sends() {
         super::OscoreInstallError::Busy
     );
     assert!(!app.association_is_active(a));
+    let revoked = app.resource_usage();
+    assert_eq!(revoked.security.unwrap().occupied, 2);
+    assert_eq!(revoked.revoked_associations, 1);
     assert!(!app.association_context(a).unwrap().has_live_requests());
     assert_eq!(
         app.take_response(call).unwrap().unwrap_err(),
@@ -14819,6 +14831,9 @@ fn associations_share_endpoint_nstart_and_pinned_revocation_stops_old_sends() {
         .unpin(tx)
         .unwrap();
     app.remove_association(a).unwrap();
+    let reclaimed = app.resource_usage();
+    assert_eq!(reclaimed.security.unwrap().occupied, 1);
+    assert_eq!(reclaimed.revoked_associations, 0);
     assert!(app.association_is_active(b));
     assert!(app.cancel(survivor));
 }

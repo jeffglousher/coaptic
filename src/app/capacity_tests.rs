@@ -63,6 +63,13 @@ impl DatagramIo for Io {
 type Client<S, const C: usize> = App<Eight, Io, DEFAULT_ROUTES, false, S, 0, C>;
 
 fn expiry<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
+    let empty = app.resource_usage();
+    assert_eq!(empty.client_requests.capacity, C);
+    assert_eq!(empty.client_requests.occupied, 0);
+    assert_eq!(empty.client_replies.capacity, C);
+    assert_eq!(empty.deferred.capacity, 0);
+    #[cfg(not(feature = "oscore"))]
+    assert_eq!(empty.security, None);
     let mut calls = [None; C];
     for call in &mut calls {
         *call = Some(
@@ -79,7 +86,14 @@ fn expiry<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
         Err(Error::Saturated)
     );
     assert_eq!(app.transport().sent, C);
+    let pending = app.resource_usage();
+    assert_eq!(pending.client_requests.occupied, C);
+    assert_eq!(pending.completed_replies, 0);
+    assert_eq!(app.resource_usage(), pending);
     app.poll(10).unwrap();
+    let expired = app.resource_usage();
+    assert_eq!(expired.client_replies.occupied, C);
+    assert_eq!(expired.completed_replies, C);
     // Failure completions are retained until collected, just like successes.
     assert_eq!(
         app.get("extra").non().to(PEER).send(10),
@@ -92,6 +106,10 @@ fn expiry<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
         );
     }
     assert_eq!(app.engine_mut().tx_occupied(), 0);
+    let collected = app.resource_usage();
+    assert_eq!(collected.client_requests.occupied, 0);
+    assert_eq!(collected.client_replies.occupied, 0);
+    assert_eq!(collected.completed_replies, 0);
     app.get("recovered").non().to(PEER).send(11).unwrap();
 }
 
