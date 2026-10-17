@@ -99,9 +99,9 @@
 //! advances the retained 24-bit sequence while replacing scheduling and OSCORE
 //! request state. After that relation is removed, or when a new App is
 //! constructed, the next registration starts at sequence 0. Notifications are
-//! selected by exact path segments. App declines FETCH and query-bearing GET
-//! registrations with an ordinary selected response without Observe, including
-//! explicit handler opt-in: per-relation selection ownership is not implemented.
+//! selected by exact path segments. [`MethodRouter::observe_selected`] retains
+//! each GET/FETCH selection for notification callbacks. Requestless sources
+//! decline FETCH and query-bearing GET registration with an ordinary response.
 //! Client subscribe/refresh uses [`Outgoing::observe`] /
 //! [`Outgoing::reregister_call`]; cancellation uses
 //! [`Outgoing::deregister`] on the same [`Call`]. Echo verification
@@ -309,6 +309,15 @@ struct DeferredSelection {
 }
 impl DeferredSelection {
     fn from_request(parsed: &ParsedMessage<'_>) -> Result<Self, EncodeError> {
+        Self::from_parts(parsed, parsed.payload())
+    }
+    fn stored(self) -> crate::storage::ObserveSelection {
+        crate::storage::ObserveSelection {
+            bytes: self.bytes,
+            len: self.len as u16,
+        }
+    }
+    fn from_parts(parsed: &ParsedMessage<'_>, payload: &[u8]) -> Result<Self, EncodeError> {
         let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
         for option in parsed.options().filter(|option| {
             (parsed.code() == Code::FETCH && option.number() == crate::message::OptionNumber::ETAG)
@@ -325,9 +334,10 @@ impl DeferredSelection {
             push_opt(&mut options, option)?;
         }
         let message = Message::new(Type::NonConfirmable, parsed.code(), MessageId::new(0))
+            .with_token(parsed.token())
             .with_options(options.as_slice())
             .with_payload(if parsed.code() == Code::FETCH {
-                parsed.payload()
+                payload
             } else {
                 &[]
             });
@@ -630,7 +640,8 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
             .with_resource(observe.resource)
             .with_seq(sequence)
             .with_content_format(response.format())
-            .with_block2_max_szx(row.meta.block2.map(|b| b.szx()));
+            .with_block2_max_szx(row.meta.block2.map(|b| b.szx()))
+            .with_selection(Some(row.selection.stored()));
         #[cfg(feature = "oscore")]
         {
             interest = interest.with_oscore(row.meta.oscore);
@@ -2215,6 +2226,9 @@ where
     /// The body snapshot survives incomplete same-Token follow-up blocks,
     /// including send failure. Final-reply caching/completion, cancellation, replacement registration,
     /// matching notification RST or CON give-up releases it.
+    /// This broadcasts the supplied response to every matching relation. For
+    /// per-observer selections, use [`Self::signal`] with
+    /// [`MethodRouter::observe_selected`] instead.
     /// Terminal responses use CON delivery. Pending CONs still count toward
     /// endpoint notification NSTART after the observer row has been removed.
     pub fn notify(
@@ -2441,8 +2455,9 @@ where
                 let response = if interest.is_deleted() {
                     Some(Response::not_found())
                 } else {
-                    site.observe_source(interest.resource())
-                        .map(|source| source())
+                    site.observe_source(interest.resource()).and_then(|source| {
+                        source.snapshot(&interest, oscore.association(interest.endpoint()))
+                    })
                 };
                 if let Some(response) = response {
                     if let Err(e) =
@@ -3224,6 +3239,38 @@ where
         return outcome;
     }
 
+    // Follow-up blocks belong to the retained selection, not merely its Token.
+    if (block2.is_some() || q_block2.is_some()) && parsed.observe().is_none() {
+        let selection = engine
+            .lookup_observe(ObserveKey::new(parsed.token(), peer))
+            .and_then(|id| engine.observe_interest(id))
+            .and_then(|row| row.selection().copied());
+        if selection.is_some_and(|expected| {
+            DeferredSelection::from_request(&parsed)
+                .ok()
+                .map(DeferredSelection::stored)
+                != Some(expected)
+        }) {
+            let outcome = send_response(
+                engine,
+                io,
+                ids,
+                SendResponse {
+                    block2: None,
+                    q_block2: None,
+                    q_request: None,
+                    ..meta
+                },
+                &Response::bad_request(),
+                now_ms,
+                oscore,
+                dedup_closed,
+            );
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+    }
+
     if let Some(policy) = echo_policy {
         let decision = policy(EchoCheck {
             echo: Echo::from_message(&parsed),
@@ -3628,6 +3675,7 @@ where
 
 #[derive(Clone, Copy)]
 struct ObservePlan {
+    selection: Option<crate::storage::ObserveSelection>,
     register: bool,
     registration_supported: bool,
     block2_max_szx: Option<u8>,
@@ -3642,6 +3690,7 @@ impl ObservePlan {
     fn idle() -> Self {
         Self {
             register: false,
+            selection: None,
             registration_supported: false,
             block2_max_szx: None,
             deregister: false,
@@ -3653,14 +3702,25 @@ impl ObservePlan {
     }
 
     fn from_request<const N: usize>(site: &Site<N>, request: &Request<'_>) -> Self {
+        let selected = matches!(
+            site.observe_source(site.observe_resource(request.path())),
+            Some(routing::SnapshotSource::Selected(_))
+        );
+        let selection = if selected {
+            DeferredSelection::from_parts(&request.message(), request.payload())
+                .ok()
+                .map(DeferredSelection::stored)
+        } else {
+            None
+        };
         Self {
             register: request.is_observe_register(),
-            // A requestless route snapshot cannot retain a FETCH or query selection.
-            // RFC 7641 section 4.1 permits declining registration while
-            // returning the requested representation; RFC 8132 section 2.4
-            // applies that behavior to FETCH as well.
-            registration_supported: request.method() == Some(Method::Get)
-                && request.uri_query().next().is_none(),
+            selection,
+            registration_supported: if selected {
+                selection.is_some()
+            } else {
+                request.method() == Some(Method::Get) && request.uri_query().next().is_none()
+            },
             block2_max_szx: request
                 .get_option(crate::message::OptionNumber::BLOCK2)
                 .and_then(|o| o.as_block().ok())
@@ -3717,7 +3777,8 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .with_seq(sequence)
             .with_resource(plan.resource)
             .with_content_format(response.format())
-            .with_block2_max_szx(plan.block2_max_szx);
+            .with_block2_max_szx(plan.block2_max_szx)
+            .with_selection(plan.selection);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
         #[cfg(not(feature = "oscore"))]
@@ -3768,7 +3829,10 @@ where
     let Some(source) = site.observe_source(interest.resource()) else {
         return Ok(());
     };
-    let mut response = source();
+    let Some(mut response) = source.snapshot(&interest, oscore.association(interest.endpoint()))
+    else {
+        return Ok(());
+    };
     response.validate().map_err(Error::Response)?;
     if interest.is_deleted()
         || !response.code().is_success()
@@ -4129,7 +4193,10 @@ where
         q_request: None,
         block1: None,
         oscore: oscore_req,
-        request: Code::GET,
+        request: interest
+            .selection()
+            .and_then(|selection| decode(&selection.bytes[..usize::from(selection.len)]).ok())
+            .map_or(Code::GET, |parsed| parsed.code()),
     };
 
     let Some(tx) = engine.acquire_tx() else {

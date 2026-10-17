@@ -453,15 +453,22 @@ impl ObserveNotifyHold {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ObserveSelection {
+    pub bytes: [u8; super::BlockTransfer::REQUEST_IDENTITY_BYTES],
+    pub len: u16,
+}
+
 /// Occupied Observe Interest Table payload.
 ///
 /// Relation identity plus small pending/coalescing state, the last
 /// library-assigned 24-bit notification sequence, optional Max-Age /
 /// CON-wait lifetime, RFC 7641 §4.5 / §4.5.1 confirm / NSTART hold, and
-/// an optional [`ObserveResource`] path key. Notification bodies are not
+/// an optional [`ObserveResource`] path key and bounded request selection. Notification bodies are not
 /// stored here. See `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserveInterest {
+    selection: Option<ObserveSelection>,
     key: ObserveKey,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
@@ -479,6 +486,15 @@ pub struct ObserveInterest {
 }
 
 impl ObserveInterest {
+    pub(crate) fn with_selection(mut self, selection: Option<ObserveSelection>) -> Self {
+        self.selection = selection;
+        self
+    }
+
+    pub(crate) fn selection(&self) -> Option<&ObserveSelection> {
+        self.selection.as_ref()
+    }
+
     /// Interest row for `token` at `endpoint`.
     ///
     /// Sequence starts at 0, is not pending, and has no lifetime or hold.
@@ -486,6 +502,7 @@ impl ObserveInterest {
     pub const fn new(token: Token, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new(token, endpoint),
+            selection: None,
             resource: ObserveResource::NONE,
             content_format: None,
             block2_max_szx: None,
