@@ -125,7 +125,7 @@ fn fixed() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("selection", fetch(selected))
     .bind(Io::default())
@@ -326,7 +326,7 @@ fn fetch_etag_allocated_exact_budget_both_peers() {
                     .block_wise::<true>()
                     .allocated(budget),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("selection", fetch(selected))
             .bind(Io::default())
@@ -654,7 +654,7 @@ fn fetch_etag_later_piv_growth_refuses_and_releases_then_recovers() {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("s", fetch(selected))
     .bind(Io::default())
@@ -664,7 +664,7 @@ fn fetch_etag_later_piv_growth_refuses_and_releases_then_recovers() {
             .routes::<2>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("selection", fetch(selected))
     .route("s", fetch(selected))
@@ -773,7 +773,7 @@ fn fetch_etag_block2_full_selection_followup_limit_refuses_and_recovers() {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("selection", fetch(large_selected))
     .bind(Io::default())
@@ -783,7 +783,7 @@ fn fetch_etag_block2_full_selection_followup_limit_refuses_and_recovers() {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("selection", fetch(large_selected))
     .bind(Io::default())

@@ -140,7 +140,7 @@ fn fixed() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(upload))
     .bind(Io::default())
@@ -275,7 +275,7 @@ fn q_con_success_no_response_allocated_exact_budget_both_peers() {
     for protected in [false, cfg!(feature = "oscore")] {
         let make = || {
             App::with_resources(resources().allocated(bytes))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .route("upload", put(upload))
                 .bind(Io::default())

@@ -124,7 +124,7 @@ fn fixed<const C: usize>() {
         App::profile::<Eight>()
             .client_calls::<C>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap()
@@ -153,7 +153,7 @@ fn client_capacity_alloc_matches_fixed() {
             App::profile::<Eight>()
                 .block_wise::<false>()
                 .client_calls::<C>()
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind_alloc(Io::default(), capacities)
                 .unwrap()
@@ -174,7 +174,7 @@ fn client_capacity_zero_serves_without_client_tables() {
         .deferred::<1>()
         .block_wise::<false>()
         .route("value", get(|_| Response::content(b"server")))
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap();
@@ -205,7 +205,7 @@ fn client_capacity_resizes_inline_metadata_and_preserves_default() {
     fn size<const C: usize>() -> (usize, usize) {
         let app = App::builder()
             .client_calls::<C>()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();
@@ -219,7 +219,7 @@ fn client_capacity_resizes_inline_metadata_and_preserves_default() {
     assert_eq!(eight.0 - four.0, eight.1 - four.1);
     assert_eq!(four.0 - zero.0, four.1 - zero.1);
     let default = App::builder()
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap();
@@ -270,7 +270,7 @@ fn client_capacity_full_response_short_output_preserves_slot_and_bytes() {
             .client_calls::<1>()
             .block_wise::<false>()
             .full_responses()
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
     };
     run(builder().bind(Io::default()).unwrap());
@@ -346,7 +346,7 @@ fn client_capacity_does_not_expand_oscore_bindings_or_leak_on_refusal() {
 fn client_capacity_zero_refuses_before_drawing_request_entropy() {
     let mut app = App::builder()
         .client_calls::<0>()
-        .allow_plaintext()
+        .allow_unprotected()
         .randomness(|bytes| {
             assert_eq!(bytes.len(), 2, "only initial MID entropy is needed");
             bytes.fill(1);
@@ -363,7 +363,7 @@ fn client_capacity_observe_holds_slot_until_cancellation() {
     let mut app = App::profile::<Eight>()
         .client_calls::<1>()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap();

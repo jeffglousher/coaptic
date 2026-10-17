@@ -324,7 +324,7 @@ fn app_with_site(io: Loopback) -> App<profiles::Default, Loopback> {
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_led))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(io)
         .expect("bind")
 }
@@ -390,7 +390,7 @@ fn constrained_plain_get_is_content() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -461,7 +461,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_post() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -490,7 +490,7 @@ fn oscore_option_without_context_is_bad_option_not_outer_fetch() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], fetch(fetch_query))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -526,7 +526,7 @@ fn proxy_uri_is_505_not_404() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -559,7 +559,7 @@ fn proxy_scheme_is_505_before_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -585,7 +585,7 @@ fn created_response_carries_location_path_and_query() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_create))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -623,7 +623,7 @@ fn duplicate_con_get_replays_without_second_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -664,7 +664,7 @@ fn duplicate_con_post_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -701,7 +701,7 @@ fn duplicate_con_patch_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["delta"], patch(counting_patch))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -731,7 +731,7 @@ fn duplicate_con_fetch_does_not_reinvoke_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["query"], fetch(counting_fetch))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -768,7 +768,7 @@ fn duplicate_con_separate_replays_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(counting_separate))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -805,7 +805,7 @@ fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(counting_get))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -841,7 +841,7 @@ fn duplicate_con_post_empty_dedup_row_acks_without_rerun() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -910,7 +910,7 @@ fn duplicate_con_post_insert_failure_does_not_rerun() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["leds", "0"], post(counting_post))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -985,7 +985,7 @@ fn created_metadata_on_wire_excludes_unsolicited_observe() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["items"], post(post_max_opts))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1028,7 +1028,7 @@ fn separate_response_is_empty_ack_then_con() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["separate"], get(get_separate))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -1124,7 +1124,7 @@ fn rfc8132_loopback(io: Loopback) -> App<profiles::Default, Loopback> {
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(io)
         .expect("bind")
 }
@@ -1302,7 +1302,7 @@ fn echo_freshness_builder_missing_is_401_problem() {
         .echo_policy(test_echo_policy)
         .block_wise::<false>()
         .route(&["leds", "0"], get(get_led).put(put_led))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1379,7 +1379,7 @@ fn no_response_con_sends_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo {
             inbox: Some((peer, wire, n)),
             ..RecordIo::default()
@@ -1405,7 +1405,7 @@ fn well_known_core_lists_registered_paths() {
         .route(&["a"], get(get_temp))
         .route(&["b"], get(get_led))
         .well_known_core()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1437,7 +1437,7 @@ fn well_known_q_block2_probe_returns_the_first_block() {
         .block_wise::<true>()
         .route(&["sensors", "temperature"], get(get_temp))
         .well_known_core()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -1528,7 +1528,7 @@ fn well_known_core_poll_lists_every_upfront_route() {
     }
     let mut app = builder
         .well_known_core()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1652,7 +1652,7 @@ fn discovery_uri_wire_reply_ignores_unsupported_unicast_filter() {
         .route(&["a/b"], get(get_temp))
         .route(&[], get(get_led))
         .well_known_core()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -1742,7 +1742,7 @@ fn discovery_uri_inbound_dot_refuses_before_dispatch_and_recovers() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("ok", get(get_temp))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     for (i, segment) in [".", ".."].into_iter().enumerate() {
@@ -1779,7 +1779,7 @@ fn discovery_uri_outgoing_dot_refuses_before_io_and_recovers() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     assert!(matches!(
@@ -1846,7 +1846,7 @@ fn request_carries_standard_and_custom_option() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["probe"], put(put_std_and_custom))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2065,7 +2065,7 @@ fn route_removal_waits_for_call_cancellation_and_collection_without_io() {
     let mut app = App::profile::<profiles::Constrained>()
         .block_wise::<false>()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .route("target", get(get_led))
         .bind(RecordIo::default())
         .unwrap();
@@ -2105,7 +2105,7 @@ fn route_removal_waits_for_deferred_and_duplicate_history_expiry() {
         .block_wise::<false>()
         .deferred::<1>()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .route("target", get(get_led))
         .bind(RecordIo::default())
         .unwrap();
@@ -2138,7 +2138,7 @@ fn route_removal_waits_for_observe_terminal_response_and_history() {
     let mut app = App::profile::<profiles::Default>()
         .block_wise::<false>()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .route("target", get(get_obs))
         .bind(WideLoopback::default())
         .unwrap();
@@ -2196,7 +2196,7 @@ fn route_removal_waits_for_retained_transfer_body_and_recovers_after_release() {
     let mut app = App::profile::<profiles::Default>()
         .block_wise::<true>()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .route("target", get(get_led))
         .bind(RecordIo::default())
         .unwrap();
@@ -2385,7 +2385,7 @@ fn block1_incomplete_is_continue() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2408,7 +2408,7 @@ fn block1_acked_num_retransmit_is_continue() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2475,7 +2475,7 @@ fn block_and_qblock_do_not_share_a_packet_or_a_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(take))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2559,7 +2559,7 @@ fn block1_smaller_szx_continues_at_the_filled_byte() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(take))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2588,7 +2588,7 @@ fn client_adopts_smaller_block1_size_from_continue() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.put("upload").payload(&LARGE).to(peer).send(0).unwrap();
@@ -2621,7 +2621,7 @@ fn block1_complete_exposes_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2651,7 +2651,7 @@ fn qblock1_incomplete_con_is_empty_ack() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2671,7 +2671,7 @@ fn qblock1_complete_exposes_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2703,7 +2703,7 @@ fn qblock1_holes_are_request_entity_incomplete() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2745,7 +2745,7 @@ fn qblock1_duplicate_con_repeats_ack_and_preserves_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -2777,7 +2777,7 @@ fn qblock2_recover_sent_from_poll() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .expect("bind");
     let engine = app.engine_mut();
@@ -2823,7 +2823,7 @@ fn block_wise_bind_uses_body_pools() {
     let app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .expect("bind");
     assert!(app.engine().has_body_pools());
@@ -2940,7 +2940,7 @@ fn duplicate_con_post_oversize_ack_replays_from_tx_pin() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["bulk"], post(counting_post))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -2979,7 +2979,7 @@ fn large_get_ships_block2_without_slot_id() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3023,7 +3023,7 @@ fn large_get_location_etag_echo_and_block2_all_on_wire() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["loud"], get(get_large_with_opts))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3052,7 +3052,7 @@ fn large_get_without_body_pools_fails_clearly() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["large"], get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3094,7 +3094,7 @@ fn large_get_q_block2_issues_a_window() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3130,7 +3130,7 @@ fn qblock2_single_selection_honors_num_and_reclaims_temporary_snapshots() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for cycle in 0..16 {
@@ -3189,7 +3189,7 @@ fn qblock2_missing_tail_reissues_only_selected_blocks_without_advancing_window()
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let retained = if cached {
@@ -3282,7 +3282,7 @@ fn qblock2_out_of_range_selection_refuses_without_leaking_state() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for cycle in 0..12 {
@@ -3316,7 +3316,7 @@ fn qblock2_client_requests_entire_body_with_m_set() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let request = app.get("large").q_block2();
@@ -3357,7 +3357,7 @@ fn observe_insert_miss_strips_observe_option() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .expect("bind");
 
@@ -3405,7 +3405,7 @@ fn observe_register_notify_deregister() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3461,7 +3461,7 @@ fn notify_nstart_one_per_endpoint() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3499,7 +3499,7 @@ fn notify_fans_out_to_distinct_endpoints() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer_a, wire, n)),
             ..WideLoopback::default()
@@ -3541,7 +3541,7 @@ fn observe_non_notify_rst_drops_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3587,7 +3587,7 @@ fn observe_con_notify_rst_drops_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3638,7 +3638,7 @@ fn empty_con_ping_rst_does_not_drop_observe() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3664,7 +3664,7 @@ fn observe_max_age_expiry_preserves_interest() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3695,7 +3695,7 @@ fn observe_source_sends_on_signal_poll() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3722,7 +3722,7 @@ fn observe_signal_survives_tx_saturated_poll() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -3802,7 +3802,7 @@ fn echo_app() -> App<profiles::Default, Echo> {
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_temp))
         .route(&["leds", "0"], get(get_led).put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -3926,7 +3926,7 @@ fn echo_rfc8132_app() -> App<profiles::Default, Echo> {
         .route(&["query"], fetch(fetch_query))
         .route(&["delta"], patch(patch_doc))
         .route(&["idem"], ipatch(ipatch_doc))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -4027,7 +4027,7 @@ fn client_get_sends_query_accept_etag_if_match_and_block2() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -4070,7 +4070,7 @@ fn client_full_path_query_and_extras_all_on_wire() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .expect("bind");
     let block = BlockValue::from_size(0, false, 64).expect("szx");
@@ -4138,7 +4138,7 @@ fn client_take_response_copies_etag() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["validate"], get(get_tagged))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Echo::default())
         .expect("bind");
     let call = app.get("validate").to(peer).send(0).expect("send");
@@ -4231,7 +4231,7 @@ fn pipe_app() -> App<profiles::Default, Pipe, DEFAULT_ROUTES, true> {
         .block_wise::<true>()
         .route(&["large"], get(get_large))
         .route(&["upload"], put(put_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Pipe::default())
         .expect("bind")
 }
@@ -4390,7 +4390,7 @@ fn echo_obs_app() -> App<profiles::Default, Echo> {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Echo::default())
         .expect("bind")
 }
@@ -4465,7 +4465,7 @@ fn record_client() -> App<profiles::Default, RecordIo> {
     App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .expect("bind")
 }
@@ -4668,7 +4668,7 @@ fn poll_progresses_when_rx_saturated() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .expect("bind");
     {
@@ -4927,7 +4927,7 @@ fn metrics_observe_register_notify_deregister() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -5045,7 +5045,7 @@ fn metrics_block1_assemble() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["leds", "0"], put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             last_send: None,
@@ -5062,7 +5062,7 @@ fn metrics_rx_saturated_and_reset() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .expect("bind");
     {
@@ -5214,7 +5214,7 @@ fn response_unknown_option_policy_precedes_completion_and_ack() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<false>()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(RecordIo::default())
                 .unwrap();
             let call = app.get("value").to(peer).send(0).unwrap();
@@ -5277,7 +5277,7 @@ fn block2_requests_with_new_tokens_select_requested_ranges_and_release_slots() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .expect("bind");
     // More independent requests than the TX body pool capacity, including
@@ -5323,7 +5323,7 @@ fn block2_outside_representation_refuses_without_retaining_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -5374,7 +5374,7 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(CheckedPipe::default())
         .unwrap();
     let call = app
@@ -5533,7 +5533,7 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
                     Response::changed()
                 }),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(CheckedUpload::default())
             .unwrap();
         let mut request = app
@@ -5736,7 +5736,7 @@ fn malformed_or_missing_qblock_request_tag_is_refused_before_dispatch() {
                     panic!("invalid tag reached handler")
                 }),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -5768,7 +5768,7 @@ fn disabled_block_assembly_refuses_before_handler_dispatch() {
                 panic!("fragment reached non-block handler")
             }),
         )
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: Some((peer, wire, n)),
             ..Loopback::default()
@@ -5894,7 +5894,7 @@ fn cancellation_reclaims_tagged_upload_and_download_bodies() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = BodyTag::new(b"upload").unwrap();
@@ -5971,7 +5971,7 @@ fn deadline_progresses_when_receive_fails() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(BadReceive)
         .unwrap();
     let call = app.get("value").to(peer).deadline(1).send(0).unwrap();
@@ -6017,7 +6017,7 @@ fn receive_failure_preserves_con_retries_and_give_up() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(ReceiveFaultIo::<RecordIo>::default())
         .unwrap();
     let call = app.get("value").to(peer).send(0).unwrap();
@@ -6070,7 +6070,7 @@ fn receive_failure_reports_later_send_failure_first() {
     let mut app = App::profile::<profiles::Constrained>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(ReceiveFaultIo::<RecordIo>::default())
         .unwrap();
     app.get("value").to(peer).send(0).unwrap();
@@ -6101,7 +6101,7 @@ fn receive_failure_does_not_starve_observe_notification() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("sensors/temp", get(get_obs).observe(obs_snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(ReceiveFaultIo {
             inner: WideLoopback {
                 inbox: Some((peer, wire, n)),
@@ -6136,7 +6136,7 @@ fn receive_failure_preserves_qblock_recovery_and_releases_exhausted_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(put_body))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(ReceiveFaultIo::<Loopback>::default())
         .unwrap();
     for (num, now) in [(0, 0), (3, 1)] {
@@ -6213,7 +6213,7 @@ fn missing_initial_block_completes_with_typed_failure_and_reclaims_state() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("large").to(peer).send(0).unwrap();
@@ -6252,7 +6252,7 @@ fn qblock1_bad_size_never_dispatches_and_valid_retry_completes_once() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(handler))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(Loopback {
                 inbox: None,
                 last_send: None,
@@ -6319,7 +6319,7 @@ fn qblock2_without_etag_is_refused_before_sending_or_retaining_body() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(&["large"], get(handler))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -6360,7 +6360,7 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(&["large"], get(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let key = BlockKey::new(Token::new(&[0xA1]).unwrap(), peer)
@@ -6477,7 +6477,7 @@ fn location_wire_preserves_empty_segments_and_maximum_counts_and_lengths() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -6520,7 +6520,7 @@ fn truncated_handler_response_refuses_wire_and_observe_then_recovers() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("test", get(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for mid in 0..12 {
@@ -6587,7 +6587,7 @@ fn invalid_response_refuses_separate_ack_and_observe_then_recovers() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["test"], get(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     // Repeat beyond RX/TX capacity: refusal must release every request.
@@ -6643,7 +6643,7 @@ fn invalid_handler_response_releases_assembled_upload_body() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback {
             inbox: None,
             last_send: None,
@@ -6673,7 +6673,7 @@ fn client_snapshot_retains_location_max_age_echo_and_unknown_options() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.post("create").to(peer).send(0).unwrap();
@@ -6721,7 +6721,7 @@ fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply()
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let call = app.get("value").to(peer).send(0).unwrap();
@@ -6793,7 +6793,7 @@ fn block2_retains_first_fragment_metadata_and_never_exposes_partial_reply() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).observe().send(0).unwrap();
@@ -6856,7 +6856,7 @@ fn four_untaken_response_metadata_snapshots_remain_distinct_and_bounded() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let mut calls = [None; 4];
@@ -6893,7 +6893,7 @@ fn block2_metadata_overflow_reclaims_partial_body_and_call() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).send(0).unwrap();
@@ -6949,7 +6949,7 @@ fn malformed_elective_response_values_remain_raw_without_creating_observe() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").to(peer).observe().send(0).unwrap();
@@ -7000,7 +7000,7 @@ fn explicit_echo_retry_uses_received_challenge_and_preserves_request() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("value", put(handler))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Pipe::default())
         .unwrap();
     let first = app
@@ -7051,7 +7051,7 @@ fn client_no_response_preserves_bitmap_and_never_reports_silence_as_success() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("value", put(|_: Request<'_>| Response::changed()))
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(Pipe::default())
                 .unwrap();
             let mut request = app
@@ -7218,7 +7218,7 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
                     let mut app = App::profile::<profiles::Default>()
                         .deterministic_for_tests()
                         .block_wise::<true>()
-                        .allow_plaintext()
+                        .allow_unprotected()
                         .bind(FaultIo {
                             sends: 0,
                             fail_at: usize::MAX,
@@ -7351,7 +7351,7 @@ fn stale_observe_block_zero_cannot_replace_incomplete_representation() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     let call = app.get("value").observe().to(peer).non().send(0).unwrap();
@@ -7581,7 +7581,7 @@ fn observe_max_age_zero_keeps_congestion_hold_and_con_retries() {
             .deterministic_for_tests()
             .block_wise::<false>()
             .route(&["sensors", "temp"], get(get_obs))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -7663,7 +7663,7 @@ fn observe_signal_at_max_age_boundary_is_not_discarded() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs).observe(obs_snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -7707,7 +7707,7 @@ fn observe_notification_format_and_terminal_response_contract() {
                     .deterministic_for_tests()
                     .block_wise::<false>()
                     .route("obs", get(handler))
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .bind(WideLoopback {
                         inbox: Some((peer, wire, n)),
                         ..WideLoopback::default()
@@ -7758,7 +7758,7 @@ fn observe_deregistration_strips_handler_observe_and_releases_relation() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for (index, option) in [Opt::observe_register(), Opt::observe_deregister()]
@@ -7878,7 +7878,7 @@ fn explicit_echo_policy_checks_issuance_peer_scope_class_and_expiry_before_handl
             .block_wise::<false>()
             .echo_policy(fixture_authenticated_echo_policy)
             .route("effect", put(effect))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(Loopback {
                 inbox: Some((sender, wire, n)),
                 last_send: None,
@@ -7917,7 +7917,7 @@ fn echo_policy_issuance_failure_is_closed_and_reclaims_rx() {
         .echo_policy(deny)
         .block_wise::<false>()
         .route("effect", put(unreachable))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     for mid in 1..=12 {
@@ -7946,7 +7946,7 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
         .block_wise::<true>()
         .echo_policy(policy)
         .route("effect", put(unreachable))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     for value in [&[][..], &[0; 41][..]] {
@@ -8016,17 +8016,21 @@ fn app_security_is_required_before_entropy_storage_or_transport_work() {
         ),
         Err(crate::BuildError::SecurityRequired)
     ));
-    let mut plain = App::builder()
-        .deterministic_for_tests()
-        .allow_plaintext()
-        .bind(Loopback::default())
-        .unwrap();
-    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-    plain.get("test").to(peer).send(0).unwrap();
-    let (_, bytes, n) = plain.transport().last_send.unwrap();
-    let packet = decode(&bytes[..n]).unwrap();
-    assert_eq!(packet.code(), Code::GET);
-    assert!(packet.oscore().is_none());
+    for legacy in [false, true] {
+        let builder = App::builder().deterministic_for_tests();
+        let builder = if legacy {
+            builder.allow_plaintext()
+        } else {
+            builder.allow_unprotected()
+        };
+        let mut plain = builder.bind(Loopback::default()).unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+        plain.get("test").to(peer).send(0).unwrap();
+        let (_, bytes, n) = plain.transport().last_send.unwrap();
+        let packet = decode(&bytes[..n]).unwrap();
+        assert_eq!(packet.code(), Code::GET);
+        assert!(packet.oscore().is_none());
+    }
 }
 
 #[test]
@@ -8034,7 +8038,7 @@ fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
     assert!(matches!(
         App::profile::<profiles::Default>()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(RecordIo::default()),
         Err(crate::BuildError::RandomnessRequired)
     ));
@@ -8042,7 +8046,7 @@ fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
         App::profile::<profiles::Default>()
             .randomness(|_| false)
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(RecordIo::default()),
         Err(crate::BuildError::RandomnessUnavailable)
     ));
@@ -8060,7 +8064,7 @@ fn app_randomness_is_explicit_and_failure_never_substitutes_counters() {
         let mut app = App::profile::<profiles::Default>()
             .randomness(source)
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(RecordIo::default())
             .unwrap();
         for _ in 0..12 {
@@ -8089,7 +8093,7 @@ fn injected_entropy_drives_wire_identity_and_exact_retransmission_boundary() {
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     let call = app.get("value").to(peer).send(100).unwrap();
@@ -8128,7 +8132,7 @@ fn entropy_failure_during_fragment_start_reclaims_preallocated_tx_and_body() {
         let mut app = App::profile::<profiles::Default>()
             .randomness(fill)
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(RecordIo::default())
             .unwrap();
         for _ in 0..12 {
@@ -8181,7 +8185,7 @@ fn entropy_failure_during_classic_upload_continuation_reclaims_and_recovers() {
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     DRAWS.store(0, Ordering::SeqCst);
@@ -8286,7 +8290,7 @@ fn entropy_failure_during_q_upload_continuation_reclaims_and_recovers() {
     let mut app = App::profile::<profiles::Default>()
         .randomness(fill)
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     DRAWS.store(0, Ordering::SeqCst);
@@ -8380,7 +8384,7 @@ fn response_non_and_qblock_window_use_shared_local_mid_space() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(get_large))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
@@ -8606,7 +8610,7 @@ fn observe_cancellation_identity_bound_refuses_before_io_without_consuming_capac
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     // Four header bytes, Uri-Path, zero-valued Content-Format and payload marker = eight.
@@ -8712,7 +8716,7 @@ fn failed_observe_cancellation_retires_local_state_and_reports_uncertainty() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(CancelIo {
             inner: RecordIo::default(),
             fail: false,
@@ -8750,7 +8754,7 @@ fn observe_cancellation_cannot_select_an_unread_terminal_response() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(decline))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Echo::default())
         .unwrap();
     let call = app.get("x").observe().to(peer).send(0).unwrap();
@@ -8835,7 +8839,7 @@ fn observe_route_identity_keeps_literal_slashes_and_segments_distinct() {
         .block_wise::<false>()
         .route(&["a/b"], get(get_obs).observe(slash))
         .route(&["a", "b"], get(get_obs).observe(segments))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let paths: [&[&str]; 2] = [&["a/b"], &["a", "b"]];
@@ -8891,7 +8895,7 @@ fn delete_queues_reliable_terminal_notifications_and_preserves_endpoint_nstart()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
         .route("other", get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for (i, path) in ["x", "x", "other"].into_iter().enumerate() {
@@ -8993,7 +8997,7 @@ fn deleted_observer_survives_local_send_failures_until_terminal_delivery() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for (time, code, options) in [
@@ -9052,7 +9056,7 @@ fn failed_delete_keeps_observers_and_pending_non_hold_delays_successful_delete_n
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("x", get(get_obs).delete(remove))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let (wire, n) = encode_wide_token(Code::GET, &["x"], &[Opt::observe_register()], 100, token);
@@ -9096,7 +9100,7 @@ fn terminal_notification_give_up_reclaims_delivery_and_unblocks_other_observers(
         .block_wise::<false>()
         .route("x", get(get_obs))
         .route("other", get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for (i, path) in ["x", "other"].into_iter().enumerate() {
@@ -9181,7 +9185,7 @@ fn failed_classic_continuations_retire_calls_and_bodies_immediately() {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .bind(FaultIo {
                         inbox: None,
                         last: [0; WIRE],
@@ -9304,7 +9308,7 @@ fn failed_qblock2_window_continuations_retire_partial_representation() {
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(FaultIo {
                     inbox: None,
                     last: [0; WIRE],
@@ -9394,7 +9398,7 @@ fn qblock2_repeated_selections_send_the_union_once() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("large", get(body))
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(WideLoopback::default())
                 .unwrap();
             let before = if cached {
@@ -9477,7 +9481,7 @@ fn qblock2_invalid_later_options_refuse_before_handler_and_preserve_cached_body(
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -9512,7 +9516,7 @@ fn qblock2_later_out_of_range_selection_is_preflighted_before_output() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route("large", get(get_large))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     // Valid block 0 then invalid block 2 for 2000 bytes / 1024.
@@ -9580,7 +9584,7 @@ fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(never))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         app.transport_mut().inbox = Some((peer, wire, n));
@@ -9621,7 +9625,7 @@ fn qblock1_missing_required_metadata_is_bad_request_without_body_admission() {
                 .deterministic_for_tests()
                 .block_wise::<true>()
                 .route("upload", put(handler))
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(WideLoopback::default())
                 .unwrap();
             app.transport_mut().inbox = Some((peer, wire, n));
@@ -9664,7 +9668,7 @@ fn qblock1_con_ack_non_set_continue_and_final_handler_effect_are_distinct() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(finish))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(Loopback::default())
             .unwrap();
         for num in 0..11 {
@@ -9714,7 +9718,7 @@ fn qblock1_non_out_of_order_and_duplicate_payloads_wait_for_the_entire_set() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     for (index, num) in [0, 2, 3, 4, 5, 6, 7, 8, 9, 9, 1, 1].into_iter().enumerate() {
@@ -9743,7 +9747,7 @@ fn qblock1_arrival_at_recovery_deadline_invalidates_old_missing_report() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(put_body))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(Loopback::default())
             .unwrap();
         // NUM 0 and final NUM 3 leave holes 1 and 2.
@@ -9795,7 +9799,7 @@ fn qblock2_completion_at_recovery_deadline_does_not_send_obsolete_get() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
@@ -9836,7 +9840,7 @@ fn observe_reregistration_does_not_inherit_a_replaced_rows_due_notification() {
             .block_wise::<false>()
             .route("first", get(get_obs).observe(obs_snapshot))
             .route("second", get(get_obs).observe(obs_snapshot))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let (wire, n) = encode_wide(Code::GET, &["first"], &[Opt::observe_register()], 100);
@@ -9880,7 +9884,7 @@ fn observe_signal_survives_unrelated_ingress_response_send_failure() {
         .block_wise::<false>()
         .route("obs", get(get_obs).observe(obs_snapshot))
         .route("plain", get(get_temp))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let token = Token::new(&[0xa1]).unwrap();
@@ -9914,7 +9918,7 @@ fn qblock1_last_hole_at_give_up_deadline_completes_before_reclamation() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route(LED_PATH, put(put_body))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(Loopback::default())
             .unwrap();
         for (num, payload) in [(0, &[b'A'; 16][..]), (2, &[b'A'; 8][..])] {
@@ -9970,7 +9974,7 @@ fn qblock2_give_up_retires_call_and_preserves_other_calls_and_reused_body() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let call = app.get("value").q_block2().non().to(peer).send(0).unwrap();
@@ -10066,7 +10070,7 @@ fn qblock1_confirmable_upload_waits_for_matching_ack_between_payloads() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app
@@ -10157,7 +10161,7 @@ fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(FaultIo {
                 pipe: WideLoopback::default(),
                 fail: false,
@@ -10235,7 +10239,7 @@ fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
     let mut app = App::profile::<LargeUpload>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app
@@ -10300,7 +10304,7 @@ fn qblock2_confirmable_request_gets_empty_ack_then_all_non_payloads() {
                     get(body)
                 },
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let q = BlockValue::from_size(0, true, 1024).unwrap().encode();
@@ -10351,7 +10355,7 @@ fn qblock1_missing_report_reissues_exact_ranges_and_retains_upload_until_final_r
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = crate::storage::BodyTag::new(b"missing").unwrap();
@@ -10438,7 +10442,7 @@ fn qblock1_invalid_missing_reports_are_silent_and_preserve_later_recovery() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let tag = crate::storage::BodyTag::new(b"tag").unwrap();
@@ -10569,7 +10573,7 @@ fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_othe
             let mut app = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(FaultIo {
                     pipe: WideLoopback::default(),
                     count: 0,
@@ -10638,7 +10642,7 @@ fn qblock2_timed_recovery_preserves_request_identity_and_selects_only_holes() {
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let request = app
@@ -10747,7 +10751,7 @@ fn qblock2_timed_recovery_send_failure_retires_call_without_harming_other_call()
         let mut app = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(FaultIo {
                 pipe: WideLoopback::default(),
                 fail: false,
@@ -10829,7 +10833,7 @@ fn download_followups_retain_conditions_and_fetch_selection() {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
                     .block_wise::<true>()
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .bind(WideLoopback::default())
                     .unwrap();
                 let request = match method {
@@ -10933,7 +10937,7 @@ fn oversized_fetch_selection_is_refused_before_io_or_call_admission() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -10965,7 +10969,7 @@ fn retained_conditional_tags_refuse_overflow_before_sending() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -11042,7 +11046,7 @@ fn fetch_requires_one_valid_content_format_before_handler_or_body_admission() {
                     Response::content(b"ok")
                 }),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -11078,7 +11082,7 @@ fn client_fetch_requires_format_without_consuming_call_capacity() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     for _ in 0..12 {
@@ -11110,7 +11114,7 @@ fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let call = app.get("value").observe().to(peer).send(0).unwrap();
@@ -11187,7 +11191,7 @@ fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
             let mut app = App::profile::<P>()
                 .deterministic_for_tests()
                 .block_wise::<true>()
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(WideLoopback::default())
                 .unwrap();
             let other = app.get("other").non().to(peer).send(0).unwrap();
@@ -11296,7 +11300,7 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("large", get(body))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WindowIo::default())
             .unwrap();
         let token = Token::new(b"q").unwrap();
@@ -11384,7 +11388,7 @@ fn outgoing_upload_lookup_and_cleanup_preserve_same_key_server_body() {
         App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap()
     }
@@ -11503,7 +11507,7 @@ fn observe_reregistration_advances_sequence_without_inheriting_old_lifecycle() {
                 .deterministic_for_tests()
                 .block_wise::<false>()
                 .route("obs", get(get_obs))
-                .allow_plaintext()
+                .allow_unprotected()
                 .bind(WideLoopback::default())
                 .unwrap();
             let key = ObserveKey::new(token, peer);
@@ -11589,7 +11593,7 @@ fn client_reregistration_preserves_call_identity_ordering_and_deadline() {
         let mut client = App::profile::<profiles::Default>()
             .deterministic_for_tests()
             .block_wise::<false>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let request = if fetch_request {
@@ -12004,7 +12008,7 @@ fn retained_classic_response_refuses_changed_bytes_or_etag_without_advancing() {
             .block_wise::<true>()
             .route("changed", get(handler))
             .route("stable", get(stable))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -12069,7 +12073,7 @@ fn retained_notification_survives_incomplete_followups_and_send_failure() {
             .block_wise::<true>()
             .route("stable", get(stable))
             .route("changed", get(changed))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let key = BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
@@ -12158,7 +12162,7 @@ fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("obs", get(current))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let resource = app.site.observe_resource(&["obs"]);
@@ -12262,7 +12266,7 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
                     .deterministic_for_tests()
                     .block_wise::<true>()
                     .route("large", get(handler).post(handler))
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .bind(WideLoopback::default())
                     .unwrap();
                 let value = [(num << 4) | 6];
@@ -12400,7 +12404,7 @@ fn observe_reregistration_after_removal_starts_a_new_relation() {
             .deterministic_for_tests()
             .block_wise::<false>()
             .route(&["sensors", "temp"], get(get_obs))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         app.transport_mut().inbox = Some((peer, wire, n));
@@ -12473,7 +12477,7 @@ fn observe_notifications_decline_query_selection_and_recover_queryless() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let (wire, n) = encode_wide_token(
@@ -12541,7 +12545,7 @@ fn observe_sequence_starts_at_zero_on_a_new_app() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     app.transport_mut().inbox = Some((peer, wire, n));
@@ -12563,7 +12567,7 @@ fn observe_sequence_starts_at_zero_on_a_new_app() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route(&["sensors", "temp"], get(get_obs))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     app.transport_mut().inbox = Some((peer, wire, n));
@@ -12587,7 +12591,7 @@ fn large_notification_metadata_is_repeated_through_the_final_block() {
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("note", get(follow))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback::default())
             .unwrap();
         let resource = app.site.observe_resource(&["note"]);
@@ -12639,7 +12643,7 @@ fn qblock1_duplicate_after_set_repeats_continue_only_for_the_finishing_block() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     for num in 0..10u32 {
@@ -12686,7 +12690,7 @@ fn qblock1_duplicate_after_set_repeats_continue_only_for_the_finishing_block() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     for num in 1..=9u32 {
@@ -12730,7 +12734,7 @@ fn qblock1_missing_reports_are_one_per_poll_and_not_held_for_nstart() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .route(LED_PATH, put(|_| panic!("incomplete body dispatched")))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Loopback::default())
         .unwrap();
     struct Step {
@@ -12829,7 +12833,7 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .full_responses()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     let call = app.get("value").to(peer).send(0).unwrap();
@@ -12980,7 +12984,7 @@ fn client_without_block_storage_refuses_fragments_and_recovers() {
             let builder = App::profile::<profiles::Default>()
                 .deterministic_for_tests()
                 .block_wise::<false>()
-                .allow_plaintext();
+                .allow_unprotected();
             let builder = if full {
                 builder.full_responses()
             } else {
@@ -13004,7 +13008,7 @@ fn client_alloc_without_block_storage_refuses_fragments_and_recovers() {
             .deterministic_for_tests()
             .block_wise::<false>()
             .full_responses()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_alloc(
                 WideLoopback::default(),
                 crate::storage::Capacities::from_profile::<profiles::Default>(),
@@ -13026,7 +13030,7 @@ fn one_app_allocated_storage_collects_beyond_legacy_hold_without_truncation() {
         .deterministic_for_tests()
         .block_wise::<true>()
         .full_responses()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind_alloc(WideLoopback::default(), capacities)
         .unwrap();
     let call = app.get("large").non().to(peer).send(0).unwrap();
@@ -13085,7 +13089,7 @@ fn deferred_completion_acknowledges_once_and_retransmits_only_wire_response() {
         .deterministic_for_tests()
         .deferred::<4>()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
@@ -13146,7 +13150,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
         .deferred::<4>()
         .deferred_lifetime(10)
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(RecordIo::default())
         .unwrap();
     let mut handles = [None; 4];
@@ -13228,14 +13232,14 @@ fn canceled_oscore_deferred_response_resets_without_spending_other_call_state() 
     let mut client = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let mut server = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<false>()
         .deferred::<4>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
@@ -13357,14 +13361,14 @@ fn deferred_oscore_completion_preserves_authenticated_request_binding() {
         .deferred::<4>()
         .block_wise::<false>()
         .full_responses()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let mut server = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .deferred::<4>()
         .block_wise::<false>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
@@ -13442,14 +13446,14 @@ fn deferred_block2_snapshot_serves_followups_without_repeating_domain_work() {
             .deferred::<4>()
             .block_wise::<true>()
             .full_responses()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_alloc(WideLoopback::default(), capacities)
             .unwrap();
         let mut server = crate::App::builder()
             .deterministic_for_tests()
             .deferred::<4>()
             .block_wise::<true>()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_alloc(WideLoopback::default(), capacities)
             .unwrap();
         #[cfg(feature = "oscore")]
@@ -13575,7 +13579,7 @@ fn failed_deferred_ack_retains_work_and_completion_send_failure_keeps_handle() {
     let mut app = crate::App::builder()
         .deterministic_for_tests()
         .deferred::<4>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Failable::default())
         .unwrap();
     let (wire, n) = encode_req(Code::POST, &["durable"], b"work");
@@ -13617,7 +13621,7 @@ fn deferred_block2_wrong_route_refuses_and_expiry_reclaims_snapshot() {
         .deferred::<4>()
         .block_wise::<true>()
         .deferred_lifetime(10)
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let (wire, n) = encode_wide(Code::POST, &["durable"], &[], 100);
@@ -13699,7 +13703,7 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
     let mut app = crate::App::builder()
         .deterministic_for_tests()
         .deferred::<4>()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(Failable::default())
         .unwrap();
     app.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
@@ -13741,7 +13745,7 @@ fn explicit_con_app(now: u64) -> App<profiles::Default, WideLoopback> {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(get_obs).observe(obs_snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback {
             inbox: Some((peer, wire, n)),
             ..WideLoopback::default()
@@ -13991,7 +13995,7 @@ fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry()
             .deterministic_for_tests()
             .block_wise::<true>()
             .route("sensors/temp", get(get_obs).observe(obs_snapshot))
-            .allow_plaintext()
+            .allow_unprotected()
             .bind(WideLoopback {
                 inbox: Some((peer, wire, n)),
                 ..WideLoopback::default()
@@ -14086,7 +14090,7 @@ fn fetch_observe_requestless_source_does_not_register_selection() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", fetch(selected).observe(snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let zero = encode_uint(0);
@@ -14128,7 +14132,7 @@ fn get_observe_requestless_source_does_not_register_query_selection() {
         .deterministic_for_tests()
         .block_wise::<false>()
         .route("obs", get(selected).observe(snapshot))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
     let options = [

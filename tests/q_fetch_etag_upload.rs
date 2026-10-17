@@ -125,7 +125,7 @@ fn fixed() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("selection", fetch(selected))
     .bind(Io::default())
@@ -402,7 +402,7 @@ fn q_fetch_etag_allocated_exact_budget_both_peers() {
     for protected in [false, cfg!(feature = "oscore")] {
         let make = || {
             App::with_resources(resources().allocated(bytes))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .route("selection", fetch(selected))
                 .bind(Io::default())
@@ -761,7 +761,7 @@ coaptic::memory_profile! { WindowBuffers {
 #[test]
 fn q_upload_first_preencoded_non_counts_once_in_ten_block_set() {
     let mut client = App::with_resources(Resources::<WindowBuffers>::new().block_wise::<true>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap();
@@ -814,7 +814,7 @@ fn q_fetch_protected_body_admission_refusal_reclaims_single_request_binding() {
             .block_wise::<true>()
             .security_requests::<1>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap();

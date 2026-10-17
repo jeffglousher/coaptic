@@ -139,7 +139,7 @@ fn fixed() -> App<Buffers, Io, 1, true> {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(upload))
     .bind(Io::default())
@@ -275,7 +275,7 @@ fn classic_error_only_no_response_allocated_both_peers_exact_budget() {
                     .block_wise::<true>()
                     .allocated(bytes),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("upload", put(upload))
             .bind(Io::default())

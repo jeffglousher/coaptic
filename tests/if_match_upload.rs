@@ -146,7 +146,7 @@ fn server() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(replace))
     .bind(Io::default())
@@ -274,7 +274,7 @@ fn fixed(
                 .routes::<1>()
                 .block_wise::<true>(),
         )
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .bind(Io::default())
         .unwrap(),
@@ -335,7 +335,7 @@ fn if_match_allocated_completion_has_identical_bounds() {
                             .block_wise::<true>()
                             .allocated(heap_bytes),
                     )
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .deterministic_for_tests()
                     .bind(Io::default())
                     .unwrap(),
@@ -356,7 +356,7 @@ fn fresh_client() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -561,7 +561,7 @@ fn if_match_encode_refusal_and_cancel_release_bounded_ownership() {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap();

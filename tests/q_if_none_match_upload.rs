@@ -147,7 +147,7 @@ fn server() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("upload", put(replace))
     .bind(Io::default())
@@ -171,7 +171,7 @@ fn client() -> Server {
             .routes::<1>()
             .block_wise::<true>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -315,7 +315,7 @@ fn q_if_none_match_allocated_both_peers_exact_budget() {
                     .block_wise::<true>()
                     .allocated(bytes),
             )
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("upload", put(replace))
             .bind(Io::default())

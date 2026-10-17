@@ -127,7 +127,7 @@ fn fixed() -> Server {
             .block_wise::<true>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .bind(Io::default())
     .unwrap()
@@ -324,7 +324,7 @@ fn deferred_fetch_allocated_exact_budget_retains_selection() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let server = App::with_resources(resources().allocated(bytes))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .unwrap();

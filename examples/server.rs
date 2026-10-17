@@ -1,4 +1,4 @@
-//! README server; explicitly plaintext on localhost.
+//! README server; explicitly unprotected on localhost.
 
 #[path = "support/host_error.rs"]
 pub mod host_error;
@@ -27,7 +27,7 @@ fn main() -> Result<(), host_error::Error> {
         .randomness(|bytes| getrandom::fill(bytes).is_ok())
         .route("sensors/temp", get(temperature))
         .route("echo", post(echo))
-        .allow_plaintext()
+        .allow_unprotected()
         .bind(UdpSocketIo::new(socket, [0; 1473])?)?;
 
     let clock = Instant::now();

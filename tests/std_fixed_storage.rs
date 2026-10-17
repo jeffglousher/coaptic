@@ -131,7 +131,7 @@ fn std_only_apps_deliver_complete_blockwise_body_and_refuse_short_output_without
             )
         };
         #[cfg(not(feature = "oscore"))]
-        let (server, client) = (server.allow_plaintext(), client.allow_plaintext());
+        let (server, client) = (server.allow_unprotected(), client.allow_unprotected());
         (
             server
                 .bind(UdpSocketIo::new(socket, [0; 1473]).unwrap())

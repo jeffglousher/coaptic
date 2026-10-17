@@ -2,42 +2,53 @@
 
 Humans and agents may author and review.
 
+## Pre-release policy
+
+Coaptic is pre-release. Backwards compatibility and versioning are not development
+requirements. Change or remove project APIs, formats and obsolete paths directly;
+update affected callers in the same batch. Do not add compatibility shims,
+deprecation periods or version bumps unless explicitly requested for a release.
+Protocol standards, security invariants and preservation of user data still apply.
+
 ## Own delivery
 
-Take charge of the agreed outcome. "Done" means development completed against
-the accepted requirements, with relevant proof. Plans, open PRs, green checks and
-registered watchers are progress, not completion of missing requirements.
+Done means the accepted behavior is implemented and supported by relevant proof.
 
-- Drive authorized work through implementation, focused validation, review fixes,
-  merge when authorized, and cleanup of owned settled work. Take the next accepted
-  requirement without asking the user to manage routine engineering decisions.
-- Keep developing while CI, reviews, builds or other agents run. A pending
-  dependency blocks only dependent work. Advance an independent requirement,
-  prepare a focused stacked change, investigate a failure or review the next
-  change. Babysit PRs in the background; never stop at watching while useful
-  authorized work remains.
-- Resolve obstacles actively. Inspect the environment and logs, test promising
-  alternatives with small reversible experiments, and fix causes. If one path
-  is blocked, continue another. Ask only for missing facts, decisions or authority
-  that cannot be established from the session and repository.
-- Hold the quality bar. Finish the requirement and its refusal/recovery behavior;
-  do not accept unexplained failures, weaken checks or reduce agreed scope to
-  claim completion. Run the required checks and focused proof of changed behavior.
-  Repeat broader testing when a change, failure or unresolved concern justifies it.
-- Prioritize accepted UDP/OSCORE feature development and the real loopback and
-  reserved ESP32 paths. Complete requirements before extensive optimization,
-  API presentation, documentation polish or repeated integration campaigns.
-- Report concrete changes, executed evidence and remaining requirements. Keep
-  implementation, local checks, independent interoperability and physical-device
-  qualification distinct; expose gaps rather than treating partial proof as done.
-- Stop only when the requested scope is complete, the user explicitly pauses it,
-  or every useful authorized path is blocked. For a real blocker, state the exact
-  prerequisite, attempted remedies and next action; continue independent work
-  while seeking the missing input.
+- Verify current source, requirements and retained evidence on resume. Treat
+  previous summaries as leads, not proof; reuse evidence whose source still matches.
+- Implement the next unfinished requirement, including refusal and recovery.
+  Resolve routine engineering decisions and tooling failures within existing authority.
+- Keep useful work moving while builds, reviews and CI run. A pending dependency
+  blocks only dependent work. Watching a PR is not completion.
+- Implement coherent batches, then run checks that can detect faults in the batch.
+  Check earlier when needed to resolve an implementation uncertainty. Once results
+  pass and make sense, proceed; repeat or broaden only for a concrete concern.
+- Drive review fixes, authorized squash merges and cleanup of settled owned work.
+  Preserve unrelated changes, evidence, credentials, firmware and shared resources.
+- Prioritize aggressive capability development, simplification and measured
+  optimization, especially UDP/OSCORE, real loopback and the reserved ESP32.
+  Keep documentation polish and repeated qualification campaigns off the critical path.
+- Report changes, executed evidence and remaining work. Distinguish implementation,
+  interoperability and physical qualification. Do not claim completion from CI alone.
+- Stop when scope is complete, the user pauses it, or every useful authorized path
+  is blocked. State the exact prerequisite and continue independent work where possible.
 
-## Repository contracts
+## Keep the repository clear
 
-Public docs are rustdoc. Architecture planning is GitHub Issues / [project](https://github.com/users/jeffglousher/projects/2). Do not restate RFC wire format; open `knowledge/rfcs/`.
+Disk space is constrained. Reuse compatible build lanes. Promptly remove settled,
+owned worktrees, branches and exclusive generated output after verifying ownership,
+merge/settlement and absence of active consumers. Retain compact evidence and
+uncommitted work; do not blanket-clean shared targets. Report reclaimed space and
+large retained paths with their owner and release condition.
 
-The repository is public. Merges to `main` are squash-only. Follow
-[DEVELOPMENT.md](DEVELOPMENT.md) for required validation and release policy.
+Public API contracts belong in rustdoc; scope and delivery belong in GitHub
+[issues/project](https://github.com/users/jeffglousher/projects/2). Keep the README
+focused on starting and choosing an integration. Explain invariants and decisions
+in comments; remove narration, repeated guidance and stale progress reports.
+
+Call the security-disabled mode **unprotected**. Retain standard cryptographic
+terms and standards-defined wire identifiers; remove obsolete project aliases.
+Use original protocol text in `knowledge/rfcs/`; do not duplicate RFC wire formats.
+
+The repository is public. Follow [DEVELOPMENT.md](DEVELOPMENT.md) for validation
+and release boundaries. Merges to `main` are squash-only.

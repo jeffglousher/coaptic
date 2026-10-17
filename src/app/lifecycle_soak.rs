@@ -99,8 +99,8 @@ fn campaign(secured: bool) {
             .route("large", get(large))
             .route("upload", put(upload));
         if !secured {
-            client = client.allow_plaintext();
-            server = server.allow_plaintext();
+            client = client.allow_unprotected();
+            server = server.allow_unprotected();
         }
         #[cfg(feature = "oscore")]
         if secured {

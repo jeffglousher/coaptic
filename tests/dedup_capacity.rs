@@ -177,7 +177,7 @@ fn fixed_dedup_capacity_replay_eviction_expiry_and_zero_fallback() {
         ($n:expr) => {{
             let app = without_allocating(|| {
                 App::with_resources(Resources::<Pools>::new().dedup_entries::<$n>())
-                    .allow_plaintext()
+                    .allow_unprotected()
                     .deterministic_for_tests()
                     .route("value", post(effect))
                     .bind(Io::default())
@@ -223,7 +223,7 @@ fn dedup_wrapper_preserves_other_dimensions_and_composes() {
 #[test]
 fn nonexpiring_row_refuses_cache_replacement_without_second_effect_then_recovers() {
     let mut app = App::with_resources(Resources::<Pools>::new().dedup_entries::<1>())
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("value", post(effect))
         .bind(Io::default())
@@ -263,7 +263,7 @@ fn allocated_dedup_capacity_exact_budget_refusal_and_recovery() {
         let before = IO_CALLS.with(Cell::get);
         let error = without_allocating(|| {
             App::with_resources(config(required - 1))
-                .allow_plaintext()
+                .allow_unprotected()
                 .deterministic_for_tests()
                 .bind(Io::default())
                 .err()
@@ -278,7 +278,7 @@ fn allocated_dedup_capacity_exact_budget_refusal_and_recovery() {
         );
         assert_eq!(IO_CALLS.with(Cell::get), before);
         let app = App::with_resources(config(required))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("value", post(effect))
             .bind(Io::default())
@@ -295,7 +295,7 @@ fn allocated_dedup_capacity_exact_budget_refusal_and_recovery() {
     let before = IO_CALLS.with(Cell::get);
     let error = without_allocating(|| {
         App::with_resources(huge)
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .bind(Io::default())
             .err()
@@ -485,7 +485,7 @@ fn tx_pressure<S: AppStorage>(mut server: Server<12, S>) {
 fn more_history_does_not_reserve_more_wire_storage() {
     let config = Resources::<Pools>::new().dedup_entries::<12>();
     let server = App::with_resources(config)
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("value", post(large_effect))
         .bind(Io::default())
@@ -502,7 +502,7 @@ fn more_history_does_not_reserve_more_wire_storage() {
                 .dedup_entries::<12>()
                 .allocated(required),
         )
-        .allow_plaintext()
+        .allow_unprotected()
         .deterministic_for_tests()
         .route("value", post(large_effect))
         .bind(Io::default())

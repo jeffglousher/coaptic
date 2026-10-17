@@ -17,7 +17,7 @@ pub enum BuildError {
     },
     /// The allocator could not reserve storage. Partial construction is dropped.
     AllocationFailed,
-    /// App requires a provisioned OSCORE context or an explicit plaintext opt-out.
+    /// App requires a provisioned OSCORE context or an explicit unprotected opt-out.
     SecurityRequired,
     /// App requires an explicit entropy source or test-only deterministic mode.
     RandomnessRequired,

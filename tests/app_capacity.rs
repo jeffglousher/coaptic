@@ -20,7 +20,7 @@ impl DatagramIo for Idle {
 fn caller_owned_storage_preserves_body_presence_validation() {
     let result = App::builder()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind_storage(
             Idle,
             Memory::<profiles::Default, WithBodies<profiles::Default>>::new(),
@@ -29,7 +29,7 @@ fn caller_owned_storage_preserves_body_presence_validation() {
     let result = App::builder()
         .block_wise::<true>()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind_storage(Idle, Memory::<profiles::Default>::new());
     assert!(matches!(result, Err(BuildError::MissingBodyPools)));
 }
@@ -43,7 +43,7 @@ fn allocated_storage_preserves_body_dimension_validation() {
     let bodies = plain.with_block_wise::<profiles::Default>();
     let result = App::builder()
         .deterministic_for_tests()
-        .allow_plaintext()
+        .allow_unprotected()
         .bind_alloc(Idle, bodies);
     assert!(matches!(result, Err(BuildError::UnexpectedBodyPools)));
     let mut incomplete = bodies;
@@ -61,7 +61,7 @@ fn allocated_storage_preserves_body_dimension_validation() {
         let result = App::builder()
             .block_wise::<true>()
             .deterministic_for_tests()
-            .allow_plaintext()
+            .allow_unprotected()
             .bind_alloc(Idle, capacity);
         match result {
             Err(error) => assert_eq!(error, expected),

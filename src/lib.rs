@@ -20,18 +20,8 @@
 //! authenticated credentials from your provisioning system as
 //! `provisioned_credentials` below; the hidden doctest credentials are fixtures.
 //! Persist sender-sequence reservations before reuse of a key after restart.
-//! Explicit `AppBuilder::allow_plaintext` is available for unprotected tests
-//! and compatibility; disabling Cargo defaults never silently permits plaintext.
-//!
-//! ```text
-//! RX slot (+ body) --view--> Request
-//! handler(Request) -> Response
-//! Response --encode--> TX slot (+ body)
-//!
-//! Outgoing (get/put) --encode--> TX slot
-//! poll matches Token + endpoint
-//! RX --copy--> Response::payload  (non-Block: min(len, INLINE_PAYLOAD) = 128)
-//! ```
+//! Explicit `AppBuilder::allow_unprotected` is available for unprotected tests
+//! and compatibility; disabling Cargo defaults never silently permits unprotected traffic.
 //!
 //! ```
 //! # #[cfg(feature = "oscore")]
@@ -125,34 +115,11 @@
 //! backward readings. Use one clock epoch for all timed App operations and
 //! propagate clock errors before sending or polling.
 //!
-//! # Modules
-//!
-//! - [`app`] — [`App`]: [`route`](app::AppBuilder::route), method routers,
-//!   `fn(Request<'_>) -> Response`, [`App::poll`], [`App::notify`],
-//!   outbound [`App::get`] / [`Outgoing::send`] / [`App::take_response`].
-//! - [`message`] — [`decode`](message::decode) / [`encode`](message::encode)
-//!   a datagram. No [`Engine`](storage::Engine) required.
-//! - [`storage`] — [`Engine`](storage::Engine) over
-//!   [`Storage`](storage::Storage); pools, tables,
-//!   [`DatagramIo`](storage::DatagramIo), wrapping
-//!   [`Metrics`] (`Engine::metrics` /
-//!   [`App::metrics`](App::metrics)). Advanced:
-//!   [`Access`](storage::Access) / [`AccessMut`](storage::AccessMut).
-//! - `oscore` — pairwise OSCORE (feature `oscore`): caller-owned
-//!   `SecurityContext`, `AppBuilder::oscore` before bind.
-//! - `provisioning` — authenticated EDHOC bootstrap (feature `edhoc`) with
-//!   installed peer pins, explicit confirmation and fresh volatile OSCORE keys.
-//! - [`profiles`] — [`profiles::Default`] (1472-byte datagrams) and
-//!   [`profiles::Constrained`] (1152).
-//!
 //! # Scope
 //!
 //! Protocol support and qualification are tracked separately in the
 //! repository issues. Passing individual scenarios does not establish full RFC
 //! conformance. Engine BERT (SZX 7) codecs exist; App does not expose them.
-//! Pairwise OSCORE (RFC 8613) is the `oscore` feature: a caller-owned
-//! `SecurityContext` (Master Secret, Sender/Recipient IDs, replay
-//! window). `AppBuilder::oscore` attaches it before bind; Engine does not store keys.
 //! Group OSCORE, other ciphers, Outer Block-wise over OSCORE (proxy
 //! hop-by-hop), and first-party DTLS are not supported.
 //! Inner Block-wise (Block1/Block2:
@@ -167,8 +134,8 @@
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
 //!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
 //!   `--no-default-features` retains the zero-dependency Engine and requires
-//!   explicit plaintext opt-out for App construction without cryptography.
-//! - `edhoc` — optional pinned P-256 EDHOC method 3 / suite 2 provisioning.
+//!   explicit unprotected opt-out for App construction without cryptography.
+//! - `edhoc` — optional pinned P-256 EDHOC method 3 / suites 2 and 3 provisioning.
 //!   Implies `oscore`, stays `no_std` and uses fixed storage without an allocator.
 //!   Install trusted credentials and supply fresh entropy through the caller.
 //!

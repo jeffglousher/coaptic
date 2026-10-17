@@ -132,7 +132,7 @@ fn fixed_lifetime(lifetime: u64) -> Server {
             .block_wise::<false>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deferred_lifetime(lifetime)
     .deterministic_for_tests()
     .route("obs", coaptic::get(handler).fetch(handler).observe(source))
@@ -381,7 +381,7 @@ fn fetch_observe_allocated_exact_budget_matches_fixed_refusal_recovery() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let server = App::with_resources(resources().allocated(budget))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("obs", coaptic::get(handler).fetch(handler).observe(source))
             .route("other", coaptic::fetch(handler).observe(source))
@@ -398,7 +398,7 @@ fn fetch_observe_explicit_response_without_source_is_declined() {
             .block_wise::<false>()
             .deferred::<2>(),
     )
-    .allow_plaintext()
+    .allow_unprotected()
     .deterministic_for_tests()
     .route("obs", coaptic::fetch(handler))
     .route("other", coaptic::get(handler))
@@ -727,7 +727,7 @@ fn query_observe_allocated_exact_budget_preserves_refusal_and_recovery() {
         .unwrap();
     for protected in [false, cfg!(feature = "oscore")] {
         let server = App::with_resources(resources().allocated(budget))
-            .allow_plaintext()
+            .allow_unprotected()
             .deterministic_for_tests()
             .route("obs", coaptic::get(handler).fetch(handler).observe(source))
             .route("other", coaptic::fetch(handler).observe(source))
