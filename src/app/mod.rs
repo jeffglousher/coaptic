@@ -1029,6 +1029,138 @@ impl<
         &self.engine
     }
 
+    /// Earliest armed protocol timeout in the caller's monotonic millisecond clock.
+    ///
+    /// Covers CON retransmissions, Call deadlines/lifetimes, overload cooldowns,
+    /// Q-Block pacing/recovery, Observe lifetimes, deferred work and dedup expiry.
+    /// Zero requests an immediate poll to arm a Q-Block receive wait. Past values
+    /// remain past until polling processes them; this query never consumes work,
+    /// advances a cursor, reads a clock, performs I/O or allocates memory.
+    ///
+    /// This is the timer input to an event loop, not a complete readiness test.
+    /// Also poll for socket ingress, queued datagrams, signalled notifications,
+    /// checkpoint retries and application state changes. `None` means no timed
+    /// work, not that these other sources are idle. Pinned resources or failing
+    /// I/O/checkpoints can prevent progress: wait for their owner or retry policy
+    /// rather than busy-looping on an expired timeout. Recompute after mutations.
+    ///
+    /// Scans configured TX, Observe, RX-body, dedup, Call and deferred capacities.
+    /// Each Call may additionally scan exchange and Observe tables. Uses constant
+    /// scratch space and no additional stored timer metadata on either backend.
+    #[must_use]
+    pub fn next_timeout(&self) -> Option<u64> {
+        let mut next = self.lives.next_timeout(&self.engine, &self.inbox);
+        let mut consider = |due: u64| {
+            next = Some(next.map_or(due, |old| old.min(due)));
+        };
+        let capacities = self.engine.capacities();
+        for index in 0..capacities.tx_datagram_slots {
+            if let Some(pending) = self.engine.pending_con(SlotId::from_index(index)) {
+                consider(pending.rto().next_timeout_ms());
+            }
+        }
+        for index in 0..capacities.observe_entries {
+            if let Some(lifetime) = self
+                .engine
+                .observe_interest(SlotId::from_index(index))
+                .and_then(|interest| interest.lifetime())
+            {
+                consider(lifetime.due_ms());
+            }
+        }
+        for index in 0..capacities.rx_body_slots.unwrap_or(0) {
+            if let Some(transfer) = self.engine.rx_body_transfer(SlotId::from_index(index)) {
+                if transfer.q_holes().is_some() {
+                    consider(
+                        transfer
+                            .q_receive()
+                            .map_or(0, |wait| wait.next_timeout_ms()),
+                    );
+                }
+            }
+        }
+        for index in 0..capacities.dedup_entries {
+            if let Some(entry) = self.engine.dedup_entry(SlotId::from_index(index)) {
+                if entry.due_ms() != 0 {
+                    consider(entry.due_ms());
+                }
+            }
+        }
+        if let Some(closed) = self.dedup_closed {
+            if closed.due_ms != 0 {
+                consider(closed.due_ms);
+            }
+        }
+        for row in self.deferred.rows.iter().flatten() {
+            consider(row.deadline_ms);
+        }
+        next
+    }
+
+    /// Next poll opportunity from retained ingress, notifications and protocol timers.
+    ///
+    /// Returns `Some(now_ms)` for ready work or elapsed timers, a later absolute
+    /// time for scheduled work, or `None` when these sources have no opportunity.
+    /// Held full responses and pinned RX slots are excluded. Deferred Observe
+    /// work and endpoint NSTART holds suppress notification readiness; NON holds
+    /// supply a wake time and CON holds use their retransmission timer.
+    ///
+    /// Recompute after polling or changing App state. Socket readiness, released
+    /// pins, new application signals, checkpoint retries and policy changes must
+    /// wake the event loop independently. A returned opportunity does not promise
+    /// successful I/O or admission; back off failures in the caller's event loop.
+    ///
+    /// No I/O, allocation, cursor advancement or timer mutation occurs. The mutable
+    /// borrow is required by the storage occupancy interface. In addition to
+    /// [`Self::next_timeout`], scans RX slots and pending Observe interests.
+    /// Each interest scans deferred and congestion state; congestion checks may
+    /// scan Observe capacity once per TX slot. All scans are capacity-bounded
+    /// and use constant scratch space.
+    #[must_use]
+    pub fn next_poll_at(&mut self, now_ms: u64) -> Option<u64> {
+        let mut next = self.next_timeout().map(|due| due.max(now_ms));
+        let capacities = self.engine.capacities();
+        for index in 0..capacities.rx_datagram_slots {
+            let id = SlotId::from_index(index);
+            let pool = self.engine.storage_mut().rx_datagram();
+            if pool.is_occupied(id) && !pool.is_pinned(id) && !self.inbox.holds_datagram(id) {
+                return Some(now_ms);
+            }
+        }
+        for index in 0..capacities.observe_entries {
+            let Some(interest) = self.engine.observe_interest(SlotId::from_index(index)) else {
+                continue;
+            };
+            if interest.key().is_client()
+                || !interest.is_pending()
+                || self.deferred.blocks_observe(interest.key())
+                || (!interest.is_deleted()
+                    && self.site.observe_source(interest.resource()).is_none())
+            {
+                continue;
+            }
+            if observe_endpoint_held(&self.engine, interest.endpoint(), now_ms)
+                < usize::from(Transmission::NSTART)
+            {
+                return Some(now_ms);
+            }
+            for held_index in 0..capacities.observe_entries {
+                if let Some(held) = self.engine.observe_interest(SlotId::from_index(held_index)) {
+                    if !held.key().is_client() && held.endpoint() == interest.endpoint() {
+                        if let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) =
+                            held.notify_hold()
+                        {
+                            if until_ms > now_ms {
+                                next = Some(next.map_or(until_ms, |old| old.min(until_ms)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        next
+    }
+
     /// Mutably borrow the Engine (advanced path).
     ///
     /// Escape hatch for explicit slots, [`crate::storage::Access`] /
