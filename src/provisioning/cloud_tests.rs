@@ -1076,3 +1076,145 @@ fn default_capacity_supports_64_active_associations_with_fixed_storage() {
         core::mem::size_of::<CloudAdmission<'_>>()
     );
 }
+
+#[test]
+fn admitted_sessions_install_into_shared_app_and_revoke_independently() {
+    let server = identity(254, 254);
+    let first = identity(1, 1);
+    let second = identity(2, 2);
+    let mut registry = Registry::new(&server, &[&first, &second]);
+    let mut cloud =
+        CloudAdmission::<2, 2, 2, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    let mut one = Some(finish(&mut cloud, &registry, &first, FIRST, 0).server);
+    let mut two = Some(finish(&mut cloud, &registry, &second, SECOND, 1_000).server);
+    let mut app = crate::App::with_resources(
+        crate::resources::SmallDevice::new()
+            .associations::<2>()
+            .client_calls::<2>(),
+    )
+    .deterministic_for_tests()
+    .require_associations()
+    .bind(Io::default())
+    .unwrap();
+    let a = AdmittedSession::install(&mut one, &mut app, &registry, 10).unwrap();
+    let b = AdmittedSession::install(&mut two, &mut app, &registry, 11).unwrap();
+    assert!(one.is_none() && two.is_none());
+    assert_eq!(a.owner(), first.peer().principal().fingerprint());
+    assert_eq!(b.owner(), second.peer().principal().fingerprint());
+    let ca = cloud
+        .with_app(&mut app, &registry, |app| {
+            app.get("status").to_association(a).send(1001)
+        })
+        .unwrap();
+    let cb = cloud
+        .with_app(&mut app, &registry, |app| {
+            app.get("status").to_association(b).send(1001)
+        })
+        .unwrap();
+    registry.entries[0]
+        .revoke(|_, _, _| Ok::<_, ()>(()))
+        .unwrap();
+    assert_eq!(cloud.reconcile_app(&mut app, &registry), 1);
+    assert_eq!(
+        app.take_response(ca).unwrap().unwrap_err(),
+        crate::CallFailure::AssociationRevoked
+    );
+    assert!(app.take_response(cb).is_none());
+    assert!(!app.association_is_active(a));
+    assert!(app.association_is_active(b));
+    assert_eq!(cloud.active.iter().flatten().count(), 1);
+    assert!(app.cancel(cb));
+}
+
+#[test]
+fn shared_listener_polls_edhoc_then_protected_application_in_the_same_rx_pool() {
+    #[derive(Default)]
+    struct SharedIo {
+        inbox: Option<(Endpoint, Vec<u8>)>,
+        output: Vec<u8>,
+    }
+    impl DatagramIo for SharedIo {
+        type Error = u8;
+        fn recv(&mut self, buffer: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
+            let Some((peer, bytes)) = self.inbox.take() else {
+                return Ok(None);
+            };
+            if bytes.len() > buffer.len() {
+                return Err(1);
+            }
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            Ok(Some((bytes.len(), peer)))
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, u8> {
+            self.output = bytes.to_vec();
+            Ok(bytes.len())
+        }
+    }
+    let server = identity(254, 254);
+    let first = identity(1, 1);
+    let registry = Registry::new(&server, &[&first]);
+    let mut cloud =
+        CloudAdmission::<2, 2, 2, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    let mut app =
+        crate::App::with_resources(crate::resources::SmallDevice::new().associations::<2>())
+            .deterministic_for_tests()
+            .require_associations()
+            .bind(SharedIo::default())
+            .unwrap();
+    let mut client = CoapProvisioner::start(&first, server.peer(), SERVER, 0, entropy(3)).unwrap();
+    let mut client_io = Io::default();
+    client.flush(&mut client_io, 0).unwrap();
+    let mut session = None;
+    for turn in 0..4 {
+        app.transport_mut().inbox = Some((FIRST, client_io.last().to_vec()));
+        cloud
+            .poll_app(
+                &mut app,
+                &registry,
+                turn,
+                entropy(4),
+                |_, _| true,
+                |_, _| panic!("bootstrap must not reach application dispatch"),
+            )
+            .unwrap();
+        client
+            .ingest(&app.transport().output, SERVER, turn, no_entropy, |_| true)
+            .unwrap();
+        if let Some(ready) = client.take_session() {
+            session = Some(ready);
+            break;
+        }
+        client.flush(&mut client_io, turn).unwrap();
+    }
+    let mut admitted = cloud.take_session(4, &registry).unwrap();
+    let owner = AdmittedSession::install(&mut admitted, &mut app, &registry, 1).unwrap();
+    let (mut context, _) = session.expect("completed handshake").into_parts();
+    let request = CoapMessage::new(Type::Confirmable, Code::GET, MessageId::new(100))
+        .with_token(Token::new(&[7]).unwrap());
+    let mut wire = [0; 256];
+    let n = context.protect_request(&request, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((FIRST, wire[..n].to_vec()));
+    let mut effects = 0;
+    cloud
+        .poll_app(
+            &mut app,
+            &registry,
+            5,
+            no_entropy,
+            |association, _| {
+                assert_eq!(association, Some(owner));
+                true
+            },
+            |request, _| {
+                assert_eq!(request.association(), Some(owner));
+                effects += 1;
+                crate::Response::content(b"ready")
+            },
+        )
+        .unwrap();
+    assert_eq!(effects, 1);
+    assert!(decode(&app.transport().output).unwrap().oscore().is_some());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+}

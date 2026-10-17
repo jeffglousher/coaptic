@@ -1174,7 +1174,7 @@ pub(crate) fn endpoint_notify_held<S: Storage + ObserveSlots>(
                 .observe_interest(SlotId::from_index(i))
                 .is_some_and(|row| {
                     !row.key().is_client()
-                        && row.endpoint() == endpoint
+                        && row.endpoint().physical() == endpoint.physical()
                         && row.is_notify_held(now_ms)
                 })
         })
