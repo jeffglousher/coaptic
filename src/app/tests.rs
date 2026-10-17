@@ -14869,3 +14869,185 @@ fn association_notification_wakeup_observes_other_owner_physical_hold() {
     assert_eq!(app.next_poll_at(11), Some(due));
     assert_eq!(app.next_poll_at(due), Some(due));
 }
+
+#[test]
+fn selected_observe_retains_get_and_fetch_selection_through_deferred_completion() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.path(), &["obs"]);
+        assert!(request.uri_query().map(Result::unwrap).eq(["b=2", "a=1"]));
+        if request.method() == Some(Method::Fetch) {
+            assert_eq!(request.content_format(), Some(Ok(ContentFormat::CBOR)));
+            assert_eq!(request.payload(), b"selector");
+            Response::content(b"fetch-result").content_format(ContentFormat::TEXT_PLAIN)
+        } else {
+            assert_eq!(request.method(), Some(Method::Get));
+            Response::content(b"get-result").content_format(ContentFormat::TEXT_PLAIN)
+        }
+    }
+    for method in [Code::GET, Code::FETCH] {
+        for deferred in [false, true] {
+            let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+            let mut app = App::profile::<profiles::Constrained>()
+                .deterministic_for_tests()
+                .deferred::<1>()
+                .block_wise::<false>()
+                .route(
+                    "obs",
+                    get(selected).fetch(selected).observe_selected(selected),
+                )
+                .allow_unprotected()
+                .bind(WideLoopback::default())
+                .unwrap();
+            let cf = ContentFormat::CBOR.encode();
+            let mut options = OptionsBuilder::<6>::new();
+            options.push(Opt::observe_register()).unwrap();
+            options.push(Opt::uri_path("obs")).unwrap();
+            if method == Code::FETCH {
+                options.push(Opt::content_format(&cf)).unwrap();
+            }
+            options.push(Opt::uri_query("b=2")).unwrap();
+            options.push(Opt::uri_query("a=1")).unwrap();
+            let message = Message::new(Type::Confirmable, method, MessageId::new(300))
+                .with_token(Token::from_checked(&[0xa1]))
+                .with_options(options.as_slice())
+                .with_payload(if method == Code::FETCH {
+                    b"selector"
+                } else {
+                    b""
+                });
+            let mut wire = [0; 1472];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            if deferred {
+                let mut handle = None;
+                app.poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+                app.complete(
+                    handle.unwrap(),
+                    Response::content(b"initial").content_format(ContentFormat::TEXT_PLAIN),
+                    1,
+                )
+                .unwrap();
+                let i = app.transport().send_n - 1;
+                let mid = decode(&app.transport().sends[i][..app.transport().send_lens[i]])
+                    .unwrap()
+                    .message_id();
+                let ack = crate::message::empty_ack(mid);
+                let mut wire = [0; 1472];
+                let n = encode(&ack, &mut wire).unwrap();
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(2).unwrap();
+            } else {
+                app.poll(0).unwrap();
+            }
+            assert_eq!(app.signal(&["obs"]), 1);
+            app.poll(10).unwrap();
+            let i = app.transport().send_n - 1;
+            let parsed = decode(&app.transport().sends[i][..app.transport().send_lens[i]]).unwrap();
+            assert_eq!(parsed.observe().and_then(Result::ok), Some(1));
+            assert_eq!(
+                parsed.payload(),
+                if method == Code::FETCH {
+                    b"fetch-result".as_slice()
+                } else {
+                    b"get-result".as_slice()
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn selected_observe_isolates_payloads_declines_oversize_and_reclaims_on_cancel() {
+    fn source(request: Request<'_>) -> Response<'static> {
+        if request.payload().len() > 128 {
+            Response::content(b"ordinary")
+        } else {
+            Response::content_copy(request.payload())
+        }
+    }
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", fetch(source).observe_selected(source))
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let cf = ContentFormat::CBOR.encode();
+    let mut options = OptionsBuilder::<4>::new();
+    options.push(Opt::observe_register()).unwrap();
+    options.push(Opt::uri_path("obs")).unwrap();
+    options.push(Opt::content_format(&cf)).unwrap();
+    for (i, payload) in [b"first".as_slice(), b"second".as_slice(), &[0; 600]]
+        .into_iter()
+        .enumerate()
+    {
+        let peer = Endpoint::v4([192, 0, 2, i as u8 + 1], 5683);
+        let message = Message::new(
+            Type::Confirmable,
+            Code::FETCH,
+            MessageId::new(i as u16 + 10),
+        )
+        .with_token(Token::from_checked(&[1]))
+        .with_options(options.as_slice())
+        .with_payload(payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(i as u64).unwrap();
+        let t = app.transport();
+        let last = t.send_n - 1;
+        let reply = decode(&t.sends[last][..t.send_lens[last]]).unwrap();
+        assert_eq!(reply.observe().is_some(), i < 2);
+    }
+    app.transport_mut().send_n = 0;
+    let block = crate::message::BlockValue::new(1, false, 0)
+        .unwrap()
+        .encode();
+    let followup = [
+        Opt::uri_path("obs"),
+        Opt::content_format(&cf),
+        Opt::block2(&block),
+    ];
+    let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(90))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(&followup)
+        .with_payload(b"different");
+    let mut wire = [0; WIRE];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((Endpoint::v4([192, 0, 2, 1], 5683), wire, n));
+    app.poll(9).unwrap();
+    let t = app.transport();
+    assert_eq!(
+        decode(&t.sends[0][..t.send_lens[0]]).unwrap().code(),
+        Code::BAD_REQUEST
+    );
+    app.transport_mut().send_n = 0;
+    assert_eq!(app.signal(&["obs"]), 2);
+    app.poll(10).unwrap();
+    app.poll(11).unwrap();
+    let t = app.transport();
+    assert_eq!(t.send_n, 2);
+    let a = decode(&t.sends[0][..t.send_lens[0]]).unwrap();
+    let b = decode(&t.sends[1][..t.send_lens[1]]).unwrap();
+    assert!([a.payload(), b.payload()].contains(&b"first".as_slice()));
+    assert!([a.payload(), b.payload()].contains(&b"second".as_slice()));
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let opts = [
+        Opt::observe_deregister(),
+        Opt::uri_path("obs"),
+        Opt::content_format(&cf),
+    ];
+    let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(99))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(&opts)
+        .with_payload(b"first");
+    let mut wire = [0; WIRE];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert_eq!(app.signal(&["obs"]), 1);
+}

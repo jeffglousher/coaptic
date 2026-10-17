@@ -19,10 +19,12 @@ use coaptic::storage::{Memory, MemoryLayout, WithBodies};
 fn complete_app_layout() {
     // Whole-object ceilings, independent of implementation-derived allowances.
     // Four Calls, eight routes, no deferred rows, unit transport, inline pools.
-    assert!(size_of::<App<profiles::Default, ()>>() <= 27 * 1024);
-    assert!(size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>() <= 49 * 1024);
-    assert!(size_of::<App<profiles::Constrained, ()>>() <= 18 * 1024);
-    assert!(size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>() <= 31 * 1024);
+    // Observe rows own a bounded 512-byte selection; no separate selection table.
+    // SmallDevice retains its independent 12/13 KiB and 26/27 KiB ceilings below.
+    assert!(size_of::<App<profiles::Default, ()>>() <= 29 * 1024);
+    assert!(size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>() <= 51 * 1024);
+    assert!(size_of::<App<profiles::Constrained, ()>>() <= 19 * 1024);
+    assert!(size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>() <= 32 * 1024);
     println!(
         "layout pointer={} oscore={}",
         size_of::<usize>(),

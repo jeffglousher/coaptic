@@ -5,7 +5,7 @@ use crate::storage::ObserveResource;
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, Request, path_from_into};
 use super::response::{INLINE_PAYLOAD, RESPONSE_BODY, Response};
-use super::routing::{Method, MethodRouter, ObserveSource};
+use super::routing::{Method, MethodRouter, SnapshotSource};
 
 /// Default number of routes in a [`Site`] / [`App`](super::App).
 pub const DEFAULT_ROUTES: usize = 8;
@@ -334,7 +334,7 @@ impl<const N: usize> Site<N> {
     }
 
     /// Snapshot fn for an opaque App route identity.
-    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<ObserveSource> {
+    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource> {
         self.entries.iter().enumerate().find_map(|(index, entry)| {
             entry
                 .as_ref()
