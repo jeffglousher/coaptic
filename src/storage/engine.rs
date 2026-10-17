@@ -128,6 +128,23 @@ impl<S: Storage> Engine<S> {
         self.storage.capacities()
     }
 
+    /// Snapshot occupancy and capacity without changing storage or counters.
+    ///
+    /// Requires exclusive access because [`Storage`] exposes mutable pool views.
+    /// Work is constant: six existing occupancy counters, without scanning slots.
+    #[must_use]
+    pub fn storage_usage(&mut self) -> super::StorageUsage {
+        use super::PoolUsage;
+        super::StorageUsage {
+            rx_datagram: PoolUsage::read(self.storage.rx_datagram()),
+            tx_datagram: PoolUsage::read(self.storage.tx_datagram()),
+            dedup: PoolUsage::read(self.storage.dedup()),
+            observe: PoolUsage::read(self.storage.observe()),
+            rx_body: self.storage.rx_body().map(|pool| PoolUsage::read(pool)),
+            tx_body: self.storage.tx_body().map(|pool| PoolUsage::read(pool)),
+        }
+    }
+
     /// Echo option on `parsed`. `Ok(None)` if absent.
     pub fn echo(parsed: &ParsedMessage<'_>) -> Result<Option<Echo>, ValueError> {
         Echo::from_message(parsed)
