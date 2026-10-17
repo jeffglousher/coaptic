@@ -4,9 +4,16 @@ Follow [AGENTS.md](AGENTS.md) for delivery. Use the pinned Rust toolchain;
 the library is edition 2024 with MSRV 1.85. Test peers may require newer tools.
 Merges to `main` are squash-only and require the repository's CI checks.
 
-## Validate the change
+Pre-release development does not require version bumps, backwards compatibility,
+deprecation cycles or compatibility layers. Update affected callers together when
+changing interfaces. Keep manifest versions and dependency pins required by tooling;
+release version selection belongs to an explicitly requested publication.
 
-Choose checks from the affected boundary and record what ran. For Rust changes:
+## Validate each batch
+
+Complete a coherent batch of capability, optimization or cleanup work before
+testing. Run an earlier focused check when it resolves an implementation uncertainty.
+Choose checks from the affected boundaries and record what ran. For a Rust batch:
 
 ```sh
 cargo fmt --all -- --check
@@ -38,8 +45,9 @@ samples; a library-to-itself exchange does not establish independent interoperab
 
 ## Release validation
 
-Run the complete feature and packaging matrix before release, and when a change
-alters the corresponding cross-feature or compiler compatibility contract:
+Run the complete feature and packaging matrix before an explicitly requested
+release. During development, select the affected checks from this matrix; expand
+coverage when a concrete cross-feature or compiler concern warrants it:
 
 ```sh
 cargo fmt --all -- --check
