@@ -172,7 +172,7 @@ fn exercise<C: AppStorage, S: AppStorage>(
     DISPATCHES.with(|v| v.set(0));
     without_allocating(|| {
         let mut now = 0;
-        for mask in [8, 16, 24] {
+        for mask in [8, 16, 24, 0x89, 0x91, 0x99] {
             for non in [false, true] {
                 MASK.with(|v| v.set(mask));
                 // Repeated refused outcomes exceed Call/body capacity; a successful operation
@@ -254,7 +254,7 @@ fn exercise<C: AppStorage, S: AppStorage>(
                 }
             }
         }
-        assert_eq!(DISPATCHES.with(Cell::get), 24);
+        assert_eq!(DISPATCHES.with(Cell::get), 48);
     });
 }
 #[test]
@@ -362,7 +362,7 @@ fn classic_error_only_no_response_refusals_preserve_owned_capacity() {
     let mut client = fixed();
     without_allocating(|| {
         for cycle in 0..16 {
-            for mask in [1, 2, 10, 18, 26, 128, 255] {
+            for mask in [2, 3, 10, 18, 26, 130, 255] {
                 assert_eq!(
                     client
                         .put("upload")

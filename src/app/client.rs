@@ -1394,8 +1394,9 @@ where
     /// ACKs; NON masks 2/18 pace each new ten-payload set after a sampled 2..=3s
     /// delay unless Continue arrives first. Poll sends at most one timed set,
     /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
-    /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
-    /// Observe registration remain explicit App boundaries.
+    /// missing-block reports. Q-Block1 rejects suppression of 4.xx; other bitmap
+    /// bits are preserved without changing upload admission or pacing.
+    /// Nonzero Observe registration masks remain an explicit App boundary.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1644,7 +1645,7 @@ where
         }
         if self
             .no_response
-            .is_some_and(|value| !matches!(value.get(), 0 | 2 | 16 | 18))
+            .is_some_and(|value| value.suppresses(Code::REQUEST_ENTITY_INCOMPLETE))
             && self.q_block1
         {
             return Err(Error::NoResponseUploadUnsupported);
@@ -2049,17 +2050,13 @@ where
         )
         .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            // Classic Block1 requires 2.xx Continue. This bounded App combination
-            // supports only the defined error-class bits; undefined bits are an
-            // API boundary, not a wire-validity judgment. CON Q uploads use
-            // transport ACKs, so their admitted 2/18 masks do not hide progress.
+            // Classic Block1 requires 2.xx Continue. Test the suppressed class,
+            // preserving unrelated bitmap bits on every fragment. CON Q uploads
+            // use transport ACKs; their success-suppression bit does not hide ACKs.
             if !spec.q_block1
-                && spec.no_response.is_some_and(|value| {
-                    value.get()
-                        & !(crate::message::NoResponse::SUPPRESS_4
-                            | crate::message::NoResponse::SUPPRESS_5)
-                        != 0
-                })
+                && spec
+                    .no_response
+                    .is_some_and(|value| value.suppresses(Code::CONTINUE))
             {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
@@ -3136,7 +3133,7 @@ fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
             && live.ty == Type::NonConfirmable
             && live
                 .no_response
-                .is_some_and(|mask| matches!(mask.get(), 2 | 18))
+                .is_some_and(|mask| mask.suppresses(Code::CONTINUE))
         {
             now_ms
                 .checked_add(u64::from(
@@ -3373,7 +3370,7 @@ where
         }
         BlockRole::OutgoingQBlock1 => {
             let paced = ty == Type::NonConfirmable
-                && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
+                && no_response.is_some_and(|mask| mask.suppresses(Code::CONTINUE));
             if paced {
                 if let Some(q) = q_ack {
                     if transfer
