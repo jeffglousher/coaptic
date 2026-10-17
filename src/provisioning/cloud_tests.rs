@@ -331,6 +331,7 @@ fn retained_saturation_delays_handoff_without_evicting_active_or_completed_state
     let second_m4 = io.last().to_vec();
     check_response(&second_m3, &second_m4, Code::CHANGED);
     assert!(cloud.take_session(1_000, &registry).unwrap().is_none());
+    assert_eq!(cloud.next_deadline(), Some(EXCHANGE_LIFETIME_MS));
     assert!(cloud.reserves_connection_id(first_id));
     assert!(cloud.reserves_connection_id(second_id));
     assert_eq!(
@@ -364,6 +365,125 @@ fn retained_saturation_delays_handoff_without_evicting_active_or_completed_state
         )
         .unwrap();
     assert_eq!(session.principal(), &server.peer().principal());
+}
+
+#[test]
+fn ready_session_wakes_handoff_without_waiting_for_expiry() {
+    let server = identity(254, 254);
+    let client = identity(1, 1);
+    let registry = Registry::new(&server, &[&client]);
+    let mut cloud =
+        CloudAdmission::<1, 1, 1, 1>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    assert_eq!(cloud.next_deadline(), None);
+    prepare_ready(&mut cloud, &registry, &client, FIRST, 7);
+    let mut io = Io::default();
+    cloud.flush(&mut io, 7, &registry).unwrap();
+    let lookups = registry.lookups.get();
+    assert_eq!(cloud.next_deadline(), Some(7));
+    assert_eq!(cloud.next_deadline(), Some(7));
+    assert_eq!(registry.lookups.get(), lookups);
+    assert!(cloud.take_session(7, &registry).unwrap().is_some());
+    assert_eq!(cloud.next_deadline(), Some(7 + EXCHANGE_LIFETIME_MS));
+}
+
+#[test]
+fn handoff_churn_cannot_starve_an_older_ready_owner() {
+    let server = identity(254, 254);
+    let first = identity(1, 1);
+    let second = identity(2, 2);
+    let third = identity(3, 3);
+    let registry = Registry::new(&server, &[&first, &second, &third]);
+    let mut cloud =
+        CloudAdmission::<3, 2, 3, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    let mut io = Io::default();
+    let (first_confirm, _) = prepare_ready(&mut cloud, &registry, &first, FIRST, 0);
+    cloud.flush(&mut io, 0, &registry).unwrap();
+    let (second_confirm, _) = prepare_ready(&mut cloud, &registry, &second, SECOND, 1_000);
+    cloud.flush(&mut io, 1_000, &registry).unwrap();
+    let taken = cloud.take_session(1_000, &registry).unwrap().unwrap();
+    assert_eq!(
+        taken.association().local_id,
+        first_confirm.peer_connection_id()
+    );
+    let (third_confirm, _) = prepare_ready(
+        &mut cloud,
+        &registry,
+        &third,
+        Endpoint::v4([192, 0, 2, 3], 5683),
+        2_000,
+    );
+    cloud.flush(&mut io, 2_000, &registry).unwrap();
+    let taken = cloud.take_session(2_000, &registry).unwrap().unwrap();
+    assert_eq!(
+        taken.association().local_id,
+        second_confirm.peer_connection_id()
+    );
+    let taken = cloud.take_session(2_000, &registry).unwrap().unwrap();
+    assert_eq!(
+        taken.association().local_id,
+        third_confirm.peer_connection_id()
+    );
+}
+
+#[test]
+fn failed_peer_cannot_starve_another_handoff_and_retry_keeps_exact_bytes() {
+    struct PeerFailure {
+        io: Io,
+        short: bool,
+    }
+    impl DatagramIo for PeerFailure {
+        type Error = u8;
+
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
+            panic!("admission must not receive")
+        }
+
+        fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> Result<usize, u8> {
+            self.io.fail = endpoint == FIRST && !self.short;
+            self.io.short = endpoint == FIRST && self.short;
+            self.io.send(endpoint, bytes)
+        }
+    }
+
+    for short in [false, true] {
+        let server = identity(254, 254);
+        let first = identity(1, 1);
+        let second = identity(2, 2);
+        let registry = Registry::new(&server, &[&first, &second]);
+        let mut cloud =
+            CloudAdmission::<2, 2, 2, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+                .unwrap();
+        let completed = finish(&mut cloud, &registry, &first, FIRST, 0);
+        let (_, second_m3) = prepare_ready(&mut cloud, &registry, &second, SECOND, 1_000);
+        cloud
+            .ingest(&completed.m3, FIRST, 1_000, &registry, no_entropy)
+            .unwrap();
+        let mut io = PeerFailure {
+            io: Io::default(),
+            short,
+        };
+        let failure = if short {
+            CloudError::ShortSend
+        } else {
+            CloudError::Io(9)
+        };
+        assert_eq!(cloud.flush(&mut io, 1_000, &registry), Err(failure));
+        assert_eq!(io.io.sent.len(), 1);
+        assert_eq!(io.io.last(), completed.m4);
+        assert_eq!(cloud.flush(&mut io, 1_000, &registry), Ok(Status::Progress));
+        assert_eq!(io.io.sent.len(), 2);
+        assert_eq!(io.io.sent[1].0, SECOND);
+        check_response(&second_m3, io.io.last(), Code::CHANGED);
+        assert!(cloud.take_session(1_000, &registry).unwrap().is_some());
+        assert_eq!(cloud.flush(&mut io, 1_000, &registry), Err(failure));
+        assert_eq!(io.io.last(), completed.m4);
+        assert_eq!(
+            cloud.retained[0].as_ref().unwrap().expires,
+            EXCHANGE_LIFETIME_MS
+        );
+    }
 }
 
 #[test]

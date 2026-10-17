@@ -640,6 +640,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
 
     /// Sends at most one saved datagram, without receiving, with round-robin fairness.
     /// A failed or short send preserves exact bytes and grants are rechecked first.
+    /// Every attempted send advances the cursor, including transport failures.
+    /// A continuously queued owner therefore receives an attempt within
+    /// `PENDING + RETAINED + 1` calls; successful delivery still depends on I/O.
     pub fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -653,8 +656,11 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             if index < P {
                 if let Some(pending) = &mut self.pending[index] {
                     for exchange in pending.exchanges.iter_mut().flatten() {
-                        if send_exchange(io, pending.endpoint, exchange, now_ms)? {
+                        let sent = send_exchange(io, pending.endpoint, exchange, now_ms);
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
+                        }
+                        if sent? {
                             return exchange.notice.map_or(Ok(Status::Progress), |notice| {
                                 Err(notice.error(pending.endpoint, pending.local_id))
                             });
@@ -663,7 +669,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     if let Some(receipt) = &mut pending.final_error {
                         let sent =
                             flush_receipt(io, pending.endpoint, pending.local_id, receipt, now_ms);
-                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
                             return sent.map(|_| Status::Progress);
                         }
@@ -673,8 +679,12 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             } else if index < P + C {
                 if let Some(retained) = &mut self.retained[index - P] {
                     for exchange in retained.exchanges.iter_mut().flatten() {
-                        if send_exchange(io, retained.association.endpoint, exchange, now_ms)? {
+                        let sent =
+                            send_exchange(io, retained.association.endpoint, exchange, now_ms);
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
+                        }
+                        if sent? {
                             return exchange.notice.map_or(Ok(Status::Progress), |notice| {
                                 Err(notice.error(
                                     retained.association.endpoint,
@@ -691,7 +701,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                             receipt,
                             now_ms,
                         );
-                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
                             return sent.map(|_| Status::Progress);
                         }
@@ -699,9 +709,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     }
                 }
             } else if let Some(challenge) = &self.challenge {
+                self.send_cursor = (index + 1) % count;
                 send(io, challenge.endpoint, challenge.response.as_bytes())?;
                 self.challenge = None;
-                self.send_cursor = (index + 1) % count;
                 return Ok(Status::Progress);
             }
         }
@@ -710,6 +720,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
 
     /// Moves one session after complete M4 transmission and current trust checks.
     /// Saturated completion storage retains keys internally until space or expiry.
+    /// Among ready sessions, the oldest admitted handshake wins. Monotonically
+    /// allocated connection IDs provide this ordering without another queue;
+    /// reuse of an earlier array slot cannot starve an older ready owner.
     pub fn take_session(
         &mut self,
         now_ms: u64,
@@ -722,11 +735,16 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         let Some(active_slot) = self.active.iter().position(Option::is_none) else {
             return Ok(None);
         };
-        let Some(pending_slot) = self.pending.iter().position(|entry| {
-            entry.as_ref().is_some_and(|item| {
+        let Some((pending_slot, _)) = self
+            .pending
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, entry)| entry.as_ref().map(|item| (slot, item)))
+            .filter(|(_, item)| {
                 item.ready.is_some() && !item.exchanges.iter().flatten().any(|item| item.queued)
             })
-        }) else {
+            .min_by(|(_, a), (_, b)| a.local_id.as_bytes().cmp(b.local_id.as_bytes()))
+        else {
             return Ok(None);
         };
         let mut pending = self.pending[pending_slot].take().expect("ready slot");
@@ -901,12 +919,22 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             })
     }
 
-    /// Earliest queued-send opportunity or original state expiry.
+    /// Earliest queued send, available session handoff or original state expiry.
+    ///
+    /// Uses the last accepted caller time; a value at/before the current time
+    /// calls for `flush` and `take_session`. Handoff readiness is suppressed when
+    /// active or completion storage is full, avoiding a capacity-induced busy loop.
+    /// Trust is rechecked by those operations, not by this scheduling hint.
+    /// Socket readiness, policy updates and caller-released capacity must wake the
+    /// event loop separately. No clock, I/O, allocation or state mutation occurs;
+    /// the scan is bounded by `ACTIVE + PENDING + RETAINED` rows.
     #[must_use]
     pub fn next_deadline(&self) -> Option<u64> {
         if self.blocked {
             return None;
         }
+        let can_handoff =
+            self.active.iter().any(Option::is_none) && self.retained.iter().any(Option::is_none);
         let mut deadline = self.challenge.as_ref().map(|_| self.last_now);
         for item in self.pending.iter().flatten() {
             let due = if item
@@ -915,6 +943,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 .flatten()
                 .any(|exchange| exchange.queued)
                 || item.final_error.as_ref().is_some_and(ErrorReceipt::pending)
+                || (can_handoff && item.ready.is_some())
             {
                 self.last_now
             } else {
