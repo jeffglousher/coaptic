@@ -9,6 +9,22 @@ deprecation cycles or compatibility layers. Update affected callers together whe
 changing interfaces. Keep manifest versions and dependency pins required by tooling;
 release version selection belongs to an explicitly requested publication.
 
+## Current-state assessment
+
+Finish accepted coding and integration before expanding comparative benchmarks
+or stability campaigns. For a performance question, use a short current-source
+sample with named workload, security, storage and resource settings. Start device
+comparisons from `SmallDevice` / `profiles::Constrained`, keeping route, Call,
+deferred and security capacities explicit. Hold these settings constant when
+comparing blockwise enabled/disabled or protected/unprotected operation. The
+small preset is a starting budget, not a restriction on accepted capabilities.
+
+Report complete-object storage separately from peak stack, heap and transport
+usage, without double counting an App placed inside a reserved stack. Identify
+unmeasured quantities. Retain source identities and compact evidence privately;
+older results do not fill gaps in a current-state report. Use historical comparison
+only when requested or necessary to diagnose a particular regression.
+
 ## Validate each batch
 
 Complete a coherent batch of capability, optimization or cleanup work before
