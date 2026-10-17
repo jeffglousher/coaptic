@@ -1217,7 +1217,9 @@ impl<
             }
             for held_index in 0..capacities.observe_entries {
                 if let Some(held) = self.engine.observe_interest(SlotId::from_index(held_index)) {
-                    if !held.key().is_client() && held.endpoint() == interest.endpoint() {
+                    if !held.key().is_client()
+                        && held.endpoint().physical() == interest.endpoint().physical()
+                    {
                         if let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) =
                             held.notify_hold()
                         {
@@ -1248,8 +1250,9 @@ impl<
     /// requires a context. This setter retains explicit replacement support
     /// and never removes protection or enables unprotected fallback.
     ///
-    /// There is exactly one context per App, with `REQUESTS` live request bindings
-    /// shared by in-flight requests and Observe registrations. Replacing it
+    /// This setter configures the single primary context, with `REQUESTS` live
+    /// request bindings shared by Calls and Observe. It refuses once explicit
+    /// associations have been installed. Replacing the primary context
     /// does not migrate live exchanges, tokens, replay state, or subscriptions.
     /// Drain, collect, cancel or expire work under the current context first,
     /// including cached replies and fail-closed dedup history. Busy refusal

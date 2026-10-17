@@ -14822,3 +14822,33 @@ fn associations_share_endpoint_nstart_and_pinned_revocation_stops_old_sends() {
     assert!(app.association_is_active(b));
     assert!(app.cancel(survivor));
 }
+
+#[cfg(feature = "oscore")]
+#[test]
+fn association_notification_wakeup_observes_other_owner_physical_hold() {
+    use crate::storage::ObserveInterest;
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("held", get(get_obs))
+        .route("pending", get(get_obs).observe(obs_snapshot))
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let physical = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut held = ObserveInterest::new(Token::new(&[1]).unwrap(), physical.with_association(1))
+        .with_resource(app.site.observe_resource(&["held"]));
+    held.record_notify(10, MessageId::new(42), false);
+    app.engine.insert_observe(held).unwrap();
+    let pending = app.site.observe_resource(&["pending"]);
+    app.engine
+        .insert_observe(
+            ObserveInterest::new(Token::new(&[2]).unwrap(), physical.with_association(2))
+                .with_resource(pending),
+        )
+        .unwrap();
+    assert_eq!(app.engine.signal_observe_resource(pending), 1);
+    let due = 10 + u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    assert_eq!(app.next_poll_at(11), Some(due));
+    assert_eq!(app.next_poll_at(due), Some(due));
+}
