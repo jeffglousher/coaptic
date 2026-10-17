@@ -15,9 +15,39 @@ use coaptic::app::{
 use coaptic::profiles;
 use coaptic::storage::{Memory, MemoryLayout, WithBodies};
 
+#[test]
+fn complete_app_layout() {
+    // Whole-object ceilings, independent of implementation-derived allowances.
+    // Four Calls, eight routes, no deferred rows, unit transport, inline pools.
+    assert!(size_of::<App<profiles::Default, ()>>() <= 27 * 1024);
+    assert!(size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>() <= 49 * 1024);
+    assert!(size_of::<App<profiles::Constrained, ()>>() <= 18 * 1024);
+    assert!(size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>() <= 31 * 1024);
+    println!(
+        "layout pointer={} oscore={}",
+        size_of::<usize>(),
+        cfg!(feature = "oscore")
+    );
+    println!(
+        "default memory={} datagram={} blockwise={}",
+        size_of::<Memory<profiles::Default>>(),
+        size_of::<App<profiles::Default, ()>>(),
+        size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>()
+    );
+    println!(
+        "constrained memory={} datagram={} blockwise={}",
+        size_of::<Memory<profiles::Constrained>>(),
+        size_of::<App<profiles::Constrained, ()>>(),
+        size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>()
+    );
+}
+
 /// Block-wise App may pay the assembled hold on top of Memory body pools.
 /// Padding to `App`'s alignment stays well under 64 bytes.
 const ASSEMBLED_HOLD_PAD: usize = 64;
+
+// A deadline and lifecycle flag share each existing request row.
+const OVERLOAD_BACKOFF_BUDGET: usize = 4 * 16;
 
 // Four live requests now retain up to 256 URI-query bytes, eight lengths,
 // and metadata each. Account explicitly for this bounded protocol state;
@@ -58,14 +88,16 @@ fn assert_datagram_omits_assembled(
         "Memory body pools must add RAM ({datagram_mem} !< {block_wise_mem})"
     );
     assert!(
-        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET) < block_wise_mem,
-        "datagram App ({datagram_app}), excluding explicit cancellation metadata, must not include WithBodies Memory ({block_wise_mem})"
+        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET + OVERLOAD_BACKOFF_BUDGET)
+            < block_wise_mem,
+        "datagram App ({datagram_app}), excluding explicit cancellation/backoff metadata, must not include WithBodies Memory ({block_wise_mem})"
     );
     let overhead = datagram_app.saturating_sub(datagram_mem);
     assert!(
         overhead
             < RESPONSE_BODY
                 + RETAINED_QUERY_BUDGET
+                + OVERLOAD_BACKOFF_BUDGET
                 + RETAINED_RESPONSE_BUDGET
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET

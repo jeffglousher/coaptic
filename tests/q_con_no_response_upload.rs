@@ -245,7 +245,15 @@ fn campaign<C: AppStorage, S: AppStorage>(
                     if protected {
                         assert!(client.oscore().unwrap().lookup(call.token()).is_none());
                     }
-                    now += 200;
+                    if status == Code::SERVICE_UNAVAILABLE && !suppressed {
+                        assert!(matches!(
+                            client.put("upload").to(PEER).send(now + 100),
+                            Err(coaptic::app::Error::Backoff { .. })
+                        ));
+                        now += 60_200;
+                    } else {
+                        now += 200;
+                    }
                 }
             }
         }

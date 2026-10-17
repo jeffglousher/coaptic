@@ -244,7 +244,15 @@ fn exercise<C: AppStorage, S: AppStorage>(
                         EFFECTS.with(Cell::get),
                         effects + usize::from(status == Code::CHANGED)
                     );
-                    now += 200;
+                    if status == Code::SERVICE_UNAVAILABLE && !suppressed {
+                        assert!(matches!(
+                            client.put("upload").to(PEER).send(now + 100),
+                            Err(coaptic::app::Error::Backoff { .. })
+                        ));
+                        now += 60_200;
+                    } else {
+                        now += 200;
+                    }
                 }
             }
         }

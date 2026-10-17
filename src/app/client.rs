@@ -17,6 +17,13 @@
 //! and replies waiting for `take_response`. [`super::AppBuilder::client_calls`]
 //! sizes those inline tables independently of packet storage. Other pool and
 //! security limits can be lower. Call-table exhaustion is `Error::Saturated`.
+//! Matched 4.29 and 5.03 replies retain method/peer/path/query backoff until
+//! Max-Age expires (60 seconds when absent). `Outgoing::send` returns
+//! `Error::Backoff` before I/O for that target. Other request bodies and options
+//! do not change similarity. Application-defined series can impose wider limits.
+//! Backoffs consume client admission capacity and retain one bounded query/path
+//! copy per row; they survive response collection and cancellation. No active
+//! backoff is evicted. Error-body block follow-ups are not sent during backoff.
 //! Upload continuation and cleanup select request-body roles separately from
 //! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
@@ -566,6 +573,10 @@ struct LiveCall {
     deadline_ms: Option<u64>,
     /// Next NON Q1 set may start at this instant; zero means disarmed.
     q_pace_ms: u64,
+    /// Cooldown retains this row's request identity, without a second buffer.
+    backoff_until_ms: u64,
+    /// Response collected or Call cancelled; only cooldown identity remains live.
+    retired: bool,
 }
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
@@ -576,7 +587,7 @@ pub(crate) struct ClientLives<const CALLS: usize> {
 
 impl<const CALLS: usize> ClientLives<CALLS> {
     pub(super) fn has_protocol_state(&self) -> bool {
-        self.rows.iter().any(Option::is_some)
+        self.rows.iter().flatten().any(|row| !row.retired)
     }
 
     pub(crate) const fn new() -> Self {
@@ -585,17 +596,87 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         }
     }
 
+    fn expire_backoffs(&mut self, now_ms: u64) {
+        for slot in &mut self.rows {
+            if let Some(row) = slot {
+                if row.backoff_until_ms <= now_ms {
+                    row.backoff_until_ms = 0;
+                    if row.retired {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+    }
+
+    fn backoff_until(
+        &self,
+        peer: Endpoint,
+        code: Code,
+        path: &Path<'_>,
+        queries: &RetainedQueries,
+    ) -> Option<u64> {
+        self.rows
+            .iter()
+            .flatten()
+            .filter(|row| {
+                row.backoff_until_ms != 0
+                    && row.call.peer == peer
+                    && row.code == code
+                    && row.path.segments() == path.segments()
+                    && row.queries.values().eq(queries.values())
+            })
+            .map(|row| row.backoff_until_ms)
+            .max()
+    }
+
+    fn record_backoff(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+        if !matches!(
+            parsed.code(),
+            Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
+        ) {
+            return;
+        }
+        // Invalid or duplicate Max-Age cannot become a remote scheduling instruction.
+        if parsed
+            .get_options(crate::message::OptionNumber::MAX_AGE)
+            .count()
+            > 1
+        {
+            return;
+        }
+        let seconds = match parsed.max_age() {
+            Some(Ok(value)) => value,
+            None => super::DEFAULT_MAX_AGE_SECS,
+            Some(Err(_)) => return,
+        };
+        self.expire_backoffs(now_ms);
+        if seconds == 0 {
+            return;
+        }
+        if let Some(row) = self
+            .rows
+            .iter_mut()
+            .flatten()
+            .find(|row| !row.retired && row.call == call)
+        {
+            row.backoff_until_ms = row
+                .backoff_until_ms
+                .max(now_ms.saturating_add(u64::from(seconds) * 1000));
+        }
+    }
+
     fn can_admit(&self, token: Token, peer: Endpoint) -> bool {
         self.rows.iter().any(|row| match row {
             None => true,
-            Some(live) => live.call.token == token && live.call.peer == peer,
+            Some(live) => !live.retired && live.call.token == token && live.call.peer == peer,
         })
     }
 
     fn insert(&mut self, live: LiveCall) {
         if let Some(existing) = self.rows.iter_mut().find(|row| {
             row.as_ref().is_some_and(|row| {
-                row.call.token == live.call.token && row.call.peer == live.call.peer
+                !row.retired && row.call.token == live.call.token && row.call.peer == live.call.peer
             })
         }) {
             *existing = Some(live);
@@ -608,7 +689,9 @@ impl<const CALLS: usize> ClientLives<CALLS> {
 
     fn get(&self, call: Call) -> Option<LiveCall> {
         self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| row.call.token == call.token && row.call.peer == call.peer)
+            row.filter(|row| {
+                !row.retired && row.call.token == call.token && row.call.peer == call.peer
+            })
         })
     }
 
@@ -684,11 +767,40 @@ impl<const CALLS: usize> ClientLives<CALLS> {
     }
 
     fn remove(&mut self, call: Call) {
-        if let Some(slot) = self.rows.iter_mut().find(|row| {
+        let Some(index) = self.rows.iter().position(|row| {
             row.as_ref()
-                .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
-        }) {
-            *slot = None;
+                .is_some_and(|row| !row.retired && row.call == call)
+        }) else {
+            return;
+        };
+        let row = self.rows[index].as_ref().expect("matched row");
+        if row.backoff_until_ms == 0 {
+            self.rows[index] = None;
+            return;
+        }
+        // Concurrent requests may receive overload before either response is
+        // collected. Merge their retired identities, preserving the longest delay.
+        let other = self.rows.iter().position(|entry| {
+            entry.as_ref().is_some_and(|entry| {
+                entry.retired
+                    && entry.call.peer == row.call.peer
+                    && entry.code == row.code
+                    && entry.path.segments() == row.path.segments()
+                    && entry.queries.values().eq(row.queries.values())
+            })
+        });
+        if let Some(other) = other {
+            let until = row.backoff_until_ms;
+            let entry = self.rows[other].as_mut().expect("matched cooldown");
+            entry.backoff_until_ms = entry.backoff_until_ms.max(until);
+            self.rows[index] = None;
+        } else {
+            let row = self.rows[index].as_mut().expect("matched row");
+            row.retired = true;
+            row.due_ms = 0;
+            row.deadline_ms = None;
+            row.q_pace_ms = 0;
+            row.observe = OutgoingObserve::Off;
         }
     }
 
@@ -1472,6 +1584,14 @@ where
         })?;
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
+        self.app.lives.expire_backoffs(now_ms);
+        if let Some(until_ms) =
+            self.app
+                .lives
+                .backoff_until(dest, self.code, &path, &retained_queries)
+        {
+            return Err(Error::Backoff { until_ms });
+        }
         let mut spec = ClientSend {
             dest,
             ty: self.ty,
@@ -1522,7 +1642,7 @@ where
                 return Ok(existing.call);
             }
         }
-        if !replacing && self.app.lives.rows.iter().all(Option::is_some) {
+        if !replacing && self.app.lives.rows.iter().flatten().count() >= CALLS {
             return Err(Error::Saturated);
         }
         let token = if replacing {
@@ -1556,7 +1676,8 @@ where
         }
         if !self.request_tag.is_absent()
             && self.app.lives.rows.iter().flatten().any(|live| {
-                live.call.peer == dest
+                !live.retired
+                    && live.call.peer == dest
                     && live.request_tag == self.request_tag
                     && live.call.token != token
             })
@@ -1633,6 +1754,8 @@ where
             request_identity,
             deadline_ms,
             q_pace_ms: 0,
+            backoff_until_ms: 0,
+            retired: false,
             due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
                 Transmission::NON_LIFETIME_MS
             } else {
@@ -2231,9 +2354,15 @@ where
         }
     };
 
+    lives.record_backoff(call, parsed, now_ms);
+    let overloaded = matches!(
+        parsed.code(),
+        Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
+    );
+
     // Classify from the already-decoded response. A plain 2.05 must not
     // stack Block IO scratch via MissingBlock probes.
-    if parsed.block2().is_some() {
+    if !overloaded && parsed.block2().is_some() {
         match engine.apply_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
@@ -2314,7 +2443,7 @@ where
                 return Ok(());
             }
         }
-    } else if parsed.q_block2().next().is_some() {
+    } else if !overloaded && parsed.q_block2().next().is_some() {
         match engine.apply_q_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
@@ -3826,12 +3955,13 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
+    lives.expire_backoffs(now_ms);
     let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
         let Some(live) = *live else {
             continue;
         };
-        if inbox.contains(live.call) && !client_observe_live(engine, live.call) {
+        if live.retired || (inbox.contains(live.call) && !client_observe_live(engine, live.call)) {
             continue;
         }
         let failure = if live.deadline_ms.is_some_and(|deadline| now_ms >= deadline) {
