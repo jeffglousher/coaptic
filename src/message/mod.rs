@@ -303,6 +303,9 @@ impl Code {
     /// 4.22 Unprocessable Entity (RFC 8132). The library does not invent 4.22 policy.
     pub const UNPROCESSABLE_ENTITY: Self = Self(pack_code(4, 22));
 
+    /// 4.29 Too Many Requests (RFC 8516).
+    pub const TOO_MANY_REQUESTS: Self = Self(pack_code(4, 29));
+
     /// 5.00 Internal Server Error.
     pub const INTERNAL_SERVER_ERROR: Self = Self(pack_code(5, 0));
     /// 5.01 Not Implemented.

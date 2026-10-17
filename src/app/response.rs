@@ -371,6 +371,14 @@ impl<'a> Response<'a> {
         Self::new(Code::NOT_IMPLEMENTED)
     }
 
+    /// Client-specific overload (RFC 8516), with an explicit retry delay.
+    /// Use only when this client's request rate caused the overload; use
+    /// [`Self::service_unavailable`] with [`Self::max_age`] for general overload.
+    #[must_use]
+    pub const fn too_many_requests(retry_after_secs: u32) -> Self {
+        Self::new(Code::TOO_MANY_REQUESTS).max_age(retry_after_secs)
+    }
+
     /// 5.03 Service Unavailable.
     #[must_use]
     pub const fn service_unavailable() -> Self {

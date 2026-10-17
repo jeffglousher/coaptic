@@ -155,8 +155,8 @@ pub(crate) const DEFAULT_MAX_AGE_SECS: u32 = 60;
 pub const DEFAULT_CLIENT_CALLS: usize = 4;
 
 pub use client::{
-    Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
-    RESPONSE_OPTION_COUNT, ResponseBufferError,
+    CLIENT_BACKOFF_BYTES, Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing,
+    RESPONSE_OPTION_BYTES, RESPONSE_OPTION_COUNT, ResponseBufferError,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 use identity::{AppIds, Source as IdentitySource};
@@ -1127,6 +1127,7 @@ impl<
         // Collected replies are only borrow backing, not outstanding work.
         self.inbox = client::ClientInbox::new();
         P::store(&mut self.assembled, &[]);
+        self.lives = client::ClientLives::new();
         self.oscore = candidate.take();
         self.oscore_checkpoint.invalidate();
         Ok(self)
@@ -5661,6 +5662,11 @@ pub enum Error<E> {
     Response(ResponseError),
     /// Absolute caller deadline has already elapsed; no request was sent.
     DeadlineElapsed,
+    /// A matched overload response defers this method and target. No I/O occurred.
+    Backoff {
+        /// Absolute monotonic millisecond time when a new request may be sent.
+        until_ms: u64,
+    },
     /// [`Engine::recv_from`] / [`Engine::send_tx`].
     Io(DatagramIoError<E>),
     /// Slot addressing or fill.
@@ -5756,6 +5762,7 @@ where
             Self::Message(e) => write!(f, "{e}"),
             Self::Response(error) => write!(f, "{error}"),
             Self::DeadlineElapsed => f.write_str("call deadline already elapsed"),
+            Self::Backoff { until_ms } => write!(f, "request backed off until {until_ms} ms"),
             Self::Saturated => f.write_str("a bounded table is saturated"),
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
@@ -5809,7 +5816,10 @@ where
             Self::Io(e) => Some(e),
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
-            Self::Saturated | Self::DeadlineElapsed | Self::DeferredUnknown => None,
+            Self::Saturated
+            | Self::DeadlineElapsed
+            | Self::DeferredUnknown
+            | Self::Backoff { .. } => None,
             Self::Block(e) => Some(e),
             Self::Response(e) => Some(e),
             Self::Path

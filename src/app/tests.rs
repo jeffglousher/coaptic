@@ -14158,3 +14158,165 @@ fn get_observe_requestless_source_does_not_register_query_selection() {
         "source cannot recover GET query"
     );
 }
+
+fn overload_reply(
+    app: &mut App<profiles::Default, RecordIo>,
+    call: crate::Call,
+    code: Code,
+    age: Option<&[u8]>,
+    now: u64,
+) {
+    let (_, request, len) = app.transport().sent[app.transport().sent_n - 1].unwrap();
+    let mid = decode(&request[..len]).unwrap().message_id();
+    let mut options = OptionsBuilder::<1>::new();
+    if let Some(age) = age {
+        options.push(Opt::new(OptionNumber::MAX_AGE, age)).unwrap();
+    }
+    let reply = Message::new(Type::Acknowledgement, code, mid)
+        .with_token(call.token())
+        .with_options(options.as_slice());
+    let mut wire = [0; 256];
+    let len = encode(&reply, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((call.peer(), wire, len));
+    app.poll(now).unwrap();
+}
+
+#[test]
+fn overload_backoff_defaults_zero_expiry_and_collection() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for code in [Code::TOO_MANY_REQUESTS, Code::SERVICE_UNAVAILABLE] {
+        for (age, delay) in [(None, 60_000), (Some(&[2][..]), 2_000), (Some(&[][..]), 0)] {
+            let mut app = record_client();
+            let call = app.get("target").to(peer).send(0).unwrap();
+            overload_reply(&mut app, call, code, age, 10);
+            assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+            if delay > 0 {
+                let sent = app.transport().sent_n;
+                assert_eq!(
+                    app.get("target").to(peer).send(10 + delay - 1),
+                    Err(Error::Backoff {
+                        until_ms: 10 + delay
+                    })
+                );
+                assert_eq!(app.transport().sent_n, sent);
+            }
+            assert!(app.get("target").to(peer).send(10 + delay).is_ok());
+        }
+    }
+}
+
+#[test]
+fn overload_backoff_is_scoped_to_method_peer_path_and_query() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for variant in 0..4 {
+        let mut app = record_client();
+        let call = app.get("target").query("a=1").to(peer).send(0).unwrap();
+        overload_reply(&mut app, call, Code::TOO_MANY_REQUESTS, Some(&[3]), 10);
+        app.take_response(call).unwrap().unwrap();
+        assert!(matches!(
+            app.get("target").query("a=1").to(peer).send(11),
+            Err(Error::Backoff { .. })
+        ));
+        let other = match variant {
+            0 => app.post("target").query("a=1").to(peer).send(11),
+            1 => app.get("other").query("a=1").to(peer).send(11),
+            2 => app.get("target").query("a=2").to(peer).send(11),
+            _ => app
+                .get("target")
+                .query("a=1")
+                .to(Endpoint::v4([192, 0, 2, 3], 5683))
+                .send(11),
+        };
+        assert!(other.is_ok());
+    }
+}
+
+#[test]
+fn overload_backoff_rejects_unmatched_and_malformed_instructions() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let call = app.get("target").to(peer).send(0).unwrap();
+    let wrong = crate::Call::new(Token::new(&[99]).unwrap(), peer);
+    overload_reply(&mut app, wrong, Code::TOO_MANY_REQUESTS, Some(&[10]), 1);
+    assert!(app.take_response(call).is_none());
+    overload_reply(&mut app, call, Code::TOO_MANY_REQUESTS, Some(&[1; 5]), 2);
+    let _ = app.take_response(call);
+    assert!(app.get("target").to(peer).send(3).is_ok());
+}
+
+#[test]
+fn overload_loopback_capacity_is_retained_until_retry_time() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .client_calls::<1>()
+        .block_wise::<false>()
+        .route("target", get(|_| Response::too_many_requests(2)))
+        .allow_unprotected()
+        .bind(Echo::default())
+        .unwrap();
+    let call = app.get("target").to(peer).send(0).unwrap();
+    app.poll(0).unwrap();
+    app.poll(0).unwrap();
+    let response = app.take_response(call).unwrap().unwrap();
+    assert_eq!(response.code(), Code::TOO_MANY_REQUESTS);
+    assert_eq!(response.max_age_secs(), Some(2));
+    assert_eq!(
+        app.get("target").to(peer).send(1),
+        Err(Error::Backoff { until_ms: 2000 })
+    );
+    assert_eq!(app.get("other").to(peer).send(1), Err(Error::Saturated));
+    assert!(app.get("other").to(peer).send(2000).is_ok());
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn overload_oscore_requires_authenticated_response_and_resets_with_context() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[0x42; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    let mut server = make(&[2], &[1]);
+    let call = app.get("target").to(peer).send(0).unwrap();
+    let (_, bytes, len) = app.transport().sent[0].unwrap();
+    let request = decode(&bytes[..len]).unwrap();
+    let mut inner = [0; 256];
+    let (_, binding) = server.unprotect_request(&request, &mut inner).unwrap();
+    let options = [Opt::new(OptionNumber::MAX_AGE, &[2])];
+    let reply = Message::new(
+        Type::Acknowledgement,
+        Code::TOO_MANY_REQUESTS,
+        request.message_id(),
+    )
+    .with_token(call.token())
+    .with_options(&options);
+    let mut wire = [0; 256];
+    let len = server.protect_response(&reply, binding, &mut wire).unwrap();
+    let mut bad = wire;
+    bad[len - 1] ^= 1;
+    app.transport_mut().inbox = Some((peer, bad, len));
+    let _ = app.poll(1);
+    assert!(app.take_response(call).is_none());
+    app.transport_mut().inbox = Some((peer, wire, len));
+    app.poll(2).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        app.get("target").to(peer).send(3),
+        Err(Error::Backoff { until_ms: 2002 })
+    );
+    app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+    assert!(app.get("target").to(peer).send(4).is_ok());
+}

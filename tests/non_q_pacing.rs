@@ -296,7 +296,15 @@ fn campaign<C: AppStorage, S: AppStorage>(
                 if protected {
                     assert!(client.oscore().unwrap().lookup(call.token()).is_none());
                 }
-                start += 30000;
+                if status == Code::SERVICE_UNAVAILABLE && !suppressed {
+                    assert!(matches!(
+                        client.put("upload").to(PEER).send(start + 13000),
+                        Err(coaptic::app::Error::Backoff { .. })
+                    ));
+                    start += 73000;
+                } else {
+                    start += 30000;
+                }
             }
         }
     });

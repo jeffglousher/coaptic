@@ -53,7 +53,11 @@ impl<
     /// replies and Observe subscriptions retain their Call slot. Collection
     /// frees ordinary Calls; subscriptions require cancellation or expiry.
     ///
-    /// Both tables are inline fixed arrays, even with allocator-backed packet
+    /// Overload backoffs survive response collection and consume admission capacity
+    /// until their Max-Age expires. Each configured Call additionally reserves
+    /// [`super::CLIENT_BACKOFF_BYTES`] for the bounded backoff table.
+    ///
+    /// These tables are inline fixed arrays, even with allocator-backed packet
     /// storage. Each Call reserves request/Observe and response-header metadata;
     /// expiry also uses bounded scratch proportional to this count. This does
     /// not resize packet/body pools, server observers, routes or security state.

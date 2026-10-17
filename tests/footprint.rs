@@ -19,6 +19,9 @@ use coaptic::storage::{Memory, MemoryLayout, WithBodies};
 /// Padding to `App`'s alignment stays well under 64 bytes.
 const ASSEMBLED_HOLD_PAD: usize = 64;
 
+// Four overload entries each have a separately bounded metadata budget.
+const OVERLOAD_BACKOFF_BUDGET: usize = 4 * coaptic::app::CLIENT_BACKOFF_BYTES;
+
 // Four live requests now retain up to 256 URI-query bytes, eight lengths,
 // and metadata each. Account explicitly for this bounded protocol state;
 // the remaining overhead must still be smaller than an assembled body.
@@ -53,19 +56,27 @@ fn assert_datagram_omits_assembled(
     datagram_mem: usize,
     block_wise_mem: usize,
 ) {
+    const {
+        assert!(
+            coaptic::app::CLIENT_BACKOFF_BYTES <= 512,
+            "backoff row exceeds bounded metadata budget"
+        );
+    }
     assert!(
         datagram_mem < block_wise_mem,
         "Memory body pools must add RAM ({datagram_mem} !< {block_wise_mem})"
     );
     assert!(
-        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET) < block_wise_mem,
-        "datagram App ({datagram_app}), excluding explicit cancellation metadata, must not include WithBodies Memory ({block_wise_mem})"
+        datagram_app.saturating_sub(OBSERVE_REQUEST_BUDGET + OVERLOAD_BACKOFF_BUDGET)
+            < block_wise_mem,
+        "datagram App ({datagram_app}), excluding explicit cancellation/backoff metadata, must not include WithBodies Memory ({block_wise_mem})"
     );
     let overhead = datagram_app.saturating_sub(datagram_mem);
     assert!(
         overhead
             < RESPONSE_BODY
                 + RETAINED_QUERY_BUDGET
+                + OVERLOAD_BACKOFF_BUDGET
                 + RETAINED_RESPONSE_BUDGET
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET

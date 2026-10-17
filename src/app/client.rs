@@ -17,6 +17,13 @@
 //! and replies waiting for `take_response`. [`super::AppBuilder::client_calls`]
 //! sizes those inline tables independently of packet storage. Other pool and
 //! security limits can be lower. Call-table exhaustion is `Error::Saturated`.
+//! Matched 4.29 and 5.03 replies retain method/peer/path/query backoff until
+//! Max-Age expires (60 seconds when absent). `Outgoing::send` returns
+//! `Error::Backoff` before I/O for that target. Other request bodies and options
+//! do not change similarity. Application-defined series can impose wider limits.
+//! Backoffs consume client admission capacity and retain one bounded query/path
+//! copy per row; they survive response collection and cancellation. No active
+//! backoff is evicted. Error-body block follow-ups are not sent during backoff.
 //! Upload continuation and cleanup select request-body roles separately from
 //! server response bodies, even at identical peer/Token/tag keys.
 //! Each live call retains up to 256 URI-query bytes plus lengths for Block2
@@ -568,10 +575,39 @@ struct LiveCall {
     q_pace_ms: u64,
 }
 
+/// Inline backoff storage reserved per configured client Call, including alignment.
+/// Multiply by the `client_calls` count to account for the whole backoff table.
+/// No heap allocation or additional body storage is used.
+pub const CLIENT_BACKOFF_BYTES: usize = core::mem::size_of::<Option<Backoff>>();
+
+#[derive(Clone, Copy, Debug)]
+struct Backoff {
+    peer: Endpoint,
+    code: Code,
+    path: Path<'static>,
+    queries: RetainedQueries,
+    until_ms: u64,
+}
+impl Backoff {
+    fn matches(
+        &self,
+        peer: Endpoint,
+        code: Code,
+        path: &Path<'_>,
+        queries: &RetainedQueries,
+    ) -> bool {
+        self.peer == peer
+            && self.code == code
+            && self.path.segments() == path.segments()
+            && self.queries.values().eq(queries.values())
+    }
+}
+
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClientLives<const CALLS: usize> {
     rows: [Option<LiveCall>; CALLS],
+    backoffs: [Option<Backoff>; CALLS],
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
@@ -582,7 +618,68 @@ impl<const CALLS: usize> ClientLives<CALLS> {
     pub(crate) const fn new() -> Self {
         Self {
             rows: [None; CALLS],
+            backoffs: [None; CALLS],
         }
+    }
+
+    fn expire_backoffs(&mut self, now_ms: u64) {
+        for entry in &mut self.backoffs {
+            if entry.is_some_and(|entry| entry.until_ms <= now_ms) {
+                *entry = None;
+            }
+        }
+    }
+
+    fn record_backoff(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+        if !matches!(
+            parsed.code(),
+            Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
+        ) {
+            return;
+        }
+        // Invalid or duplicate Max-Age cannot become a remote scheduling instruction.
+        if parsed
+            .get_options(crate::message::OptionNumber::MAX_AGE)
+            .count()
+            > 1
+        {
+            return;
+        }
+        let seconds = match parsed.max_age() {
+            Some(Ok(value)) => value,
+            None => super::DEFAULT_MAX_AGE_SECS,
+            Some(Err(_)) => return,
+        };
+        let Some(live) = self.get(call) else {
+            return;
+        };
+        self.expire_backoffs(now_ms);
+        if seconds == 0 {
+            return;
+        }
+        let until_ms = now_ms.saturating_add(u64::from(seconds) * 1000);
+        if let Some(entry) = self
+            .backoffs
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.matches(call.peer, live.code, &live.path, &live.queries))
+        {
+            entry.until_ms = entry.until_ms.max(until_ms);
+            return;
+        }
+        // Admission reserves room for every outstanding call's possible backoff.
+        let slot = self
+            .backoffs
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .expect("reserved backoff row");
+        *slot = Some(Backoff {
+            peer: call.peer,
+            code: live.code,
+            path: live.path,
+            queries: live.queries,
+            until_ms,
+        });
     }
 
     fn can_admit(&self, token: Token, peer: Endpoint) -> bool {
@@ -1472,6 +1569,19 @@ where
         })?;
         let retained_queries = RetainedQueries::new(&queries[..query_n])
             .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
+        self.app.lives.expire_backoffs(now_ms);
+        if let Some(entry) = self
+            .app
+            .lives
+            .backoffs
+            .iter()
+            .flatten()
+            .find(|entry| entry.matches(dest, self.code, &path, &retained_queries))
+        {
+            return Err(Error::Backoff {
+                until_ms: entry.until_ms,
+            });
+        }
         let mut spec = ClientSend {
             dest,
             ty: self.ty,
@@ -1522,7 +1632,11 @@ where
                 return Ok(existing.call);
             }
         }
-        if !replacing && self.app.lives.rows.iter().all(Option::is_some) {
+        if !replacing
+            && self.app.lives.rows.iter().flatten().count()
+                + self.app.lives.backoffs.iter().flatten().count()
+                >= CALLS
+        {
             return Err(Error::Saturated);
         }
         let token = if replacing {
@@ -2231,9 +2345,15 @@ where
         }
     };
 
+    lives.record_backoff(call, parsed, now_ms);
+    let overloaded = matches!(
+        parsed.code(),
+        Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
+    );
+
     // Classify from the already-decoded response. A plain 2.05 must not
     // stack Block IO scratch via MissingBlock probes.
-    if parsed.block2().is_some() {
+    if !overloaded && parsed.block2().is_some() {
         match engine.apply_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
@@ -2314,7 +2434,7 @@ where
                 return Ok(());
             }
         }
-    } else if parsed.q_block2().next().is_some() {
+    } else if !overloaded && parsed.q_block2().next().is_some() {
         match engine.apply_q_block2_rx(rx) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
