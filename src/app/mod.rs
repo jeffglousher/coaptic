@@ -1542,6 +1542,14 @@ impl<
         self.engine.reset_metrics();
     }
 
+    /// Snapshot the six core storage areas without allocation or retained state.
+    ///
+    /// See [`crate::storage::StorageUsage`] for scope and sampling limits.
+    #[must_use]
+    pub fn storage_usage(&mut self) -> crate::storage::StorageUsage {
+        self.engine.storage_usage()
+    }
+
     /// Copy optional request-path work counters from the Engine.
     #[cfg(feature = "diagnostics")]
     #[must_use]
