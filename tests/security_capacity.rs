@@ -425,16 +425,19 @@ fn security_capacity_metadata_and_compatibility_are_explicit() {
     );
     let field_growth = core::mem::size_of::<Option<BoundedSecurityContext<6>>>()
         - core::mem::size_of::<Option<BoundedSecurityContext<0>>>();
-    assert_eq!(
-        core::mem::size_of::<Client<AppStore<Eight, false>, 6>>()
-            - core::mem::size_of::<Client<AppStore<Eight, false>, 0>>(),
-        field_growth
+    // The owning association row has stricter alignment than the context.
+    // Whole-App ceilings are checked independently in footprint.rs.
+    let fixed_growth = core::mem::size_of::<Client<AppStore<Eight, false>, 6>>()
+        - core::mem::size_of::<Client<AppStore<Eight, false>, 0>>();
+    assert!(fixed_growth >= field_growth);
+    assert!(
+        fixed_growth - field_growth <= core::mem::align_of::<Client<AppStore<Eight, false>, 6>>()
     );
     #[cfg(feature = "alloc")]
     assert_eq!(
         core::mem::size_of::<Client<coaptic::storage::AllocMemory, 6>>()
             - core::mem::size_of::<Client<coaptic::storage::AllocMemory, 0>>(),
-        field_growth
+        fixed_growth
     );
     let mut rng_state = 0u8;
     let mut app = App::with_resources(Resources::<Eight>::new().security_requests::<6>())
@@ -450,9 +453,11 @@ fn security_capacity_metadata_and_compatibility_are_explicit() {
         app.poll(1).unwrap();
     });
     assert_eq!(app.security_request_capacity(), 6);
-    assert_eq!(
-        app.security_metadata_bytes(),
-        core::mem::size_of::<Option<BoundedSecurityContext<6>>>()
+    let context_and_identity = core::mem::size_of::<BoundedSecurityContext<6>>()
+        + core::mem::size_of::<coaptic::app::Association>();
+    assert!(app.security_metadata_bytes() >= context_and_identity);
+    assert!(
+        app.security_metadata_bytes() <= context_and_identity + 4 * core::mem::align_of_val(&app)
     );
     assert!(
         decode(&app.transport().transport().last.bytes[..app.transport().transport().last.len])

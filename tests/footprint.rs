@@ -244,3 +244,49 @@ fn deferred_headers_are_reserved_only_by_explicit_slot_selection() {
     assert!(added >= 2 * coaptic::app::RESPONSE_OPTION_BYTES);
     assert!(added < 2048, "one bounded deferred row adds {added} bytes");
 }
+
+#[test]
+fn small_device_association_capacity_has_independent_whole_app_ceilings() {
+    type Small<const A: usize> = App<
+        profiles::Constrained,
+        (),
+        4,
+        false,
+        coaptic::app::AppStore<profiles::Constrained, false>,
+        0,
+        1,
+        4,
+        A,
+    >;
+    type SmallBlock<const A: usize> = App<
+        profiles::Constrained,
+        (),
+        4,
+        true,
+        coaptic::app::AppStore<profiles::Constrained, true>,
+        0,
+        1,
+        4,
+        A,
+    >;
+    println!(
+        "small-device associations=0/1/2 datagram={}/{}/{} blockwise={}/{}/{} endpoint={} request={}",
+        size_of::<Small<0>>(),
+        size_of::<Small<1>>(),
+        size_of::<Small<2>>(),
+        size_of::<SmallBlock<0>>(),
+        size_of::<SmallBlock<1>>(),
+        size_of::<SmallBlock<2>>(),
+        size_of::<coaptic::Endpoint>(),
+        size_of::<coaptic::Request<'static>>()
+    );
+    assert!(size_of::<Small<1>>() <= 12 * 1024);
+    assert!(size_of::<Small<2>>() <= 13 * 1024);
+    assert!(size_of::<SmallBlock<1>>() <= 26 * 1024);
+    assert!(size_of::<SmallBlock<2>>() <= 27 * 1024);
+    assert_eq!(
+        size_of::<Small<2>>() - size_of::<Small<1>>(),
+        size_of::<SmallBlock<2>>() - size_of::<SmallBlock<1>>(),
+        "another association adds no packet/body pools"
+    );
+}

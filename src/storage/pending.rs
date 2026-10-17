@@ -330,7 +330,10 @@ pub(crate) fn outstanding_pending(
     mut pending_at: impl FnMut(SlotId) -> Option<PendingCon>,
 ) -> usize {
     (0..slot_count)
-        .filter(|&i| pending_at(SlotId::from_index(i)).is_some_and(|p| p.endpoint() == endpoint))
+        .filter(|&i| {
+            pending_at(SlotId::from_index(i))
+                .is_some_and(|p| p.endpoint().physical() == endpoint.physical())
+        })
         .count()
 }
 
@@ -348,7 +351,7 @@ pub(crate) fn record_admission(
         if pending.message_id() == message_id && pending.endpoint() == endpoint {
             return Some(false);
         }
-        if pending.endpoint() == endpoint {
+        if pending.endpoint().physical() == endpoint.physical() {
             return Some(true);
         }
     }

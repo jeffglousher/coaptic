@@ -167,6 +167,81 @@ impl AdmittedSession {
     }
 }
 
+/// Session handoff refusal leaves the staged session and App unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppInstallError {
+    /// No completed session was staged.
+    Missing,
+    /// Captured authorization or local identity is no longer current.
+    Unauthorized,
+    /// App refused capacity or recipient identity before moving any keys.
+    App(crate::app::OscoreInstallError),
+}
+
+/// Failure while sharing one transport between admission and the application.
+#[derive(Debug)]
+pub enum SharedAppError<E> {
+    /// Admission, trust maintenance or its bounded reply failed.
+    Admission(CloudError<E>),
+    /// Application protocol progress or checkpointing failed.
+    Application(crate::app::Error<E>),
+}
+
+impl AdmittedSession {
+    /// Move a fresh session into shared App storage after current trust revalidation.
+    /// `epoch` is the caller's durable key-epoch identity, not a trust generation.
+    /// Refusal preserves the candidate; successful installation consumes it once.
+    pub fn install<
+        P,
+        T,
+        const N: usize,
+        const B: bool,
+        S,
+        const D: usize,
+        const C: usize,
+        const A: usize,
+    >(
+        candidate: &mut Option<Self>,
+        app: &mut crate::App<P, T, N, B, S, D, C, 4, A>,
+        registry: &impl AdmissionRegistry,
+        epoch: u64,
+    ) -> Result<crate::app::Association, AppInstallError>
+    where
+        P: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        S: crate::app::AppStorage,
+    {
+        let staged = candidate.as_ref().ok_or(AppInstallError::Missing)?;
+        let metadata = staged.association;
+        let trust = registry
+            .resolve(metadata.reference)
+            .ok_or(AppInstallError::Unauthorized)?;
+        if !trust.permits(&metadata.grant, staged.session.principal())
+            || staged.session.local_principal().fingerprint()
+                != trust.checkpoint().local_principal()
+        {
+            return Err(AppInstallError::Unauthorized);
+        }
+        app.check_association_install(
+            metadata.endpoint,
+            *staged.session.principal().fingerprint(),
+            epoch,
+            &staged.session.context,
+        )
+        .map_err(AppInstallError::App)?;
+        let staged = candidate.take().expect("checked staged session");
+        let (context, principal) = staged.session.into_parts();
+        let installed = app
+            .install_association(
+                metadata.endpoint,
+                *principal.fingerprint(),
+                epoch,
+                &mut Some(context),
+            )
+            .expect("exclusive preflight established capacity and identity");
+        Ok(installed)
+    }
+}
+
 struct Wire {
     bytes: [u8; DATAGRAM_CAPACITY],
     len: usize,
@@ -825,6 +900,155 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             .copied())
     }
 
+    /// Poll one shared UDP transport for bootstrap and authenticated application work.
+    /// Admission borrows App's received slot; it does not allocate another ingress queue.
+    /// Each call retains App's bounded progress and flushes at most one bootstrap reply.
+    /// Use `take_session` and `AdmittedSession::install` to complete a ready handoff.
+    /// The checkpoint callback must honor the same durable contract as App polling.
+    pub fn poll_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+        now_ms: u64,
+        mut entropy: impl FnMut(&mut [u8]) -> bool,
+        checkpoint: impl FnMut(Option<crate::app::Association>, crate::oscore::ReplayCheckpoint) -> bool,
+        dispatch: impl FnMut(
+            crate::Request<'_>,
+            Option<crate::app::DeferredReply>,
+        ) -> crate::Response<'static>,
+    ) -> Result<Status, SharedAppError<T::Error>>
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+        T: DatagramIo,
+    {
+        let maintenance = self.maintain(now_ms, registry);
+        self.reconcile_app(app, registry);
+        maintenance.map_err(|error| SharedAppError::Admission(widen(error)))?;
+        let mut ingress_error = None;
+        let progress = app.poll_with_association_ingress(
+            now_ms,
+            |bytes, endpoint| {
+                let Ok(parsed) = decode(bytes) else {
+                    return false;
+                };
+                if parsed.uri_path().eq([Ok(".well-known"), Ok("edhoc")]) {
+                    if let Err(error) = self.ingest(bytes, endpoint, now_ms, registry, &mut entropy)
+                    {
+                        ingress_error = Some(error);
+                    }
+                    true
+                } else {
+                    parsed.code().is_request()
+                        && self.reserves_message_id(parsed.message_id(), endpoint, now_ms)
+                }
+            },
+            checkpoint,
+            dispatch,
+        );
+        // A transient application I/O failure must not starve queued admission.
+        let flushed = self.flush(app.transport_mut(), now_ms, registry);
+        progress.map_err(SharedAppError::Application)?;
+        if let Some(error) = ingress_error {
+            return Err(SharedAppError::Admission(widen(error)));
+        }
+        flushed.map_err(SharedAppError::Admission)
+    }
+
+    /// Revalidate every installed association before an App operation.
+    /// This App must contain only sessions admitted by this listener. Revoked
+    /// owners lose queued work immediately; pinned storage retains a disabled row
+    /// and is reclaimed on a later call. No packet or body buffer is duplicated.
+    pub fn reconcile_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+    ) -> usize
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+    {
+        let mut removed = 0;
+        for index in 0..app.association_capacity() {
+            let Some(owner) = app.association_at(index) else {
+                continue;
+            };
+            let reservation = app.association_context(owner).and_then(|context| {
+                self.active
+                    .iter()
+                    .flatten()
+                    .find(|entry| {
+                        entry.endpoint == owner.endpoint()
+                            && entry.local_id.as_bytes() == context.recipient_id()
+                            && entry.grant.principal().fingerprint() == owner.owner()
+                    })
+                    .copied()
+            });
+            if !self.blocked
+                && app.association_is_active(owner)
+                && reservation
+                    .as_ref()
+                    .is_some_and(|entry| current(registry, entry))
+            {
+                continue;
+            }
+            if app.remove_association(owner).is_ok() {
+                if let Some(reservation) = reservation {
+                    self.release(reservation);
+                }
+                removed += 1;
+            }
+        }
+        removed
+    }
+
+    /// Run one application action after synchronously revoking stale owners.
+    /// Refresh the registry under the same event-loop/management lock first.
+    pub fn with_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+        O,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+        action: impl FnOnce(&mut crate::App<MP, T, N, B, ST, D, CC, R, AA>) -> O,
+    ) -> O
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+    {
+        self.reconcile_app(app, registry);
+        action(app)
+    }
+
     /// Releases active capacity only after the corresponding application is quiesced.
     /// Retained completion replies and their CID/MID reservations remain until expiry.
     pub fn release(&mut self, association: Association) -> bool {
@@ -1037,9 +1261,10 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         if self.datagrams >= self.limits.global_datagrams {
             return None;
         }
-        let address = match endpoint {
-            Endpoint::V4(bytes, _) => Endpoint::v4(bytes, 0),
-            Endpoint::V6(bytes, _, scope) => Endpoint::v6_scoped(bytes, 0, scope),
+        let address = if let Some((bytes, _)) = endpoint.as_ipv4() {
+            Endpoint::v4(bytes, 0)
+        } else {
+            Endpoint::v6_scoped(endpoint.as_ipv6().expect("IPv6").0, 0, endpoint.scope_id())
         };
         let slot = self
             .sources
@@ -1087,18 +1312,16 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     fn echo(&self, endpoint: Endpoint, issued: u64) -> [u8; ECHO_LEN] {
         let mut hash = blake3::Hasher::new_keyed(&self.echo_key);
         hash.update(ECHO_DOMAIN);
-        match endpoint {
-            Endpoint::V4(address, port) => {
-                hash.update(&[4]);
-                hash.update(&address);
-                hash.update(&port.to_be_bytes());
-            }
-            Endpoint::V6(address, port, scope) => {
-                hash.update(&[6]);
-                hash.update(&address);
-                hash.update(&port.to_be_bytes());
-                hash.update(&scope.to_be_bytes());
-            }
+        if let Some((address, port)) = endpoint.as_ipv4() {
+            hash.update(&[4]);
+            hash.update(&address);
+            hash.update(&port.to_be_bytes());
+        } else {
+            let (address, port) = endpoint.as_ipv6().expect("IPv6");
+            hash.update(&[6]);
+            hash.update(&address);
+            hash.update(&port.to_be_bytes());
+            hash.update(&endpoint.scope_id().to_be_bytes());
         }
         hash.update(&issued.to_be_bytes());
         let mut token = [0; ECHO_LEN];
