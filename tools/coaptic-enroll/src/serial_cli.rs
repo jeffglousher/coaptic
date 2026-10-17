@@ -38,38 +38,49 @@ impl Usb {
         })
     }
     fn request(&mut self, request: &CommissioningRequest) -> Result<CommissioningReply> {
-        let mut payload = [0; 512];
-        let len = request.encode(&mut payload)?;
-        let mut frame = [0; 518];
-        let len = CommissioningDecoder::frame(&payload[..len], &mut frame)?;
-        self.port.write_all(&frame[..len])?;
-        self.port.flush()?;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut bytes = [0; 64];
-        while Instant::now() < deadline {
-            match self.port.read(&mut bytes) {
-                Ok(len) => {
-                    for byte in &bytes[..len] {
-                        if let Some(payload) = self.decoder.feed(*byte) {
-                            let reply = CommissioningReply::decode(payload)?;
-                            if let CommissioningReply::Refused(code) = reply {
-                                return Err(format!(
-                                    "device refused commissioning request (code {code})"
-                                )
-                                .into());
-                            }
-                            return Ok(reply);
-                        }
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Err("Device response timed out; inspect its state before retrying.".into())
+        exchange(&mut *self.port, &mut self.decoder, request)
     }
 }
 
+fn commissioning_error(error: Box<dyn std::error::Error>) -> Error {
+    match error.downcast::<Error>() {
+        Ok(error) => *error,
+        Err(error) => Error::Commissioning(error.to_string()),
+    }
+}
+
+fn exchange<T: Read + Write + ?Sized>(
+    port: &mut T,
+    decoder: &mut CommissioningDecoder,
+    request: &CommissioningRequest,
+) -> Result<CommissioningReply> {
+    let mut payload = [0; 512];
+    let len = request.encode(&mut payload)?;
+    let mut frame = [0; 518];
+    let len = CommissioningDecoder::frame(&payload[..len], &mut frame)?;
+    port.write_all(&frame[..len])?;
+    port.flush()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut bytes = [0; 64];
+    while Instant::now() < deadline {
+        match port.read(&mut bytes) {
+            Ok(len) => {
+                for byte in &bytes[..len] {
+                    if let Some(payload) = decoder.feed(*byte) {
+                        let reply = CommissioningReply::decode(payload)?;
+                        if let CommissioningReply::Refused(code) = reply {
+                            return Err(Error::DeviceRefused(code).into());
+                        }
+                        return Ok(reply);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err("Device response timed out; inspect its state before retrying.".into())
+}
 pub fn run(
     command: &OsStr,
     mut args: impl Iterator<Item = OsString>,
@@ -187,7 +198,7 @@ pub fn run(
             |request| {
                 let CommissioningReply::State { device, record } = usb
                     .request(&CommissioningRequest::Inspect)
-                    .map_err(|_| Error::Persistence)?
+                    .map_err(commissioning_error)?
                 else {
                     return Err(Error::Persistence);
                 };
@@ -280,7 +291,7 @@ pub fn run(
                 update,
                 endpoint: destination,
             })
-            .map_err(|_| Error::Persistence)?;
+            .map_err(commissioning_error)?;
         let CommissioningReply::Committed(committed) = response else {
             return Err(Error::Persistence);
         };
@@ -355,4 +366,79 @@ fn show_peer(peer: &PinnedPeer) {
         super::hex(&peer.public_key()),
         peer.kid()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, Cursor};
+
+    struct Port {
+        input: Cursor<Vec<u8>>,
+        written: Vec<u8>,
+    }
+    impl Read for Port {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            if self.input.position() == self.input.get_ref().len() as u64 {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            self.input.read(out)
+        }
+    }
+    impl Write for Port {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.written.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn device_refusal_survives_the_approval_callback_boundary() {
+        let mut payload = [0; 512];
+        let len = CommissioningReply::Refused(5).encode(&mut payload).unwrap();
+        let mut frame = [0; 518];
+        let len = CommissioningDecoder::frame(&payload[..len], &mut frame).unwrap();
+        let mut port = Port {
+            input: Cursor::new(frame[..len].to_vec()),
+            written: Vec::new(),
+        };
+        let error = exchange(
+            &mut port,
+            &mut CommissioningDecoder::new(),
+            &CommissioningRequest::Inspect,
+        )
+        .unwrap_err();
+        let error = commissioning_error(error);
+        assert!(matches!(error, Error::DeviceRefused(5)));
+        assert_eq!(
+            error.to_string(),
+            "device refused commissioning request (code 5)"
+        );
+        assert!(!port.written.is_empty());
+    }
+
+    #[test]
+    fn lost_reply_reports_uncertain_outcome_without_resending() {
+        let mut port = Port {
+            input: Cursor::new(Vec::new()),
+            written: Vec::new(),
+        };
+        let request = CommissioningRequest::Restart;
+        let error = exchange(&mut port, &mut CommissioningDecoder::new(), &request).unwrap_err();
+        let error = commissioning_error(error);
+        assert!(matches!(error, Error::Commissioning(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("inspect device state before retrying")
+        );
+        let mut payload = [0; 512];
+        let len = request.encode(&mut payload).unwrap();
+        let mut expected = [0; 518];
+        let len = CommissioningDecoder::frame(&payload[..len], &mut expected).unwrap();
+        assert_eq!(port.written, expected[..len]);
+    }
 }
