@@ -350,6 +350,17 @@ pub(crate) struct ClientInbox<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientInbox<CALLS> {
+    pub(super) fn usage(&self) -> (usize, usize) {
+        (
+            self.rows.iter().flatten().count(),
+            self.rows
+                .iter()
+                .flatten()
+                .filter(|row| row.complete)
+                .count(),
+        )
+    }
+
     pub(super) fn has_protocol_state(&self) -> bool {
         self.rows.iter().any(Option::is_some)
     }
@@ -589,6 +600,13 @@ pub(crate) struct ClientLives<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
+    pub(super) fn usage(&self) -> (usize, usize) {
+        (
+            self.rows.iter().flatten().count(),
+            self.rows.iter().flatten().filter(|row| row.retired).count(),
+        )
+    }
+
     pub(super) fn next_timeout<Mem: Storage + Exchanges + ObserveSlots>(
         &self,
         engine: &Engine<Mem>,

@@ -123,6 +123,9 @@ pub mod resources;
 mod response;
 mod routing;
 mod site;
+mod usage;
+
+pub use usage::AppUsage;
 
 #[cfg(test)]
 mod lifecycle_soak;
@@ -1548,6 +1551,55 @@ impl<
     #[must_use]
     pub fn storage_usage(&mut self) -> crate::storage::StorageUsage {
         self.engine.storage_usage()
+    }
+
+    /// Snapshot App admission storage, including retained replies and cooldowns.
+    ///
+    /// Work is bounded by the configured Call, deferred and association counts.
+    /// See [`AppUsage`] for scope and lifetime semantics.
+    #[must_use]
+    pub fn resource_usage(&mut self) -> AppUsage {
+        use crate::storage::PoolUsage;
+        let (requests, cooldowns) = self.lives.usage();
+        let (replies, completed) = self.inbox.usage();
+        #[cfg(feature = "oscore")]
+        let (security, revoked) = (
+            Some(PoolUsage {
+                occupied: self.oscore.rows.iter().flatten().count(),
+                capacity: ASSOCIATIONS,
+            }),
+            self.oscore
+                .rows
+                .iter()
+                .flatten()
+                .filter(|row| row.revoked)
+                .count(),
+        );
+        #[cfg(not(feature = "oscore"))]
+        let (security, revoked) = (None, 0);
+        AppUsage {
+            storage: self.engine.storage_usage(),
+            routes: PoolUsage {
+                occupied: self.site.len(),
+                capacity: N,
+            },
+            client_requests: PoolUsage {
+                occupied: requests,
+                capacity: CALLS,
+            },
+            client_cooldowns: cooldowns,
+            client_replies: PoolUsage {
+                occupied: replies,
+                capacity: CALLS,
+            },
+            completed_replies: completed,
+            deferred: PoolUsage {
+                occupied: self.deferred.rows.iter().flatten().count(),
+                capacity: DEFERRED,
+            },
+            security,
+            revoked_associations: revoked,
+        }
     }
 
     /// Copy optional request-path work counters from the Engine.

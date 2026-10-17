@@ -166,9 +166,9 @@ pub use app::resources;
 pub use storage::profiles;
 
 pub use app::{
-    App, Call, CallFailure, DeferredReply, EchoCheck, EchoDecision, EchoPolicy, Error, Method,
-    Outgoing, Request, Response, ResponseBufferError, ResponseError, delete, fetch, get, ipatch,
-    patch, post, put,
+    App, AppUsage, Call, CallFailure, DeferredReply, EchoCheck, EchoDecision, EchoPolicy, Error,
+    Method, Outgoing, Request, Response, ResponseBufferError, ResponseError, delete, fetch, get,
+    ipatch, patch, post, put,
 };
 pub use error::BuildError;
 pub use message::{Code, ContentFormat, ProblemDetails};
