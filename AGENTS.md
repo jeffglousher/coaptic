@@ -10,6 +10,31 @@ update affected callers in the same batch. Do not add compatibility shims,
 deprecation periods or version bumps unless explicitly requested for a release.
 Protocol standards, security invariants and preservation of user data still apply.
 
+## Deterministic resource design
+
+Constrained means intentionally bounded memory and work for reliability,
+performance and ease of integration. It does not mean an arbitrarily reduced
+feature set. Complete accepted capabilities within explicit ownership, capacity,
+refusal and recovery contracts. Do not claim safety-standard certification.
+
+- Reuse storage across mutually exclusive lifetimes before adding buffers or
+  tables. Account for metadata, alignment, scratch, initialization peaks,
+  transport and security state. Keep independent whole-object ceilings; adding
+  a feature allowance alone is not adequate RAM accounting.
+- Start device comparisons with `resources::SmallDevice` and its
+  `profiles::Constrained` pools. Name route, Call, deferred and security capacities
+  too: the pool profile alone does not define an App. Change one dimension at a
+  time; use larger presets only for a concrete workload requirement.
+- Describe one App with named options: security, blockwise transfers and storage
+  backend. Blockwise is a transfer capability, not a separate product. Compare
+  equivalent capabilities and workload semantics before comparing performance.
+- Report current source and configuration first. Use matching-source evidence;
+  otherwise state what is unmeasured. Preserve older evidence for traceability,
+  but omit historical comparisons unless requested or needed for a specific fault.
+- Finish coding and integration before benchmark expansion, presentation polish
+  or stability campaigns. Focused correctness and resource checks remain part of
+  each implementation batch, including real loopback and the reserved ESP32.
+
 ## Own delivery
 
 Done means the accepted behavior is implemented and supported by relevant proof.
