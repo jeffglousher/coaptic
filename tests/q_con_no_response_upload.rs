@@ -177,7 +177,7 @@ fn campaign<C: AppStorage, S: AppStorage>(
         let mut now = 0;
         for length in [3000, BODY.len()] {
             LENGTH.with(|v| v.set(length));
-            for mask in [2, 18] {
+            for mask in [2, 18, 0x83, 0x93] {
                 MASK.with(|v| v.set(mask));
                 for status in [
                     Code::CHANGED,
@@ -200,7 +200,8 @@ fn campaign<C: AppStorage, S: AppStorage>(
                         .unwrap();
                     let count = length.div_ceil(1024);
                     let suppressed = status == Code::CHANGED
-                        || (mask == 18 && status == Code::SERVICE_UNAVAILABLE);
+                        || (mask & NoResponse::SUPPRESS_5 != 0
+                            && status == Code::SERVICE_UNAVAILABLE);
                     for index in 0..count {
                         let frame = client.transport_mut().take().expect("one admitted CON");
                         assert!(client.transport_mut().take().is_none());
@@ -306,7 +307,7 @@ fn q_con_success_no_response_unsupported_modes_refuse_before_io_then_recover() {
             for now in 0..16 {
                 for non in [false, true] {
                     for mask in [1, 2, 8, 10, 18, 24, 26, 128, 255] {
-                        if matches!(mask, 2 | 18) {
+                        if mask & NoResponse::SUPPRESS_4 == 0 {
                             continue;
                         }
                         let request = client
@@ -323,7 +324,7 @@ fn q_con_success_no_response_unsupported_modes_refuse_before_io_then_recover() {
                         );
                     }
                 }
-                for mask in [2, 18] {
+                for mask in [2, 18, 0x83, 0x93] {
                     assert_eq!(
                         client
                             .put("upload")
@@ -345,7 +346,7 @@ fn q_con_success_no_response_unsupported_modes_refuse_before_io_then_recover() {
 fn q_con_success_no_response_lost_acks_wrong_owner_retry_and_fresh_recovery() {
     use coaptic::message::{Message, MessageId, NoResponse, encode};
     for protected in [false, cfg!(feature = "oscore")] {
-        for mask in [2, 18] {
+        for mask in [2, 18, 0x83, 0x93] {
             let mut client = fixed();
             let mut server = fixed();
             LENGTH.with(|v| v.set(3000));

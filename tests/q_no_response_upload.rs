@@ -173,7 +173,7 @@ fn exercise<C: AppStorage, S: AppStorage>(
     without_allocating(|| {
         refuse_and_reclaim(&mut client);
         let mut now = 100;
-        for mask in [16] {
+        for mask in [16, 0x91] {
             for non in [false, true] {
                 MASK.with(|v| v.set(mask));
                 // Repeated refused outcomes exceed Call/body capacity; a successful operation
@@ -256,7 +256,7 @@ fn exercise<C: AppStorage, S: AppStorage>(
                 }
             }
         }
-        assert_eq!(DISPATCHES.with(Cell::get), 8);
+        assert_eq!(DISPATCHES.with(Cell::get), 16);
     });
 }
 #[test]
@@ -445,7 +445,7 @@ fn refuse_and_reclaim<S: AppStorage>(client: &mut Peer<S>) {
     use coaptic::app::{CallFailure, Error};
     use coaptic::message::NoResponse;
     for now in 0..16 {
-        for mask in [1, 8, 10, 24, 26, 128, 255] {
+        for mask in [8, 9, 10, 24, 26, 136, 255] {
             let request = client
                 .put("upload")
                 .to(PEER)

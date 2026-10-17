@@ -7159,7 +7159,9 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
     for qblock in [false, true] {
         let mut app = pipe_app();
         for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
-            if mask == 16 || (qblock && mask == 2) || (!qblock && matches!(mask, 8 | 24)) {
+            if (qblock && mask & NoResponse::SUPPRESS_4 == 0)
+                || (!qblock && mask & NoResponse::SUPPRESS_2 == 0)
+            {
                 continue;
             }
             let mut request = app
