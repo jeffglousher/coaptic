@@ -1,6 +1,6 @@
 use core::fmt;
 
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use p256::elliptic_curve::zeroize::Zeroizing;
 use p256::{PublicKey, SecretKey};
 
@@ -152,7 +152,7 @@ impl PinnedPeer {
     }
 
     fn from_key(public_key: PublicKey, kid: u8) -> Result<Self, Error> {
-        let point = public_key.to_encoded_point(false);
+        let point = public_key.to_sec1_point(false);
         let x = point.x().ok_or(Error::InvalidKey)?;
         let y = point.y().ok_or(Error::InvalidKey)?;
         let mut encoded = [0; CREDENTIAL_LEN];

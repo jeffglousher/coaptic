@@ -7,19 +7,73 @@
 
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{Message, ParsedMessage};
-use crate::storage::{DatagramSlots, Engine, SlotId, Storage};
+use crate::storage::{DatagramSlots, Endpoint, Engine, SlotId, Storage};
 
 #[cfg(feature = "oscore")]
-use crate::oscore::{BoundedSecurityContext, Error as OscoreError, RequestRef};
+use crate::oscore::{Error as OscoreError, RequestRef};
 
 /// [`App`](super::App) field: a caller-owned context, or an empty marker.
+pub(crate) use super::associations::Store;
+pub(crate) type Field<const REQUESTS: usize> = dyn super::associations::ContextStorage<REQUESTS>;
+
 #[cfg(feature = "oscore")]
-pub(crate) type Field<const REQUESTS: usize> = Option<BoundedSecurityContext<REQUESTS>>;
+fn selected<const R: usize>(
+    ctx: &Field<R>,
+    namespace: u32,
+) -> Result<Option<&crate::oscore::BoundedSecurityContext<R>>, OscoreError> {
+    let value = ctx.context(namespace);
+    if ctx.is_some() && value.is_none() {
+        Err(OscoreError::Context)
+    } else {
+        Ok(value)
+    }
+}
+
+#[cfg(feature = "oscore")]
+fn selected_mut<const R: usize>(
+    ctx: &mut Field<R>,
+    namespace: u32,
+) -> Result<Option<&mut crate::oscore::BoundedSecurityContext<R>>, OscoreError> {
+    let protected = ctx.is_some();
+    let value = ctx.context_mut(namespace);
+    if protected && value.is_none() {
+        Err(OscoreError::Context)
+    } else {
+        Ok(value)
+    }
+}
+
+pub(super) fn resolve<E, const R: usize>(
+    ctx: &Field<R>,
+    peer: Endpoint,
+) -> Result<Endpoint, super::Error<E>> {
+    #[cfg(feature = "oscore")]
+    {
+        ctx.resolve(peer).map_err(super::Error::Oscore)
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = ctx;
+        Ok(peer)
+    }
+}
+
+pub(super) fn route_allowed<const R: usize>(ctx: &Field<R>, peer: Endpoint) -> bool {
+    #[cfg(feature = "oscore")]
+    {
+        !ctx.is_some() || ctx.context(peer.association()).is_some()
+    }
+    #[cfg(not(feature = "oscore"))]
+    {
+        let _ = (ctx, peer);
+        true
+    }
+}
 
 pub(crate) fn has_live_requests<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
     #[cfg(feature = "oscore")]
     {
-        ctx.as_ref().is_some_and(|ctx| ctx.has_live_requests())
+        ctx.has_live_requests()
     }
     #[cfg(not(feature = "oscore"))]
     {
@@ -27,12 +81,10 @@ pub(crate) fn has_live_requests<const REQUESTS: usize>(ctx: &Field<REQUESTS>) ->
         false
     }
 }
-#[cfg(not(feature = "oscore"))]
-#[derive(Clone, Copy)]
-pub(crate) struct Field<const REQUESTS: usize>;
 
 #[cfg(feature = "oscore")]
-pub(crate) type CheckpointCommit<'a> = dyn FnMut(crate::oscore::ReplayCheckpoint) -> bool + 'a;
+pub(crate) type CheckpointCommit<'a> =
+    dyn FnMut(Option<super::Association>, crate::oscore::ReplayCheckpoint) -> bool + 'a;
 #[cfg(not(feature = "oscore"))]
 pub(crate) type CheckpointCommit<'a> = dyn FnMut() -> bool + 'a;
 
@@ -96,11 +148,8 @@ impl CheckpointState {
             let commit = commit
                 .as_mut()
                 .ok_or(super::Error::OscoreCheckpointRequired)?;
-            let ctx = ctx
-                .as_ref()
-                .ok_or(super::Error::Oscore(OscoreError::Context))?;
             if matches!(self, Self::Dirty) {
-                if !commit(ctx.replay_checkpoint()) {
+                if !ctx.checkpoints(*commit) {
                     return Err(super::Error::OscoreCheckpointFailed);
                 }
                 *self = Self::Clean;
@@ -134,10 +183,11 @@ pub(crate) enum ResponseState {
 
 pub(crate) fn commit_response<E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     state: ResponseState,
 ) -> Result<(), super::Error<E>> {
     #[cfg(feature = "oscore")]
-    if let Some(ctx) = ctx.as_mut() {
+    if let Some(ctx) = selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)? {
         match state {
             ResponseState::None => {}
             ResponseState::Notification(token, piv) => ctx
@@ -155,7 +205,7 @@ pub(crate) fn commit_response<E, const REQUESTS: usize>(
         }
     }
     #[cfg(not(feature = "oscore"))]
-    let _ = (ctx, state);
+    let _ = (ctx, state, peer);
     Ok(())
 }
 
@@ -181,13 +231,8 @@ pub(crate) const fn no_request() -> Request {
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) const fn empty_field<const REQUESTS: usize>() -> Field<REQUESTS> {
-    None
-}
-
-#[cfg(not(feature = "oscore"))]
-pub(crate) const fn empty_field<const REQUESTS: usize>() -> Field<REQUESTS> {
-    Field
+pub(crate) const fn empty_field<const REQUESTS: usize>() -> Store<REQUESTS, 1> {
+    Store::new()
 }
 
 #[cfg(feature = "oscore")]
@@ -223,10 +268,11 @@ pub(crate) fn is_active<const REQUESTS: usize>(_ctx: &Field<REQUESTS>) -> bool {
 #[cfg(feature = "oscore")]
 pub(crate) fn inbound<'a, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     parsed: &ParsedMessage<'_>,
     scratch: &'a mut [u8],
 ) -> Result<Option<Opened<'a>>, InboundError> {
-    let Some(ctx) = ctx.as_mut() else {
+    let Some(ctx) = selected_mut(ctx, peer.association())? else {
         return Ok(None);
     };
     if parsed.oscore().is_some() {
@@ -295,9 +341,11 @@ pub(crate) fn inbound<'a, const REQUESTS: usize>(
 #[cfg(not(feature = "oscore"))]
 pub(crate) fn inbound<'a, const REQUESTS: usize>(
     _ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     _parsed: &ParsedMessage<'_>,
     _scratch: &'a mut [u8],
 ) -> Result<Option<Opened<'a>>, InboundError> {
+    let _ = peer;
     Ok(None)
 }
 
@@ -308,13 +356,14 @@ pub(crate) fn inbound<'a, const REQUESTS: usize>(
 /// App `Oscore` error and must not look like a size miss.
 pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
 ) -> Result<(), super::Error<E>> {
-    let _ = ctx;
+    let _ = (&ctx, peer);
     #[cfg(feature = "oscore")]
-    if let Some(ctx) = ctx.as_mut() {
+    if let Some(ctx) = selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)? {
         let capacity = engine
             .access_tx_mut(tx)
             .map_err(super::Error::from)?
@@ -339,14 +388,15 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
 pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &Field<REQUESTS>,
+    peer: Endpoint,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
 ) -> Result<(), super::Error<E>> {
-    let _ = (ctx, request);
+    let _ = (ctx, request, peer);
     #[cfg(feature = "oscore")]
-    if let Some(ctx) = ctx.as_ref() {
+    if let Some(ctx) = selected(ctx, peer.association()).map_err(super::Error::Oscore)? {
         let Some(request) = request else {
             return Err(protect_err(OscoreError::Context));
         };
@@ -368,17 +418,18 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// not fall back to unprotected traffic.
 pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
     msg: &Message<'_>,
 ) -> Result<(), super::Error<E>> {
     #[cfg(not(feature = "oscore"))]
-    let _ = (ctx, request);
+    let _ = (ctx, request, peer);
     #[cfg(feature = "oscore")]
     if ctx.is_some() {
         let mut wire = S::TxScratch::default();
-        let n = stage_notification(ctx, request, msg, wire.as_mut())?;
+        let n = stage_notification(ctx, peer, request, msg, wire.as_mut())?;
         return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
     }
     engine
@@ -389,14 +440,15 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
 
 pub(crate) fn stage_notification<E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     request: Request,
     msg: &Message<'_>,
     out: &mut [u8],
 ) -> Result<usize, super::Error<E>> {
     #[cfg(not(feature = "oscore"))]
-    let _ = (ctx, request);
+    let _ = (ctx, request, peer);
     #[cfg(feature = "oscore")]
-    if let Some(oscore) = ctx.as_mut() {
+    if let Some(oscore) = selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)? {
         let Some(request) = request else {
             return Err(protect_err(OscoreError::Context));
         };
@@ -448,14 +500,15 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
 /// Release a terminal client's request binding without resetting crypto state.
 pub(crate) fn cancel<const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS>,
+    peer: Endpoint,
     token: crate::message::Token,
 ) {
     #[cfg(feature = "oscore")]
-    if let Some(ctx) = ctx.as_mut() {
+    if let Some(ctx) = ctx.context_mut(peer.association()) {
         let _ = ctx.take(token);
     }
     #[cfg(not(feature = "oscore"))]
-    let _ = (ctx, token);
+    let _ = (ctx, token, peer);
 }
 
 #[cfg(feature = "oscore")]
@@ -502,7 +555,15 @@ where
     .with_options(&options)
     .with_payload(response.payload());
     let tx = engine.acquire_tx().ok_or(super::Error::Saturated)?;
-    let result = encode_notification(ctx, Some(request), engine, tx, &message).and_then(|()| {
+    let result = encode_notification(
+        ctx,
+        recover.key().endpoint(),
+        Some(request),
+        engine,
+        tx,
+        &message,
+    )
+    .and_then(|()| {
         engine
             .set_tx_endpoint(tx, recover.key().endpoint())
             .map_err(super::Error::Slot)?;
@@ -557,8 +618,14 @@ mod request_capacity_tests {
         let short =
             Message::new(Type::Confirmable, Code::POST, MessageId::new(1)).with_token(token);
         let tx = engine.acquire_tx().unwrap();
-        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
-            .unwrap();
+        encode_request::<_, core::convert::Infallible, 4>(
+            &mut ctx,
+            Endpoint::v4([127, 0, 0, 1], 5683),
+            &mut engine,
+            tx,
+            &short,
+        )
+        .unwrap();
         let original = ctx.as_ref().unwrap().lookup(token).unwrap();
         let before = ctx.as_ref().unwrap().sender_seq();
         let mut bytes = [0u8; 128];
@@ -572,7 +639,13 @@ mod request_capacity_tests {
             .with_token(token)
             .with_payload(&[0x5a; 200]);
         assert!(matches!(
-            encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &large),
+            encode_request::<_, core::convert::Infallible, 4>(
+                &mut ctx,
+                Endpoint::v4([127, 0, 0, 1], 5683),
+                &mut engine,
+                tx,
+                &large
+            ),
             Err(super::super::Error::Message(SlotMessageError::Encode(
                 EncodeError::BufferTooSmall
             )))
@@ -580,8 +653,14 @@ mod request_capacity_tests {
         assert_eq!(ctx.as_ref().unwrap().lookup(token), Some(original));
         assert_eq!(ctx.as_ref().unwrap().sender_seq(), before + 1);
         assert_eq!(engine.access_tx(tx).unwrap().as_bytes(), &bytes[..retained]);
-        encode_request::<_, core::convert::Infallible, 4>(&mut ctx, &mut engine, tx, &short)
-            .unwrap();
+        encode_request::<_, core::convert::Infallible, 4>(
+            &mut ctx,
+            Endpoint::v4([127, 0, 0, 1], 5683),
+            &mut engine,
+            tx,
+            &short,
+        )
+        .unwrap();
         assert_eq!(
             ctx.as_ref().unwrap().lookup(token).unwrap().piv().seq(),
             before + 1

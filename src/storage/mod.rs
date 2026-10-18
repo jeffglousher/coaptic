@@ -40,6 +40,7 @@ pub mod profiles;
 mod progress;
 mod slot;
 mod table;
+mod usage;
 #[cfg(feature = "diagnostics")]
 mod work_metrics;
 
@@ -71,10 +72,12 @@ pub use pending::{PendingCon, PendingCons, PendingReplaceError, PendingRto, Retr
 pub use pool::{BodyPool, DatagramPool, DatagramScratch};
 pub use progress::Progress;
 pub use slot::{SlotError, SlotId};
+pub(crate) use table::ObserveSelection;
 pub use table::{
     DedupEntry, DedupKey, DedupTable, ObserveExpiry, ObserveInterest, ObserveKey, ObserveLifetime,
     ObserveNotifyHold, ObserveResource, ObserveTable,
 };
+pub use usage::{PoolUsage, StorageUsage};
 #[cfg(feature = "diagnostics")]
 pub use work_metrics::WorkMetrics;
 

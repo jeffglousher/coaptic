@@ -20,76 +20,113 @@ use core::fmt;
 /// assert_eq!(peer.port(), 5683);
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Endpoint {
-    /// IPv4 address and UDP port (network-order octets).
-    V4([u8; 4], u16),
-    /// IPv6 address, UDP port and scope identifier (network-order address octets).
-    V6([u8; 16], u16, u32),
+pub struct Endpoint {
+    octets: [u8; 16],
+    scope: u32,
+    association: u32,
+    port: u16,
+    ipv6: bool,
 }
 
 impl Endpoint {
+    /// Physical UDP address without an App-local association namespace.
+    #[must_use]
+    pub const fn physical(self) -> Self {
+        Self {
+            association: 0,
+            ..self
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn with_association(self, association: u32) -> Self {
+        Self {
+            association,
+            ..self
+        }
+    }
+    #[cfg(feature = "oscore")]
+    pub(crate) const fn association(self) -> u32 {
+        self.association
+    }
+
     /// IPv4 endpoint.
     #[must_use]
     pub const fn v4(addr: [u8; 4], port: u16) -> Self {
-        Self::V4(addr, port)
+        Self {
+            octets: [
+                addr[0], addr[1], addr[2], addr[3], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            scope: 0,
+            association: 0,
+            port,
+            ipv6: false,
+        }
     }
-
     /// IPv6 endpoint.
     #[must_use]
     pub const fn v6(addr: [u8; 16], port: u16) -> Self {
-        Self::V6(addr, port, 0)
+        Self::v6_scoped(addr, port, 0)
     }
-
     /// IPv6 endpoint with an interface/zone scope identifier.
     #[must_use]
     pub const fn v6_scoped(addr: [u8; 16], port: u16, scope_id: u32) -> Self {
-        Self::V6(addr, port, scope_id)
+        Self {
+            octets: addr,
+            scope: scope_id,
+            association: 0,
+            port,
+            ipv6: true,
+        }
     }
-
     /// IPv6 scope identifier, or zero for IPv4.
     #[must_use]
     pub const fn scope_id(self) -> u32 {
-        match self {
-            Self::V6(_, _, scope) => scope,
-            Self::V4(_, _) => 0,
-        }
+        self.scope
     }
-
     /// UDP port.
     #[must_use]
     pub const fn port(self) -> u16 {
-        match self {
-            Self::V4(_, port) | Self::V6(_, port, _) => port,
-        }
+        self.port
     }
-
-    /// IPv4 octets and port, if this is [`Self::V4`].
+    /// IPv4 octets and port, if this is an IPv4 address.
     #[must_use]
     pub const fn as_ipv4(self) -> Option<([u8; 4], u16)> {
-        match self {
-            Self::V4(addr, port) => Some((addr, port)),
-            Self::V6(_, _, _) => None,
+        if self.ipv6 {
+            None
+        } else {
+            Some((
+                [
+                    self.octets[0],
+                    self.octets[1],
+                    self.octets[2],
+                    self.octets[3],
+                ],
+                self.port,
+            ))
         }
     }
-
-    /// IPv6 octets and port, if this is [`Self::V6`].
+    /// IPv6 octets and port, if this is an IPv6 address.
     /// Use [`Self::scope_id`] for its zone identifier.
     #[must_use]
     pub const fn as_ipv6(self) -> Option<([u8; 16], u16)> {
-        match self {
-            Self::V6(addr, port, _) => Some((addr, port)),
-            Self::V4(_, _) => None,
+        if self.ipv6 {
+            Some((self.octets, self.port))
+        } else {
+            None
         }
     }
 }
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::V4(addr, port) => {
+        match self.as_ipv4() {
+            Some((addr, port)) => {
                 write!(f, "{}.{}.{}.{}:{port}", addr[0], addr[1], addr[2], addr[3])
             }
-            Self::V6(addr, port, scope) => {
+            None => {
+                let (addr, port) = (self.octets, self.port);
+                let scope = self.scope;
                 write!(f, "[")?;
                 for (i, chunk) in addr.chunks_exact(2).enumerate() {
                     if i > 0 {
@@ -110,14 +147,14 @@ impl fmt::Display for Endpoint {
 #[cfg(feature = "std")]
 impl From<std::net::SocketAddrV4> for Endpoint {
     fn from(addr: std::net::SocketAddrV4) -> Self {
-        Self::V4(addr.ip().octets(), addr.port())
+        Self::v4(addr.ip().octets(), addr.port())
     }
 }
 
 #[cfg(feature = "std")]
 impl From<std::net::SocketAddrV6> for Endpoint {
     fn from(addr: std::net::SocketAddrV6) -> Self {
-        Self::V6(addr.ip().octets(), addr.port(), addr.scope_id())
+        Self::v6_scoped(addr.ip().octets(), addr.port(), addr.scope_id())
     }
 }
 
@@ -134,11 +171,12 @@ impl From<std::net::SocketAddr> for Endpoint {
 #[cfg(feature = "std")]
 impl From<Endpoint> for std::net::SocketAddr {
     fn from(endpoint: Endpoint) -> Self {
-        match endpoint {
-            Endpoint::V4(octets, port) => {
+        match endpoint.as_ipv4() {
+            Some((octets, port)) => {
                 std::net::SocketAddr::V4(std::net::SocketAddrV4::new(octets.into(), port))
             }
-            Endpoint::V6(octets, port, scope) => {
+            None => {
+                let (octets, port, scope) = (endpoint.octets, endpoint.port, endpoint.scope);
                 std::net::SocketAddr::V6(std::net::SocketAddrV6::new(octets.into(), port, 0, scope))
             }
         }
@@ -152,7 +190,7 @@ mod tests {
     #[test]
     fn equality_same_v4() {
         let a = Endpoint::v4([192, 0, 2, 1], 5683);
-        let b = Endpoint::V4([192, 0, 2, 1], 5683);
+        let b = Endpoint::v4([192, 0, 2, 1], 5683);
         assert_eq!(a, b);
         assert_eq!(a.port(), 5683);
         assert_eq!(a.as_ipv4(), Some(([192, 0, 2, 1], 5683)));

@@ -19,10 +19,12 @@ use coaptic::storage::{Memory, MemoryLayout, WithBodies};
 fn complete_app_layout() {
     // Whole-object ceilings, independent of implementation-derived allowances.
     // Four Calls, eight routes, no deferred rows, unit transport, inline pools.
-    assert!(size_of::<App<profiles::Default, ()>>() <= 27 * 1024);
-    assert!(size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>() <= 49 * 1024);
-    assert!(size_of::<App<profiles::Constrained, ()>>() <= 18 * 1024);
-    assert!(size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>() <= 31 * 1024);
+    // Observe rows own a bounded 512-byte selection; no separate selection table.
+    // SmallDevice retains its independent 12/13 KiB and 26/27 KiB ceilings below.
+    assert!(size_of::<App<profiles::Default, ()>>() <= 29 * 1024);
+    assert!(size_of::<App<profiles::Default, (), DEFAULT_ROUTES, true>>() <= 51 * 1024);
+    assert!(size_of::<App<profiles::Constrained, ()>>() <= 19 * 1024);
+    assert!(size_of::<App<profiles::Constrained, (), DEFAULT_ROUTES, true>>() <= 32 * 1024);
     println!(
         "layout pointer={} oscore={}",
         size_of::<usize>(),
@@ -243,4 +245,50 @@ fn deferred_headers_are_reserved_only_by_explicit_slot_selection() {
     let added = size_of::<Deferred>() - size_of::<Ordinary>();
     assert!(added >= 2 * coaptic::app::RESPONSE_OPTION_BYTES);
     assert!(added < 2048, "one bounded deferred row adds {added} bytes");
+}
+
+#[test]
+fn small_device_association_capacity_has_independent_whole_app_ceilings() {
+    type Small<const A: usize> = App<
+        profiles::Constrained,
+        (),
+        4,
+        false,
+        coaptic::app::AppStore<profiles::Constrained, false>,
+        0,
+        1,
+        4,
+        A,
+    >;
+    type SmallBlock<const A: usize> = App<
+        profiles::Constrained,
+        (),
+        4,
+        true,
+        coaptic::app::AppStore<profiles::Constrained, true>,
+        0,
+        1,
+        4,
+        A,
+    >;
+    println!(
+        "small-device associations=0/1/2 datagram={}/{}/{} blockwise={}/{}/{} endpoint={} request={}",
+        size_of::<Small<0>>(),
+        size_of::<Small<1>>(),
+        size_of::<Small<2>>(),
+        size_of::<SmallBlock<0>>(),
+        size_of::<SmallBlock<1>>(),
+        size_of::<SmallBlock<2>>(),
+        size_of::<coaptic::Endpoint>(),
+        size_of::<coaptic::Request<'static>>()
+    );
+    assert!(size_of::<Small<1>>() <= 12 * 1024);
+    assert!(size_of::<Small<2>>() <= 13 * 1024);
+    assert!(size_of::<SmallBlock<1>>() <= 26 * 1024);
+    assert!(size_of::<SmallBlock<2>>() <= 27 * 1024);
+    assert_eq!(
+        size_of::<Small<2>>() - size_of::<Small<1>>(),
+        size_of::<SmallBlock<2>>() - size_of::<SmallBlock<1>>(),
+        "another association adds no packet/body pools"
+    );
 }

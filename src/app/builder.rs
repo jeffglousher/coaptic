@@ -16,18 +16,30 @@ impl App {
     /// Start from a memory profile. Next: [`AppBuilder::block_wise`].
     #[must_use]
     pub const fn profile<P: MemoryProfile>() -> AppBuilder<P> {
-        Self::profile_requests::<P, 4>()
+        Self::profile_requests::<P, 4, 1>()
     }
 
-    pub(super) const fn profile_requests<P: MemoryProfile, const REQUESTS: usize>()
-    -> AppBuilder<P, Missing, DEFAULT_ROUTES, false, 0, DEFAULT_CLIENT_CALLS, REQUESTS> {
+    pub(super) const fn profile_requests<
+        P: MemoryProfile,
+        const REQUESTS: usize,
+        const ASSOCIATIONS: usize,
+    >() -> AppBuilder<
+        P,
+        Missing,
+        DEFAULT_ROUTES,
+        false,
+        0,
+        DEFAULT_CLIENT_CALLS,
+        REQUESTS,
+        ASSOCIATIONS,
+    > {
         AppBuilder {
             site: Site::new(),
             echo_policy: None,
             full_responses: false,
             deferred_lifetime_ms: Transmission::EXCHANGE_LIFETIME_MS as u64,
             identity: None,
-            oscore: oscore::empty_field(),
+            oscore: oscore::Store::new(),
             oscore_checkpoint: oscore::CheckpointState::new(),
             allow_unprotected: false,
             _p: PhantomData,
@@ -44,7 +56,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 {
     /// Size the live client Call and completion tables independently of pools.
     ///
@@ -73,7 +86,7 @@ impl<
     #[must_use]
     pub fn client_calls<const SLOTS: usize>(
         self,
-    ) -> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, SLOTS, REQUESTS> {
+    ) -> AppBuilder<P, Block, N, BLOCK_WISE, DEFERRED, SLOTS, REQUESTS, ASSOCIATIONS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -97,7 +110,7 @@ impl<
     #[must_use]
     pub fn routes<const M: usize>(
         self,
-    ) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED, CALLS, REQUESTS> {
+    ) -> AppBuilder<P, Block, M, BLOCK_WISE, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS> {
         assert!(
             self.site.is_empty(),
             "call .routes::<M>() before .route(...)"
@@ -137,7 +150,7 @@ impl<
     #[must_use]
     pub fn deferred<const SLOTS: usize>(
         self,
-    ) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS, CALLS, REQUESTS> {
+    ) -> AppBuilder<P, Block, N, BLOCK_WISE, SLOTS, CALLS, REQUESTS, ASSOCIATIONS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -273,8 +286,17 @@ impl<
     #[cfg(feature = "oscore")]
     #[must_use]
     pub fn oscore(mut self, context: crate::oscore::BoundedSecurityContext<REQUESTS>) -> Self {
-        self.oscore = Some(context);
+        self.oscore.set_primary(context);
         self.oscore_checkpoint.invalidate();
+        self
+    }
+
+    /// Bind with no active keys while refusing all nonempty traffic until installation.
+    /// Select capacity through `Resources::associations` before constructing this builder.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub fn require_associations(mut self) -> Self {
+        self.oscore.generation = self.oscore.generation.max(1);
         self
     }
 
@@ -350,7 +372,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> AppBuilder<P, Block, N, PREV, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> AppBuilder<P, Block, N, PREV, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 {
     /// Enable or disable body pools, then [`AppBuilder::bind`].
     ///
@@ -372,7 +395,7 @@ impl<
     #[must_use]
     pub fn block_wise<const ENABLED: bool>(
         self,
-    ) -> AppBuilder<P, Present, N, ENABLED, DEFERRED, CALLS, REQUESTS> {
+    ) -> AppBuilder<P, Present, N, ENABLED, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS> {
         AppBuilder {
             site: self.site,
             echo_policy: self.echo_policy,
@@ -395,7 +418,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> AppBuilder<P, Present, N, BLOCK_WISE, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -439,7 +463,7 @@ where
         self,
         io: T,
     ) -> Result<
-        App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED, CALLS, REQUESTS>,
+        App<P, T, N, BLOCK_WISE, AppStore<P, BLOCK_WISE>, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>,
         BuildError,
     > {
         self.validate_security()?;
@@ -462,7 +486,8 @@ where
         self,
         io: T,
         storage: S,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>, BuildError>
+    {
         self.validate_security()?;
         let c = storage.capacities();
         Self::validate_scratch::<S>(c)?;
@@ -488,7 +513,17 @@ where
         io: T,
         c: crate::storage::Capacities,
     ) -> Result<
-        App<P, T, N, BLOCK_WISE, crate::storage::AllocMemory, DEFERRED, CALLS, REQUESTS>,
+        App<
+            P,
+            T,
+            N,
+            BLOCK_WISE,
+            crate::storage::AllocMemory,
+            DEFERRED,
+            CALLS,
+            REQUESTS,
+            ASSOCIATIONS,
+        >,
         BuildError,
     > {
         self.validate_security()?;
@@ -529,6 +564,7 @@ where
             DEFERRED,
             CALLS,
             REQUESTS,
+            ASSOCIATIONS,
         >,
         BuildError,
     > {
@@ -546,7 +582,17 @@ where
         storage: S,
         random: R,
     ) -> Result<
-        App<P, crate::platform::WithEntropy<T, R>, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
+        App<
+            P,
+            crate::platform::WithEntropy<T, R>,
+            N,
+            BLOCK_WISE,
+            S,
+            DEFERRED,
+            CALLS,
+            REQUESTS,
+            ASSOCIATIONS,
+        >,
         BuildError,
     > {
         self.validate_entropy_source()?;
@@ -573,6 +619,7 @@ where
             DEFERRED,
             CALLS,
             REQUESTS,
+            ASSOCIATIONS,
         >,
         BuildError,
     > {
@@ -611,7 +658,8 @@ where
         self,
         io: T,
         engine: Engine<S>,
-    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>, BuildError> {
+    ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>, BuildError>
+    {
         Ok(App {
             engine,
             io,

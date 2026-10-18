@@ -13,6 +13,9 @@ use std::{
 #[path = "peer_cli.rs"]
 mod peer;
 
+#[path = "shared_probe.rs"]
+mod shared_probe;
+
 pub fn run(
     command: &OsStr,
     mut args: impl Iterator<Item = OsString>,
@@ -55,7 +58,19 @@ pub fn run(
     if command == "peer" {
         let local = args.next().ok_or("missing local address")?;
         let remote = args.next().ok_or("missing peer address")?;
-        let probe = match args.next() {
+        let mode = args.next();
+        if mode.as_deref() == Some(OsStr::new("--probe-shared")) {
+            if args.next().is_some() {
+                return Err("unexpected arguments".into());
+            }
+            return shared_probe::run(
+                &identity,
+                &state,
+                local.to_str().ok_or("invalid address")?,
+                remote.to_str().ok_or("invalid address")?,
+            );
+        }
+        let probe = match mode {
             None => None,
             Some(value) if value == "--connect" => Some(peer::Probe::Connect),
             Some(value) if value == "--probe" => Some(peer::Probe::Identity),

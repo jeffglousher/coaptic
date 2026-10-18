@@ -9,8 +9,9 @@ and the linked owner issues schedule implementation. Public API contracts remain
 in rustdoc. Original protocol text is retained in [knowledge/rfcs](../knowledge/rfcs/index.md).
 
 The implementation is a portable Rust library with secure defaults, explicit
-resource limits and caller-owned I/O, runtime, time, entropy and storage. Version
-remains 0.0.10. Default operation requires neither `std` nor allocation; `std` and
+resource limits and caller-owned I/O, runtime, time, entropy and storage. This is
+pre-release development, without compatibility or version-bump obligations.
+Default operation requires neither `std` nor allocation; `std` and
 `alloc` are independent. Allocated storage retains checked limits. These are
 implementation constraints, not exceptions to applicable protocol requirements.
 
@@ -44,6 +45,30 @@ implicitly adopt group security.
 UDP is an architectural choice. Reliability, congestion handling, scalability
 and comparative performance claims require measurements of named workloads,
 sources and environments; no universal superiority claim follows from that choice.
+
+### Resource and delivery acceptance
+
+Constrained means deterministic resource ownership and bounded memory/work for
+reliability, performance and ease of integration. Accepted capabilities remain
+required. Each implementation must include capacity exhaustion, refusal and
+recovery; a fixed array by itself does not establish a sufficient memory budget.
+Reuse identity/body storage across lifetimes where possible and account for all
+metadata, scratch, initialization, security and platform reservations. Keep total
+ceilings independent of feature allowances and distinguish static layout from
+whole-system peak use.
+
+Use `SmallDevice` with `profiles::Constrained` pools as the starting device
+configuration. Explicitly record its route, Call, deferred and security capacities
+and any overrides. Security, blockwise transfers and storage backend are options
+of the same App. Compare equal-capability workloads and change one setting at a
+time; a profile name alone is not a memory or performance specification.
+
+The execution priority is completed coding and integration on real loopback and
+the reserved ESP32. Focused success/refusal/recovery checks accompany each batch.
+Benchmark expansion, long stability runs and presentation are not prerequisites
+for implementing the next accepted requirement. Current-state reports use current
+source/configuration evidence or mark a metric unmeasured. Historical evidence
+stays archived; it is not the default report or a substitute for current results.
 
 ## Provisioning and enrollment decisions
 
@@ -211,7 +236,7 @@ Exp means Experimental. Titles are shortened for readability.
 | [8075](../knowledge/rfcs/rfc8075.txt) — HTTP-to-CoAP Mapping; ST | Selection in progress: application gateway use case and ownership boundary. HTTP transport support is outside active core UDP development. | L0. | Select the actual gateway need before committing method/status/media-type/conditional/stream/error/security mapping and independent proof. CoAP-to-HTTP is separately assessed under RFC 7252 section 10. [#517](https://github.com/jeffglousher/coaptic/issues/517). |
 | [8132](../knowledge/rfcs/rfc8132.txt) — FETCH, PATCH and iPATCH; ST | Committed: protocol methods and exact selection/transfer identity. Application patch formats remain separately named payload contracts. | L3: method API; L2: complete selection/transfer scope. | Selected FETCH follow-up fragmentation, server selected Observe and applicable validators. Peer JSON patch fixtures cover a limited application subset, not universal patch semantics. [#520](https://github.com/jeffglousher/coaptic/issues/520), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
 | [8323](../knowledge/rfcs/rfc8323.txt) — TCP, TLS and WebSockets; ST | Contribution opportunity: reliable client/server sessions, signaling and negotiated BERT; no delivery promise or MVP gate. | L1: Engine BERT codecs; L0: reliable session runtime. | A contributed profile needs framing/partial I/O, CSM/Ping/Pong/Release/Abort, lifecycle/identity epochs, reviewed TLS/WS adapters, negotiated size/BERT ownership and independent directions. [#516](https://github.com/jeffglousher/coaptic/issues/516). |
-| [8516](../knowledge/rfcs/rfc8516.txt) — Too Many Requests; ST | Committed: explicit server overload policy and client similar-request backoff contract. | L0: no dedicated delivered profile/proof. | Distinguish client-specific 4.29 from general 5.03 overload; bound refusal response work and honor applicable Max-Age/default/similar-request rules. [#340](https://github.com/jeffglousher/coaptic/issues/340), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
+| [8516](../knowledge/rfcs/rfc8516.txt) — Too Many Requests; ST | Committed: explicit server overload policy and client similar-request backoff contract. | L2 implementation in [PR #567](https://github.com/jeffglousher/coaptic/pull/567): explicit 4.29/5.03 constructors, bounded similar-request cooldown and focused local/UDP proof; merge and device integration pending. | Complete independent/device proof and broader overload work/readiness contracts; application selects client-specific versus general overload. [#340](https://github.com/jeffglousher/coaptic/issues/340), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
 | [8613](../knowledge/rfcs/rfc8613.txt) — OSCORE; ST | Committed: pairwise origin endpoints and inner blockwise transfers. Selection in progress: protected intermediary/Outer Block-wise role. | L3: supported pairwise profile; L0: protected intermediary. | Requirement/algorithm/context inventory, multiple bounded association ownership, nonce/replay/persistence boundaries and remaining independent modes. [#340](https://github.com/jeffglousher/coaptic/issues/340), [#200](https://github.com/jeffglousher/coaptic/issues/200). Intermediary: [#517](https://github.com/jeffglousher/coaptic/issues/517). |
 | [8710](../knowledge/rfcs/rfc8710.txt) — Multipart Content-Format; ST | Interest: bounded multipart codec/API. | L0: no dedicated codec; bytes can be transported opaquely. | No multipart compliance claim. Adoption requires a payload API and grammar/limit tests; opaque transport is not format implementation. |
 | [8768](../knowledge/rfcs/rfc8768.txt) — Hop-Limit; ST | Committed: origin/codec handling. Selection in progress: proxy forwarding/loop refusal. | L1: option codec and 5.08 constant; L0: intermediary behavior. | Separate exact origin behavior from decrement/forward/loop rules and prove each delivered role. [#517](https://github.com/jeffglousher/coaptic/issues/517), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
@@ -306,7 +331,7 @@ whole-RFC wording is withheld while applicable mandatory requirements remain ope
 | P0, companion maintenance | Unresolved companion GCM structural/authentication finding. | [#486](https://github.com/jeffglousher/coaptic/issues/486): reviewed correction and strict source-bound refusal/recovery; no finding suppression or substitute CCM proof. Moving production DTLS outside the MVP does not resolve this existing finding or permit affected traffic. |
 | P1 | Usable UDP/OSCORE security boundary, applicable EDHOC requirements and deployed enrollment. | [#365](https://github.com/jeffglousher/coaptic/issues/365), [#333](https://github.com/jeffglousher/coaptic/issues/333): selected commissioning/trust decisions, authenticated providers, exact 7252/8613/9528/9668 requirements and physical approval/revocation/recovery. |
 | P1 | Bounded association/context ownership and fair progress needed by protocol roles. | [#340](https://github.com/jeffglousher/coaptic/issues/340): capacity/epoch/replay/expiry/cancel isolation, checked refusal and valid-peer recovery. |
-| P2 | Remaining discovery metadata/parsing, Observe/selection/transfer APIs, overload/backoff and extended tokens. | [#519](https://github.com/jeffglousher/coaptic/issues/519), [#520](https://github.com/jeffglousher/coaptic/issues/520), [#340](https://github.com/jeffglousher/coaptic/issues/340), [#516](https://github.com/jeffglousher/coaptic/issues/516): narrow clause-driven implementation and independent directions. |
+| P2 | Remaining discovery metadata/parsing, Observe/selection/transfer APIs and extended tokens. | [#519](https://github.com/jeffglousher/coaptic/issues/519), [#520](https://github.com/jeffglousher/coaptic/issues/520), [#340](https://github.com/jeffglousher/coaptic/issues/340), [#516](https://github.com/jeffglousher/coaptic/issues/516): narrow clause-driven implementation and independent directions. |
 | P2 | Missing requirement ledgers and independent evidence for established profiles. | [#200](https://github.com/jeffglousher/coaptic/issues/200), [#202](https://github.com/jeffglousher/coaptic/issues/202): finite requirement inventory; no full-compliance claim from fixture totals. |
 | Selection before scheduling | Proxy/cache/gateway, RD, ACE and base multicast roles. | [#517](https://github.com/jeffglousher/coaptic/issues/517), [#519](https://github.com/jeffglousher/coaptic/issues/519), [#365](https://github.com/jeffglousher/coaptic/issues/365), [#518](https://github.com/jeffglousher/coaptic/issues/518): decide each use case, trust model, supported role and completion contract in the scope review. Reliable transports/BERT and DTLS are contribution opportunities outside this queue. |
 

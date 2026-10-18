@@ -221,7 +221,7 @@ fn campaign<C: AppStorage, S: AppStorage>(
     protect(&mut client, &mut server, protected);
     without_allocating(|| {
         let mut start = 0;
-        for mask in [2, 18] {
+        for mask in [2, 18, 0x83, 0x93] {
             MASK.with(|v| v.set(mask));
             LENGTH.with(|v| v.set(BODY.len()));
             for status in [
@@ -276,8 +276,9 @@ fn campaign<C: AppStorage, S: AppStorage>(
                     EFFECTS.with(Cell::get),
                     usize::from(status == Code::CHANGED)
                 );
-                let suppressed =
-                    status == Code::CHANGED || (mask == 18 && status == Code::SERVICE_UNAVAILABLE);
+                let suppressed = status == Code::CHANGED
+                    || (mask & coaptic::message::NoResponse::SUPPRESS_5 != 0
+                        && status == Code::SERVICE_UNAVAILABLE);
                 if suppressed {
                     assert!(server.transport_mut().take().is_none());
                     assert!(client.take_response(call).is_none());

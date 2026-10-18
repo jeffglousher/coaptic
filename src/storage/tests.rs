@@ -5477,3 +5477,75 @@ fn classic_if_none_match_invalid_encoding_refuses_before_body_admission() {
         );
     }
 }
+
+fn check_storage_usage<S: Storage>(mut engine: Engine<S>) {
+    let empty = engine.storage_usage();
+    let metrics = engine.metrics();
+    let rx = engine.acquire_rx().unwrap();
+    let tx = engine.acquire_tx().unwrap();
+    let dedup = engine.storage_mut().dedup().acquire().unwrap();
+    let observe = engine.storage_mut().observe().acquire().unwrap();
+    let rx_body = engine.acquire_rx_body();
+    let tx_body = engine.acquire_tx_body();
+    let cursor = engine.rx_cursor();
+    let used = engine.storage_usage();
+    for (before, after) in [
+        (empty.rx_datagram, used.rx_datagram),
+        (empty.tx_datagram, used.tx_datagram),
+        (empty.dedup, used.dedup),
+        (empty.observe, used.observe),
+    ] {
+        assert_eq!(before.occupied, 0);
+        assert_eq!(after.occupied, 1);
+        assert_eq!(before.capacity, after.capacity);
+    }
+    assert_eq!(used.rx_body.map(|p| p.occupied), rx_body.map(|_| 1));
+    assert_eq!(used.tx_body.map(|p| p.occupied), tx_body.map(|_| 1));
+    assert_eq!(engine.storage_usage(), used);
+    assert_eq!(engine.metrics(), metrics);
+    assert_eq!(engine.rx_cursor(), cursor);
+    engine.release_rx(rx).unwrap();
+    engine.release_tx(tx).unwrap();
+    engine.storage_mut().dedup().release(dedup).unwrap();
+    engine.storage_mut().observe().release(observe).unwrap();
+    if let Some(id) = rx_body {
+        engine.release_rx_body(id).unwrap();
+    }
+    if let Some(id) = tx_body {
+        engine.release_tx_body(id).unwrap();
+    }
+    assert_eq!(engine.storage_usage(), empty);
+    for rx in [true, false] {
+        let pool = if rx {
+            engine.storage_mut().rx_datagram()
+        } else {
+            engine.storage_mut().tx_datagram()
+        };
+        for _ in 0..pool.slot_count() {
+            assert!(pool.acquire().is_some());
+        }
+        assert!(pool.acquire().is_none());
+    }
+    let full = engine.storage_usage();
+    assert_eq!(full.rx_datagram.occupied, full.rx_datagram.capacity);
+    assert_eq!(full.tx_datagram.occupied, full.tx_datagram.capacity);
+}
+
+#[test]
+fn storage_usage_fixed() {
+    check_storage_usage(build_default());
+    check_storage_usage(build_default_bodies());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn storage_usage_allocated() {
+    for bodies in [false, true] {
+        let mut c = Capacities::from_profile::<profiles::Constrained>();
+        if bodies {
+            c = c.with_block_wise::<profiles::Constrained>();
+        }
+        let storage = super::AllocMemory::try_new(c, 64 * 1024).unwrap();
+        check_storage_usage(Engine::from_storage(storage));
+    }
+}
