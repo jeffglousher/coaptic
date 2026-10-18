@@ -31,11 +31,14 @@ pub mod store;
 #[cfg(feature = "development-piv")]
 pub mod development_piv;
 
-#[cfg(windows)]
 pub mod device;
 
-#[cfg(windows)]
 pub mod pairing;
+
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+pub mod native_custody;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+mod sealing;
 
 #[cfg(test)]
 mod tests;

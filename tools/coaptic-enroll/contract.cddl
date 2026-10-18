@@ -28,7 +28,7 @@ commissioning-request = {
 
 development-piv-operator = {
   version: 1,
-  profile: "development-piv-no-touch",
+  profile: "development-piv-no-touch" / "piv-touch-required",
   serial: 1..4294967295,
   slot: 130..149,
   public_key: bstr .size 65,

@@ -5,17 +5,16 @@ use coaptic_enroll::{
     Request, begin_registration, origin,
     store::{self, OperatorStore},
 };
-#[cfg(windows)]
 use std::path::PathBuf;
 
-#[cfg(all(windows, feature = "development-piv"))]
+#[cfg(feature = "development-piv")]
 mod piv_cli;
 
-#[cfg(windows)]
 mod pairing_cli;
 
-#[cfg(windows)]
 mod serial_cli;
+
+mod guided;
 
 fn main() {
     if let Err(error) = run() {
@@ -24,25 +23,32 @@ fn main() {
     }
 }
 
-#[cfg(not(windows))]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    Err("this native hardware client requires Windows; the verifier is portable Rust".into())
-}
-
-#[cfg(windows)]
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    use webauthn_authenticator_rs::{WebauthnAuthenticator, win10::Win10};
-    let mut args = std::env::args_os().skip(1);
+    let supplied: Vec<_> = std::env::args_os().skip(1).collect();
+    let supplied = if supplied.is_empty() || supplied == [std::ffi::OsString::from("guide")] {
+        let Some(args) =
+            guided::collect(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?
+        else {
+            return Ok(());
+        };
+        args
+    } else {
+        supplied
+    };
+    let mut args = supplied.into_iter();
     let command = args
         .next()
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
+            "Run without arguments, or use guide, for guided commissioning.\ncustody-init prepares native credential storage.\nUse --piv-touch for hardware-enforced PIV touch approval."
+        );
+        println!(
             "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\ntransfer DEVICE NEW_PEER VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--connect | --probe | --probe-shared | --probe-echo | --probe-denied]"
         );
         #[cfg(feature = "development-piv")]
         println!(
-            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor"
+            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor\npiv-touch-register SERIAL SLOT PUBLIC.pem | piv-touch-check REQUEST.cbor"
         );
         println!(
             "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-recover PORT UNPAIRED_HOST [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
@@ -50,7 +56,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     #[cfg(feature = "development-piv")]
-    let development = command == "development-piv-register" || command == "development-piv-check";
+    let development = [
+        "development-piv-register",
+        "development-piv-check",
+        "piv-touch-register",
+        "piv-touch-check",
+    ]
+    .iter()
+    .any(|name| command == *name);
     #[cfg(not(feature = "development-piv"))]
     let development = false;
     if ![
@@ -71,6 +84,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "serial-revoke",
         "serial-transfer",
         "serial-recover",
+        "custody-init",
     ]
     .iter()
     .any(|value| command == *value)
@@ -78,12 +92,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("expected operator-init or operator-check REQUEST.cbor".into());
     }
-    let directory = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or("LOCALAPPDATA unavailable")?
-        .join("Coaptic")
-        .join("Enrollment");
+    let directory = enrollment_directory()?;
     private_directory(&directory)?;
+    if command == "custody-init" {
+        if args.next().is_some() {
+            return Err("unexpected arguments".into());
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let _lock =
+                coaptic_enroll::store::RecordStore::<u8>::open_named(&directory, "custody")?;
+            coaptic_enroll::native_custody::initialize(&directory)?;
+        }
+        println!("Native credential custody ready.");
+        return Ok(());
+    }
     if [
         "serial-info",
         "serial-init",
@@ -165,6 +188,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("Device identity ready. Peer authorization requires commissioning.");
         return Ok(());
     }
+    operator_command(command, args, &directory)
+}
+
+#[cfg(not(windows))]
+fn operator_command(
+    _: std::ffi::OsString,
+    _: impl Iterator<Item = std::ffi::OsString>,
+    _: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("Windows WebAuthn is unavailable on this OS; select an explicitly registered PIV approval profile".into())
+}
+
+#[cfg(windows)]
+fn operator_command(
+    command: std::ffi::OsString,
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+    directory: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use webauthn_authenticator_rs::{WebauthnAuthenticator, win10::Win10};
     // Ordinary device-key recovery does not wait on an operator ceremony lock.
     let operator_store = OperatorStore::open(&directory)?;
     let mut client = WebauthnAuthenticator::new(Win10::default());
@@ -223,12 +265,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(windows)]
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-#[cfg(windows)]
+fn enrollment_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    {
+        return Ok(PathBuf::from(
+            std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable")?,
+        )
+        .join("Coaptic")
+        .join("Enrollment"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(
+            PathBuf::from(std::env::var_os("HOME").ok_or("HOME unavailable")?)
+                .join("Library/Application Support/Coaptic/Enrollment"),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let root = match std::env::var_os("XDG_DATA_HOME") {
+            Some(path) if PathBuf::from(&path).is_absolute() => PathBuf::from(path),
+            _ => PathBuf::from(std::env::var_os("HOME").ok_or("HOME unavailable")?)
+                .join(".local/share"),
+        };
+        Ok(root.join("coaptic/enrollment"))
+    }
+}
+
+#[cfg(unix)]
+fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder.create(directory)?;
+    let metadata = directory.symlink_metadata()?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata.mode() & 0o077 != 0 {
+        return Err("enrollment directory must be a private directory (mode 0700)".into());
+    }
+    Ok(())
+}
+
 fn device_directory(
     directory: &std::path::Path,
     name: &std::ffi::OsStr,
@@ -356,6 +436,8 @@ fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::err
         "device.cbor",
         "piv-development.lock",
         "piv-development.cbor",
+        "piv-touch.lock",
+        "piv-touch.cbor",
         "pairing.lock",
         "pairing.cbor",
     ] {

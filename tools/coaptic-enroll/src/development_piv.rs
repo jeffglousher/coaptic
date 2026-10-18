@@ -42,7 +42,10 @@ fn public_key(bytes: &[u8]) -> Result<EcKey<Public>, Error> {
 impl DevelopmentOperator {
     fn validate(&self) -> Result<(), Error> {
         if self.version != 1
-            || self.profile != "development-piv-no-touch"
+            || !matches!(
+                self.profile.as_str(),
+                "development-piv-no-touch" | "piv-touch-required"
+            )
             || self.serial == 0
             || !(0x82..=0x95).contains(&self.slot)
         {
@@ -68,11 +71,41 @@ impl DevelopmentOperator {
         self.slot
     }
 
+    pub fn requires_touch(&self) -> bool {
+        self.profile == "piv-touch-required"
+    }
+
+    /// Every signing operation checks the live key's policy and public key first.
+    pub fn sign(&self, digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
+        self.validate()?;
+        let mut key = yubikey::YubiKey::open_by_serial(self.serial.into())
+            .map_err(|_| Error::Authentication)?;
+        let slot = yubikey::piv::SlotId::try_from(self.slot).map_err(|_| Error::Input)?;
+        check_policy(&mut key, slot, &self.public_key, self.requires_touch())?;
+        yubikey::piv::sign_data(&mut key, digest, yubikey::piv::AlgorithmId::EccP256, slot)
+            .map(|bytes| bytes.to_vec())
+            .map_err(|_| Error::Authentication)
+    }
+
     /// Prove possession before registering a supplied, independently selected key.
     pub fn registration(serial: u32, slot: u8, key: &[u8]) -> Result<PendingRegistration, Error> {
+        Self::registration_with_touch(serial, slot, key, false)
+    }
+
+    pub fn registration_with_touch(
+        serial: u32,
+        slot: u8,
+        key: &[u8],
+        touch: bool,
+    ) -> Result<PendingRegistration, Error> {
         let operator = Self {
             version: 1,
-            profile: "development-piv-no-touch".into(),
+            profile: if touch {
+                "piv-touch-required"
+            } else {
+                "development-piv-no-touch"
+            }
+            .into(),
             serial,
             slot,
             public_key: key.to_vec(),
@@ -129,6 +162,7 @@ fn challenge(
     }
     let mut transcript = Vec::from(&b"coaptic development PIV proof v1\0"[..]);
     transcript.extend_from_slice(operation);
+    transcript.extend_from_slice(operator.profile.as_bytes());
     transcript.extend_from_slice(&operator.serial.to_be_bytes());
     transcript.push(operator.slot);
     transcript.extend_from_slice(&operator.public_key);
@@ -145,6 +179,9 @@ pub struct PendingRegistration {
 }
 
 impl PendingRegistration {
+    pub fn sign(&self) -> Result<Vec<u8>, Error> {
+        self.operator.sign(&self.digest)
+    }
     pub fn digest(&self) -> &[u8; 32] {
         &self.digest
     }
@@ -212,7 +249,83 @@ impl DevelopmentApproval {
     }
 }
 
-#[cfg(windows)]
+/// Inspect the selected physical key without signing or changing token state.
+pub fn verify_policy(serial: u32, slot: u8, public: &[u8], touch: bool) -> Result<(), Error> {
+    let mut key =
+        yubikey::YubiKey::open_by_serial(serial.into()).map_err(|_| Error::Authentication)?;
+    let slot = yubikey::piv::SlotId::try_from(slot).map_err(|_| Error::Input)?;
+    check_policy(&mut key, slot, public, touch)
+}
+
+fn check_policy(
+    key: &mut yubikey::YubiKey,
+    slot: yubikey::piv::SlotId,
+    public: &[u8],
+    touch: bool,
+) -> Result<(), Error> {
+    use yubikey::{PinPolicy, TouchPolicy, piv};
+    let expected = if touch {
+        TouchPolicy::Always
+    } else {
+        TouchPolicy::Never
+    };
+    if let Ok(metadata) = piv::metadata(key, slot) {
+        if metadata.policy != Some((PinPolicy::Never, expected))
+            || metadata
+                .public
+                .as_ref()
+                .and_then(|p| p.subject_public_key.as_bytes())
+                != Some(public)
+        {
+            return Err(Error::Authentication);
+        }
+        return Ok(());
+    }
+    // Older firmware exposes policy through generated-key attestation, not metadata.
+    // Trust is the explicitly selected local token, not a manufacturer certification claim.
+    use x509_cert::der::{Decode, Encode};
+    let der = piv::attest(key, slot).map_err(|_| Error::Authentication)?;
+    let cert = x509_cert::Certificate::from_der(&der).map_err(|_| Error::Authentication)?;
+    if cert
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_bytes()
+        != Some(public)
+    {
+        return Err(Error::Authentication);
+    }
+    let extensions = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .ok_or(Error::Authentication)?;
+    let mut policy = extensions
+        .iter()
+        .filter(|e| e.extn_id.to_string() == "1.3.6.1.4.1.41482.3.8");
+    let expected = [1, if touch { 2 } else { 1 }];
+    if policy.next().map(|e| e.extn_value.as_bytes()) != Some(expected.as_slice())
+        || policy.next().is_some()
+    {
+        return Err(Error::Authentication);
+    }
+    let issuer = yubikey::Certificate::read(key, piv::SlotId::Attestation)
+        .map_err(|_| Error::Authentication)?
+        .cert
+        .to_der()
+        .map_err(|_| Error::Authentication)?;
+    let issuer = openssl::x509::X509::from_der(&issuer).map_err(|_| Error::Authentication)?;
+    let cert = openssl::x509::X509::from_der(&der).map_err(|_| Error::Authentication)?;
+    let issuer_key = issuer.public_key().map_err(|_| Error::Authentication)?;
+    if !cert
+        .verify(&issuer_key)
+        .map_err(|_| Error::Authentication)?
+    {
+        return Err(Error::Authentication);
+    }
+    Ok(())
+}
+
 pub fn sign(serial: u32, slot: u8, digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
     use yubikey::{YubiKey, piv};
     let mut key = YubiKey::open_by_serial(serial.into()).map_err(|_| Error::Authentication)?;

@@ -1,6 +1,6 @@
 use coaptic_enroll::{
     Request,
-    development_piv::{self, DevelopmentOperator},
+    development_piv::DevelopmentOperator,
     store::{self, RecordStore},
 };
 use openssl::{bn::BigNumContext, ec::PointConversionForm, nid::Nid, pkey::PKey};
@@ -14,8 +14,16 @@ pub fn run(
     mut args: impl Iterator<Item = std::ffi::OsString>,
     directory: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let store = RecordStore::<DevelopmentOperator>::open_named(directory, "piv-development")?;
-    if command == "development-piv-register" {
+    let touch = command == "piv-touch-register" || command == "piv-touch-check";
+    let store = RecordStore::<DevelopmentOperator>::open_named(
+        directory,
+        if touch {
+            "piv-touch"
+        } else {
+            "piv-development"
+        },
+    )?;
+    if command == "development-piv-register" || command == "piv-touch-register" {
         if store.exists() {
             return Err("development operator already registered".into());
         }
@@ -41,15 +49,20 @@ pub fn run(
             PointConversionForm::UNCOMPRESSED,
             &mut context,
         )?;
-        let pending = DevelopmentOperator::registration(serial, slot, &public)?;
-        let proof = development_piv::sign(serial, slot, pending.digest())?;
+        let pending = DevelopmentOperator::registration_with_touch(serial, slot, &public, touch)?;
+        if touch {
+            println!("Touch the YubiKey to register the touch-required credential.");
+        }
+        let proof = pending.sign()?;
         let operator = pending.finish(&proof)?;
         store.initialize(&operator)?;
         println!(
             "Development PIV operator registered: {}",
             super::hex(&operator.owner()?)
         );
-        println!("No-touch development profile; production FIDO2 approval is separate.");
+        println!(
+            "PIV profile registered (touch required: {touch}); WebAuthn user verification is separate."
+        );
     } else {
         let path = PathBuf::from(args.next().ok_or("missing REQUEST.cbor")?);
         if args.next().is_some() {
@@ -58,8 +71,14 @@ pub fn run(
         let request: Request = store::read(&path)?;
         let commitment = request.commitment()?;
         let operator = store.load()?;
+        if operator.requires_touch() != touch {
+            return Err("registered profile does not match requested mode".into());
+        }
         let pending = operator.begin(request)?;
-        let proof = development_piv::sign(operator.serial(), operator.slot(), pending.digest())?;
+        if touch {
+            println!("Touch the YubiKey to approve this transaction.");
+        }
+        let proof = operator.sign(pending.digest())?;
         let approval =
             pending.finish(&proof, |old, next| store.commit(old, next).map_err(|_| ()))?;
         approval.commit(|request| {
