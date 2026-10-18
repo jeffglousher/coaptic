@@ -208,7 +208,7 @@ fn operator_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use webauthn_authenticator_rs::{WebauthnAuthenticator, win10::Win10};
     // Ordinary device-key recovery does not wait on an operator ceremony lock.
-    let operator_store = OperatorStore::open(&directory)?;
+    let operator_store = OperatorStore::open(directory)?;
     let mut client = WebauthnAuthenticator::new(Win10::default());
     if command == "operator-init" {
         if args.next().is_some() || operator_store.exists() {
@@ -272,18 +272,18 @@ fn hex(bytes: &[u8]) -> String {
 fn enrollment_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
-        return Ok(PathBuf::from(
-            std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable")?,
+        Ok(
+            PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable")?)
+                .join("Coaptic")
+                .join("Enrollment"),
         )
-        .join("Coaptic")
-        .join("Enrollment"));
     }
     #[cfg(target_os = "macos")]
     {
-        return Ok(
+        Ok(
             PathBuf::from(std::env::var_os("HOME").ok_or("HOME unavailable")?)
                 .join("Library/Application Support/Coaptic/Enrollment"),
-        );
+        )
     }
     #[cfg(target_os = "linux")]
     {

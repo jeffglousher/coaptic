@@ -56,3 +56,13 @@ pub(crate) fn unseal(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
     let key = key()?;
     sealing::open(&key, input)
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn absent_native_key_never_falls_back_to_unsealed_records() {
+        // Windows test dependency has only keyring's mock backend enabled.
+        assert!(super::protect(b"record").is_err());
+        assert!(super::unseal(b"record").is_err());
+    }
+}
