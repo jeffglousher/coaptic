@@ -145,24 +145,23 @@ impl DatagramIo for QueuedIo {
     }
 
     fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> io::Result<usize> {
-        if let Ok(message) = decode(bytes) {
-            if matches!(message.ty(), Type::Confirmable | Type::NonConfirmable) {
-                let mid = message.message_id();
-                let is_bootstrap = bootstrap(message);
-                if let Some((_, owner)) = self.used.iter().flatten().find(|(used, _)| *used == mid)
-                {
-                    if *owner != is_bootstrap {
-                        return Err(io::ErrorKind::AddrInUse.into());
-                    }
-                } else {
-                    let row = self
-                        .used
-                        .iter_mut()
-                        .find(|row| row.is_none())
-                        .ok_or(io::ErrorKind::OutOfMemory)?;
-                    *row = Some((mid, is_bootstrap));
-                    USED.with(|table| table.set(self.used.map(|row| row.map(|(mid, _)| mid))));
+        if let Ok(message) = decode(bytes)
+            && matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+        {
+            let mid = message.message_id();
+            let is_bootstrap = bootstrap(message);
+            if let Some((_, owner)) = self.used.iter().flatten().find(|(used, _)| *used == mid) {
+                if *owner != is_bootstrap {
+                    return Err(io::ErrorKind::AddrInUse.into());
                 }
+            } else {
+                let row = self
+                    .used
+                    .iter_mut()
+                    .find(|row| row.is_none())
+                    .ok_or(io::ErrorKind::OutOfMemory)?;
+                *row = Some((mid, is_bootstrap));
+                USED.with(|table| table.set(self.used.map(|row| row.map(|(mid, _)| mid))));
             }
         }
         self.udp.send(endpoint, bytes)
@@ -355,18 +354,18 @@ fn run() -> Result<(), String> {
                 authority.anchor.parts().1
             );
         }
-        if grant.is_none() {
-            if let Ok(fresh) = trust.grant(&local_identity) {
-                recovery = Some(
-                    CoapRecovery::<4>::new(&local_identity, peer.clone(), endpoint, now)
-                        .map_err(|e| format!("{e:?}"))?,
-                );
-                grant = Some(fresh);
-                println!(
-                    "{{\"owners_admitted\":true,\"trust_generation\":{}}}",
-                    authority.anchor.parts().1
-                );
-            }
+        if grant.is_none()
+            && let Ok(fresh) = trust.grant(&local_identity)
+        {
+            recovery = Some(
+                CoapRecovery::<4>::new(&local_identity, peer.clone(), endpoint, now)
+                    .map_err(|e| format!("{e:?}"))?,
+            );
+            grant = Some(fresh);
+            println!(
+                "{{\"owners_admitted\":true,\"trust_generation\":{}}}",
+                authority.anchor.parts().1
+            );
         }
         let Some(recovery) = recovery.as_mut() else {
             std::thread::sleep(Duration::from_millis(1));
@@ -379,28 +378,25 @@ fn run() -> Result<(), String> {
         } else {
             io.as_mut().expect("unbound transport")
         };
-        if transport.queued.is_none() {
-            if let Some((len, from)) = transport.receive(&mut bytes).map_err(|e| e.to_string())? {
-                if from == endpoint {
-                    if decode(&bytes[..len]).is_ok_and(bootstrap) {
-                        if let Err(error) =
-                            recovery.ingest(&bytes[..len], from, now, entropy, |p| {
-                                trust.permits(grant, p)
-                            })
-                        {
-                            println!(
-                                "{{\"candidate_failed\":true,\"error\":\"{error:?}\",\"sessions\":{sessions}}}"
-                            );
-                            recovery
-                                .discard_candidate(now)
-                                .map_err(|e| format!("{e:?}"))?;
-                        }
-                    } else if have_app {
-                        transport
-                            .queue(&bytes[..len], from)
-                            .map_err(|e| e.to_string())?;
-                    }
+        if transport.queued.is_none()
+            && let Some((len, from)) = transport.receive(&mut bytes).map_err(|e| e.to_string())?
+            && from == endpoint
+        {
+            if decode(&bytes[..len]).is_ok_and(bootstrap) {
+                if let Err(error) = recovery.ingest(&bytes[..len], from, now, entropy, |p| {
+                    trust.permits(grant, p)
+                }) {
+                    println!(
+                        "{{\"candidate_failed\":true,\"error\":\"{error:?}\",\"sessions\":{sessions}}}"
+                    );
+                    recovery
+                        .discard_candidate(now)
+                        .map_err(|e| format!("{e:?}"))?;
                 }
+            } else if have_app {
+                transport
+                    .queue(&bytes[..len], from)
+                    .map_err(|e| e.to_string())?;
             }
         }
         if let Err(error) = recovery.flush(transport, now) {
@@ -482,30 +478,30 @@ fn run() -> Result<(), String> {
             println!("{{\"handled\":true,\"count\":{handled},\"generation\":{sessions},\"principal\":\"{}\",\"code\":{},\"mtype\":{},\"mid\":{},\"token\":\"{}\",\"payload\":\"{}\",\"path\":\"provisioned\",\"content_format\":42,\"options\":[{}]}}", hex(expected.fingerprint()), request.code().as_raw(), request.ty().to_bits(), request.message_id().get(), hex(request.token().as_bytes()), hex(request.payload()), options.join(","));
             Response::changed().payload_borrowed(RESPONSE).content_format(ContentFormat::OCTET_STREAM)
         }).map_err(|e| format!("{e:?}"))?;
-        if let Some(pending) = call {
-            if let Some(response) = app.take_response(pending) {
-                let response = response.map_err(|e| format!("{e:?}"))?;
-                if response.code() != Code::CHANGED
-                    || response.payload() != RESPONSE
-                    || response.payload_truncated()
-                    || response.payload_src_len() != RESPONSE.len()
-                    || response.format() != Some(ContentFormat::OCTET_STREAM)
-                    || response.ty() != Some(Type::Acknowledgement)
-                    || response.token() != Some(pending.token())
-                    || response.peer() != Some(endpoint)
-                {
-                    return Err("invalid complete protected response".into());
-                }
-                responses += 1;
-                println!(
-                    "{{\"response\":true,\"count\":{responses},\"generation\":{sessions},\"code\":{},\"mtype\":2,\"mid\":{},\"token\":\"{}\",\"payload\":\"{}\",\"content_format\":42}}",
-                    response.code().as_raw(),
-                    response.message_id().ok_or("response MID absent")?.get(),
-                    hex(pending.token().as_bytes()),
-                    hex(response.payload())
-                );
-                call = None;
+        if let Some(pending) = call
+            && let Some(response) = app.take_response(pending)
+        {
+            let response = response.map_err(|e| format!("{e:?}"))?;
+            if response.code() != Code::CHANGED
+                || response.payload() != RESPONSE
+                || response.payload_truncated()
+                || response.payload_src_len() != RESPONSE.len()
+                || response.format() != Some(ContentFormat::OCTET_STREAM)
+                || response.ty() != Some(Type::Acknowledgement)
+                || response.token() != Some(pending.token())
+                || response.peer() != Some(endpoint)
+            {
+                return Err("invalid complete protected response".into());
             }
+            responses += 1;
+            println!(
+                "{{\"response\":true,\"count\":{responses},\"generation\":{sessions},\"code\":{},\"mtype\":2,\"mid\":{},\"token\":\"{}\",\"payload\":\"{}\",\"content_format\":42}}",
+                response.code().as_raw(),
+                response.message_id().ok_or("response MID absent")?.get(),
+                hex(pending.token().as_bytes()),
+                hex(response.payload())
+            );
+            call = None;
         }
         std::thread::sleep(Duration::from_millis(1));
     }

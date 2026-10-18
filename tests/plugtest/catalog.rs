@@ -96,10 +96,10 @@ pub fn extract_td_ids(yaml: &str) -> Vec<&str> {
     let mut ids = Vec::new();
     for line in yaml.lines() {
         let line = line.trim();
-        if let Some(id) = line.strip_prefix("TD_") {
-            if let Some(name) = id.strip_suffix(':') {
-                ids.push(line.strip_suffix(':').unwrap_or(name));
-            }
+        if let Some(id) = line.strip_prefix("TD_")
+            && let Some(name) = id.strip_suffix(':')
+        {
+            ids.push(line.strip_suffix(':').unwrap_or(name));
         }
     }
     ids

@@ -748,21 +748,20 @@ fn validate_snapshot(
     if let PolicyQuery::Refresh {
         policy_commitment, ..
     } = query
+        && actual.parts().1 == expected.parts().1
+        && snapshot.commitment() != *policy_commitment
     {
-        if actual.parts().1 == expected.parts().1 && snapshot.commitment() != *policy_commitment {
-            return Err(EnrollmentError::Rollback);
-        }
+        return Err(EnrollmentError::Rollback);
     }
-    if let PolicyQuery::Enroll { expected, policy } = query {
-        if expected.parts().1 != 0
+    if let PolicyQuery::Enroll { expected, policy } = query
+        && (expected.parts().1 != 0
             || actual.parts().1 != 1
             || !snapshot.record.enabled()
             || snapshot.record.peer().principal() != policy.peer.principal()
             || snapshot.owner != policy.owner
-            || snapshot.resource_policy != policy.resource_policy
-        {
-            return Err(EnrollmentError::Binding);
-        }
+            || snapshot.resource_policy != policy.resource_policy)
+    {
+        return Err(EnrollmentError::Binding);
     }
     Ok(())
 }

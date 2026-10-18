@@ -345,10 +345,10 @@ impl<T: DatagramIo> DatagramIo for ConnectionIo<T> {
     }
 
     fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        if let Ok(message) = decode(bytes) {
-            if matches!(message.ty(), Type::Confirmable | Type::NonConfirmable) {
-                self.reserve(message.message_id())?;
-            }
+        if let Ok(message) = decode(bytes)
+            && matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+        {
+            self.reserve(message.message_id())?;
         }
         self.raw
             .as_mut()

@@ -357,7 +357,7 @@ fn sweep_axes_are_dynamic() {
             SWEEP_BODY_BYTES >= 25 * 1024,
             "Default 4096 is not the ceiling"
         );
-        assert!(SWEEP_BODY_BYTES % 1024 == 0);
+        assert!(SWEEP_BODY_BYTES.is_multiple_of(1024));
     }
 }
 

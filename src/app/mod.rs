@@ -448,13 +448,12 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         key: ObserveKey,
     ) -> Result<(), crate::storage::SlotError> {
         for row in &mut self.rows {
-            if let Some(value) = *row {
-                if value.observe.is_some()
-                    && ObserveKey::new(value.meta.token, value.meta.dest) == key
-                {
-                    retire_deferred_observe(engine, value)?;
-                    *row = None;
-                }
+            if let Some(value) = *row
+                && value.observe.is_some()
+                && ObserveKey::new(value.meta.token, value.meta.dest) == key
+            {
+                retire_deferred_observe(engine, value)?;
+                *row = None;
             }
         }
         Ok(())
@@ -467,18 +466,17 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         now_ms: u64,
     ) -> Result<(), SlotError> {
         for row in &mut self.rows {
-            if let Some(value) = *row {
-                if value.meta.dest == endpoint
-                    && value.observe.is_some_and(|observe| {
-                        observe
-                            .failed_mid
-                            .is_some_and(|(sent, expires)| sent == mid && now_ms < expires)
-                    })
-                    && deferred_observe_owner(engine, value).is_some()
-                {
-                    retire_deferred_observe(engine, value)?;
-                    *row = None;
-                }
+            if let Some(value) = *row
+                && value.meta.dest == endpoint
+                && value.observe.is_some_and(|observe| {
+                    observe
+                        .failed_mid
+                        .is_some_and(|(sent, expires)| sent == mid && now_ms < expires)
+                })
+                && deferred_observe_owner(engine, value).is_some()
+            {
+                retire_deferred_observe(engine, value)?;
+                *row = None;
             }
         }
         Ok(())
@@ -559,24 +557,22 @@ fn retire_deferred_observe<S: AppStorage>(
         if row
             .observe
             .is_some_and(|observe| observe.attempted.is_none())
+            && let Some((body, _)) = row.snapshot
         {
-            if let Some((body, _)) = row.snapshot {
-                engine.release_tx_body(body)?;
-            }
+            engine.release_tx_body(body)?;
         }
         return Ok(());
     };
     if let Some(body) =
         response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
+        && engine.tx_body_is_pinned(body)
     {
-        if engine.tx_body_is_pinned(body) {
-            return Err(crate::storage::SlotError::Pinned);
-        }
+        return Err(crate::storage::SlotError::Pinned);
     }
-    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
-        if let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint()) {
-            engine.release_tx(tx)?;
-        }
+    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
+        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+    {
+        engine.release_tx(tx)?;
     }
     engine.take_observe(interest.key());
     release_observe_response_body(engine, interest);
@@ -684,14 +680,13 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         }
     }
     if let Some(body) = body.filter(|body| row.snapshot.is_none_or(|(current, _)| current != *body))
+        && let Err(error) = engine.release_tx_body(body)
     {
-        if let Err(error) = engine.release_tx_body(body) {
-            if let Some((id, interest)) = installed {
-                let _ = engine.storage_mut().set_observe_interest(id, interest);
-            }
-            let _ = engine.release_tx(tx);
-            return Err(error.into());
+        if let Some((id, interest)) = installed {
+            let _ = engine.storage_mut().set_observe_interest(id, interest);
         }
+        let _ = engine.release_tx(tx);
+        return Err(error.into());
     }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
     if let Err(error) = finish_send(engine, io, tx, row.meta.dest, pending) {
@@ -1161,14 +1156,14 @@ impl<
             }
         }
         for index in 0..capacities.rx_body_slots.unwrap_or(0) {
-            if let Some(transfer) = self.engine.rx_body_transfer(SlotId::from_index(index)) {
-                if transfer.q_holes().is_some() {
-                    consider(
-                        transfer
-                            .q_receive()
-                            .map_or(0, |wait| wait.next_timeout_ms()),
-                    );
-                }
+            if let Some(transfer) = self.engine.rx_body_transfer(SlotId::from_index(index))
+                && transfer.q_holes().is_some()
+            {
+                consider(
+                    transfer
+                        .q_receive()
+                        .map_or(0, |wait| wait.next_timeout_ms()),
+                );
             }
         }
         for index in 0..capacities.tx_body_slots.unwrap_or(0) {
@@ -1181,16 +1176,16 @@ impl<
             }
         }
         for index in 0..capacities.dedup_entries {
-            if let Some(entry) = self.engine.dedup_entry(SlotId::from_index(index)) {
-                if entry.due_ms() != 0 {
-                    consider(entry.due_ms());
-                }
+            if let Some(entry) = self.engine.dedup_entry(SlotId::from_index(index))
+                && entry.due_ms() != 0
+            {
+                consider(entry.due_ms());
             }
         }
-        if let Some(closed) = self.dedup_closed {
-            if closed.due_ms != 0 {
-                consider(closed.due_ms);
-            }
+        if let Some(closed) = self.dedup_closed
+            && closed.due_ms != 0
+        {
+            consider(closed.due_ms);
         }
         for row in self.deferred.rows.iter().flatten() {
             consider(row.deadline_ms);
@@ -1246,18 +1241,14 @@ impl<
                 return Some(now_ms);
             }
             for held_index in 0..capacities.observe_entries {
-                if let Some(held) = self.engine.observe_interest(SlotId::from_index(held_index)) {
-                    if !held.key().is_client()
-                        && held.endpoint().physical() == interest.endpoint().physical()
-                    {
-                        if let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) =
-                            held.notify_hold()
-                        {
-                            if until_ms > now_ms {
-                                next = Some(next.map_or(until_ms, |old| old.min(until_ms)));
-                            }
-                        }
-                    }
+                if let Some(held) = self.engine.observe_interest(SlotId::from_index(held_index))
+                    && !held.key().is_client()
+                    && held.endpoint().physical() == interest.endpoint().physical()
+                    && let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) =
+                        held.notify_hold()
+                    && until_ms > now_ms
+                {
+                    next = Some(next.map_or(until_ms, |old| old.min(until_ms)));
                 }
             }
         }
@@ -2428,11 +2419,11 @@ where
 
     // Max-Age expires a representation, not an observation (RFC 7641
     // section 3.3.1). Only explicit CON-wait expiry terminates an interest.
-    if let Some(crate::storage::ObserveExpiry::ClientOff(id)) = progress.observe_expired() {
-        if let Some(interest) = engine.observe_interest(id) {
-            let _ = engine.take_observe(interest.key());
-            release_observe_response_body(engine, interest);
-        }
+    if let Some(crate::storage::ObserveExpiry::ClientOff(id)) = progress.observe_expired()
+        && let Some(interest) = engine.observe_interest(id)
+    {
+        let _ = engine.take_observe(interest.key());
+        release_observe_response_body(engine, interest);
     }
 
     // A fresh receive must not bypass queued work left by an earlier failure.
@@ -2476,31 +2467,30 @@ where
                 .is_some_and(|interest| !deferred.blocks_observe(interest.key()))
         })
         .and_then(|id| engine.claim_observe_notification(id, now_ms))
+        && let Some(interest) = engine.observe_interest(id)
     {
-        if let Some(interest) = engine.observe_interest(id) {
-            let seq = interest.seq();
-            if observe_endpoint_held(engine, interest.endpoint(), now_ms)
-                >= usize::from(Transmission::NSTART)
-            {
-                let _ = engine.restore_observe_due(id, seq);
+        let seq = interest.seq();
+        if observe_endpoint_held(engine, interest.endpoint(), now_ms)
+            >= usize::from(Transmission::NSTART)
+        {
+            let _ = engine.restore_observe_due(id, seq);
+        } else {
+            let response = if interest.is_deleted() {
+                Some(Response::not_found())
             } else {
-                let response = if interest.is_deleted() {
-                    Some(Response::not_found())
-                } else {
-                    site.observe_source(interest.resource()).and_then(|source| {
-                        source.snapshot(&interest, oscore.association(interest.endpoint()))
-                    })
-                };
-                if let Some(response) = response {
-                    if let Err(e) =
-                        send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
-                    {
-                        let _ = engine.restore_observe_due(id, seq);
-                        return Err(e);
-                    }
-                } else {
+                site.observe_source(interest.resource()).and_then(|source| {
+                    source.snapshot(&interest, oscore.association(interest.endpoint()))
+                })
+            };
+            if let Some(response) = response {
+                if let Err(e) =
+                    send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
+                {
                     let _ = engine.restore_observe_due(id, seq);
+                    return Err(e);
                 }
+            } else {
+                let _ = engine.restore_observe_due(id, seq);
             }
         }
     }
@@ -2936,8 +2926,8 @@ where
         }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
-            if parsed.is_empty_ack() {
-                if let Err(error) = client::continue_qblock1_ack(
+            if parsed.is_empty_ack()
+                && let Err(error) = client::continue_qblock1_ack(
                     engine,
                     io,
                     inbox,
@@ -2947,10 +2937,10 @@ where
                     now_ms,
                     parsed.message_id(),
                     peer,
-                ) {
-                    let _ = engine.release_rx(rx);
-                    return Err(error);
-                }
+                )
+            {
+                let _ = engine.release_rx(rx);
+                return Err(error);
             }
         }
         if parsed.is_empty_ack() {
@@ -2958,15 +2948,13 @@ where
         } else {
             // Delayed RST: retire the exact current packet before detaching its
             // relation. A pinned packet refuses with both owners intact.
-            if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer) {
-                if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
-                    if let Some(tx) = engine.lookup_pending_con(mid, peer) {
-                        if let Err(error) = engine.release_tx(tx) {
-                            let _ = engine.release_rx(rx);
-                            return Err(error.into());
-                        }
-                    }
-                }
+            if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer)
+                && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
+                && let Some(tx) = engine.lookup_pending_con(mid, peer)
+                && let Err(error) = engine.release_tx(tx)
+            {
+                let _ = engine.release_rx(rx);
+                return Err(error.into());
             }
             // RST identifies a server notification by MID and endpoint. Its
             // request reference belongs to the removed server interest;
@@ -3428,112 +3416,152 @@ where
 
     // A terminal notification has no observer row, but its body still owns the
     // exact selection and response metadata until the last requested block.
-    if meta.block2.is_some() && parsed.observe().is_none() {
-        if let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer)) {
-            let transfer = engine.tx_body_transfer(body).expect("located body");
-            if let (Some(expected), Some((code, format, age))) = (
-                transfer.observe_selection(),
-                transfer.notification_metadata(),
-            ) {
-                let actual = DeferredSelection::from_parts(
-                    &parsed,
-                    match assembled {
-                        InboundBody::Complete(id) => {
-                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                        }
-                        _ => parsed.payload(),
+    if meta.block2.is_some()
+        && parsed.observe().is_none()
+        && let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer))
+    {
+        let transfer = engine.tx_body_transfer(body).expect("located body");
+        if let (Some(expected), Some((code, format, age))) = (
+            transfer.observe_selection(),
+            transfer.notification_metadata(),
+        ) {
+            let actual = DeferredSelection::from_parts(
+                &parsed,
+                match assembled {
+                    InboundBody::Complete(id) => {
+                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                    }
+                    _ => parsed.payload(),
+                },
+            )
+            .ok()
+            .map(DeferredSelection::stored);
+            let outcome = if actual != Some(expected) {
+                send_response(
+                    engine,
+                    io,
+                    ids,
+                    SendResponse {
+                        block2: None,
+                        ..meta
                     },
+                    &Response::bad_request(),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
                 )
-                .ok()
-                .map(DeferredSelection::stored);
-                let outcome = if actual != Some(expected) {
-                    send_response(
-                        engine,
-                        io,
-                        ids,
-                        SendResponse {
-                            block2: None,
-                            ..meta
-                        },
-                        &Response::bad_request(),
-                        now_ms,
-                        oscore,
-                        dedup_closed,
-                    )
-                } else {
-                    let response = Response::new(code)
-                        .retain_format(format)
-                        .retain_max_age(age);
-                    let response = match transfer.identity().as_slice() {
-                        Some(tag) => response.etag(tag),
-                        None => response,
-                    };
-                    let ty = if meta.ty == Type::Confirmable {
-                        Type::Acknowledgement
-                    } else {
-                        Type::NonConfirmable
-                    };
-                    let mid = if ty == Type::Acknowledgement {
-                        meta.mid
-                    } else {
-                        ids.next_for(engine, io, now_ms)?
-                    };
-                    issue_classic(
-                        engine,
-                        io,
-                        meta,
-                        &response,
-                        ty,
-                        mid,
-                        body,
-                        None,
-                        true,
-                        Some((now_ms, dedup_closed)),
-                        oscore,
-                    )
+            } else {
+                let response = Response::new(code)
+                    .retain_format(format)
+                    .retain_max_age(age);
+                let response = match transfer.identity().as_slice() {
+                    Some(tag) => response.etag(tag),
+                    None => response,
                 };
-                if let InboundBody::Complete(id) = assembled {
-                    let _ = engine.release_rx_body(id);
-                }
-                let _ = engine.release_rx(rx);
-                return outcome;
+                let ty = if meta.ty == Type::Confirmable {
+                    Type::Acknowledgement
+                } else {
+                    Type::NonConfirmable
+                };
+                let mid = if ty == Type::Acknowledgement {
+                    meta.mid
+                } else {
+                    ids.next_for(engine, io, now_ms)?
+                };
+                issue_classic(
+                    engine,
+                    io,
+                    meta,
+                    &response,
+                    ty,
+                    mid,
+                    body,
+                    None,
+                    true,
+                    Some((now_ms, dedup_closed)),
+                    oscore,
+                )
+            };
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
             }
+            let _ = engine.release_rx(rx);
+            return outcome;
         }
     }
 
     // Deferred responses own a stable bounded TX snapshot. Authenticated
     // classic or bounded Q-Block2 follow-ups select it without re-running work.
-    if meta.block2.is_some() || meta.q_block2.is_some() {
-        if let Some(index) = deferred.rows.iter().position(|row| {
+    if (meta.block2.is_some() || meta.q_block2.is_some())
+        && let Some(index) = deferred.rows.iter().position(|row| {
             row.is_some_and(|row| {
                 row.completed
                     && row.meta.token == meta.token
                     && row.meta.dest == peer
                     && (row.observe.is_none() || parsed.observe().is_none())
             })
-        }) {
-            let row = deferred.rows[index].expect("matched snapshot");
-            let (body, retained) = row.snapshot.expect("completed snapshot");
-            let outcome = (|| {
-                if DeferredSelection::from_parts(
-                    &parsed,
-                    match assembled {
-                        InboundBody::Complete(id) => {
-                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                        }
-                        _ => parsed.payload(),
-                    },
+        })
+    {
+        let row = deferred.rows[index].expect("matched snapshot");
+        let (body, retained) = row.snapshot.expect("completed snapshot");
+        let outcome = (|| {
+            if DeferredSelection::from_parts(
+                &parsed,
+                match assembled {
+                    InboundBody::Complete(id) => {
+                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                    }
+                    _ => parsed.payload(),
+                },
+            )
+            .ok()
+                != Some(row.selection)
+                || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
+                || row.meta.q_block2.is_some() != meta.q_block2.is_some()
+                || (row.observe.is_some()
+                    && meta
+                        .block2
+                        .is_some_and(|requested| engine.requested_block2(body, requested).is_err()))
+            {
+                send_response(
+                    engine,
+                    io,
+                    ids,
+                    meta,
+                    &Response::bad_request(),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
                 )
-                .ok()
-                    != Some(row.selection)
-                    || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
-                    || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                    || (row.observe.is_some()
-                        && meta.block2.is_some_and(|requested| {
-                            engine.requested_block2(body, requested).is_err()
-                        }))
-                {
-                    send_response(
+            } else if meta.q_block2.is_some() {
+                let response = retained.response();
+                let ty = if meta.ty == Type::Confirmable {
+                    Type::Acknowledgement
+                } else {
+                    Type::NonConfirmable
+                };
+                let meta = if ty == Type::NonConfirmable {
+                    SendResponse {
+                        mid: ids.next_for(engine, io, now_ms)?,
+                        ..meta
+                    }
+                } else {
+                    meta
+                };
+                match issue_deferred_q(
+                    engine,
+                    io,
+                    ids,
+                    now_ms,
+                    meta,
+                    &response,
+                    ty,
+                    body,
+                    None,
+                    oscore,
+                    dedup_closed,
+                ) {
+                    Err(Error::Block(BlockTransferError::Gap)) => send_response(
                         engine,
                         io,
                         ids,
@@ -3542,81 +3570,42 @@ where
                         now_ms,
                         oscore,
                         dedup_closed,
-                    )
-                } else if meta.q_block2.is_some() {
-                    let response = retained.response();
-                    let ty = if meta.ty == Type::Confirmable {
-                        Type::Acknowledgement
-                    } else {
-                        Type::NonConfirmable
-                    };
-                    let meta = if ty == Type::NonConfirmable {
-                        SendResponse {
-                            mid: ids.next_for(engine, io, now_ms)?,
-                            ..meta
-                        }
-                    } else {
-                        meta
-                    };
-                    match issue_deferred_q(
-                        engine,
-                        io,
-                        ids,
-                        now_ms,
-                        meta,
-                        &response,
-                        ty,
-                        body,
-                        None,
-                        oscore,
-                        dedup_closed,
-                    ) {
-                        Err(Error::Block(BlockTransferError::Gap)) => send_response(
-                            engine,
-                            io,
-                            ids,
-                            meta,
-                            &Response::bad_request(),
-                            now_ms,
-                            oscore,
-                            dedup_closed,
-                        ),
-                        other => other,
-                    }
-                } else {
-                    let response = retained.response();
-                    let ty = if meta.ty == Type::Confirmable {
-                        Type::Acknowledgement
-                    } else {
-                        Type::NonConfirmable
-                    };
-                    let mid = if ty == Type::Acknowledgement {
-                        meta.mid
-                    } else {
-                        ids.next_for(engine, io, now_ms)?
-                    };
-                    issue_classic(
-                        engine,
-                        io,
-                        meta,
-                        &response,
-                        ty,
-                        mid,
-                        body,
-                        None,
-                        true,
-                        Some((now_ms, dedup_closed)),
-                        oscore,
-                    )
+                    ),
+                    other => other,
                 }
-            })();
-            if let InboundBody::Complete(id) = assembled {
-                let _ = engine.release_rx_body(id);
+            } else {
+                let response = retained.response();
+                let ty = if meta.ty == Type::Confirmable {
+                    Type::Acknowledgement
+                } else {
+                    Type::NonConfirmable
+                };
+                let mid = if ty == Type::Acknowledgement {
+                    meta.mid
+                } else {
+                    ids.next_for(engine, io, now_ms)?
+                };
+                issue_classic(
+                    engine,
+                    io,
+                    meta,
+                    &response,
+                    ty,
+                    mid,
+                    body,
+                    None,
+                    true,
+                    Some((now_ms, dedup_closed)),
+                    oscore,
+                )
             }
-            let _ = engine.release_rx(rx);
-            deferred.expire(engine, now_ms);
-            return outcome;
+        })();
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
         }
+        let _ = engine.release_rx(rx);
+        deferred.expire(engine, now_ms);
+        return outcome;
     }
 
     let request_plan = Request::from_decoded(
@@ -3915,12 +3904,10 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
         if let Some(interest) = engine
             .lookup_observe(key)
             .and_then(|id| engine.observe_interest(id))
+            && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
+            && let Some(tx) = engine.lookup_pending_con(mid, peer)
         {
-            if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
-                if let Some(tx) = engine.lookup_pending_con(mid, peer) {
-                    engine.release_tx(tx)?;
-                }
-            }
+            engine.release_tx(tx)?;
         }
         engine.take_observe(key)
     } else {
@@ -4102,10 +4089,10 @@ where
         }
         Err(error) => return Err(error),
     };
-    if body.is_none() {
-        if let Some(id) = previous_body {
-            drop(engine.access_tx_body_mut(id)?);
-        }
+    if body.is_none()
+        && let Some(id) = previous_body
+    {
+        drop(engine.access_tx_body_mut(id)?);
     }
     let commit = if let Some(transfer) = body {
         engine.storage_mut().replace_observe_body(
@@ -4288,10 +4275,10 @@ impl NotifyHeldCache {
             }
         }
         for i in 0..engine.capacities().tx_datagram_slots {
-            if let Some(pending) = engine.pending_con(SlotId::from_index(i)) {
-                if !pending_has_observe_hold(engine, pending, now_ms) {
-                    cache.add(pending.endpoint());
-                }
+            if let Some(pending) = engine.pending_con(SlotId::from_index(i))
+                && !pending_has_observe_hold(engine, pending, now_ms)
+            {
+                cache.add(pending.endpoint());
             }
         }
         cache
@@ -4402,30 +4389,29 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
         }
     };
     for i in 0..engine.capacities().tx_datagram_slots {
-        if let Some(row) = engine.pending_con(SlotId::from_index(i)) {
-            if row.message_id() == mid {
-                accept(row.endpoint());
-            }
+        if let Some(row) = engine.pending_con(SlotId::from_index(i))
+            && row.message_id() == mid
+        {
+            accept(row.endpoint());
         }
     }
     for i in 0..engine.capacities().tx_datagram_slots {
-        if let Some(row) = engine.exchange_entry(SlotId::from_index(i)) {
-            if row.message_id() == mid {
-                accept(row.endpoint());
-            }
+        if let Some(row) = engine.exchange_entry(SlotId::from_index(i))
+            && row.message_id() == mid
+        {
+            accept(row.endpoint());
         }
     }
     for i in 0..engine.capacities().observe_entries {
-        if let Some(row) = engine.observe_interest(SlotId::from_index(i)) {
-            if !row.key().is_client()
-                && (row.lifetime().and_then(|life| life.con_mid()) == Some(mid)
-                    || row
-                        .notify_hold()
-                        .is_some_and(|hold| hold.message_id() == mid)
-                    || row.superseded_con_mids().contains(&mid))
-            {
-                accept(row.endpoint());
-            }
+        if let Some(row) = engine.observe_interest(SlotId::from_index(i))
+            && !row.key().is_client()
+            && (row.lifetime().and_then(|life| life.con_mid()) == Some(mid)
+                || row
+                    .notify_hold()
+                    .is_some_and(|hold| hold.message_id() == mid)
+                || row.superseded_con_mids().contains(&mid))
+        {
+            accept(row.endpoint());
         }
     }
     for row in deferred.rows.iter().flatten() {
@@ -4659,36 +4645,36 @@ where
         );
     }
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = response_body_for(engine, key) {
-        if engine.tx_body_transfer(id).is_some_and(|t| {
+    if let Some(id) = response_body_for(engine, key)
+        && engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             )
-        }) {
-            let ty = match meta.ty {
-                Type::Confirmable if acknowledged => Type::Confirmable,
-                Type::Confirmable => Type::Acknowledgement,
-                Type::NonConfirmable => Type::NonConfirmable,
-                Type::Acknowledgement | Type::Reset => return Ok(()),
-            };
-            let mut meta = meta;
-            if ty != Type::Acknowledgement {
-                meta.mid = ids.next_for(engine, io, now_ms)?;
-            }
-            return continue_outgoing(
-                engine,
-                io,
-                ids,
-                now_ms,
-                meta,
-                response,
-                ty,
-                id,
-                oscore_ctx,
-                dedup_closed,
-            );
+        })
+    {
+        let ty = match meta.ty {
+            Type::Confirmable if acknowledged => Type::Confirmable,
+            Type::Confirmable => Type::Acknowledgement,
+            Type::NonConfirmable => Type::NonConfirmable,
+            Type::Acknowledgement | Type::Reset => return Ok(()),
+        };
+        let mut meta = meta;
+        if ty != Type::Acknowledgement {
+            meta.mid = ids.next_for(engine, io, now_ms)?;
         }
+        return continue_outgoing(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            ty,
+            id,
+            oscore_ctx,
+            dedup_closed,
+        );
     }
 
     let ty = match meta.ty {
@@ -4825,26 +4811,25 @@ where
     let key = BlockKey::new(meta.token, meta.dest);
     if let Some(id) = response_body_for(engine, key)
         .filter(|_| response.code().is_success() && response.code() != Code::CONTINUE)
-    {
-        if engine.tx_body_transfer(id).is_some_and(|t| {
+        && engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             )
-        }) {
-            return continue_outgoing(
-                engine,
-                io,
-                ids,
-                now_ms,
-                meta,
-                response,
-                ty,
-                id,
-                oscore_ctx,
-                dedup_closed,
-            );
-        }
+        })
+    {
+        return continue_outgoing(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            ty,
+            id,
+            oscore_ctx,
+            dedup_closed,
+        );
     }
 
     if (meta.block2.is_some() || meta.q_block2.is_some()) && response.code().is_success() {
@@ -4987,10 +4972,10 @@ fn retire_suppressed_observe<
     if body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
         return Err(crate::storage::SlotError::Pinned);
     }
-    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
-        if let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint()) {
-            engine.release_tx(tx)?;
-        }
+    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
+        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+    {
+        engine.release_tx(tx)?;
     }
     if let Some(body) = body {
         engine.release_tx_body(body)?;
@@ -5003,12 +4988,11 @@ fn release_observe_response_body<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     interest: ObserveInterest,
 ) {
-    if !interest.key().is_client() {
-        if let Some(id) =
+    if !interest.key().is_client()
+        && let Some(id) =
             response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
-        {
-            let _ = engine.release_tx_body(id);
-        }
+    {
+        let _ = engine.release_tx_body(id);
     }
 }
 
@@ -6412,10 +6396,11 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     dedup_closed: &mut Option<DedupClosed>,
     now_ms: u64,
 ) {
-    if let Some(closed) = *dedup_closed {
-        if closed.due_ms != 0 && now_ms >= closed.due_ms {
-            *dedup_closed = None;
-        }
+    if let Some(closed) = *dedup_closed
+        && closed.due_ms != 0
+        && now_ms >= closed.due_ms
+    {
+        *dedup_closed = None;
     }
     if engine.storage_mut().dedup().is_empty() {
         return;

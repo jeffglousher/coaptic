@@ -49,10 +49,10 @@ impl DatagramIo for Io {
         assert_eq!(destination, address(1 - self.side));
         let mut network = self.network.borrow_mut();
         network.sent += 1;
-        if network.sent % 13 == 0 {
+        if network.sent.is_multiple_of(13) {
             network.dropped += 1;
         } else {
-            let duplicate = network.sent % 17 == 0;
+            let duplicate = network.sent.is_multiple_of(17);
             network.queues[1 - self.side].push_back(bytes.to_vec());
             if duplicate {
                 network.duplicated += 1;

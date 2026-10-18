@@ -52,10 +52,8 @@ struct Cache {
 impl Cache {
     fn from_controller(controller: CoapProvisioner<'_>, expires: u64, replies: bool) -> Self {
         let mut control = controller.control;
-        if !replies {
-            if let Some(control) = &mut control {
-                control.pending = false;
-            }
+        if !replies && let Some(control) = &mut control {
+            control.pending = false;
         }
         let expires = control
             .as_ref()
@@ -136,12 +134,12 @@ impl Cache {
                         };
                     }
                 }
-                if let Some(abort) = abort {
-                    if let Ok(parsed) = decode(bytes) {
-                        let classified = abort.classify(bytes, parsed, now);
-                        if classified != CompletedCacheMatch::NoMatch {
-                            return classified;
-                        }
+                if let Some(abort) = abort
+                    && let Ok(parsed) = decode(bytes)
+                {
+                    let classified = abort.classify(bytes, parsed, now);
+                    if classified != CompletedCacheMatch::NoMatch {
+                        return classified;
                     }
                 }
                 if bytes[0] & 0x20 != 0 && operations.iter().any(|operation| operation.mid == mid) {
@@ -181,13 +179,12 @@ impl Cache {
         if !self.replies {
             return false;
         }
-        if let Some(control) = &mut self.control {
-            if decode(bytes)
+        if let Some(control) = &mut self.control
+            && decode(bytes)
                 .is_ok_and(|message| control.owns(message, now) && control.can_replay(message))
-            {
-                control.pending = true;
-                return true;
-            }
+        {
+            control.pending = true;
+            return true;
         }
         match &mut self.role {
             CachedRole::Client {
@@ -732,10 +729,10 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         }
         let mut index = 0;
         while index < CACHES {
-            if let Some(cache) = &self.caches[index] {
-                if cache.error_in_flight(self.last_now) {
-                    return true;
-                }
+            if let Some(cache) = &self.caches[index]
+                && cache.error_in_flight(self.last_now)
+            {
+                return true;
             }
             index += 1;
         }
@@ -797,19 +794,17 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         if endpoint != self.endpoint {
             return false;
         }
-        if let Some(candidate) = &self.candidate {
-            if let Role::Client(client) = &candidate.role {
-                if [
-                    client.ids.first.mid,
-                    client.ids.second.mid,
-                    client.ids.echo.mid,
-                    client.ids.error.mid,
-                ]
-                .contains(&mid)
-                {
-                    return true;
-                }
-            }
+        if let Some(candidate) = &self.candidate
+            && let Role::Client(client) = &candidate.role
+            && [
+                client.ids.first.mid,
+                client.ids.second.mid,
+                client.ids.echo.mid,
+                client.ids.error.mid,
+            ]
+            .contains(&mid)
+        {
+            return true;
         }
         self.caches.iter().flatten().any(|cache| {
             now_ms < cache.expires
@@ -829,14 +824,12 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         let Ok(parsed) = decode(bytes) else {
             return false;
         };
-        if let Some(candidate) = &self.candidate {
-            if let Role::Client(client) = &candidate.role {
-                if let ClientState::LocalAbort { request, .. } = &client.state {
-                    if request.classify(bytes, parsed, now) != CompletedCacheMatch::NoMatch {
-                        return true;
-                    }
-                }
-            }
+        if let Some(candidate) = &self.candidate
+            && let Role::Client(client) = &candidate.role
+            && let ClientState::LocalAbort { request, .. } = &client.state
+            && request.classify(bytes, parsed, now) != CompletedCacheMatch::NoMatch
+        {
+            return true;
         }
         self.caches.iter().flatten().any(|cache| {
             now < cache.expires

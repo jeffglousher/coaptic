@@ -128,7 +128,7 @@ impl fmt::Display for Endpoint {
                 let (addr, port) = (self.octets, self.port);
                 let scope = self.scope;
                 write!(f, "[")?;
-                for (i, chunk) in addr.chunks_exact(2).enumerate() {
+                for (i, chunk) in addr.as_chunks::<2>().0.iter().enumerate() {
                     if i > 0 {
                         write!(f, ":")?;
                     }

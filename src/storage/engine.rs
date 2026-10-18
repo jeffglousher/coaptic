@@ -879,13 +879,13 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         if interest.key().is_client() {
             return None;
         }
-        if let Some(existing) = interest.notify_hold() {
-            if existing.is_held(now_ms) {
-                if confirmable && existing.con_mid() == Some(message_id) {
-                    return Some(id);
-                }
-                return None;
+        if let Some(existing) = interest.notify_hold()
+            && existing.is_held(now_ms)
+        {
+            if confirmable && existing.con_mid() == Some(message_id) {
+                return Some(id);
             }
+            return None;
         }
         if endpoint_notify_held(&self.storage, key.endpoint(), now_ms)
             >= usize::from(crate::message::Transmission::NSTART)
@@ -2459,15 +2459,15 @@ impl<S: Storage + BodySlots> Engine<S> {
             }
             Err(error) => Err(error),
         };
-        if result.is_err() {
-            if let Some(checkpoint) = checkpoint {
-                let mut transfer = self
-                    .storage
-                    .tx_body_transfer(body_id)
-                    .ok_or(BlockTransferError::NoTransfer)?;
-                transfer.restore_issue(checkpoint);
-                self.storage.set_tx_body_transfer(body_id, transfer)?;
-            }
+        if result.is_err()
+            && let Some(checkpoint) = checkpoint
+        {
+            let mut transfer = self
+                .storage
+                .tx_body_transfer(body_id)
+                .ok_or(BlockTransferError::NoTransfer)?;
+            transfer.restore_issue(checkpoint);
+            self.storage.set_tx_body_transfer(body_id, transfer)?;
         }
         result
     }

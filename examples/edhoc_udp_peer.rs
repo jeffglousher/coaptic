@@ -130,24 +130,24 @@ impl QueuedIo {
     }
 
     fn send_wire(&mut self, dest: Endpoint, bytes: &[u8]) -> io::Result<usize> {
-        if let Ok(message) = decode(bytes) {
-            if matches!(message.ty(), Type::Confirmable | Type::NonConfirmable) {
-                let mid = Some(message.message_id());
-                if bootstrap(message) {
-                    if !self.reserved.contains(&mid) {
-                        let row = self
-                            .reserved
-                            .iter_mut()
-                            .find(|row| row.is_none())
-                            .ok_or(io::ErrorKind::InvalidData)?;
-                        *row = mid;
-                    }
-                } else if self.cache_live && self.reserved.contains(&mid) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AddrInUse,
-                        "application MID collides with live bootstrap exchange",
-                    ));
+        if let Ok(message) = decode(bytes)
+            && matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+        {
+            let mid = Some(message.message_id());
+            if bootstrap(message) {
+                if !self.reserved.contains(&mid) {
+                    let row = self
+                        .reserved
+                        .iter_mut()
+                        .find(|row| row.is_none())
+                        .ok_or(io::ErrorKind::InvalidData)?;
+                    *row = mid;
                 }
+            } else if self.cache_live && self.reserved.contains(&mid) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    "application MID collides with live bootstrap exchange",
+                ));
             }
         }
         self.udp.send(dest, bytes)
@@ -302,23 +302,21 @@ fn run() -> Result<(), String> {
             Ok(command) if command == "stats" => stats(handled, responses, true),
             Ok(_) | Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
         }
-        if app.transport().queued.is_none() {
-            if let Some((len, from)) = app
+        if app.transport().queued.is_none()
+            && let Some((len, from)) = app
                 .transport_mut()
                 .receive(&mut bytes)
                 .map_err(|e| e.to_string())?
-            {
-                if from == endpoint {
-                    if decode(&bytes[..len]).is_ok_and(bootstrap) {
-                        controller
-                            .ingest(&bytes[..len], from, now, entropy, |p| *p == expected)
-                            .map_err(|e| format!("{e:?}"))?;
-                    } else {
-                        app.transport_mut()
-                            .queue(&bytes[..len], from)
-                            .map_err(|e| e.to_string())?;
-                    }
-                }
+            && from == endpoint
+        {
+            if decode(&bytes[..len]).is_ok_and(bootstrap) {
+                controller
+                    .ingest(&bytes[..len], from, now, entropy, |p| *p == expected)
+                    .map_err(|e| format!("{e:?}"))?;
+            } else {
+                app.transport_mut()
+                    .queue(&bytes[..len], from)
+                    .map_err(|e| e.to_string())?;
             }
         }
         if controller
@@ -347,30 +345,30 @@ fn run() -> Result<(), String> {
             );
             Response::changed().payload_borrowed(RESPONSE).content_format(ContentFormat::OCTET_STREAM)
         }).map_err(|e| format!("{e:?}"))?;
-        if let Some(pending) = call {
-            if let Some(response) = app.take_response(pending) {
-                let response = response.map_err(|e| format!("{e:?}"))?;
-                if response.code() != Code::CHANGED
-                    || response.payload() != RESPONSE
-                    || response.payload_truncated()
-                    || response.payload_src_len() != RESPONSE.len()
-                    || response.format() != Some(ContentFormat::OCTET_STREAM)
-                    || response.ty() != Some(Type::Acknowledgement)
-                    || response.token() != Some(pending.token())
-                    || response.peer() != Some(endpoint)
-                {
-                    return Err("invalid complete protected response".into());
-                }
-                responses += 1;
-                println!(
-                    "{{\"response\":true,\"code\":{},\"mtype\":2,\"payload\":\"{}\",\"mid\":{},\"token\":\"{}\",\"content_format\":42}}",
-                    response.code().as_raw(),
-                    hex(response.payload()),
-                    response.message_id().ok_or("response MID absent")?.get(),
-                    hex(pending.token().as_bytes()),
-                );
-                call = None;
+        if let Some(pending) = call
+            && let Some(response) = app.take_response(pending)
+        {
+            let response = response.map_err(|e| format!("{e:?}"))?;
+            if response.code() != Code::CHANGED
+                || response.payload() != RESPONSE
+                || response.payload_truncated()
+                || response.payload_src_len() != RESPONSE.len()
+                || response.format() != Some(ContentFormat::OCTET_STREAM)
+                || response.ty() != Some(Type::Acknowledgement)
+                || response.token() != Some(pending.token())
+                || response.peer() != Some(endpoint)
+            {
+                return Err("invalid complete protected response".into());
             }
+            responses += 1;
+            println!(
+                "{{\"response\":true,\"code\":{},\"mtype\":2,\"payload\":\"{}\",\"mid\":{},\"token\":\"{}\",\"content_format\":42}}",
+                response.code().as_raw(),
+                hex(response.payload()),
+                response.message_id().ok_or("response MID absent")?.get(),
+                hex(pending.token().as_bytes()),
+            );
+            call = None;
         }
         std::thread::sleep(Duration::from_millis(1));
     }

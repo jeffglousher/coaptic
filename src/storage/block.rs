@@ -1382,7 +1382,7 @@ impl BlockTransfer {
             return Err(BlockTransferError::SzxMismatch);
         }
         let size = usize::from(BlockValue::SIZE_MAX);
-        if block.more() && (payload_len == 0 || payload_len % size != 0) {
+        if block.more() && (payload_len == 0 || !payload_len.is_multiple_of(size)) {
             return Err(BlockTransferError::PayloadLength);
         }
         let offset = block_offset(block.num(), size)?;
@@ -1448,10 +1448,10 @@ impl BlockTransfer {
         if q.mask & bit != 0 {
             return Err(BlockTransferError::Duplicate);
         }
-        if let Some(final_num) = q.final_num {
-            if block.num() > final_num {
-                return Err(BlockTransferError::LengthInconsistent);
-            }
+        if let Some(final_num) = q.final_num
+            && block.num() > final_num
+        {
+            return Err(BlockTransferError::LengthInconsistent);
         }
         if !block.more() {
             let after = idx.saturating_add(1);
@@ -1761,7 +1761,7 @@ impl BlockTransfer {
                 q.mask = 0;
             }
             BlockRole::OutgoingQBlock2 => {
-                if num == 0 || num % max != 0 {
+                if num == 0 || !num.is_multiple_of(max) {
                     return Err(BlockTransferError::Gap);
                 }
                 let q = self

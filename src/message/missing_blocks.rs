@@ -76,10 +76,10 @@ impl MissingBlocks {
         let mut prev = None;
         let mut wrote = false;
         for num in nums {
-            if let Some(p) = prev {
-                if num <= p {
-                    continue;
-                }
+            if let Some(p) = prev
+                && num <= p
+            {
+                continue;
             }
             match put_uint(buf, &mut at, u64::from(num)) {
                 Ok(()) => {
@@ -117,10 +117,10 @@ impl MissingBlocks {
                 return Err(MissingBlocksError::Invalid);
             }
             let num = raw as u32;
-            if let Some(p) = prev {
-                if num <= p {
-                    return Err(MissingBlocksError::Invalid);
-                }
+            if let Some(p) = prev
+                && num <= p
+            {
+                return Err(MissingBlocksError::Invalid);
             }
             if n >= out.len() {
                 return Err(MissingBlocksError::BufferTooSmall);

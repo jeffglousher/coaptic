@@ -876,11 +876,11 @@ impl<'a> CoapProvisioner<'a> {
                     ClientState::Message2(_) | ClientState::Message4(_)
                 ) && client.retry.due(now_ms)
                 {
-                    if let Some(first) = client.retry.first_sent {
-                        if now_ms > first + client.retry.initial * 15 {
-                            client.retry.next_retry = None;
-                            return Ok(self.status(progress, false));
-                        }
+                    if let Some(first) = client.retry.first_sent
+                        && now_ms > first + client.retry.initial * 15
+                    {
+                        client.retry.next_retry = None;
+                        return Ok(self.status(progress, false));
                     }
                     send(io, self.endpoint, client.request.as_slice())?;
                     if let Err(failure) = client.retry.sent(now_ms) {
@@ -918,11 +918,11 @@ impl<'a> CoapProvisioner<'a> {
                 }
             }
         }
-        if let Role::Client(client) = &mut self.role {
-            if let ClientState::Aborted { code, reported, .. } = &mut client.state {
-                *reported = true;
-                return Err(PollError::PeerAbort(*code));
-            }
+        if let Role::Client(client) = &mut self.role
+            && let ClientState::Aborted { code, reported, .. } = &mut client.state
+        {
+            *reported = true;
+            return Err(PollError::PeerAbort(*code));
         }
         Ok(self.status(progress, false))
     }
@@ -1009,18 +1009,18 @@ impl<'a> CoapProvisioner<'a> {
             self.failure = Some(Failure::Timeout);
             return Err(PollError::Timeout);
         }
-        if let Role::Client(client) = &self.role {
-            if matches!(
+        if let Role::Client(client) = &self.role
+            && matches!(
                 client.state,
                 ClientState::Message2(_) | ClientState::Message4(_)
-            ) && client
+            )
+            && client
                 .retry
                 .wait_until
                 .is_some_and(|expires| now >= expires)
-            {
-                self.failure = Some(Failure::Timeout);
-                return Err(PollError::Timeout);
-            }
+        {
+            self.failure = Some(Failure::Timeout);
+            return Err(PollError::Timeout);
         }
         Ok(())
     }
@@ -1044,19 +1044,18 @@ impl Client {
     ) -> Result<bool, Failure> {
         let now = input.now;
         for (index, ack) in self.acks.iter().enumerate() {
-            if let Some(ack) = ack {
-                if now < ack.expires
-                    && parsed.message_id() == ack.mid
-                    && same_mid_namespace(bytes[0], ack.response.bytes[0])
-                {
-                    if ack.response.as_slice() == bytes {
-                        if parsed.ty() == Type::Confirmable {
-                            self.pending_acks |= 1 << index;
-                        }
-                        return Ok(true);
+            if let Some(ack) = ack
+                && now < ack.expires
+                && parsed.message_id() == ack.mid
+                && same_mid_namespace(bytes[0], ack.response.bytes[0])
+            {
+                if ack.response.as_slice() == bytes {
+                    if parsed.ty() == Type::Confirmable {
+                        self.pending_acks |= 1 << index;
                     }
-                    return Ok(false);
+                    return Ok(true);
                 }
+                return Ok(false);
             }
         }
         if let ClientState::LocalAbort { request, .. } = &mut self.state {
@@ -1282,17 +1281,16 @@ impl Server {
     ) -> Result<bool, Failure> {
         let now = input.now;
         for (index, exchange) in self.exchanges.iter().enumerate() {
-            if let Some(exchange) = exchange {
-                if now < exchange.expires
-                    && parsed.message_id() == exchange.operation.mid
-                    && same_mid_namespace(bytes[0], exchange.request.bytes[0])
-                {
-                    if exchange.request.as_slice() == bytes {
-                        self.pending |= 1 << index;
-                        return Ok(true);
-                    }
-                    return Ok(false);
+            if let Some(exchange) = exchange
+                && now < exchange.expires
+                && parsed.message_id() == exchange.operation.mid
+                && same_mid_namespace(bytes[0], exchange.request.bytes[0])
+            {
+                if exchange.request.as_slice() == bytes {
+                    self.pending |= 1 << index;
+                    return Ok(true);
                 }
+                return Ok(false);
             }
         }
         if let ServerState::FinalAbort(receipt) = &mut self.state {

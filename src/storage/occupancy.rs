@@ -44,16 +44,15 @@ fn first_free(occupied: &[bool]) -> Option<usize> {
     if occupied.len() < CHUNK {
         return occupied.iter().position(|&used| !used);
     }
-    let mut chunks = occupied.chunks_exact(CHUNK);
-    for (index, chunk) in chunks.by_ref().enumerate() {
-        if chunk != [true; CHUNK] {
+    let (chunks, tail) = occupied.as_chunks::<CHUNK>();
+    for (index, chunk) in chunks.iter().enumerate() {
+        if *chunk != [true; CHUNK] {
             return chunk
                 .iter()
                 .position(|&used| !used)
                 .map(|i| index * CHUNK + i);
         }
     }
-    let tail = chunks.remainder();
     tail.iter()
         .position(|&used| !used)
         .map(|i| occupied.len() - tail.len() + i)

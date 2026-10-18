@@ -650,12 +650,12 @@ impl<const CALLS: usize> ClientLives<CALLS> {
 
     fn expire_backoffs(&mut self, now_ms: u64) {
         for slot in &mut self.rows {
-            if let Some(row) = slot {
-                if row.backoff_until_ms <= now_ms {
-                    row.backoff_until_ms = 0;
-                    if row.retired {
-                        *slot = None;
-                    }
+            if let Some(row) = slot
+                && row.backoff_until_ms <= now_ms
+            {
+                row.backoff_until_ms = 0;
+                if row.retired {
+                    *slot = None;
                 }
             }
         }
@@ -793,19 +793,18 @@ impl<const CALLS: usize> ClientLives<CALLS> {
     }
 
     fn record_observation(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
-        if let Some(sequence) = observation_start(parsed) {
-            if let Some(live) = self
+        if let Some(sequence) = observation_start(parsed)
+            && let Some(live) = self
                 .rows
                 .iter_mut()
                 .flatten()
                 .find(|live| live.call == call)
+        {
+            live.observed = Some((sequence, now_ms));
+            if live.observed_format.is_none()
+                && (parsed.code() != Code::VALID || parsed.content_format().is_some())
             {
-                live.observed = Some((sequence, now_ms));
-                if live.observed_format.is_none()
-                    && (parsed.code() != Code::VALID || parsed.content_format().is_some())
-                {
-                    live.observed_format = Some(parsed.content_format().and_then(Result::ok));
-                }
+                live.observed_format = Some(parsed.content_format().and_then(Result::ok));
             }
         }
     }
@@ -1943,10 +1942,8 @@ fn with_client_options<R>(
         if let Some(tag) = spec.if_match {
             push_opt(&mut opts, Opt::if_match(tag))?;
         }
-        if !identity_only {
-            if let Some(tag) = spec.etag {
-                push_opt(&mut opts, Opt::etag(tag))?;
-            }
+        if !identity_only && let Some(tag) = spec.etag {
+            push_opt(&mut opts, Opt::etag(tag))?;
         }
         if spec.if_none_match {
             push_opt(&mut opts, Opt::if_none_match())?;
@@ -2310,12 +2307,11 @@ where
     // RFC 7252 sections 5.4.1 and 4.2: reject the response, not an
     // otherwise matching ACK. No inbox/body/Observe state may accept it.
     if parsed.unknown_critical().is_some() {
-        if parsed.ty() == Type::Acknowledgement {
-            if let Some(entry) = via_exchange {
-                if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
-                    let _ = engine.release_tx(tx);
-                }
-            }
+        if parsed.ty() == Type::Acknowledgement
+            && let Some(entry) = via_exchange
+            && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
+        {
+            let _ = engine.release_tx(tx);
         }
         let outcome = if parsed.ty() == Type::Confirmable {
             super::send_empty_rst(engine, io, peer, parsed.message_id())
@@ -2345,11 +2341,11 @@ where
         let _ = engine.release_rx(rx);
         return outcome;
     }
-    if parsed.ty() == Type::Confirmable {
-        if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {
-            let _ = engine.release_rx(rx);
-            return Err(e);
-        }
+    if parsed.ty() == Type::Confirmable
+        && let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id())
+    {
+        let _ = engine.release_rx(rx);
+        return Err(e);
     }
     if let Err(error) = super::oscore::commit_response(oscore, peer, response_state) {
         let _ = engine.release_rx(rx);
@@ -2358,12 +2354,11 @@ where
     // A matching piggybacked ACK ends retransmission even if its Observe
     // value is stale. A delayed NON/CON notification cannot acknowledge a
     // concurrently refreshed request merely by sharing its Token.
-    if parsed.ty() == Type::Acknowledgement {
-        if let Some(entry) = via_exchange {
-            if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
-                let _ = engine.release_tx(tx);
-            }
-        }
+    if parsed.ty() == Type::Acknowledgement
+        && let Some(entry) = via_exchange
+        && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
+    {
+        let _ = engine.release_tx(tx);
     }
     // ACK stale CON notifications too, but do not refresh their lifetime,
     // replace the inbox, or alter assembly. OSCORE already authenticated and
@@ -2374,78 +2369,76 @@ where
     }
     // Piggybacked ACK shares the request MID. A separate CON/NON response
     // uses a new MID; stop RTO using the exchange's request MID.
-    if let Some(entry) = via_exchange {
-        if let Some(tx) = engine.take_pending_con(entry.message_id(), peer) {
-            let _ = engine.release_tx(tx);
-        }
+    if let Some(entry) = via_exchange
+        && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
+    {
+        let _ = engine.release_tx(tx);
     }
     if let Some(tx) = engine.take_pending_con(parsed.message_id(), peer) {
         let _ = engine.release_tx(tx);
     }
 
-    if let Some(body) = upload_body(engine, lives.upload_key(Call::new(parsed.token(), peer))) {
-        if let Some(transfer) = engine.tx_body_transfer(body) {
-            if matches!(
-                transfer.role(),
-                BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
-            ) {
-                if transfer.role() == BlockRole::OutgoingQBlock1
-                    && parsed.code() == Code::REQUEST_ENTITY_INCOMPLETE
-                    && parsed.content_format() == Some(Ok(ContentFormat::MISSING_BLOCKS))
-                    && lives
-                        .get(Call::new(parsed.token(), peer))
-                        .is_some_and(|live| live.ty == Type::NonConfirmable)
-                {
-                    let outcome = reissue_qblock1_missing(
-                        engine, io, lives, ids, oscore, now_ms, parsed, peer, body,
-                    );
-                    if outcome.is_err() {
-                        abandon_send(engine, oscore, parsed.token(), peer);
-                        fail_call(
-                            engine,
-                            inbox,
-                            lives,
-                            oscore,
-                            Call::new(parsed.token(), peer),
-                            CallFailure::ContinuationFailed,
-                            true,
-                        );
-                    }
-                    let _ = engine.release_rx(rx);
-                    return outcome;
-                }
-                if parsed.code() == Code::CONTINUE {
-                    let outcome = continue_block1_tx(
-                        engine,
-                        io,
-                        lives,
-                        ids,
-                        oscore,
-                        now_ms,
-                        parsed.token(),
-                        parsed.block1().and_then(Result::ok),
-                        parsed.q_block1().and_then(Result::ok),
-                        peer,
-                        body,
-                    );
-                    if outcome.is_err() {
-                        abandon_send(engine, oscore, parsed.token(), peer);
-                        fail_call(
-                            engine,
-                            inbox,
-                            lives,
-                            oscore,
-                            Call::new(parsed.token(), peer),
-                            CallFailure::ContinuationFailed,
-                            true,
-                        );
-                    }
-                    let _ = engine.release_rx(rx);
-                    return outcome;
-                }
-                let _ = engine.release_tx_body(body);
+    if let Some(body) = upload_body(engine, lives.upload_key(Call::new(parsed.token(), peer)))
+        && let Some(transfer) = engine.tx_body_transfer(body)
+        && matches!(
+            transfer.role(),
+            BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+        )
+    {
+        if transfer.role() == BlockRole::OutgoingQBlock1
+            && parsed.code() == Code::REQUEST_ENTITY_INCOMPLETE
+            && parsed.content_format() == Some(Ok(ContentFormat::MISSING_BLOCKS))
+            && lives
+                .get(Call::new(parsed.token(), peer))
+                .is_some_and(|live| live.ty == Type::NonConfirmable)
+        {
+            let outcome =
+                reissue_qblock1_missing(engine, io, lives, ids, oscore, now_ms, parsed, peer, body);
+            if outcome.is_err() {
+                abandon_send(engine, oscore, parsed.token(), peer);
+                fail_call(
+                    engine,
+                    inbox,
+                    lives,
+                    oscore,
+                    Call::new(parsed.token(), peer),
+                    CallFailure::ContinuationFailed,
+                    true,
+                );
             }
+            let _ = engine.release_rx(rx);
+            return outcome;
         }
+        if parsed.code() == Code::CONTINUE {
+            let outcome = continue_block1_tx(
+                engine,
+                io,
+                lives,
+                ids,
+                oscore,
+                now_ms,
+                parsed.token(),
+                parsed.block1().and_then(Result::ok),
+                parsed.q_block1().and_then(Result::ok),
+                peer,
+                body,
+            );
+            if outcome.is_err() {
+                abandon_send(engine, oscore, parsed.token(), peer);
+                fail_call(
+                    engine,
+                    inbox,
+                    lives,
+                    oscore,
+                    Call::new(parsed.token(), peer),
+                    CallFailure::ContinuationFailed,
+                    true,
+                );
+            }
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        let _ = engine.release_tx_body(body);
     }
 
     let metadata = match ReplyMeta::from_parsed(parsed, peer, now_ms) {
@@ -2729,10 +2722,10 @@ fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
     }
     match inbox.insert(call, Ok(meta), body) {
         Ok(prev) => {
-            if let Some(id) = prev {
-                if Some(id) != body {
-                    let _ = engine.release_rx_body(id);
-                }
+            if let Some(id) = prev
+                && Some(id) != body
+            {
+                let _ = engine.release_rx_body(id);
             }
         }
         Err(()) => {
@@ -2982,10 +2975,10 @@ where
             }
             // RFC 9177 section 4.4: Q missing requests avoid ETag validation
             // replies (2.03) without payload. Classic Block2 retains it.
-            if q_block2.is_empty() {
-                if let Some(tag) = live.etag.as_slice() {
-                    push_opt(&mut opts, Opt::etag(tag))?;
-                }
+            if q_block2.is_empty()
+                && let Some(tag) = live.etag.as_slice()
+            {
+                push_opt(&mut opts, Opt::etag(tag))?;
             }
         }
         if let Some(ref encoded) = cf {
@@ -3388,12 +3381,13 @@ where
     let Some(transfer) = engine.tx_body_transfer(body) else {
         return Ok(());
     };
-    if let Some(preferred) = block1 {
-        if transfer.role() == BlockRole::OutgoingBlock1 && preferred.szx() < transfer.szx() {
-            engine
-                .adopt_smaller_block1(body, preferred.szx())
-                .map_err(Error::Block)?;
-        }
+    if let Some(preferred) = block1
+        && transfer.role() == BlockRole::OutgoingBlock1
+        && preferred.szx() < transfer.szx()
+    {
+        engine
+            .adopt_smaller_block1(body, preferred.szx())
+            .map_err(Error::Block)?;
     }
     if transfer.is_complete() {
         return Ok(());
@@ -3586,10 +3580,8 @@ where
             Err(BlockTransferError::OutsideWindow) => return Ok(sent),
             Err(e) => return Err(Error::Block(e)),
         };
-        if !sent {
-            if let Some((tok, ep)) = take_first {
-                let _ = engine.take_exchange(ExchangeKey::new(tok, ep));
-            }
+        if !sent && let Some((tok, ep)) = take_first {
+            let _ = engine.take_exchange(ExchangeKey::new(tok, ep));
         }
         let ty = first_ty;
         send_block1_issued(
@@ -4063,10 +4055,10 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
     if let Some(entry) = engine.take_exchange(key) {
         // NON/empty ACK may have released and reused the old TX slot. Only
         // a matching pending CON still establishes ownership of that slot.
-        if release_pending {
-            if let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint()) {
-                let _ = engine.release_tx(tx);
-            }
+        if release_pending
+            && let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint())
+        {
+            let _ = engine.release_tx(tx);
         }
     }
     let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer));
@@ -4089,15 +4081,15 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
             let _ = engine.release_rx_body(id);
         }
     }
-    if let Some(body) = upload_body(engine, lives.upload_key(call)) {
-        if engine.tx_body_transfer(body).is_some_and(|transfer| {
+    if let Some(body) = upload_body(engine, lives.upload_key(call))
+        && engine.tx_body_transfer(body).is_some_and(|transfer| {
             matches!(
                 transfer.role(),
                 BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
             )
-        }) {
-            let _ = engine.release_tx_body(body);
-        }
+        })
+    {
+        let _ = engine.release_tx_body(body);
     }
     super::oscore::cancel(oscore, call.peer, call.token());
     // Untaken failures occupy the same bounded completion budget as replies.
