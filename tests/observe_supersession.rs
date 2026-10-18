@@ -64,6 +64,9 @@ fn source() -> Response<'static> {
         3 => Response::content(LARGE).etag(b"large"),
         7 => Response::content(&[8; 2000]).etag(b"newlarge"),
         4 => Response::not_found(),
+        6 => Response::new(coaptic::Code::BAD_REQUEST)
+            .with_static(LARGE)
+            .etag(b"error"),
         _ => {
             Response::content(b"changed format").content_format(coaptic::ContentFormat::TEXT_PLAIN)
         }
@@ -1307,6 +1310,77 @@ fn error_only_no_response_preserves_notifications_and_retires_suppressed_termina
                 #[cfg(feature = "alloc")]
                 suppressed_terminal(allocated(protected), protected, mask, in_flight);
             }
+        }
+    }
+}
+
+fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, finish: bool) {
+    let mut client = block_client(protected);
+    no_alloc(|| {
+        let call = client.get("value").observe().to(OWNER).send(0).unwrap();
+        server.transport_mut().incoming = Some(client.transport().last);
+        server.poll(1).unwrap();
+        client.transport_mut().incoming = Some(server.transport().last);
+        client.poll(2).unwrap();
+        assert!(client.take_response(call).unwrap().is_ok());
+        let key = ObserveKey::new(call.token(), OWNER);
+        server.notify_confirmable(3, &["value"], source()).unwrap();
+        let old = pending(&server, key);
+        VERSION.with(|v| v.set(6));
+        server.signal(&["value"]);
+        let due = old.rto().next_timeout_ms();
+        server.poll(due).unwrap();
+        assert!(server.engine().lookup_observe(key).is_none());
+        let terminal = server.engine().pending_con(old.tx_slot()).unwrap();
+        assert_ne!(terminal.message_id(), old.message_id());
+        assert_eq!(terminal.rto(), old.rto().next_attempt(due).unwrap());
+        let body = server
+            .engine()
+            .lookup_tx_body(
+                coaptic::storage::BlockKey::new(key.token(), OWNER)
+                    .with_identity(coaptic::storage::BodyTag::new(b"error").unwrap()),
+            )
+            .unwrap();
+        client.transport_mut().incoming = Some(server.transport().last);
+        if !finish {
+            control(&mut server, terminal.message_id(), false, OWNER, due + 1);
+            let expires = due + u64::from(coaptic::message::Transmission::EXCHANGE_LIFETIME_MS);
+            assert!(server.next_timeout().is_some_and(|at| at <= expires));
+            server.poll(expires).unwrap();
+            assert!(server.engine().tx_body_transfer(body).is_none());
+            return;
+        }
+        // A changed resource must not replace the retained terminal body.
+        VERSION.with(|v| v.set(2));
+        let mut complete = false;
+        for step in 0..8 {
+            let now = due + 1 + step * 2;
+            client.poll(now).unwrap();
+            if let Some(reply) = client.take_response(call) {
+                let reply = reply.unwrap();
+                assert_eq!(reply.code(), coaptic::Code::BAD_REQUEST);
+                assert_eq!(reply.body(), Some(LARGE));
+                assert!(reply.observe_seq().is_none());
+                complete = true;
+                break;
+            }
+            server.transport_mut().incoming = Some(client.transport().last);
+            server
+                .poll_with(now + 1, |_, _| panic!("terminal follow-up redispatched"))
+                .unwrap();
+            client.transport_mut().incoming = Some(server.transport().last);
+        }
+        assert!(complete);
+        assert!(server.engine().tx_body_transfer(body).is_none());
+    });
+}
+#[test]
+fn terminal_block2_replacement_retains_error_and_selection_until_completion() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for finish in [false, true] {
+            terminal_blocks(fixed_blocks(protected), protected, finish);
+            #[cfg(feature = "alloc")]
+            terminal_blocks(allocated_blocks(protected), protected, finish);
         }
     }
 }

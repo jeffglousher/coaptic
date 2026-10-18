@@ -518,6 +518,7 @@ struct QWindow {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NotificationSnapshot {
+    code: crate::message::Code,
     format: Option<crate::message::ContentFormat>,
     max_age: Option<u32>,
 }
@@ -1135,23 +1136,76 @@ impl BlockTransfer {
         }
     }
 
-    /// Retain Content-Format and Max-Age for a large Observe notification body.
+    /// Retain code, Content-Format and Max-Age for a large notification body.
     pub(crate) fn remember_notification(
         &mut self,
+        code: crate::message::Code,
         format: Option<crate::message::ContentFormat>,
         max_age: Option<u32>,
     ) {
-        self.notification = Some(NotificationSnapshot { format, max_age });
+        self.notification = Some(NotificationSnapshot {
+            code,
+            format,
+            max_age,
+        });
     }
 
-    /// Notification Content-Format and Max-Age, including absence of either.
+    /// Notification code, Content-Format and Max-Age, including absent options.
     pub(crate) const fn notification_metadata(
         self,
-    ) -> Option<(Option<crate::message::ContentFormat>, Option<u32>)> {
+    ) -> Option<(
+        crate::message::Code,
+        Option<crate::message::ContentFormat>,
+        Option<u32>,
+    )> {
         match self.notification {
-            Some(snapshot) => Some((snapshot.format, snapshot.max_age)),
+            Some(snapshot) => Some((snapshot.code, snapshot.format, snapshot.max_age)),
             None => None,
         }
+    }
+
+    /// Classic terminal bodies reuse the inactive Q receive timer for cleanup.
+    pub(crate) fn expire_terminal_at(&mut self, deadline: u64) {
+        if self.role == BlockRole::OutgoingBlock2
+            && self.notification.is_some_and(|n| !n.code.is_success())
+        {
+            self.q_receive = Some(QBlockReceiveWait {
+                attempts: 0,
+                timeout_ms: 0,
+                next_timeout_ms: deadline,
+            });
+        }
+    }
+
+    pub(crate) const fn terminal_deadline(self) -> Option<u64> {
+        if matches!(self.role, BlockRole::OutgoingBlock2) {
+            match self.q_receive {
+                Some(wait) => Some(wait.next_timeout_ms),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Outgoing notification bodies reuse the inactive upload-binding area.
+    pub(crate) fn retain_observe_selection(&mut self, selection: Option<super::ObserveSelection>) {
+        self.request_binding = selection.map(|selection| RequestBinding {
+            bytes: selection.bytes,
+            len: selection.len,
+            if_none_match: None,
+            non_confirmable: false,
+        });
+    }
+
+    pub(crate) fn observe_selection(&self) -> Option<super::ObserveSelection> {
+        if self.notification.is_none() || self.role != BlockRole::OutgoingBlock2 {
+            return None;
+        }
+        self.request_binding.map(|binding| super::ObserveSelection {
+            bytes: binding.bytes,
+            len: binding.len,
+        })
     }
 
     /// Known incoming Q-Block holes in the current window, if any.
@@ -1218,7 +1272,11 @@ impl BlockTransfer {
     /// Armed [`QBlockReceiveWait`] for incoming Q-Block holes, if any.
     #[must_use]
     pub const fn q_receive(self) -> Option<QBlockReceiveWait> {
-        self.q_receive
+        if matches!(self.role, BlockRole::OutgoingBlock2) {
+            None
+        } else {
+            self.q_receive
+        }
     }
 
     /// Arm or clear [`QBlockReceiveWait`] from caller `now_ms`.
