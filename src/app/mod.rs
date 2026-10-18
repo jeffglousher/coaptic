@@ -1171,6 +1171,15 @@ impl<
                 }
             }
         }
+        for index in 0..capacities.tx_body_slots.unwrap_or(0) {
+            if let Some(deadline) = self
+                .engine
+                .tx_body_transfer(SlotId::from_index(index))
+                .and_then(|t| t.terminal_deadline())
+            {
+                consider(deadline);
+            }
+        }
         for index in 0..capacities.dedup_entries {
             if let Some(entry) = self.engine.dedup_entry(SlotId::from_index(index)) {
                 if entry.due_ms() != 0 {
@@ -2358,6 +2367,17 @@ where
     // Q-Block recovery. Return the receive error after progressing work.
     // Local deadlines must progress even if receiving the next packet fails.
     deferred.expire(engine, now_ms);
+    for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(index);
+        if engine
+            .tx_body_transfer(id)
+            .and_then(|t| t.terminal_deadline())
+            .is_some_and(|due| now_ms >= due)
+        {
+            // Advanced caller pins defer reclamation until their release.
+            let _ = engine.release_tx_body(id);
+        }
+    }
     expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
     let (mut received, recv_error) = match engine.recv_from(io) {
@@ -3405,6 +3425,81 @@ where
         }
     }
 
+    // A terminal notification has no observer row, but its body still owns the
+    // exact selection and response metadata until the last requested block.
+    if meta.block2.is_some() && parsed.observe().is_none() {
+        if let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer)) {
+            let transfer = engine.tx_body_transfer(body).expect("located body");
+            if let (Some(expected), Some((code, format, age))) = (
+                transfer.observe_selection(),
+                transfer.notification_metadata(),
+            ) {
+                let actual = DeferredSelection::from_parts(
+                    &parsed,
+                    match assembled {
+                        InboundBody::Complete(id) => {
+                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                        }
+                        _ => parsed.payload(),
+                    },
+                )
+                .ok()
+                .map(DeferredSelection::stored);
+                let outcome = if actual != Some(expected) {
+                    send_response(
+                        engine,
+                        io,
+                        ids,
+                        SendResponse {
+                            block2: None,
+                            ..meta
+                        },
+                        &Response::bad_request(),
+                        now_ms,
+                        oscore,
+                        dedup_closed,
+                    )
+                } else {
+                    let response = Response::new(code)
+                        .retain_format(format)
+                        .retain_max_age(age);
+                    let response = match transfer.identity().as_slice() {
+                        Some(tag) => response.etag(tag),
+                        None => response,
+                    };
+                    let ty = if meta.ty == Type::Confirmable {
+                        Type::Acknowledgement
+                    } else {
+                        Type::NonConfirmable
+                    };
+                    let mid = if ty == Type::Acknowledgement {
+                        meta.mid
+                    } else {
+                        ids.next_for(engine, io, now_ms)?
+                    };
+                    issue_classic(
+                        engine,
+                        io,
+                        meta,
+                        &response,
+                        ty,
+                        mid,
+                        body,
+                        None,
+                        true,
+                        Some((now_ms, dedup_closed)),
+                        oscore,
+                    )
+                };
+                if let InboundBody::Complete(id) = assembled {
+                    let _ = engine.release_rx_body(id);
+                }
+                let _ = engine.release_rx(rx);
+                return outcome;
+            }
+        }
+    }
+
     // Deferred responses own a stable bounded TX snapshot. Authenticated
     // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if meta.block2.is_some() || meta.q_block2.is_some() {
@@ -3763,26 +3858,23 @@ impl ObservePlan {
             site.observe_source(site.observe_resource(request.path())),
             Some(routing::SnapshotSource::Selected(_))
         );
-        let selection = if selected {
+        let selection = {
             DeferredSelection::from_parts(
                 &request.message(),
                 request.body().unwrap_or(request.payload()),
             )
             .ok()
             .map(DeferredSelection::stored)
-        } else {
-            None
         };
         Self {
             register: request.is_observe_register(),
             no_response: NoResponse::from_message(&request.message())
                 .unwrap_or(NoResponse::DEFAULT),
             selection,
-            registration_supported: if selected {
-                selection.is_some()
-            } else {
-                request.method() == Some(Method::Get) && request.uri_query().next().is_none()
-            },
+            registration_supported: selection.is_some()
+                && (selected
+                    || (request.method() == Some(Method::Get)
+                        && request.uri_query().next().is_none())),
             block2_max_szx: request
                 .get_option(crate::message::OptionNumber::BLOCK2)
                 .and_then(|o| o.as_block().ok())
@@ -3951,7 +4043,7 @@ where
     let mut body = None;
     let n = match staged {
         Ok(n) => n,
-        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) if !terminal => {
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             let Some(capacity) = engine.capacities().tx_body_bytes else {
                 return Err(Error::Message(SlotMessageError::Encode(
                     EncodeError::BufferTooSmall,
@@ -3969,7 +4061,15 @@ where
                     capacity,
                 )
                 .map_err(Error::Block)?;
-                transfer.remember_notification(response.format(), response.max_age_secs());
+                transfer.remember_notification(
+                    response.code(),
+                    response.format(),
+                    response.max_age_secs(),
+                );
+                transfer.retain_observe_selection(interest.selection().copied());
+                transfer.expire_terminal_at(
+                    now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+                );
                 let (block, offset, len) = transfer.issue_outgoing().map_err(Error::Block)?;
                 match stage_observe_replacement(
                     oscore,
@@ -4460,7 +4560,7 @@ fn start_notify_block2<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
     T: DatagramIo,
 {
     let key = response_block_key(meta.token, meta.dest, response)?;
@@ -4478,7 +4578,18 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     if let Some(mut transfer) = engine.tx_body_transfer(id) {
-        transfer.remember_notification(response.format(), response.max_age_secs());
+        transfer.remember_notification(response.code(), response.format(), response.max_age_secs());
+        transfer.retain_observe_selection(
+            engine
+                .lookup_observe(ObserveKey::new(meta.token, meta.dest))
+                .and_then(|id| engine.observe_interest(id))
+                .and_then(|row| row.selection().copied()),
+        );
+        if let Some((now, _, _)) = pending {
+            transfer.expire_terminal_at(
+                now.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+            );
+        }
         engine
             .storage_mut()
             .set_tx_body_transfer(id, transfer)
@@ -5213,7 +5324,9 @@ where
                 return Err(Error::Block(BlockTransferError::IdentityMismatch));
             }
             let retained = match transfer.notification_metadata() {
-                Some((format, max_age)) => response.retain_format(format).retain_max_age(max_age),
+                Some((_, format, max_age)) => {
+                    response.retain_format(format).retain_max_age(max_age)
+                }
                 None => *response,
             };
             issue_classic(
