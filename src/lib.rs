@@ -30,8 +30,10 @@
 //! # use coaptic::storage::DatagramIo;
 //! # use coaptic::Endpoint;
 //! # struct NullIo;
-//! # impl DatagramIo for NullIo {
+//! # impl coaptic::storage::DatagramTransport for NullIo {
 //! #     type Error = &'static str;
+//! # }
+//! # impl DatagramIo for NullIo {
 //! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 //! #         Ok(None)
 //! #     }

@@ -9,9 +9,11 @@ struct CountingIo {
     sent: usize,
 }
 
-impl DatagramIo for CountingIo {
+impl coaptic::storage::DatagramTransport for CountingIo {
     type Error = core::convert::Infallible;
+}
 
+impl DatagramIo for CountingIo {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         Ok(None)
     }
@@ -202,8 +204,11 @@ fn checked_routes_preserve_allocated_builder_and_app_after_refusal() {
     assert_eq!(app.site().len(), 1);
     app.poll(0).unwrap();
 }
-impl DatagramIo for Idle {
+impl coaptic::storage::DatagramTransport for Idle {
     type Error = core::convert::Infallible;
+}
+
+impl DatagramIo for Idle {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         Ok(None)
     }

@@ -323,13 +323,15 @@ impl<T: DatagramIo> ConnectionIo<T> {
     }
 }
 
-impl<T: DatagramIo> DatagramIo for ConnectionIo<T> {
-    // Preserve optional platform entropy through this ownership decorator.
+impl<T: DatagramIo> crate::storage::DatagramTransport for ConnectionIo<T> {
+    type Error = ManagedIoError<T::Error>;
     fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
         self.raw.as_mut().is_some_and(|raw| raw.fill_random(bytes))
     }
+}
 
-    type Error = ManagedIoError<T::Error>;
+impl<T: DatagramIo> DatagramIo for ConnectionIo<T> {
+    // Preserve optional platform entropy through this ownership decorator.
 
     fn recv(&mut self, output: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((len, endpoint)) = self.queued else {

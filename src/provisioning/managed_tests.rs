@@ -28,9 +28,11 @@ struct Io {
     network: Rc<RefCell<Network>>,
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = u8;
+}
 
+impl DatagramIo for Io {
     fn recv(&mut self, output: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
         let mut network = self.network.borrow_mut();
         network.receives += 1;

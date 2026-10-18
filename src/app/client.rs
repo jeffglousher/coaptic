@@ -94,8 +94,10 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// # use coaptic::storage::DatagramIo;
 /// # use coaptic::{App, Endpoint, profiles};
 /// # struct NullIo;
-/// # impl DatagramIo for NullIo {
+/// # impl coaptic::storage::DatagramTransport for NullIo {
 /// #     type Error = &'static str;
+/// # }
+/// # impl DatagramIo for NullIo {
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
@@ -919,8 +921,10 @@ enum OutgoingObserve {
 /// # use coaptic::storage::DatagramIo;
 /// # use coaptic::{App, Endpoint, profiles};
 /// # struct NullIo;
-/// # impl DatagramIo for NullIo {
+/// # impl coaptic::storage::DatagramTransport for NullIo {
 /// #     type Error = &'static str;
+/// # }
+/// # impl DatagramIo for NullIo {
 /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 /// #         Ok(None)
 /// #     }
@@ -1591,6 +1595,7 @@ where
 }
 
 impl<
+    'a,
     P,
     T,
     const N: usize,
@@ -1600,10 +1605,10 @@ impl<
     const CALLS: usize,
     const REQUESTS: usize,
     const ASSOCIATIONS: usize,
-> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-    T: DatagramIo,
+    T: crate::storage::DatagramTransport,
 {
     /// Encode the request, record the Exchange, and send.
     ///
@@ -1622,7 +1627,44 @@ where
     ///
     /// [`Error::Saturated`] if the configured client Call table is full and
     /// this Token is not one of its retained Calls. No reply is evicted.
-    pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
+    pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>>
+    where
+        T: DatagramIo,
+    {
+        self.prepare(now_ms)?.send()
+    }
+
+    /// Encode and admit this request, then await complete datagram acceptance.
+    ///
+    /// Uses the same options, body slots and Call semantics as `send`, including
+    /// initial Block1 and Q-Block1 payload sets. The future owns cleanup from its
+    /// construction, so dropping it before polling also cancels admission.
+    /// `completed_at` supplies the monotonic completion clock after each accepted
+    /// datagram. Cancellation and errors do not rewind OSCORE sequence numbers;
+    /// the peer may already have acted on earlier datagrams in a Q payload set.
+    /// Driving subsequent responses, retransmissions and deadlines remains the
+    /// caller's responsibility. The clock must finish in bounded time.
+    pub fn send_async<C: 'a>(
+        self,
+        now_ms: u64,
+        completed_at: impl FnMut() -> Result<u64, C> + 'a,
+    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    where
+        T: crate::storage::AsyncDatagramIo,
+    {
+        let prepared = self.prepare(now_ms);
+        async move {
+            prepared
+                .map_err(AsyncCallError::Request)?
+                .send_async(completed_at)
+                .await
+        }
+    }
+
+    fn prepare(
+        self,
+        now_ms: u64,
+    ) -> Result<PreparedCall<'a, S, T, CALLS, REQUESTS>, Error<T::Error>> {
         #[cfg(feature = "oscore")]
         if !self.association_valid {
             return Err(Error::Oscore(crate::oscore::Error::Context));
@@ -1734,7 +1776,31 @@ where
                         .as_ref()
                         .is_some_and(|original| original.same_target(identity))
             }) {
-                return Ok(existing.call);
+                let call = existing.call;
+                let App {
+                    engine,
+                    io,
+                    ids,
+                    inbox,
+                    lives,
+                    oscore,
+                    ..
+                } = self.app;
+                return Ok(PreparedCall {
+                    engine,
+                    io,
+                    ids,
+                    inbox,
+                    lives,
+                    oscore,
+                    staged: None,
+                    pending: None,
+                    live: None,
+                    call,
+                    now_ms,
+                    replacing: false,
+                    owned: false,
+                });
             }
         }
         if !replacing && self.app.lives.rows.iter().flatten().count() >= CALLS {
@@ -1808,28 +1874,23 @@ where
                 true,
             );
         }
-        let call = send_client(
+        let staged = stage_client(
             &mut self.app.engine,
             &mut self.app.io,
             &mut self.app.ids,
             &mut self.app.oscore,
             now_ms,
-            spec,
+            &spec,
         );
-        let call = match call {
-            Ok(call) => call,
+        let staged = match staged {
+            Ok(staged) => staged,
             Err(error) => {
                 abandon_send(&mut self.app.engine, &mut self.app.oscore, token, dest);
                 return Err(error);
             }
         };
-        if replacing {
-            if let Some(rx) = self.app.inbox.take_datagram(call) {
-                let _ = self.app.engine.release_rx(rx);
-            }
-            self.app.inbox.discard(call);
-        }
-        self.app.lives.insert(LiveCall {
+        let call = Call::new(token, dest);
+        let live = LiveCall {
             call,
             queries: retained_queries,
             accept: self.accept,
@@ -1856,21 +1917,39 @@ where
             } else {
                 Transmission::EXCHANGE_LIFETIME_MS
             })),
-        });
-        arm_q_pacing(
-            &self.app.engine,
-            &mut self.app.lives,
-            &self.app.ids,
-            now_ms,
+        };
+        let App {
+            engine,
+            io,
+            ids,
+            inbox,
+            lives,
+            oscore,
+            ..
+        } = self.app;
+        let mut prepared = PreparedCall {
+            engine,
+            io,
+            ids,
+            inbox,
+            lives,
+            oscore,
+            staged: Some(staged),
+            pending: None,
+            live: Some(live),
             call,
-        );
-        Ok(call)
+            now_ms,
+            replacing,
+            owned: true,
+        };
+        prepared.admit()?;
+        Ok(prepared)
     }
 }
 
 impl<
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
-    T: DatagramIo,
+    T: crate::storage::DatagramTransport,
     const N: usize,
     const BLOCK_WISE: bool,
     S: super::AppStorage,
@@ -2006,17 +2085,638 @@ fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, En
     })?
 }
 
-fn send_client<Mem, T, const REQUESTS: usize>(
+struct StagedClient {
+    tx: SlotId,
+    mid: MessageId,
+    jitter: u32,
+    body: Option<SlotId>,
+    continue_q: bool,
+}
+
+#[cfg(test)]
+mod async_request_tests {
+    use super::*;
+    use core::{
+        cell::Cell,
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    const PEER: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
+
+    #[derive(Default)]
+    struct State {
+        ready: Cell<bool>,
+        sent: Cell<usize>,
+        entered: Cell<usize>,
+        fail_at: Cell<Option<usize>>,
+        blocks: Cell<u64>,
+    }
+
+    struct AsyncOnly<'a>(&'a State);
+    impl crate::storage::DatagramTransport for AsyncOnly<'_> {
+        type Error = ();
+    }
+    impl crate::storage::AsyncDatagramIo for AsyncOnly<'_> {
+        async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            panic!("initial send does not receive")
+        }
+        async fn send(&mut self, peer: Endpoint, wire: &[u8]) -> Result<usize, ()> {
+            assert_eq!(peer, PEER);
+            self.0.entered.set(self.0.entered.get() + 1);
+            core::future::poll_fn(|cx| {
+                if !self.0.ready.get() {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                self.0.ready.set(false);
+                if self.0.fail_at.get() == Some(self.0.sent.get()) {
+                    return Poll::Ready(Err(()));
+                }
+                let message = crate::message::decode(wire).unwrap();
+                if let Some(Ok(block)) = message.q_block1() {
+                    self.0.blocks.set(self.0.blocks.get() | (1 << block.num()));
+                }
+                self.0.sent.set(self.0.sent.get() + 1);
+                Poll::Ready(Ok(wire.len()))
+            })
+            .await
+        }
+    }
+
+    #[test]
+    fn native_async_initial_call_drop_and_acceptance_share_existing_slots() {
+        let state = State::default();
+        let mut app = App::with_resources(crate::resources::SmallDevice::new())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        let initial = app.engine.tx_occupied();
+        drop(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+        assert_eq!(state.entered.get(), 0);
+        assert_eq!(app.engine.tx_occupied(), initial);
+        assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+        {
+            let mut send = pin!(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+            assert!(
+                send.as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        assert_eq!(app.engine.tx_occupied(), initial);
+        assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+        let call = {
+            let mut send = pin!(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(send.as_mut().poll(&mut cx).is_pending());
+            state.ready.set(true);
+            match send.as_mut().poll(&mut cx) {
+                Poll::Ready(Ok(call)) => call,
+                _ => panic!("accepted call"),
+            }
+        };
+        assert_eq!(state.sent.get(), 1);
+        assert!(app.lives.get(call).is_some());
+        let exchange = app
+            .engine
+            .lookup_exchange(ExchangeKey::new(call.token(), PEER))
+            .unwrap();
+        let entry = app.engine.exchange_entry(exchange).unwrap();
+        let pending = app.engine.pending_con(entry.tx_slot()).unwrap();
+        assert_eq!(
+            pending.rto().next_timeout_ms(),
+            Some(90 + u64::from(Transmission::initial_timeout_ms(0)))
+        );
+        assert!(app.cancel(call));
+        assert_eq!(app.engine.tx_occupied(), initial);
+    }
+
+    #[test]
+    fn native_async_block1_and_q_window_acceptance_and_partial_failure() {
+        let payload = [7; 1500];
+        for q in [false, true] {
+            for fail in [false, true] {
+                let state = State::default();
+                state.fail_at.set(fail.then_some(if q { 1 } else { 0 }));
+                let mut app =
+                    App::with_resources(crate::resources::SmallDevice::new().block_wise::<true>())
+                        .deterministic_for_tests()
+                        .allow_unprotected()
+                        .bind(AsyncOnly(&state))
+                        .unwrap();
+                let result = {
+                    let mut request = app.post("upload").payload(&payload).to(PEER);
+                    if q {
+                        request = request
+                            .non()
+                            .q_block1()
+                            .request_tag(BodyTag::new(b"tag").unwrap());
+                    }
+                    let mut send = pin!(request.send_async(0, || Ok::<_, ()>(90)));
+                    let mut cx = Context::from_waker(Waker::noop());
+                    let mut result = None;
+                    for _ in 0..32 {
+                        state.ready.set(true);
+                        if let Poll::Ready(outcome) = send.as_mut().poll(&mut cx) {
+                            result = Some(outcome);
+                            break;
+                        }
+                    }
+                    result.expect("bounded initial payload set")
+                };
+                if fail {
+                    assert!(result.is_err());
+                    assert_eq!(app.engine.tx_occupied(), 0);
+                    assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+                    for i in 0..app.engine.capacities().tx_body_slots.unwrap_or(0) {
+                        assert!(app.engine.tx_body_transfer(SlotId::from_index(i)).is_none());
+                    }
+                } else {
+                    let call = result.unwrap();
+                    assert!(app.lives.get(call).is_some());
+                    if q {
+                        assert!(state.sent.get() > 1);
+                        assert_eq!(state.blocks.get() & 3, 3);
+                    } else {
+                        assert_eq!(state.sent.get(), 1);
+                    }
+                    assert!(app.cancel(call));
+                    assert_eq!(app.engine.tx_occupied(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_async_clock_failure_after_send_leaves_no_call() {
+        for non in [false, true] {
+            let state = State::default();
+            state.ready.set(true);
+            let mut app = App::with_resources(crate::resources::SmallDevice::new())
+                .deterministic_for_tests()
+                .allow_unprotected()
+                .bind(AsyncOnly(&state))
+                .unwrap();
+            {
+                let request = app.get("sensor").to(PEER);
+                let request = if non { request.non() } else { request };
+                let mut send = pin!(request.send_async(0, || Err(42)));
+                assert!(matches!(
+                    send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Ready(Err(AsyncCallError::ClockAfterSend(42)))
+                ));
+            }
+            assert_eq!(state.sent.get(), 1);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+        }
+    }
+
+    #[test]
+    fn native_async_deadline_at_acceptance_stops_call_installation() {
+        let state = State::default();
+        let mut app = App::with_resources(crate::resources::SmallDevice::new())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        {
+            let mut send = pin!(
+                app.get("sensor")
+                    .to(PEER)
+                    .deadline(50)
+                    .send_async(0, || Ok::<_, ()>(50))
+            );
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(send.as_mut().poll(&mut cx).is_pending());
+            state.ready.set(true);
+            assert!(matches!(
+                send.as_mut().poll(&mut cx),
+                Poll::Ready(Err(AsyncCallError::Request(Error::DeadlineElapsed)))
+            ));
+        }
+        assert_eq!(state.sent.get(), 1);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn native_async_protected_observe_preserves_identity_and_consumed_sequences() {
+        use crate::oscore::{DeriveParams, SecurityContext};
+        let context = |sender, recipient| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[7; 16],
+                master_salt: &[],
+                sender_id: sender,
+                recipient_id: recipient,
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        let state = State::default();
+        let mut app = App::with_resources(crate::resources::SmallDevice::new())
+            .deterministic_for_tests()
+            .oscore(context(&[1], &[2]))
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        drop(
+            app.get("sensor")
+                .to(PEER)
+                .observe()
+                .send_async(0, || Ok::<_, ()>(90)),
+        );
+        assert_eq!(app.oscore().unwrap().sender_seq(), 1);
+        assert_eq!(state.sent.get(), 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        let call = {
+            let mut send = pin!(
+                app.get("sensor")
+                    .to(PEER)
+                    .observe()
+                    .send_async(0, || Ok::<_, ()>(90))
+            );
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(send.as_mut().poll(&mut cx).is_pending());
+            state.ready.set(true);
+            match send.as_mut().poll(&mut cx) {
+                Poll::Ready(Ok(call)) => call,
+                _ => panic!("accepted Observe"),
+            }
+        };
+        assert_eq!(app.oscore().unwrap().sender_seq(), 2);
+        assert!(app.oscore().unwrap().lookup(call.token()).is_some());
+        assert_eq!(
+            app.lives.get(call).unwrap().observe,
+            OutgoingObserve::Register
+        );
+        let id = app
+            .engine
+            .lookup_exchange(ExchangeKey::new(call.token(), PEER))
+            .unwrap();
+        let entry = app.engine.exchange_entry(id).unwrap();
+        {
+            let packet = app.engine.access_tx(entry.tx_slot()).unwrap();
+            let outer = crate::message::decode(packet.as_bytes()).unwrap();
+            assert!(outer.oscore().is_some());
+            let mut peer = context(&[2], &[1]);
+            let mut plain = [0; 256];
+            let (request, _) = peer.unprotect_request(&outer, &mut plain).unwrap();
+            assert_eq!(request.code(), Code::GET);
+            assert_eq!(request.observe(), Some(Ok(0)));
+        }
+        assert!(app.cancel(call));
+        assert_eq!(app.oscore().unwrap().sender_seq(), 2);
+        assert!(app.oscore().unwrap().lookup(call.token()).is_none());
+    }
+
+    #[test]
+    fn native_async_small_device_independent_storage_ceilings() {
+        let state = State::default();
+        let mut app = App::with_resources(crate::resources::SmallDevice::new())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        let app_bytes = core::mem::size_of_val(&app);
+        let prepared = app.get("sensor").to(PEER).prepare(0).unwrap();
+        let prepared_bytes = core::mem::size_of_val(&prepared);
+        drop(prepared);
+        let future = app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90));
+        let future_bytes = core::mem::size_of_val(&future);
+        assert!(app_bytes <= 32 * 1024, "whole SmallDevice App: {app_bytes}");
+        assert!(prepared_bytes <= 4096, "prepared Call: {prepared_bytes}");
+        assert!(
+            future_bytes <= 8192,
+            "initial request future: {future_bytes}"
+        );
+        #[cfg(feature = "std")]
+        std::println!(
+            "SmallDevice Constrained routes=4 calls=1 deferred=0 security_requests=4 associations=1 unprotected fixed blockwise=false App={app_bytes} PreparedCall={prepared_bytes} SendFuture={future_bytes}"
+        );
+    }
+}
+
+/// Failure to prepare or transmit an asynchronous App request.
+///
+/// An error never proves that earlier datagrams did not reach the peer. In
+/// particular, a Q-Block1 initial set can fail after accepting earlier payloads.
+#[derive(Debug)]
+pub enum AsyncCallError<E, C> {
+    /// Validation, capacity, encoding, admission or transport failure.
+    Request(Error<E>),
+    /// A complete datagram was accepted, then its completion clock failed.
+    ClockAfterSend(C),
+    /// A complete CON was accepted, then its reservation commit failed.
+    CommitAfterSend,
+}
+
+impl<E, C> From<super::send::AsyncSendError<E, C>> for AsyncCallError<E, C> {
+    fn from(error: super::send::AsyncSendError<E, C>) -> Self {
+        match error {
+            super::send::AsyncSendError::Prepare(error) => Self::Request(error),
+            super::send::AsyncSendError::Transport(error) => Self::Request(error.into()),
+            super::send::AsyncSendError::ClockAfterSend(error) => Self::ClockAfterSend(error),
+            super::send::AsyncSendError::CommitAfterSend => Self::CommitAfterSend,
+        }
+    }
+}
+
+// Ownership uses existing packet/body pools. Only the same bounded LiveCall
+// options that sync send constructs are retained while the transport waits.
+struct PreparedCall<'a, S: super::AppStorage, T, const C: usize, const R: usize> {
+    engine: &'a mut Engine<S>,
+    io: &'a mut T,
+    ids: &'a mut AppIds,
+    inbox: &'a mut ClientInbox<C>,
+    lives: &'a mut ClientLives<C>,
+    oscore: &'a mut super::oscore::Field<R>,
+    staged: Option<StagedClient>,
+    pending: Option<crate::storage::PendingCon>,
+    live: Option<LiveCall>,
+    call: Call,
+    now_ms: u64,
+    replacing: bool,
+    owned: bool,
+}
+
+impl<S: super::AppStorage, T, const C: usize, const R: usize> Drop
+    for PreparedCall<'_, S, T, C, R>
+{
+    fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
+        if let Some(pending) = self.pending.take() {
+            let _ = self.engine.cancel_pending_con(pending);
+        }
+        if let Some(staged) = self.staged.take() {
+            let _ = self.engine.release_tx(staged.tx);
+        }
+        abandon_send(self.engine, self.oscore, self.call.token(), self.call.peer);
+    }
+}
+
+impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize, const R: usize>
+    PreparedCall<'_, S, T, C, R>
+{
+    fn admit(&mut self) -> Result<(), Error<T::Error>> {
+        let staged = self.staged.as_ref().expect("prepared datagram");
+        self.engine
+            .record_request(staged.tx, self.call.peer)?
+            .ok_or(Error::Saturated)?;
+        if self.live.as_ref().expect("prepared call").ty == Type::Confirmable {
+            self.pending = Some(
+                self.engine
+                    .reserve_pending_con(staged.tx, self.call.peer, staged.mid)
+                    .ok_or(Error::Saturated)?,
+            );
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Call {
+        if let Some(mut live) = self.live.take() {
+            if self.replacing {
+                if let Some(rx) = self.inbox.take_datagram(self.call) {
+                    let _ = self.engine.release_rx(rx);
+                }
+                self.inbox.discard(self.call);
+            }
+            live.due_ms =
+                self.now_ms
+                    .saturating_add(u64::from(if live.ty == Type::NonConfirmable {
+                        Transmission::NON_LIFETIME_MS
+                    } else {
+                        Transmission::EXCHANGE_LIFETIME_MS
+                    }));
+            self.lives.insert(live);
+            arm_q_pacing(self.engine, self.lives, self.ids, self.now_ms, self.call);
+        }
+        self.owned = false;
+        self.call
+    }
+
+    // Encode one continuation synchronously; borrowed option and block scratch
+    // lifetimes finish before the transport await begins.
+    fn stage_next_q(&mut self, body: SlotId) -> Result<Option<bool>, Error<T::Error>> {
+        let issued = match self.engine.next_q_block1(body) {
+            Ok(issued) => issued,
+            Err(BlockTransferError::OutsideWindow) => return Ok(None),
+            Err(error) => return Err(Error::Block(error)),
+        };
+        let live = self.live.as_ref().expect("prepared Q upload");
+        let mut queries = [""; MAX_PATH_SEGMENTS];
+        let mut count = 0;
+        for query in live.queries.values() {
+            queries[count] = query;
+            count += 1;
+        }
+        let staged = stage_block1_issued(
+            self.engine,
+            self.io,
+            self.ids,
+            self.oscore,
+            self.now_ms,
+            self.call.peer,
+            live.ty,
+            live.code,
+            self.call.token(),
+            live.path.segments(),
+            &queries[..count],
+            live.accept,
+            live.content_format,
+            live.echo,
+            live.no_response,
+            live.if_match.as_slice(),
+            live.etag.as_slice(),
+            live.if_none_match,
+            issued,
+            true,
+            None,
+        )?;
+        self.staged = Some(staged);
+        self.admit()?;
+        Ok(Some(issued.complete()))
+    }
+
+    fn send(mut self) -> Result<Call, Error<T::Error>>
+    where
+        T: DatagramIo,
+    {
+        let Some(staged) = self.staged.take() else {
+            return Ok(self.commit());
+        };
+        let pending = self.pending.take().map(|p| (p, staged.jitter));
+        super::send::finish_prepared(
+            self.engine,
+            self.io,
+            staged.tx,
+            self.call.peer,
+            pending,
+            self.now_ms,
+        )?;
+        if staged.continue_q {
+            let body = staged.body.expect("Q body");
+            while let Some(complete) = self.stage_next_q(body)? {
+                let next = self.staged.take().expect("staged Q payload");
+                let pending = self.pending.take().map(|p| (p, next.jitter));
+                super::send::finish_prepared(
+                    self.engine,
+                    self.io,
+                    next.tx,
+                    self.call.peer,
+                    pending,
+                    self.now_ms,
+                )?;
+                if complete {
+                    break;
+                }
+            }
+        }
+        Ok(self.commit())
+    }
+
+    async fn accept<CError>(
+        &mut self,
+        completed_at: &mut impl FnMut() -> Result<u64, CError>,
+    ) -> Result<StagedClient, AsyncCallError<T::Error, CError>>
+    where
+        T: crate::storage::AsyncDatagramIo,
+    {
+        let staged = self.staged.take().expect("staged datagram");
+        let pending = self.pending.take();
+        let completed = core::cell::Cell::new(None);
+        super::send::finish_async(
+            self.engine,
+            self.io,
+            staged.tx,
+            self.call.peer,
+            pending.map(|p| (p.message_id(), staged.jitter)),
+            pending,
+            || {
+                let now = completed_at()?;
+                completed.set(Some(now));
+                Ok(now)
+            },
+        )
+        .await
+        .map_err(AsyncCallError::from)?;
+        self.now_ms = match completed.get() {
+            Some(now) => now,
+            None => completed_at().map_err(AsyncCallError::ClockAfterSend)?,
+        };
+        if self
+            .live
+            .as_ref()
+            .and_then(|live| live.deadline_ms)
+            .is_some_and(|deadline| self.now_ms >= deadline)
+        {
+            return Err(AsyncCallError::Request(Error::DeadlineElapsed));
+        }
+        Ok(staged)
+    }
+
+    async fn send_async<CError>(
+        mut self,
+        mut completed_at: impl FnMut() -> Result<u64, CError>,
+    ) -> Result<Call, AsyncCallError<T::Error, CError>>
+    where
+        T: crate::storage::AsyncDatagramIo,
+    {
+        if self.staged.is_none() {
+            return Ok(self.commit());
+        }
+        let staged = self.accept(&mut completed_at).await?;
+        if staged.continue_q {
+            let body = staged.body.expect("Q body");
+            while let Some(complete) = self.stage_next_q(body).map_err(AsyncCallError::Request)? {
+                self.accept(&mut completed_at).await?;
+                if complete {
+                    break;
+                }
+            }
+        }
+        Ok(self.commit())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_staged_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field<REQUESTS>,
     now_ms: u64,
-    spec: ClientSend<'_>,
+    staged: StagedClient,
+    spec: &ClientSend<'_>,
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
+{
+    let sent = finish_client_send(
+        engine,
+        io,
+        staged.tx,
+        spec.dest,
+        spec.ty,
+        now_ms,
+        staged.mid,
+        staged.jitter,
+    )
+    .and_then(|()| {
+        if staged.continue_q {
+            issue_q_block1_window(
+                engine,
+                io,
+                ids,
+                oscore,
+                now_ms,
+                spec.dest,
+                spec.ty,
+                spec.code,
+                spec.token,
+                spec.path,
+                spec.queries,
+                spec.accept,
+                spec.content_format,
+                spec.echo,
+                spec.no_response,
+                spec.if_match,
+                spec.etag,
+                spec.if_none_match,
+                staged.body.expect("Q upload body"),
+                None,
+                None,
+            )
+            .map(|_| ())
+        } else {
+            Ok(())
+        }
+    });
+    if sent.is_err()
+        && let Some(body) = staged.body
+    {
+        let _ = engine.release_tx_body(body);
+    }
+    sent.map(|()| Call::new(spec.token, spec.dest))
+}
+
+fn stage_client<Mem, T, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    spec: &ClientSend<'_>,
+) -> Result<StagedClient, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: crate::storage::DatagramTransport,
 {
     if spec.path.len() > MAX_PATH_SEGMENTS {
         return Err(Error::Path);
@@ -2025,7 +2725,7 @@ where
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    let encoded = with_client_options(&spec, false, |options| {
+    let encoded = with_client_options(spec, false, |options| {
         let msg = Message::new(spec.ty, spec.code, mid)
             .with_token(spec.token)
             .with_options(options)
@@ -2040,17 +2740,13 @@ where
         }
     };
     match encoded {
-        Ok(_) => finish_client_send(
-            engine,
-            io,
+        Ok(_) => Ok(StagedClient {
             tx,
-            spec.dest,
-            spec.ty,
-            now_ms,
             mid,
-            ids.jitter(),
-        )
-        .map(|()| Call::new(spec.token, spec.dest)),
+            jitter: ids.jitter(),
+            body: None,
+            continue_q: false,
+        }),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
             // Classic Block1 requires 2.xx Continue. Test the suppressed class,
             // preserving unrelated bitmap bits on every fragment. CON Q uploads
@@ -2072,8 +2768,8 @@ where
             // Inner Block-wise: fragment first, then protect each
             // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
             // Protocol protect failures are `Error::Oscore`, not this arm.
-            with_client_options(&spec, false, |controls| {
-                send_client_block1(
+            with_client_options(spec, false, |controls| {
+                stage_client_block1(
                     engine,
                     io,
                     ids,
@@ -2139,6 +2835,87 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
+{
+    let staged = stage_client_block1(
+        engine,
+        io,
+        ids,
+        oscore,
+        now_ms,
+        dest,
+        ty,
+        code,
+        token,
+        path,
+        queries,
+        accept,
+        payload,
+        request_tag,
+        content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
+        q_block1,
+        tx,
+        mid,
+        controls,
+    )?;
+    let spec = ClientSend {
+        dest,
+        ty,
+        code,
+        token,
+        path,
+        payload,
+        content_format,
+        echo,
+        no_response,
+        accept,
+        request_tag,
+        etag,
+        if_match,
+        if_none_match,
+        queries,
+        q_block1,
+        q_block2: false,
+        block2: None,
+        observe: OutgoingObserve::Off,
+    };
+    send_staged_client(engine, io, ids, oscore, now_ms, staged, &spec)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_client_block1<Mem, T, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    _io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    _now_ms: u64,
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
+    payload: &[u8],
+    request_tag: BodyTag,
+    content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
+    q_block1: bool,
+    tx: SlotId,
+    mid: MessageId,
+    controls: &[Opt<'_>],
+) -> Result<StagedClient, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: crate::storage::DatagramTransport,
 {
     // At most seven candidate SZX values. Only size misses try a smaller
     // prefix. Protection may consume sequence numbers; never rewind them.
@@ -2224,48 +3001,20 @@ where
     } else {
         engine.next_block1(body)
     };
-    let outcome = match first {
-        Ok(issued) => finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
-            .and_then(|()| {
-                if q_block1 && ty == Type::NonConfirmable && !issued.complete() {
-                    issue_q_block1_window(
-                        engine,
-                        io,
-                        ids,
-                        oscore,
-                        now_ms,
-                        dest,
-                        ty,
-                        code,
-                        token,
-                        path,
-                        queries,
-                        accept,
-                        content_format,
-                        echo,
-                        no_response,
-                        if_match,
-                        etag,
-                        if_none_match,
-                        body,
-                        None,
-                        None,
-                    )
-                    .map(|_| ())
-                } else {
-                    Ok(())
-                }
-            }),
+    match first {
+        Ok(issued) => Ok(StagedClient {
+            tx,
+            mid,
+            jitter: ids.jitter(),
+            body: Some(body),
+            continue_q: q_block1 && ty == Type::NonConfirmable && !issued.complete(),
+        }),
         Err(error) => {
             let _ = engine.release_tx(tx);
+            let _ = engine.release_tx_body(body);
             Err(Error::Block(error))
         }
-    };
-    if outcome.is_err() {
-        let _ = engine.release_tx_body(body);
     }
-    outcome?;
-    Ok(Call::new(token, dest))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2737,7 +3486,7 @@ fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
 }
 
 /// Check unencrypted routing fields before touching protected response state.
-pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots>(
+pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots + PendingCons>(
     engine: &Engine<Mem>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
@@ -2757,14 +3506,28 @@ fn matching_observe<Mem: Storage + ObserveSlots>(
             .is_some()
 }
 
-fn matching_exchange<Mem: Storage + Exchanges>(
+fn matching_exchange<Mem: Storage + Exchanges + PendingCons>(
     engine: &Engine<Mem>,
     parsed: &ParsedMessage<'_>,
     peer: Endpoint,
 ) -> Option<crate::storage::ExchangeEntry> {
     let id = engine.lookup_exchange(ExchangeKey::new(parsed.token(), peer))?;
     let entry = engine.exchange_entry(id)?;
-    entry.matches_response(parsed).then_some(entry)
+    (entry.matches_response(parsed) && !exchange_is_unsent(engine, entry)).then_some(entry)
+}
+
+// A reserved initial CON owns admission and bytes, but grants no response
+// authority until the transport accepts it. Match the complete identity:
+// an old NON exchange may refer to a TX slot reused by another request.
+fn exchange_is_unsent<Mem: Storage + PendingCons>(
+    engine: &Engine<Mem>,
+    entry: ExchangeEntry,
+) -> bool {
+    engine.pending_con(entry.tx_slot()).is_some_and(|pending| {
+        pending.message_id() == entry.message_id()
+            && pending.endpoint() == entry.endpoint()
+            && !pending.rto().is_started()
+    })
 }
 
 fn take_exchange<Mem: Storage + Exchanges>(
@@ -3644,6 +4407,69 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
+    let staged = stage_block1_issued(
+        engine,
+        io,
+        ids,
+        oscore,
+        now_ms,
+        dest,
+        ty,
+        code,
+        token,
+        path,
+        queries,
+        accept,
+        content_format,
+        echo,
+        no_response,
+        if_match,
+        etag,
+        if_none_match,
+        issued,
+        q_block1,
+        tx,
+    )?;
+    finish_client_send(
+        engine,
+        io,
+        staged.tx,
+        dest,
+        ty,
+        now_ms,
+        staged.mid,
+        staged.jitter,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_block1_issued<Mem, T, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    now_ms: u64,
+    dest: Endpoint,
+    ty: Type,
+    code: Code,
+    token: Token,
+    path: &[&str],
+    queries: &[&str],
+    accept: Option<ContentFormat>,
+    content_format: Option<ContentFormat>,
+    echo: Option<crate::message::Echo>,
+    no_response: Option<crate::message::NoResponse>,
+    if_match: Option<&[u8]>,
+    etag: Option<&[u8]>,
+    if_none_match: bool,
+    issued: OutgoingBlock,
+    q_block1: bool,
+    tx: Option<SlotId>,
+) -> Result<StagedClient, Error<T::Error>>
+where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
+    T: crate::storage::DatagramTransport,
+{
     let mut chunk = [0u8; 1024];
     let n = copy_tx_range(engine, issued, &mut chunk).map_err(Error::Block)?;
     let tag = engine
@@ -3673,8 +4499,10 @@ where
         OptionsBuilder::<{ crate::storage::BlockTransfer::MAX_PAYLOADS as usize + 2 }>::new();
     if let Some(stored) = stored {
         for option in stored.options() {
-            push_opt(&mut controls, Opt::new(option.number(), option.value()))
-                .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
+            if let Err(error) = push_opt(&mut controls, Opt::new(option.number(), option.value())) {
+                let _ = engine.release_tx(tx);
+                return Err(Error::Message(SlotMessageError::Encode(error)));
+            }
         }
     }
     if let Err(error) = encode_block1_request(
@@ -3706,7 +4534,13 @@ where
         return Err(error);
     }
 
-    finish_client_send(engine, io, tx, dest, ty, now_ms, mid, ids.jitter())
+    Ok(StagedClient {
+        tx,
+        mid,
+        jitter: ids.jitter(),
+        body: None,
+        continue_q: false,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4055,10 +4889,22 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
     if let Some(entry) = engine.take_exchange(key) {
         // NON/empty ACK may have released and reused the old TX slot. Only
         // a matching pending CON still establishes ownership of that slot.
-        if release_pending
-            && let Some(tx) = engine.take_pending_con(entry.message_id(), entry.endpoint())
-        {
-            let _ = engine.release_tx(tx);
+        if release_pending {
+            let reserved = engine.pending_con(entry.tx_slot()).filter(|pending| {
+                pending.message_id() == entry.message_id()
+                    && pending.endpoint() == entry.endpoint()
+                    && !pending.rto().is_started()
+            });
+            let tx = if let Some(reserved) = reserved {
+                engine
+                    .cancel_pending_con(reserved)
+                    .then_some(entry.tx_slot())
+            } else {
+                engine.take_pending_con(entry.message_id(), entry.endpoint())
+            };
+            if let Some(tx) = tx {
+                let _ = engine.release_tx(tx);
+            }
         }
     }
     let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer));
@@ -4117,7 +4963,10 @@ pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize
     let entry = engine
         .lookup_pending_con(message_id, peer)
         .and_then(|tx| exchange_for_tx(engine, tx))
-        .or_else(|| exchange_for_mid(engine, message_id, peer));
+        .or_else(|| {
+            exchange_for_mid(engine, message_id, peer)
+                .filter(|entry| !exchange_is_unsent(engine, *entry))
+        });
     if let Some(entry) = entry {
         fail_call(
             engine,
@@ -4128,6 +4977,135 @@ pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize
             CallFailure::Reset,
             false,
         );
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    use crate::storage::{EngineBuilder, Memory, PendingCon, profiles};
+
+    fn reserved_request() -> (Engine<Memory<profiles::Default>>, PendingCon, ExchangeEntry) {
+        let mut engine = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let tx = engine.acquire_tx().unwrap();
+        let mid = MessageId::new(801);
+        engine
+            .encode_tx(tx, &Message::new(Type::Confirmable, Code::GET, mid))
+            .unwrap();
+        let entry = engine.record_request(tx, peer).unwrap().unwrap();
+        let reserved = engine.reserve_pending_con(tx, peer, mid).unwrap();
+        (engine, reserved, entry)
+    }
+
+    #[test]
+    fn initial_reservation_rejects_responses_until_acceptance() {
+        let (mut engine, reserved, entry) = reserved_request();
+        let mut wire = [0; 32];
+        for ty in [
+            Type::Acknowledgement,
+            Type::Confirmable,
+            Type::NonConfirmable,
+        ] {
+            let len = crate::message::encode(
+                &Message::new(ty, Code::CONTENT, entry.message_id()),
+                &mut wire,
+            )
+            .unwrap();
+            let parsed = crate::message::decode(&wire[..len]).unwrap();
+            assert!(!has_response_target(&engine, &parsed, entry.endpoint()));
+        }
+        engine.commit_pending_con(reserved, 40, 0).unwrap();
+        let len = crate::message::encode(
+            &Message::new(Type::Acknowledgement, Code::CONTENT, entry.message_id()),
+            &mut wire,
+        )
+        .unwrap();
+        let parsed = crate::message::decode(&wire[..len]).unwrap();
+        assert!(has_response_target(&engine, &parsed, entry.endpoint()));
+    }
+
+    #[test]
+    fn initial_reservation_rst_does_not_retire_exchange() {
+        let (mut engine, reserved, entry) = reserved_request();
+        let mut inbox = ClientInbox::<1>::new();
+        let mut lives = ClientLives::<1>::new();
+        let mut oscore = super::super::oscore::Store::<1, 1>::new();
+        complete_client_rst(
+            &mut engine,
+            &mut inbox,
+            &mut lives,
+            &mut oscore,
+            entry.message_id(),
+            entry.endpoint(),
+        );
+        let call = Call::new(entry.token(), entry.endpoint());
+        assert!(!inbox.contains(call));
+        assert!(engine.lookup_exchange(entry.key()).is_some());
+        assert_eq!(engine.pending_con(entry.tx_slot()), Some(reserved));
+        engine.commit_pending_con(reserved, 40, 0).unwrap();
+        complete_client_rst(
+            &mut engine,
+            &mut inbox,
+            &mut lives,
+            &mut oscore,
+            entry.message_id(),
+            entry.endpoint(),
+        );
+        assert!(inbox.contains(call));
+        assert!(engine.lookup_exchange(entry.key()).is_none());
+    }
+
+    #[test]
+    fn initial_reservation_local_failure_reclaims_tx_and_admission() {
+        let (mut engine, _, entry) = reserved_request();
+        let mut inbox = ClientInbox::<1>::new();
+        let mut lives = ClientLives::<1>::new();
+        let mut oscore = super::super::oscore::Store::<1, 1>::new();
+        let call = Call::new(entry.token(), entry.endpoint());
+        fail_call(
+            &mut engine,
+            &mut inbox,
+            &mut lives,
+            &mut oscore,
+            call,
+            CallFailure::TimedOut,
+            true,
+        );
+        assert!(inbox.contains(call));
+        assert!(engine.lookup_exchange(entry.key()).is_none());
+        assert!(engine.pending_con(entry.tx_slot()).is_none());
+        assert_eq!(engine.tx_occupied(), 0);
+        assert!(engine.acquire_tx().is_some());
+    }
+
+    #[test]
+    fn unrelated_reservation_on_reused_tx_preserves_old_exchange_authority() {
+        let (mut engine, reserved, entry) = reserved_request();
+        assert!(engine.cancel_pending_con(reserved));
+        let other_mid = MessageId::new(802);
+        let other = engine
+            .reserve_pending_con(entry.tx_slot(), entry.endpoint(), other_mid)
+            .unwrap();
+        assert!(!exchange_is_unsent(&engine, entry));
+        let mut inbox = ClientInbox::<1>::new();
+        let mut lives = ClientLives::<1>::new();
+        let mut oscore = super::super::oscore::Store::<1, 1>::new();
+        fail_call(
+            &mut engine,
+            &mut inbox,
+            &mut lives,
+            &mut oscore,
+            Call::new(entry.token(), entry.endpoint()),
+            CallFailure::TimedOut,
+            true,
+        );
+        assert_eq!(engine.pending_con(entry.tx_slot()), Some(other));
+        assert_eq!(engine.tx_occupied(), 1);
     }
 }
 

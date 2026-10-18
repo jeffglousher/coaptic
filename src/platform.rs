@@ -5,6 +5,19 @@
 //! entropy can use [`WithEntropy`] for caller-owned mutable state or
 //! [`crate::app::RandomSource`] for function pointers. No platform SDK is required.
 
+/// Executor-neutral registration for one absolute monotonic deadline.
+///
+/// The timestamp domain must match App's injected millisecond timestamps.
+/// The returned future registers the current task, completes when the deadline
+/// is reached, and releases its registration on cancellation. A past deadline
+/// completes immediately. It must not spin or block the executor. Timer and
+/// executor registration storage belongs to the platform resource budget.
+#[allow(async_fn_in_trait)]
+pub trait AsyncTimer {
+    /// Suspend until `deadline_ms`, without allocating in the Coaptic core.
+    async fn wait_until(&mut self, deadline_ms: u64);
+}
+
 /// A clock reading failed or moved behind the last accepted reading.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClockError<E> {
@@ -121,7 +134,7 @@ impl<C> CheckedClock<C> {
 /// outside Coaptic's pool heap budget.
 ///
 /// Place this wrapper outside transport decorators: a decorator which does not
-/// forward [`crate::storage::DatagramIo::fill_random`] refuses entropy by default.
+/// forward [`crate::storage::DatagramTransport::fill_random`] refuses entropy by default.
 /// This source supplies App identities and jitter, not EDHOC or key generation.
 pub struct WithEntropy<T, R> {
     io: T,
@@ -147,18 +160,35 @@ impl<T, R> WithEntropy<T, R> {
     }
 }
 
+impl<T: crate::storage::DatagramTransport, R: FnMut(&mut [u8]) -> bool>
+    crate::storage::DatagramTransport for WithEntropy<T, R>
+{
+    type Error = T::Error;
+    fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
+        (self.random)(bytes)
+    }
+}
+
 impl<T: crate::storage::DatagramIo, R: FnMut(&mut [u8]) -> bool> crate::storage::DatagramIo
     for WithEntropy<T, R>
 {
-    type Error = T::Error;
     fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, crate::Endpoint)>, Self::Error> {
         self.io.recv(bytes)
     }
     fn send(&mut self, to: crate::Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
         self.io.send(to, bytes)
     }
-    fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
-        (self.random)(bytes)
+}
+
+impl<T: crate::storage::AsyncDatagramIo, R: FnMut(&mut [u8]) -> bool>
+    crate::storage::AsyncDatagramIo for WithEntropy<T, R>
+{
+    async fn recv(&mut self, bytes: &mut [u8]) -> Result<(usize, crate::Endpoint), Self::Error> {
+        self.io.recv(bytes).await
+    }
+
+    async fn send(&mut self, to: crate::Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        self.io.send(to, bytes).await
     }
 }
 

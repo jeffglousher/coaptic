@@ -35,8 +35,12 @@ impl<S: AsMut<[u8]>> Udp<S> {
     }
 }
 
-impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
+impl<S: AsMut<[u8]>> coaptic::storage::DatagramTransport for Udp<S> {
     type Error = io::Error;
+}
+
+impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
+
 
     async fn recv(&mut self, buf: &mut [u8]) -> io::Result<(usize, Endpoint)> {
         let required = buf

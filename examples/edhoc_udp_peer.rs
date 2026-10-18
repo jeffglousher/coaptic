@@ -154,9 +154,11 @@ impl QueuedIo {
     }
 }
 
-impl DatagramIo for QueuedIo {
+impl coaptic::storage::DatagramTransport for QueuedIo {
     type Error = io::Error;
+}
 
+impl DatagramIo for QueuedIo {
     fn recv(&mut self, output: &mut [u8]) -> io::Result<Option<(usize, Endpoint)>> {
         let Some((len, endpoint)) = self.queued else {
             return Ok(None);
@@ -176,9 +178,11 @@ impl DatagramIo for QueuedIo {
 
 struct BootstrapIo<'a>(&'a mut QueuedIo);
 
-impl DatagramIo for BootstrapIo<'_> {
+impl coaptic::storage::DatagramTransport for BootstrapIo<'_> {
     type Error = io::Error;
+}
 
+impl DatagramIo for BootstrapIo<'_> {
     fn recv(&mut self, output: &mut [u8]) -> io::Result<Option<(usize, Endpoint)>> {
         self.0.receive(output)
     }

@@ -2,8 +2,11 @@ use super::*;
 use crate::oscore::{DeriveParams, SecurityContext};
 
 struct NoIo;
-impl DatagramIo for NoIo {
+impl crate::storage::DatagramTransport for NoIo {
     type Error = core::convert::Infallible;
+}
+
+impl DatagramIo for NoIo {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         Ok(None)
     }

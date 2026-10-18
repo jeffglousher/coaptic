@@ -129,9 +129,11 @@ impl QueuedIo {
     }
 }
 
-impl DatagramIo for QueuedIo {
+impl coaptic::storage::DatagramTransport for QueuedIo {
     type Error = io::Error;
+}
 
+impl DatagramIo for QueuedIo {
     fn recv(&mut self, output: &mut [u8]) -> io::Result<Option<(usize, Endpoint)>> {
         let Some((len, endpoint)) = self.queued else {
             return Ok(None);

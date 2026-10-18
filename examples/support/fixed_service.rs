@@ -72,9 +72,11 @@ mod tests {
         }
     }
 
-    impl DatagramIo for Wire {
+    impl coaptic::storage::DatagramTransport for Wire {
         type Error = core::convert::Infallible;
+    }
 
+    impl DatagramIo for Wire {
         fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             if self.received == 0 {
                 return Ok(None);

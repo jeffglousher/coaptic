@@ -43,8 +43,11 @@ impl<const RR: usize, const RW: usize, const TR: usize, const TW: usize> MemoryP
     type TxScratch = Scratch<TR, TW>;
 }
 struct NoIo;
-impl DatagramIo for NoIo {
+impl coaptic::storage::DatagramTransport for NoIo {
     type Error = ();
+}
+
+impl DatagramIo for NoIo {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, coaptic::Endpoint)>, ()> {
         panic!("unexpected receive")
     }

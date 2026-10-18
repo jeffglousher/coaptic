@@ -69,8 +69,11 @@ struct Io {
     fail_send: bool,
     sends: usize,
 }
-impl DatagramIo for Io {
+impl coaptic::storage::DatagramTransport for Io {
     type Error = ();
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
         Ok(self.incoming.take().map(|f| {
             out[..f.len].copy_from_slice(&f.bytes[..f.len]);

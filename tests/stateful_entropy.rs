@@ -1,6 +1,6 @@
 //! Caller-owned entropy integration; deterministic bytes here are test fixtures only.
 use coaptic::app::{Error, IdentityError};
-use coaptic::storage::DatagramIo;
+use coaptic::storage::{DatagramIo, DatagramTransport};
 use coaptic::{App, BuildError, Endpoint, Request, Response, get, resources::SmallDevice};
 use core::cell::Cell;
 
@@ -21,8 +21,11 @@ impl Default for LoopIo {
         }
     }
 }
-impl DatagramIo for LoopIo {
+impl coaptic::storage::DatagramTransport for LoopIo {
     type Error = ();
+}
+
+impl DatagramIo for LoopIo {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
         self.receives += 1;
         if self.len == 0 {

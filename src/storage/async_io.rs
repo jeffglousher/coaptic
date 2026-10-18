@@ -25,10 +25,7 @@ use super::{
 /// This is the Engine I/O boundary. It does not itself drive App protocol work,
 /// start retransmission timers or provide an executor.
 #[allow(async_fn_in_trait)]
-pub trait AsyncDatagramIo {
-    /// Transport-specific failure, independent of a CoAP response code.
-    type Error;
-
+pub trait AsyncDatagramIo: super::DatagramTransport {
     /// Wait for one complete datagram. Reject truncation and oversize packets.
     async fn recv(&mut self, buf: &mut [u8]) -> Result<(usize, Endpoint), Self::Error>;
 
@@ -288,8 +285,11 @@ mod tests {
             .await
         }
     }
-    impl AsyncDatagramIo for Io {
+    impl crate::storage::DatagramTransport for Io {
         type Error = ();
+    }
+
+    impl AsyncDatagramIo for Io {
         async fn recv(&mut self, buf: &mut [u8]) -> Result<(usize, Endpoint), ()> {
             self.address = buf.as_ptr() as usize;
             self.ready().await;
@@ -329,9 +329,11 @@ mod tests {
 
     struct ConIo(Io);
 
-    impl AsyncDatagramIo for ConIo {
+    impl crate::storage::DatagramTransport for ConIo {
         type Error = ();
+    }
 
+    impl AsyncDatagramIo for ConIo {
         async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), ()> {
             unreachable!("send-only fixture")
         }

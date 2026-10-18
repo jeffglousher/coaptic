@@ -67,7 +67,7 @@ pub use engine::Engine;
 pub use exchange::{ExchangeEntry, ExchangeKey, ExchangeTable, Exchanges};
 #[cfg(feature = "std")]
 pub use io::UdpSocketIo;
-pub use io::{DatagramIo, DatagramIoError};
+pub use io::{DatagramIo, DatagramIoError, DatagramTransport};
 pub use memory::{Memory, MemoryLayout, MemoryProfile, NoBodies, WithBodies};
 pub use metrics::Metrics;
 pub use pending::{PendingCon, PendingCons, PendingReplaceError, PendingRto, Retransmit};

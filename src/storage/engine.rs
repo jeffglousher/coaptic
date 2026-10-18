@@ -558,6 +558,21 @@ impl<S: Storage + PendingCons> Engine<S> {
         self.storage.lookup_pending_con(message_id, endpoint)
     }
 
+    /// Find local ownership of a CON, including an unsent reservation.
+    ///
+    /// Use for local cancellation or replacement only. Unlike
+    /// [`Self::lookup_pending_con`], this is not evidence that a packet has
+    /// reached the transport and must not authorize an ACK, RST or response.
+    #[must_use]
+    pub fn lookup_owned_con(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        (0..self.capacities().tx_datagram_slots)
+            .map(SlotId::from_index)
+            .find(|&id| {
+                self.pending_con(id)
+                    .is_some_and(|row| row.message_id() == message_id && row.endpoint() == endpoint)
+            })
+    }
+
     /// Clear pending and RTO for the matching TX slot. The slot stays occupied.
     ///
     /// The caller releases the returned slot. `None` on miss.

@@ -33,8 +33,11 @@ fn address(side: usize) -> Endpoint {
     Endpoint::v4([192, 0, 2, side as u8 + 1], 5683)
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = ();
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, buffer: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some(bytes) = self.network.borrow_mut().queues[self.side].pop_front() else {
             return Ok(None);

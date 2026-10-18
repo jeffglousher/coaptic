@@ -18,9 +18,11 @@ struct Io {
     short: bool,
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = u8;
+}
 
+impl DatagramIo for Io {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         panic!("recovery never receives application traffic")
     }

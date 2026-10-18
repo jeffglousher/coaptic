@@ -1,6 +1,7 @@
 //! App construction, security selection and platform binding.
 
 use super::*;
+use crate::storage::DatagramTransport;
 
 impl App {
     /// Start with the default fixed profile and datagram-only storage.
@@ -550,7 +551,7 @@ where
     /// See [`crate::platform::WithEntropy`] for adapter composition and limits.
     // Preserve the existing App type parameters; only the transport is wrapped.
     #[allow(clippy::type_complexity)]
-    pub fn bind_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+    pub fn bind_with_entropy<T: DatagramTransport, R: FnMut(&mut [u8]) -> bool>(
         self,
         io: T,
         random: R,
@@ -576,7 +577,11 @@ where
 
     /// Bind caller-selected storage and a stateful entropy callback.
     /// See [`Self::bind_with_entropy`] for the callback and refusal contract.
-    pub fn bind_storage_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool, S: AppStorage>(
+    pub fn bind_storage_with_entropy<
+        T: DatagramTransport,
+        R: FnMut(&mut [u8]) -> bool,
+        S: AppStorage,
+    >(
         self,
         io: T,
         storage: S,
@@ -604,7 +609,7 @@ where
     /// Allocate bounded pools once and bind a stateful entropy callback.
     /// Requires `alloc` independently of `std`; see [`Self::bind_with_entropy`].
     #[cfg(feature = "alloc")]
-    pub fn bind_alloc_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+    pub fn bind_alloc_with_entropy<T: DatagramTransport, R: FnMut(&mut [u8]) -> bool>(
         self,
         io: T,
         c: crate::storage::Capacities,
@@ -637,7 +642,7 @@ where
         Ok(())
     }
 
-    pub(super) fn prepare_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
+    pub(super) fn prepare_entropy<T: DatagramTransport, R: FnMut(&mut [u8]) -> bool>(
         mut self,
         io: T,
         random: R,

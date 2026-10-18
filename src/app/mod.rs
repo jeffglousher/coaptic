@@ -46,8 +46,10 @@
 //! }
 //!
 //! # struct NullIo;
-//! # impl DatagramIo for NullIo {
+//! # impl coaptic::storage::DatagramTransport for NullIo {
 //! #     type Error = &'static str;
+//! # }
+//! # impl DatagramIo for NullIo {
 //! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 //! #         Ok(None)
 //! #     }
@@ -122,10 +124,13 @@ mod request;
 pub mod resources;
 mod response;
 mod routing;
+mod send;
 mod site;
 mod usage;
+mod wake;
 
 pub use usage::AppUsage;
+pub use wake::AppWake;
 
 #[cfg(test)]
 mod lifecycle_soak;
@@ -134,6 +139,9 @@ mod tests;
 
 #[cfg(test)]
 mod capacity_tests;
+
+#[cfg(test)]
+mod reservation_tests;
 
 #[cfg(all(test, feature = "oscore"))]
 mod oscore_install_tests;
@@ -160,7 +168,7 @@ pub const DEFAULT_CLIENT_CALLS: usize = 4;
 
 pub use associations::Association;
 pub use client::{
-    Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
+    AsyncCallError, Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
     RESPONSE_OPTION_COUNT, ResponseBufferError,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
@@ -570,7 +578,7 @@ fn retire_deferred_observe<S: AppStorage>(
         return Err(crate::storage::SlotError::Pinned);
     }
     if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+        && let Some(tx) = engine.lookup_owned_con(mid, interest.endpoint())
     {
         engine.release_tx(tx)?;
     }
@@ -1538,8 +1546,10 @@ impl<
     /// # use coaptic::storage::DatagramIo;
     /// # use coaptic::{App, Endpoint, profiles};
     /// # struct NullIo;
-    /// # impl DatagramIo for NullIo {
+    /// # impl coaptic::storage::DatagramTransport for NullIo {
     /// #     type Error = &'static str;
+    /// # }
+    /// # impl DatagramIo for NullIo {
     /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
     /// #         Ok(None)
     /// #     }
@@ -2954,7 +2964,7 @@ where
             // relation. A pinned packet refuses with both owners intact.
             if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer)
                 && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-                && let Some(tx) = engine.lookup_pending_con(mid, peer)
+                && let Some(tx) = engine.lookup_owned_con(mid, peer)
                 && let Err(error) = engine.release_tx(tx)
             {
                 let _ = engine.release_rx(rx);
@@ -3909,7 +3919,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .lookup_observe(key)
             .and_then(|id| engine.observe_interest(id))
             && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-            && let Some(tx) = engine.lookup_pending_con(mid, peer)
+            && let Some(tx) = engine.lookup_owned_con(mid, peer)
         {
             engine.release_tx(tx)?;
         }
@@ -4385,6 +4395,15 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
     let mut found = None;
     let mut ambiguous = false;
     let mut accept = |route: Endpoint| {
+        // Observe and Exchange ownership can be prepared before transport
+        // acceptance. Neither may turn an unsent reservation into wire authority.
+        if engine
+            .lookup_owned_con(mid, route)
+            .and_then(|id| engine.pending_con(id))
+            .is_some_and(|pending| !pending.rto().is_started())
+        {
+            return;
+        }
         if route.physical() == peer.physical() {
             if found.is_some_and(|previous| previous != route) {
                 ambiguous = true;
@@ -4977,7 +4996,7 @@ fn retire_suppressed_observe<
         return Err(crate::storage::SlotError::Pinned);
     }
     if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+        && let Some(tx) = engine.lookup_owned_con(mid, interest.endpoint())
     {
         engine.release_tx(tx)?;
     }
@@ -6505,32 +6524,7 @@ where
     S: Storage + DatagramSlots + PendingCons,
     T: DatagramIo,
 {
-    if let Err(e) = engine.set_tx_endpoint(tx, dest) {
-        let _ = engine.release_tx(tx);
-        return Err(Error::Slot(e));
-    }
-    if let Some((now_ms, mid, jitter)) = pending {
-        if engine
-            .record_pending_con(tx, dest, mid, now_ms, jitter)
-            .is_none()
-        {
-            let _ = engine.release_tx(tx);
-            return Err(Error::Saturated);
-        }
-        match engine.send_tx(io, tx) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                let _ = engine.take_pending_con(mid, dest);
-                let _ = engine.release_tx(tx);
-                Err(e.into())
-            }
-        }
-    } else {
-        let send = engine.send_tx(io, tx);
-        let _ = engine.release_tx(tx);
-        send?;
-        Ok(())
-    }
+    send::finish(engine, io, tx, dest, pending)
 }
 
 #[allow(clippy::too_many_arguments)]
