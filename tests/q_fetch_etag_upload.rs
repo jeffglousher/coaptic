@@ -874,3 +874,109 @@ fn q_fetch_protected_body_admission_refusal_reclaims_single_request_binding() {
         }
     });
 }
+
+const LARGE_SELECTED: [u8; 384] = [0x44; 384];
+fn fragmented_selected(request: Request<'_>) -> Response<'static> {
+    assert_eq!(request.body().unwrap_or(request.payload()), &SELECTION);
+    Response::content(&LARGE_SELECTED).etag(b"snapshot")
+}
+fn fragmented_observation(protected: bool, deferred: bool) {
+    let mut client = fixed();
+    let mut server = App::with_resources(
+        Resources::<Buffers>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<2>(),
+    )
+    .allow_unprotected()
+    .deterministic_for_tests()
+    .route(
+        "selection",
+        fetch(fragmented_selected).observe_selected(fragmented_selected),
+    )
+    .bind(Io::default())
+    .unwrap();
+    #[cfg(feature = "oscore")]
+    if protected {
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
+    }
+    without_allocating(|| {
+        let call = client
+            .fetch("selection")
+            .to(PEER)
+            .content_format(ContentFormat::OCTET_STREAM)
+            .payload(&SELECTION)
+            .observe()
+            .block2(coaptic::message::BlockValue::new(0, false, 1).unwrap())
+            .send(0)
+            .unwrap();
+        let mut clock = 1;
+        let mut completed = 0;
+        for round in 0..100 {
+            while let Some(frame) = client.transport_mut().take() {
+                server.transport_mut().incoming = Some(frame);
+                if deferred {
+                    let mut handle = None;
+                    server
+                        .poll_with(clock, |request, pending| {
+                            assert_eq!(request.body().unwrap_or(request.payload()), &SELECTION);
+                            if request.is_observe_register() {
+                                handle = pending;
+                                {
+                                    assert!(pending.is_some(), "fragmented selection admitted");
+                                    Response::deferred()
+                                }
+                            } else {
+                                fragmented_selected(request)
+                            }
+                        })
+                        .unwrap();
+                    if let Some(handle) = handle {
+                        server
+                            .complete(
+                                handle,
+                                Response::content(&LARGE_SELECTED).etag(b"snapshot"),
+                                clock + 1,
+                            )
+                            .unwrap();
+                    }
+                } else {
+                    server.poll(clock).unwrap();
+                }
+                clock += 2;
+            }
+            while let Some(frame) = server.transport_mut().take() {
+                client.transport_mut().incoming = Some(frame);
+                client.poll(clock).unwrap();
+                clock += 1;
+            }
+            if let Some(reply) = client.take_response(call) {
+                let reply = reply.unwrap();
+                assert_eq!(reply.body(), Some(LARGE_SELECTED.as_slice()));
+                assert!(reply.observe_seq().is_some());
+                completed += 1;
+                if completed == 2 {
+                    return;
+                }
+                assert_eq!(server.signal(&["selection"]), 1);
+                server.poll(clock).unwrap();
+                clock += 1;
+                continue;
+            }
+            assert!(
+                client.transport().len != 0,
+                "fragmented follow-up stopped at round {round}, protected={protected}"
+            );
+        }
+        panic!("fragmented selected observation did not complete");
+    });
+}
+#[test]
+fn fragmented_observe_selection_and_block2_followups_complete() {
+    for deferred in [false, true] {
+        fragmented_observation(false, deferred);
+        #[cfg(feature = "oscore")]
+        fragmented_observation(true, deferred);
+    }
+}

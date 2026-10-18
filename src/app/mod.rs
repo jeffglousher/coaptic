@@ -308,6 +308,7 @@ struct DeferredSelection {
     len: usize,
 }
 impl DeferredSelection {
+    #[cfg(test)]
     fn from_request(parsed: &ParsedMessage<'_>) -> Result<Self, EncodeError> {
         Self::from_parts(parsed, parsed.payload())
     }
@@ -2050,8 +2051,9 @@ where
     /// registration that has not attempted output does not own an earlier live
     /// relation. Direct mutation through `engine_mut` remains an advanced caller
     /// ownership boundary: do not replace App-owned relations while a deferred
-    /// handle is live. Deferred FETCH and query-bearing GET Observe,
-    /// nonzero initial Block2 and Q-Block2 Observe remain unsupported. A requested
+    /// handle is live. Selected FETCH and query-bearing GET Observe retain the
+    /// complete bounded selection, including reassembled uploads. Nonzero initial
+    /// Block2 and Q-Block2 deferred Observe remain unsupported. A requested
     /// classic block size is retained as a maximum for later notifications until
     /// re-registration. Encoding may select a smaller block. Ordinary
     /// deferred queries without Observe remain available.
@@ -3240,38 +3242,6 @@ where
         return outcome;
     }
 
-    // Follow-up blocks belong to the retained selection, not merely its Token.
-    if (block2.is_some() || q_block2.is_some()) && parsed.observe().is_none() {
-        let selection = engine
-            .lookup_observe(ObserveKey::new(parsed.token(), peer))
-            .and_then(|id| engine.observe_interest(id))
-            .and_then(|row| row.selection().copied());
-        if selection.is_some_and(|expected| {
-            DeferredSelection::from_request(&parsed)
-                .ok()
-                .map(DeferredSelection::stored)
-                != Some(expected)
-        }) {
-            let outcome = send_response(
-                engine,
-                io,
-                ids,
-                SendResponse {
-                    block2: None,
-                    q_block2: None,
-                    q_request: None,
-                    ..meta
-                },
-                &Response::bad_request(),
-                now_ms,
-                oscore,
-                dedup_closed,
-            );
-            let _ = engine.release_rx(rx);
-            return outcome;
-        }
-    }
-
     if let Some(policy) = echo_policy {
         let decision = policy(EchoCheck {
             echo: Echo::from_message(&parsed),
@@ -3298,6 +3268,135 @@ where
         }
     }
 
+    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
+    match assembled {
+        InboundBody::Continue => {
+            let outcome = send_response(
+                engine,
+                io,
+                ids,
+                SendResponse {
+                    block2: None,
+                    q_block2: None,
+                    q_request: None,
+                    ..meta
+                },
+                &Response::new(Code::CONTINUE),
+                now_ms,
+                oscore,
+                dedup_closed,
+            );
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        InboundBody::QWait(continue_block) => {
+            let outcome = if let Some(value) = continue_block {
+                send_response(
+                    engine,
+                    io,
+                    ids,
+                    SendResponse {
+                        block2: None,
+                        q_block2: None,
+                        q_request: None,
+                        block1: Some(BlockOpt {
+                            value,
+                            q_block: true,
+                            size2: None,
+                        }),
+                        ..meta
+                    },
+                    &Response::new(Code::CONTINUE),
+                    now_ms,
+                    oscore,
+                    dedup_closed,
+                )
+            } else if meta.ty == Type::Confirmable {
+                // Body admission and authenticated replay state already advanced.
+                // Retain the ACK before I/O so a failed send can be retried by
+                // the peer without reopening the protected request.
+                remember_empty_ack(
+                    engine,
+                    meta.dest,
+                    meta.mid,
+                    now_ms,
+                    meta.request,
+                    dedup_closed,
+                );
+                send_empty_ack(engine, io, meta.dest, meta.mid)
+            } else {
+                Ok(())
+            };
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        InboundBody::Refused(code) => {
+            // Apply errors (gap, SZX mismatch, overflow, …).
+            // Classic Overlap / AlreadyComplete replay 2.31 above.
+            // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
+            let outcome = send_response(
+                engine,
+                io,
+                ids,
+                meta,
+                &Response::problem(code).title(match code {
+                    Code::REQUEST_ENTITY_INCOMPLETE => "Request Entity Incomplete",
+                    Code::REQUEST_ENTITY_TOO_LARGE => "Request Entity Too Large",
+                    _ => "Block Transfer Rejected",
+                }),
+                now_ms,
+                oscore,
+                dedup_closed,
+            );
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        InboundBody::None | InboundBody::Complete(_) => {}
+    }
+
+    // Follow-up blocks belong to the retained selection, not merely its Token.
+    if (block2.is_some() || q_block2.is_some()) && parsed.observe().is_none() {
+        let selection = engine
+            .lookup_observe(ObserveKey::new(parsed.token(), peer))
+            .and_then(|id| engine.observe_interest(id))
+            .and_then(|row| row.selection().copied());
+        if selection.is_some_and(|expected| {
+            DeferredSelection::from_parts(
+                &parsed,
+                match assembled {
+                    InboundBody::Complete(id) => {
+                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                    }
+                    _ => parsed.payload(),
+                },
+            )
+            .ok()
+            .map(DeferredSelection::stored)
+                != Some(expected)
+        }) {
+            let outcome = send_response(
+                engine,
+                io,
+                ids,
+                SendResponse {
+                    block2: None,
+                    q_block2: None,
+                    q_request: None,
+                    ..meta
+                },
+                &Response::bad_request(),
+                now_ms,
+                oscore,
+                dedup_closed,
+            );
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
+            }
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+    }
+
     // Deferred responses own a stable bounded TX snapshot. Authenticated
     // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if meta.block2.is_some() || meta.q_block2.is_some() {
@@ -3312,7 +3411,17 @@ where
             let row = deferred.rows[index].expect("matched snapshot");
             let (body, retained) = row.snapshot.expect("completed snapshot");
             let outcome = (|| {
-                if DeferredSelection::from_request(&parsed).ok() != Some(row.selection)
+                if DeferredSelection::from_parts(
+                    &parsed,
+                    match assembled {
+                        InboundBody::Complete(id) => {
+                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                        }
+                        _ => parsed.payload(),
+                    },
+                )
+                .ok()
+                    != Some(row.selection)
                     || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
                     || row.meta.q_block2.is_some() != meta.q_block2.is_some()
                     || (row.observe.is_some()
@@ -3397,93 +3506,25 @@ where
                     )
                 }
             })();
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
+            }
             let _ = engine.release_rx(rx);
             deferred.expire(engine, now_ms);
             return outcome;
         }
     }
 
-    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
-    match assembled {
-        InboundBody::Continue => {
-            let outcome = send_response(
-                engine,
-                io,
-                ids,
-                meta,
-                &Response::new(Code::CONTINUE),
-                now_ms,
-                oscore,
-                dedup_closed,
-            );
-            let _ = engine.release_rx(rx);
-            return outcome;
-        }
-        InboundBody::QWait(continue_block) => {
-            let outcome = if let Some(value) = continue_block {
-                send_response(
-                    engine,
-                    io,
-                    ids,
-                    SendResponse {
-                        block1: Some(BlockOpt {
-                            value,
-                            q_block: true,
-                            size2: None,
-                        }),
-                        ..meta
-                    },
-                    &Response::new(Code::CONTINUE),
-                    now_ms,
-                    oscore,
-                    dedup_closed,
-                )
-            } else if meta.ty == Type::Confirmable {
-                // Body admission and authenticated replay state already advanced.
-                // Retain the ACK before I/O so a failed send can be retried by
-                // the peer without reopening the protected request.
-                remember_empty_ack(
-                    engine,
-                    meta.dest,
-                    meta.mid,
-                    now_ms,
-                    meta.request,
-                    dedup_closed,
-                );
-                send_empty_ack(engine, io, meta.dest, meta.mid)
-            } else {
-                Ok(())
-            };
-            let _ = engine.release_rx(rx);
-            return outcome;
-        }
-        InboundBody::Refused(code) => {
-            // Apply errors (gap, SZX mismatch, overflow, …).
-            // Classic Overlap / AlreadyComplete replay 2.31 above.
-            // Window holes use `send_qblock_recover` → `Response::missing_blocks`.
-            let outcome = send_response(
-                engine,
-                io,
-                ids,
-                meta,
-                &Response::problem(code).title(match code {
-                    Code::REQUEST_ENTITY_INCOMPLETE => "Request Entity Incomplete",
-                    Code::REQUEST_ENTITY_TOO_LARGE => "Request Entity Too Large",
-                    _ => "Block Transfer Rejected",
-                }),
-                now_ms,
-                oscore,
-                dedup_closed,
-            );
-            let _ = engine.release_rx(rx);
-            return outcome;
-        }
-        InboundBody::None | InboundBody::Complete(_) => {}
-    }
-
-    let request_plan = Request::from_decoded(parsed, peer, None)
-        .ok()
-        .map(|request| ObservePlan::from_request(site, &request));
+    let request_plan = Request::from_decoded(
+        parsed,
+        peer,
+        match assembled {
+            InboundBody::Complete(id) => engine.rx_body_payload(id),
+            _ => None,
+        },
+    )
+    .ok()
+    .map(|request| ObservePlan::from_request(site, &request));
     if request_plan.is_some_and(|plan| plan.register || plan.deregister) {
         if let Err(error) =
             deferred.supersede_observe(engine, ObserveKey::new(parsed.token(), peer))
@@ -3503,8 +3544,6 @@ where
                 && plan.registration_supported
                 && block2.is_none_or(|b| b.num() == 0 && !b.more() && !b.is_bert())
                 && parsed.q_block2().next().is_none()
-                && parsed.block1().is_none()
-                && parsed.q_block1().is_none()
                 && no_response == NoResponse::DEFAULT
         })
         .map(|plan| DeferredObserve {
@@ -3512,7 +3551,14 @@ where
             attempted: None,
             failed_mid: None,
         });
-    let selection = DeferredSelection::from_request(&parsed).ok();
+    let selection = DeferredSelection::from_parts(
+        &parsed,
+        match assembled {
+            InboundBody::Complete(id) => engine.rx_body_payload(id).unwrap_or(parsed.payload()),
+            _ => parsed.payload(),
+        },
+    )
+    .ok();
     let q_selectors = DeferredQSelectors::from_request(&parsed);
     let deferred_handle = if selection.is_some()
         && dispatch.is_some()
@@ -3708,9 +3754,12 @@ impl ObservePlan {
             Some(routing::SnapshotSource::Selected(_))
         );
         let selection = if selected {
-            DeferredSelection::from_parts(&request.message(), request.payload())
-                .ok()
-                .map(DeferredSelection::stored)
+            DeferredSelection::from_parts(
+                &request.message(),
+                request.body().unwrap_or(request.payload()),
+            )
+            .ok()
+            .map(DeferredSelection::stored)
         } else {
             None
         };
@@ -4625,7 +4674,9 @@ where
     }
 
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = response_body_for(engine, key).filter(|_| response.code().is_success()) {
+    if let Some(id) = response_body_for(engine, key)
+        .filter(|_| response.code().is_success() && response.code() != Code::CONTINUE)
+    {
         if engine.tx_body_transfer(id).is_some_and(|t| {
             matches!(
                 t.role(),

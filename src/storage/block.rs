@@ -650,6 +650,55 @@ pub(crate) struct IssueCheckpoint {
 const _: () = assert!(core::mem::size_of::<IssueCheckpoint>() <= 16);
 
 impl BlockTransfer {
+    /// Outgoing uploads reuse the incoming request-binding area for the control
+    /// options that must survive fragmentation. `role` distinguishes the layouts.
+    pub(crate) fn retain_upload_controls(
+        &mut self,
+        options: &[crate::message::Opt<'_>],
+    ) -> Result<(), BlockTransferError> {
+        use crate::message::{Code, Message, MessageId, OptionNumber as N, OptionsBuilder, Type};
+        if !matches!(
+            self.role,
+            BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+        ) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let mut selected = OptionsBuilder::<{ Self::MAX_PAYLOADS as usize + 2 }>::new();
+        for option in options
+            .iter()
+            .filter(|o| matches!(o.number(), N::OBSERVE | N::BLOCK2 | N::Q_BLOCK2))
+        {
+            selected
+                .push(*option)
+                .map_err(|_| BlockTransferError::Overflow)?;
+        }
+        if selected.as_slice().is_empty() {
+            return Ok(());
+        }
+        let mut binding = RequestBinding {
+            bytes: [0; Self::REQUEST_IDENTITY_BYTES],
+            len: 0,
+            if_none_match: None,
+            non_confirmable: false,
+        };
+        let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(0))
+            .with_options(selected.as_slice());
+        binding.len = crate::message::encode(&message, &mut binding.bytes)? as u16;
+        self.request_binding = Some(binding);
+        Ok(())
+    }
+
+    pub(crate) fn upload_controls(&self) -> Option<crate::message::ParsedMessage<'_>> {
+        if !matches!(
+            self.role,
+            BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
+        ) {
+            return None;
+        }
+        let binding = self.request_binding.as_ref()?;
+        crate::message::decode(&binding.bytes[..usize::from(binding.len)]).ok()
+    }
+
     pub(crate) fn if_none_match(&self) -> bool {
         matches!(
             self.role,
