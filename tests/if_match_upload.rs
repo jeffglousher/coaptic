@@ -221,10 +221,10 @@ fn exercise<S: AppStorage>(
                             "partial ACK must not dispatch"
                         );
                         assert_eq!(EFFECTS.with(Cell::get), prior_effects);
-                        if phase == 0 {
-                            if let Some(value) = changed {
-                                REPRESENTATION.with(|v| v.set(value));
-                            }
+                        if phase == 0
+                            && let Some(value) = changed
+                        {
+                            REPRESENTATION.with(|v| v.set(value));
                         }
                     }
                 }

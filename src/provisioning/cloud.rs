@@ -1230,27 +1230,26 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         for slot in &mut self.pending {
             if slot.as_ref().is_some_and(|item| now >= item.expires) {
                 *slot = None;
-            } else if let Some(item) = slot {
-                if item
+            } else if let Some(item) = slot
+                && item
                     .ready
                     .as_ref()
                     .is_some_and(|ready| !current(registry, &ready.association))
-                {
-                    item.ready = None;
-                    disable(&mut item.exchanges);
-                }
+            {
+                item.ready = None;
+                disable(&mut item.exchanges);
             }
         }
         for slot in &mut self.retained {
             if slot.as_ref().is_some_and(|item| now >= item.expires) {
                 *slot = None;
-            } else if let Some(item) = slot {
-                if !current(registry, &item.association) {
-                    disable(&mut item.exchanges);
-                    item.enabled = false;
-                    if let Some(receipt) = &mut item.final_error {
-                        receipt.disable();
-                    }
+            } else if let Some(item) = slot
+                && !current(registry, &item.association)
+            {
+                disable(&mut item.exchanges);
+                item.enabled = false;
+                if let Some(receipt) = &mut item.final_error {
+                    receipt.disable();
                 }
             }
         }

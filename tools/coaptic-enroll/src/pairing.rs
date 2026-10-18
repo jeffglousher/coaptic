@@ -120,7 +120,7 @@ pub fn permissions(write: bool) -> [u8; 32] {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

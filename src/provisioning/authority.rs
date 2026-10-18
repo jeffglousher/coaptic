@@ -73,10 +73,10 @@ impl EnrollmentRecord {
         if parts.approved && parts.policy.is_none() {
             return Err(ApprovalError::Record);
         }
-        if let Some(policy) = &parts.policy {
-            if parts.revision < 2 || policy.peer().public_x() == parts.device.public_x() {
-                return Err(ApprovalError::Record);
-            }
+        if let Some(policy) = &parts.policy
+            && (parts.revision < 2 || policy.peer().public_x() == parts.device.public_x())
+        {
+            return Err(ApprovalError::Record);
         }
         if let Some(snapshot) = &parts.snapshot {
             let policy = parts.policy.as_ref().ok_or(ApprovalError::Record)?;

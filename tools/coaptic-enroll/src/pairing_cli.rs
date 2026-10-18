@@ -1,9 +1,11 @@
 use coaptic::provisioning::EnrollmentPolicy;
+use coaptic_console_core::ApprovalMode;
 use coaptic_enroll::{
-    Action, Error, Request, device, origin,
+    Action, Error, Request, device,
     pairing::{self, PairingFile},
-    store::OperatorStore,
 };
+#[cfg(windows)]
+use coaptic_enroll::{origin, store::OperatorStore};
 use std::{
     ffi::{OsStr, OsString},
     path::Path,
@@ -105,11 +107,16 @@ pub fn run(
     } else {
         None
     };
-    let mut development = false;
+    let mut approval = ApprovalMode::WebAuthn;
+    let mut approval_selected = false;
     let mut write = true;
     for option in args {
-        if option == "--development-no-touch" && !development {
-            development = true;
+        if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
+            if approval_selected {
+                return Err("repeated approval mode".into());
+            }
+            approval = mode;
+            approval_selected = true;
         } else if option == "--read-only" && write && (command == "pair" || command == "transfer") {
             write = false;
         } else {
@@ -159,7 +166,7 @@ pub fn run(
             |old, next| store.commit(old, next),
         )
     };
-    approve(directory, development, make_request, commit)?;
+    approve(directory, approval, make_request, commit)?;
     println!(
         "Pairing committed at revision {} (enabled {}).",
         state.checkpoint().revision(),
@@ -170,25 +177,34 @@ pub fn run(
 
 pub fn approve<T>(
     directory: &Path,
-    development: bool,
+    approval: ApprovalMode,
     request: impl FnOnce([u8; 32]) -> Result<Request, Error>,
     commit: impl FnOnce(&Request) -> Result<T, Error>,
 ) -> Result<T, Box<dyn std::error::Error>> {
-    if development {
+    if approval != ApprovalMode::WebAuthn {
         #[cfg(feature = "development-piv")]
         {
-            use coaptic_enroll::{
-                development_piv::{self, DevelopmentOperator},
-                store::RecordStore,
-            };
-            let store =
-                RecordStore::<DevelopmentOperator>::open_named(directory, "piv-development")?;
+            use coaptic_enroll::{development_piv::DevelopmentOperator, store::RecordStore};
+            let touch = approval == ApprovalMode::PivTouch;
+            let store = RecordStore::<DevelopmentOperator>::open_named(
+                directory,
+                if touch {
+                    "piv-touch"
+                } else {
+                    "piv-development"
+                },
+            )?;
             let operator = store.load()?;
+            if operator.requires_touch() != touch {
+                return Err(Error::Authentication.into());
+            }
             let request = request(operator.owner()?)?;
-            review(&request, true)?;
+            review(&request, approval)?;
             let pending = operator.begin(request)?;
-            let proof =
-                development_piv::sign(operator.serial(), operator.slot(), pending.digest())?;
+            if touch {
+                println!("Touch the selected YubiKey to approve this transaction.");
+            }
+            let proof = operator.sign(pending.digest())?;
             let approval =
                 pending.finish(&proof, |old, next| store.commit(old, next).map_err(|_| ()))?;
             return Ok(approval.commit(commit)?);
@@ -196,19 +212,30 @@ pub fn approve<T>(
         #[cfg(not(feature = "development-piv"))]
         return Err("binary was built without the development-piv feature".into());
     }
-    let store = OperatorStore::open(directory)?;
-    let operator = store.load()?;
-    let request = request(*operator.owner())?;
-    review(&request, false)?;
-    let (challenge, pending) = operator.begin(request)?;
-    use webauthn_authenticator_rs::{WebauthnAuthenticator, win10::Win10};
-    let proof =
-        WebauthnAuthenticator::new(Win10::default()).do_authentication(origin(), challenge)?;
-    let approval = pending.finish(&proof, |old, next| store.commit(old, next).map_err(|_| ()))?;
-    Ok(approval.commit_local(commit)?)
+    #[cfg(not(windows))]
+    {
+        Err(
+            "native WebAuthn approval is unavailable; select an explicitly registered PIV profile"
+                .into(),
+        )
+    }
+    #[cfg(windows)]
+    {
+        let store = OperatorStore::open(directory)?;
+        let operator = store.load()?;
+        let request = request(*operator.owner())?;
+        review(&request, approval)?;
+        let (challenge, pending) = operator.begin(request)?;
+        use webauthn_authenticator_rs::{WebauthnAuthenticator, win10::Win10};
+        let proof =
+            WebauthnAuthenticator::new(Win10::default()).do_authentication(origin(), challenge)?;
+        let approval =
+            pending.finish(&proof, |old, next| store.commit(old, next).map_err(|_| ()))?;
+        Ok(approval.commit_local(commit)?)
+    }
 }
 
-fn review(request: &Request, development: bool) -> Result<(), Error> {
+fn review(request: &Request, approval: ApprovalMode) -> Result<(), Error> {
     println!(
         "Approve {:?}: device {} peer {} owner {} permissions {}",
         request.action,
@@ -226,11 +253,7 @@ fn review(request: &Request, development: bool) -> Result<(), Error> {
     println!(
         "Transaction {}{}",
         super::hex(&request.commitment()?),
-        if development {
-            " (development, no touch)"
-        } else {
-            ""
-        }
+        approval.label()
     );
     Ok(())
 }

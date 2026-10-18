@@ -12,9 +12,10 @@ description = "Local hardware-approved commissioning for Coaptic devices"
 
 [features]
 # Explicit hardware-development profile. It never weakens the FIDO2 verifier.
-development-piv = ["dep:yubikey"]
+development-piv = ["dep:yubikey", "dep:x509-cert"]
 
 [dependencies]
+coaptic-console-core = { path = "../coaptic-console-core" }
 coaptic = { path = "../..", default-features = false, features = ["std", "edhoc"] }
 # Read verified public UV/backup flags and the initial counter after registration.
 # Unchecked credentials are never constructed by the production path.
@@ -26,14 +27,22 @@ ciborium = "0.2"
 getrandom = "=0.3.4"
 blake3 = "=1.8.7"
 zeroize = "1"
+serialport = { version = "=4.8.1", default-features = false }
+yubikey = { version = "=0.8.0", optional = true, features = ["untested"] }
+x509-cert = { version = "=0.2.5", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
-serialport = { version = "=4.8.1", default-features = false }
-yubikey = { version = "=0.8.0", optional = true }
 webauthn-authenticator-rs = { version = "=0.5.5", default-features = false, features = ["win10"] }
 windows = { version = "=0.41.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Memory"] }
 
 [dev-dependencies]
+keyring = { version = "=3.6.3", default-features = false }
 webauthn-authenticator-rs = { version = "=0.5.5", default-features = false, features = ["softpasskey"] }
 
 [profile.dev]

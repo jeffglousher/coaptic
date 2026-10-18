@@ -96,13 +96,13 @@ impl<C> CheckedClock<C> {
         C: FnMut() -> Result<u64, E>,
     {
         let observed_ms = (self.source)().map_err(ClockError::Source)?;
-        if let Some(previous_ms) = self.previous_ms {
-            if observed_ms < previous_ms {
-                return Err(ClockError::Regressed {
-                    previous_ms,
-                    observed_ms,
-                });
-            }
+        if let Some(previous_ms) = self.previous_ms
+            && observed_ms < previous_ms
+        {
+            return Err(ClockError::Regressed {
+                previous_ms,
+                observed_ms,
+            });
         }
         self.previous_ms = Some(observed_ms);
         Ok(observed_ms)

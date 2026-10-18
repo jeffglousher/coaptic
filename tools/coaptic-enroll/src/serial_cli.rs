@@ -8,6 +8,7 @@ use coaptic::{
         PairingUpdate, PinnedPeer,
     },
 };
+use coaptic_console_core::ApprovalMode;
 use coaptic_enroll::{
     Action, Error, Request, device,
     pairing::{self, PairingFile},
@@ -155,11 +156,16 @@ pub fn run(
     } else {
         None
     };
-    let mut development = false;
+    let mut approval = ApprovalMode::WebAuthn;
+    let mut approval_selected = false;
     let mut write = true;
     for option in args {
-        if option == "--development-no-touch" && !development {
-            development = true;
+        if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
+            if approval_selected {
+                return Err("repeated approval mode".into());
+            }
+            approval = mode;
+            approval_selected = true;
         } else if option == "--read-only"
             && write
             && (command == "serial-pair" || command == "serial-transfer")
@@ -193,7 +199,7 @@ pub fn run(
     if let Some(recovery) = recovery {
         super::pairing_cli::approve(
             directory,
-            development,
+            approval,
             |owner| recovery.request(&local_challenge, owner),
             |request| {
                 let CommissioningReply::State { device, record } = usb
@@ -274,7 +280,7 @@ pub fn run(
         };
         Request::for_pairing(&challenge, &policy, action)
     };
-    super::pairing_cli::approve(directory, development, make_request, |request| {
+    super::pairing_cli::approve(directory, approval, make_request, |request| {
         request.matches_pairing(&challenge)?;
         let policy = request.pairing_policy()?;
         let update = if action == Action::Transfer {

@@ -117,11 +117,11 @@ fn udp_two_owners_share_constrained_pools_and_finish_blockwise_and_observe() {
         a.poll(3).unwrap();
         b.poll(3).unwrap();
         for (index, (client, call)) in [(&mut a, ca), (&mut b, cb)].into_iter().enumerate() {
-            if !done[index] {
-                if let Some(reply) = client.take_response(call) {
-                    assert_eq!(reply.unwrap().payload(), b"initial");
-                    done[index] = true;
-                }
+            if !done[index]
+                && let Some(reply) = client.take_response(call)
+            {
+                assert_eq!(reply.unwrap().payload(), b"initial");
+                done[index] = true;
             }
         }
         assert!(Instant::now() < deadline);
@@ -138,11 +138,11 @@ fn udp_two_owners_share_constrained_pools_and_finish_blockwise_and_observe() {
         a.poll(5).unwrap();
         b.poll(5).unwrap();
         for (index, (client, call)) in [(&mut a, ca), (&mut b, cb)].into_iter().enumerate() {
-            if !notified[index] {
-                if let Some(reply) = client.take_response(call) {
-                    assert_eq!(reply.unwrap().payload(), b"updated");
-                    notified[index] = true;
-                }
+            if !notified[index]
+                && let Some(reply) = client.take_response(call)
+            {
+                assert_eq!(reply.unwrap().payload(), b"updated");
+                notified[index] = true;
             }
         }
         assert!(Instant::now() < deadline);

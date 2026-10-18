@@ -119,5 +119,5 @@ impl Capacities {
 }
 
 pub(crate) const fn bytes_ok(bytes: usize) -> bool {
-    bytes % BODY_BYTE_QUANTUM == 0
+    bytes.is_multiple_of(BODY_BYTE_QUANTUM)
 }

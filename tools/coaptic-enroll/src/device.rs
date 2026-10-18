@@ -4,10 +4,13 @@
 //! A restored disk image can restore an older record. No peer or permission is
 //! installed here, and this store never restores EDHOC or OSCORE session keys.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use crate::native_custody::{protect, unseal};
 use crate::{Error, PublicIdentity, store};
 use coaptic::provisioning::Identity;
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, path::Path};
+#[cfg(windows)]
 use windows::{
     Win32::{
         Security::Cryptography::{
@@ -17,7 +20,9 @@ use windows::{
     },
     core::PCWSTR,
 };
-use zeroize::{Zeroize, Zeroizing};
+#[cfg(windows)]
+use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,7 +77,9 @@ pub fn restore(directory: &Path) -> Result<Identity, Error> {
     Ok(identity)
 }
 
+#[cfg(windows)]
 struct Blob(CRYPTOAPI_BLOB);
+#[cfg(windows)]
 impl Drop for Blob {
     fn drop(&mut self) {
         if !self.0.pbData.is_null() {
@@ -85,6 +92,7 @@ impl Drop for Blob {
     }
 }
 
+#[cfg(windows)]
 pub(crate) fn protect(input: &[u8]) -> Result<Vec<u8>, Error> {
     let source = CRYPTOAPI_BLOB {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
@@ -122,6 +130,7 @@ fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
     Ok(output)
 }
 
+#[cfg(windows)]
 pub(crate) fn unseal(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
     let source = CRYPTOAPI_BLOB {
         cbData: input.len().try_into().map_err(|_| Error::Input)?,
@@ -153,7 +162,7 @@ pub(crate) fn unseal(input: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

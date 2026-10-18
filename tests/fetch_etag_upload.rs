@@ -767,7 +767,7 @@ fn large_selected(request: Request<'_>) -> Response<'static> {
     }
 }
 #[test]
-fn fetch_etag_block2_full_selection_followup_limit_refuses_and_recovers() {
+fn fetch_etag_block2_full_selection_followup_fragments_and_releases_capacity() {
     let mut client = App::with_resources(
         Resources::<DownloadBuffers>::new()
             .routes::<1>()
@@ -807,38 +807,27 @@ fn fetch_etag_block2_full_selection_followup_limit_refuses_and_recovers() {
                 if let Some(frame) = client.transport_mut().take() {
                     let msg = decode(&frame.bytes[..frame.len]).unwrap();
                     assert_eq!(msg.block1().unwrap().unwrap().szx(), 2);
+                    assert_eq!(msg.etag().next(), Some(&b"v1"[..]));
                     blocks += 1;
                     server.transport_mut().incoming = Some(frame);
                     server.poll(now).unwrap();
                 }
                 if let Some(frame) = server.transport_mut().take() {
                     let msg = decode(&frame.bytes[..frame.len]).unwrap();
-                    let large = msg.code() == Code::CONTENT;
-                    if large {
-                        assert_eq!(msg.payload(), &[0x74; 1024]);
-                        assert!(msg.block2().unwrap().unwrap().more());
+                    if msg.code() == Code::CONTENT {
+                        let block = msg.block2().unwrap().unwrap();
+                        let expected_len = if block.more() { 1024 } else { 976 };
+                        assert_eq!(msg.payload().len(), expected_len);
+                        assert!(msg.payload().iter().all(|byte| *byte == 0x74));
                     }
                     client.transport_mut().incoming = Some(frame);
-                    let result = client.poll(now);
-                    if large {
-                        assert!(matches!(
-                            result,
-                            Err(coaptic::app::Error::Message(
-                                coaptic::error::SlotMessageError::Encode(
-                                    coaptic::error::EncodeError::BufferTooSmall
-                                )
-                            ))
-                        ));
-                    } else {
-                        result.unwrap();
-                    }
+                    client.poll(now).unwrap();
                 }
                 if let Some(response) = client.take_response(call) {
                     if version == 2 {
-                        assert!(matches!(
-                            response,
-                            Err(coaptic::CallFailure::ContinuationFailed)
-                        ));
+                        let response = response.unwrap();
+                        assert_eq!(response.code(), Code::CONTENT);
+                        assert_eq!(response.body(), Some([0x74; 2000].as_slice()));
                     } else {
                         let response = response.unwrap();
                         assert_eq!(response.code(), Code::VALID);
@@ -849,8 +838,10 @@ fn fetch_etag_block2_full_selection_followup_limit_refuses_and_recovers() {
                 }
             }
             assert!(complete);
-            assert_eq!(blocks, 4);
-            assert_eq!(DISPATCHES.with(Cell::get), 1);
+            assert_eq!(blocks, if version == 2 { 8 } else { 4 });
+            // Ordinary classic Block2 selects each block from the handler's
+            // borrowed representation; only Observe/deferred replies retain a snapshot.
+            assert_eq!(DISPATCHES.with(Cell::get), if version == 2 { 2 } else { 1 });
             assert_eq!(client.transport_mut().len, 0);
             assert_eq!(client.engine_mut().tx_occupied(), 0);
             let a = client.engine_mut().acquire_tx_body().unwrap();

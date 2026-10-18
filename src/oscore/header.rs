@@ -146,15 +146,15 @@ pub(crate) fn encode_option(
     kid_context: Option<&[u8]>,
     kid: Option<&[u8]>,
 ) -> Result<usize, Error> {
-    if let Some(ctx) = kid_context {
-        if ctx.len() > MAX_ID_CONTEXT_LEN {
-            return Err(Error::Id);
-        }
+    if let Some(ctx) = kid_context
+        && ctx.len() > MAX_ID_CONTEXT_LEN
+    {
+        return Err(Error::Id);
     }
-    if let Some(id) = kid {
-        if id.len() > MAX_ID_LEN {
-            return Err(Error::Id);
-        }
+    if let Some(id) = kid
+        && id.len() > MAX_ID_LEN
+    {
+        return Err(Error::Id);
     }
 
     let n = piv.map(|p| p.as_bytes().len()).unwrap_or(0);
