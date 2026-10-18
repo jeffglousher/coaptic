@@ -124,7 +124,7 @@ where
         timer: &mut impl AsyncTimer,
         local: impl Future<Output = ()>,
     ) -> Result<AppWake, ManagedError<T::Error>> {
-        self.time(now_ms)?;
+        self.prepare(now_ms)?;
         let deadline = self.next_poll_at(now_ms);
         if deadline.is_some_and(|due| due <= now_ms) {
             return Ok(AppWake::Ready);

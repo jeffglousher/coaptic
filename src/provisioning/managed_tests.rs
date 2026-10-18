@@ -2266,4 +2266,46 @@ mod native_async {
         assert!(server.is_blocked());
         assert_eq!(net.borrow().sent.len(), sent_before + 1);
     }
+
+    #[test]
+    fn native_async_wait_refuses_blocked_or_revoked_owner_before_receive() {
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        for revoked in [false, true] {
+            let (mut client, _, net) = pair_native(&a, &b);
+            if revoked {
+                client.revoke(|_, _, _| Ok::<_, ()>(())).unwrap();
+            } else {
+                assert!(
+                    client
+                        .refresh(0, |_| Err::<(PeerTrust, PolicyValidity), _>(()))
+                        .is_err()
+                );
+            }
+            net.borrow_mut().a.push_back((std::vec![0], SERVER));
+            let mut timer = Timer::new();
+            let error =
+                ready(client.wait_async(1, &mut timer, core::future::pending())).unwrap_err();
+            assert!(matches!(
+                error,
+                ManagedError::Trust(TrustError::Blocked | TrustError::Unauthorized)
+            ));
+            assert_eq!(net.borrow().receives, 0);
+            assert_eq!(net.borrow().a.len(), 1);
+            assert!(net.borrow().sent.is_empty());
+            assert_eq!(timer.deadline.get(), 0);
+            // Explicit verified policy refresh restores listening under a fresh grant.
+            client
+                .refresh(2, |_| {
+                    Ok::<_, ()>((trust(&a, &b, 1), PolicyValidity::OfflineProtectedAnchor))
+                })
+                .unwrap();
+            assert!(matches!(
+                ready(client.wait_async(2, &mut timer, core::future::pending())).unwrap(),
+                AppWake::Ingress
+            ));
+            assert_eq!(net.borrow().receives, 1);
+            assert!(net.borrow().a.is_empty());
+        }
+    }
 }
