@@ -1503,3 +1503,81 @@ fn unconfigured_observe_paths_cannot_share_an_unknown_resource_identity() {
     ));
     assert_eq!(server.notify(&["configured"], snapshot(), now).unwrap(), 0);
 }
+
+#[test]
+fn desired_subscription_refreshes_reconnects_and_stops_at_grant_change() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    server.observable_manual("identity").unwrap();
+    let mut desired = ManagedSubscription::new("identity");
+    let mut now = connect(&mut client, &mut server, 0) + 1;
+    let mut output = [0; 32];
+    for round in 0..3 {
+        assert!(client.poll_subscription(&mut desired, now).unwrap());
+        server
+            .poll_with(now, |_, request, _| {
+                assert!(request.is_observe_register());
+                Response::content(b"owner identity").max_age(1).observe(0)
+            })
+            .unwrap();
+        client.poll(now).unwrap();
+        let response = client
+            .take_subscription_response_into(&mut desired, &mut output, now)
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.payload(), b"owner identity");
+        assert!(response.observe_seq().is_some());
+        assert!(!client.poll_subscription(&mut desired, now + 1).unwrap());
+        now += 16_001;
+        if round == 1 {
+            now = connect(&mut client, &mut server, now) + 1;
+        }
+    }
+    network.borrow_mut().fail = Some(CLIENT);
+    assert!(matches!(
+        client.poll_subscription(&mut desired, now),
+        Err(ManagedError::Application(crate::app::Error::Io(_)))
+    ));
+    network.borrow_mut().fail = None;
+    assert!(!client.poll_subscription(&mut desired, now + 999).unwrap());
+    now += 1000;
+    assert!(client.poll_subscription(&mut desired, now).unwrap());
+    server
+        .poll_with(now, |_, _, _| Response::content(b"recovered").observe(0))
+        .unwrap();
+    client.poll(now).unwrap();
+    assert_eq!(
+        client
+            .take_subscription_response_into(&mut desired, &mut output, now)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"recovered"
+    );
+    client
+        .replace(b.peer().clone(), true, |_, _, _| Ok::<_, ()>(()))
+        .unwrap();
+    server
+        .replace(a.peer().clone(), true, |_, _, _| Ok::<_, ()>(()))
+        .unwrap();
+    now = connect(&mut client, &mut server, now) + 1;
+    let sent = network.borrow().sent.len();
+    assert!(matches!(
+        client.poll_subscription(&mut desired, now),
+        Err(ManagedError::StaleHandle)
+    ));
+    assert_eq!(network.borrow().sent.len(), sent);
+    client.stop_subscription(&mut desired, now).unwrap();
+    assert!(desired.is_stopped());
+    assert!(
+        !client
+            .poll_subscription(&mut desired, now + 10_000)
+            .unwrap()
+    );
+    assert_eq!(network.borrow().sent.len(), sent);
+    assert!(core::mem::size_of::<ManagedSubscription>() <= 192);
+}
