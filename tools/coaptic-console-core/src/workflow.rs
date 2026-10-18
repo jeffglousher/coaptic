@@ -70,6 +70,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
         "13" => ("operator-init", &[]),
         "14" => ("piv-touch-test", &[]),
         "15" => ("development-piv-test", &[]),
+        "16" => ("serial-restart", &["Serial port"]),
         _ => return None,
     };
     Some(Operation {

@@ -44,3 +44,7 @@ input and operation definitions live in `coaptic-console-core` and also use neit
 If a serial operation times out, inspect device and host state before retrying.
 Recovery reconciles a committed device update whose reply was lost. Reinitializing
 an existing identity is not a recovery operation.
+
+If networking stops after a fatal session error while USB inspection still works,
+use the guide's Restart device operation. It retains identity and pairing; it does
+not recreate keys or authorize a different owner.

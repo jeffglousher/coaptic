@@ -67,7 +67,7 @@ pub fn collect(
 ) -> io::Result<Option<Vec<std::ffi::OsString>>> {
     writeln!(
         output,
-        "Coaptic commissioning\n1 Inspect device\n2 Pair\n3 Revoke\n4 Transfer ownership\n5 Recover host pairing\n6 Initialize device identity\n7 Inspect host identity\n8 Initialize host identity\n9 Register touch-required PIV credential\n10 Register touchless development PIV credential\n11 Prepare native credential storage\n12 Connect protected peer\n13 Register Windows WebAuthn operator\n14 Test touch-required credential\n15 Test touchless credential"
+        "Coaptic commissioning\n1 Inspect device\n2 Pair\n3 Revoke\n4 Transfer ownership\n5 Recover host pairing\n6 Initialize device identity\n7 Inspect host identity\n8 Initialize host identity\n9 Register touch-required PIV credential\n10 Register touchless development PIV credential\n11 Prepare native credential storage\n12 Connect protected peer\n13 Register Windows WebAuthn operator\n14 Test touch-required credential\n15 Test touchless credential\n16 Restart device (retains identity and pairing)"
     )?;
     let Some(choice) = prompt(input, output, "Operation")? else {
         return Ok(None);
