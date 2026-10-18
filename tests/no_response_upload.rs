@@ -386,15 +386,6 @@ fn classic_error_only_no_response_refusals_preserve_owned_capacity() {
                         Err(Error::NoResponseUploadUnsupported)
                     );
                 }
-                assert_eq!(
-                    client
-                        .get("upload")
-                        .to(PEER)
-                        .observe()
-                        .no_response(NoResponse::new(mask))
-                        .send(cycle),
-                    Err(Error::NoResponseObserveUnsupported)
-                );
             }
             assert_eq!(client.transport_mut().len, 0);
             let call = client

@@ -594,6 +594,11 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     response: &Response<'_>,
 ) -> Result<(), Error<T::Error>> {
     let observe = row.observe.expect("Observe completion");
+    if row.meta.no_response.suppresses(response.code()) {
+        retire_deferred_observe(engine, *row)?;
+        row.completed = true;
+        return Ok(());
+    }
     if observe.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
         return Err(Error::DeferredUnknown);
     }
@@ -642,6 +647,7 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
             .with_seq(sequence)
             .with_content_format(response.format())
             .with_block2_max_szx(row.meta.block2.map(|b| b.szx()))
+            .with_no_response(row.meta.no_response)
             .with_selection(Some(row.selection.stored()));
         #[cfg(feature = "oscore")]
         {
@@ -2382,7 +2388,9 @@ where
                 );
                 // Staging refusal still makes the due attempt with retained bytes;
                 // no unprotected fallback and no retry-budget reset.
-                engine.send_tx(io, pending.tx_slot())?;
+                if engine.pending_con(pending.tx_slot()).is_some() {
+                    engine.send_tx(io, pending.tx_slot())?;
+                }
                 replacement_error = replacement.err();
             }
             Retransmit::GiveUp(pending) => {
@@ -3544,7 +3552,7 @@ where
                 && plan.registration_supported
                 && block2.is_none_or(|b| b.num() == 0 && !b.more() && !b.is_bert())
                 && parsed.q_block2().next().is_none()
-                && no_response == NoResponse::DEFAULT
+                && !no_response.suppresses(Code::CONTENT)
         })
         .map(|plan| DeferredObserve {
             resource: plan.resource,
@@ -3725,6 +3733,7 @@ struct ObservePlan {
     selection: Option<crate::storage::ObserveSelection>,
     register: bool,
     registration_supported: bool,
+    no_response: NoResponse,
     block2_max_szx: Option<u8>,
     deregister: bool,
     delete: bool,
@@ -3739,6 +3748,7 @@ impl ObservePlan {
             register: false,
             selection: None,
             registration_supported: false,
+            no_response: NoResponse::DEFAULT,
             block2_max_szx: None,
             deregister: false,
             delete: false,
@@ -3765,6 +3775,8 @@ impl ObservePlan {
         };
         Self {
             register: request.is_observe_register(),
+            no_response: NoResponse::from_message(&request.message())
+                .unwrap_or(NoResponse::DEFAULT),
             selection,
             registration_supported: if selected {
                 selection.is_some()
@@ -3817,7 +3829,12 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     if let Some(interest) = previous {
         release_observe_response_body(engine, interest);
     }
-    if plan.register && plan.registration_supported && response.code().is_success() && opted {
+    if plan.register
+        && plan.registration_supported
+        && !plan.no_response.suppresses(Code::CONTENT)
+        && response.code().is_success()
+        && opted
+    {
         // Re-registration replaces scheduling and protection state, but the
         // same Token/resource must retain ordering across that replacement.
         let sequence = previous
@@ -3828,6 +3845,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .with_resource(plan.resource)
             .with_content_format(response.format())
             .with_block2_max_szx(plan.block2_max_szx)
+            .with_no_response(plan.no_response)
             .with_selection(plan.selection);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
@@ -3891,6 +3909,10 @@ where
     response.validate().map_err(Error::Response)?;
     if response.code().is_success() && response.format() != interest.content_format() {
         response = Response::new(Code::NOT_ACCEPTABLE);
+    }
+    if interest.suppresses(response.code()) {
+        retire_suppressed_observe(engine, interest)?;
+        return Ok(());
     }
     let terminal = !response.code().is_success();
     let previous_body =
@@ -4109,13 +4131,17 @@ where
             continue;
         };
         let dest = interest.endpoint();
-        if let Err(e) = send_notification(engine, io, ids, oscore, now_ms, interest, response, seq)
-        {
-            let _ = engine.restore_observe_due(id, seq);
-            return Err(e);
+        match send_notification(engine, io, ids, oscore, now_ms, interest, response, seq) {
+            Ok(true) => {
+                held.add(dest);
+                sent += 1;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                let _ = engine.restore_observe_due(id, seq);
+                return Err(e);
+            }
         }
-        held.add(dest);
-        sent += 1;
     }
     Ok(sent)
 }
@@ -4316,7 +4342,7 @@ fn send_notification<S, T, const REQUESTS: usize>(
     interest: ObserveInterest,
     response: &Response<'_>,
     seq: u32,
-) -> Result<(), Error<T::Error>>
+) -> Result<bool, Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
     T: DatagramIo,
@@ -4329,6 +4355,10 @@ where
     } else {
         *response
     };
+    if interest.suppresses(notify.code()) {
+        retire_suppressed_observe(engine, interest)?;
+        return Ok(false);
+    }
     // Terminal delivery remains tracked even after removing the observer row.
     let ty = if !notify.code().is_success() || interest.must_confirm(now_ms) {
         Type::Confirmable
@@ -4408,7 +4438,7 @@ where
     outcome?;
     if !notify.code().is_success() {
         let _ = engine.take_observe(interest.key());
-        return Ok(());
+        return Ok(true);
     }
 
     let confirmable = ty == Type::Confirmable;
@@ -4417,7 +4447,7 @@ where
         let max_age = notify.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
         let _ = engine.refresh_observe_max_age(interest.key(), now_ms, max_age, None);
     }
-    Ok(())
+    Ok(true)
 }
 
 fn start_notify_block2<S, T, const REQUESTS: usize>(
@@ -4784,6 +4814,29 @@ fn response_block_key<E>(
         )),
         None => Ok(key),
     }
+}
+
+// Suppressed terminal responses still end the relation and all owned retries.
+fn retire_suppressed_observe<
+    S: Storage + BodySlots + ObserveSlots + PendingCons + DatagramSlots,
+>(
+    engine: &mut Engine<S>,
+    interest: ObserveInterest,
+) -> Result<(), crate::storage::SlotError> {
+    let body = response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()));
+    if body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
+        return Err(crate::storage::SlotError::Pinned);
+    }
+    if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid()) {
+        if let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint()) {
+            engine.release_tx(tx)?;
+        }
+    }
+    if let Some(body) = body {
+        engine.release_tx_body(body)?;
+    }
+    engine.take_observe(interest.key());
+    Ok(())
 }
 
 fn release_observe_response_body<S: Storage + BodySlots>(
@@ -6542,7 +6595,8 @@ pub enum Error<E> {
     /// sent. Other masks need a single datagram
     /// or a caller-managed Engine transfer.
     NoResponseUploadUnsupported,
-    /// App requires a response when registering Observe. Deregistration is allowed.
+    /// Observe registration requires interest in 2.xx. Error-only masks and
+    /// deregistration suppression are supported; reserved bits do not refuse registration.
     NoResponseObserveUnsupported,
     /// No live subscription matches the cancellation's request identity/Call.
     ObserveCancellationMismatch,
@@ -6643,7 +6697,7 @@ where
                 f.write_str("No-Response mask is unsupported for this upload combination")
             }
             Self::NoResponseObserveUnsupported => {
-                f.write_str("No-Response Observe registration is unsupported")
+                f.write_str("Observe registration requires interest in 2.xx responses")
             }
             Self::ConditionalUploadUnsupported => {
                 f.write_str("conditional fragmented uploads are unsupported")

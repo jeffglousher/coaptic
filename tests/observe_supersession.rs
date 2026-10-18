@@ -1252,3 +1252,61 @@ fn blockwise_replacement_refusal_preserves_body_and_packet_ownership() {
         blockwise_refusal(allocated_blocks(false), pin_body);
     }
 }
+
+fn suppressed_terminal<S: AppStorage>(
+    mut server: Server<S>,
+    protected: bool,
+    mask: u8,
+    in_flight: bool,
+) {
+    let mut client = client(protected);
+    no_alloc(|| {
+        let call = client
+            .get("value")
+            .observe()
+            .to(OWNER)
+            .no_response(coaptic::message::NoResponse::new(mask))
+            .send(0)
+            .unwrap();
+        server.transport_mut().incoming = Some(client.transport().last);
+        server.poll(1).unwrap();
+        deliver(&server, &mut client, call, b"initial complete", 2);
+        let key = ObserveKey::new(call.token(), OWNER);
+        assert!(server.engine().lookup_observe(key).is_some());
+        if in_flight {
+            assert_eq!(
+                server.notify_confirmable(3, &["value"], source()).unwrap(),
+                1
+            );
+            let due = pending(&server, key).rto().next_timeout_ms();
+            let sent = server.transport().sends;
+            VERSION.with(|v| v.set(4));
+            server.signal(&["value"]);
+            server.poll(due).unwrap();
+            assert_eq!(server.transport().sends, sent);
+        } else {
+            let sent = server.transport().sends;
+            assert_eq!(
+                server
+                    .notify_confirmable(3, &["value"], Response::not_found())
+                    .unwrap(),
+                0
+            );
+            assert_eq!(server.transport().sends, sent);
+        }
+        assert!(server.engine().lookup_observe(key).is_none());
+        assert_eq!(server.engine_mut().tx_occupied(), 0);
+    });
+}
+#[test]
+fn error_only_no_response_preserves_notifications_and_retires_suppressed_terminal() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for mask in [8, 24, 136, 253] {
+            for in_flight in [false, true] {
+                suppressed_terminal(fixed(protected), protected, mask, in_flight);
+                #[cfg(feature = "alloc")]
+                suppressed_terminal(allocated(protected), protected, mask, in_flight);
+            }
+        }
+    }
+}

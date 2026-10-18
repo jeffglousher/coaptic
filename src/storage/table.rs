@@ -472,7 +472,8 @@ pub struct ObserveInterest {
     key: ObserveKey,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
-    block2_max_szx: Option<u8>,
+    // SZX in bits 0..2, presence in bit 7; No-Response error bits in 3..4.
+    response_policy: u8,
     seq: u32,
     pending: bool,
     deleted: bool,
@@ -505,7 +506,7 @@ impl ObserveInterest {
             selection: None,
             resource: ObserveResource::NONE,
             content_format: None,
-            block2_max_szx: None,
+            response_policy: 0,
             seq: 0,
             pending: false,
             deleted: false,
@@ -578,14 +579,29 @@ impl ObserveInterest {
 
     /// App-owned early Block2 negotiation; raw Engine interests default to none.
     pub(crate) const fn block2_max_szx(self) -> Option<u8> {
-        self.block2_max_szx
+        if self.response_policy & 0x80 != 0 {
+            Some(self.response_policy & 7)
+        } else {
+            None
+        }
     }
 
-    pub(crate) const fn with_block2_max_szx(self, block2_max_szx: Option<u8>) -> Self {
-        Self {
-            block2_max_szx,
-            ..self
-        }
+    pub(crate) const fn with_block2_max_szx(mut self, szx: Option<u8>) -> Self {
+        self.response_policy = (self.response_policy & 24)
+            | match szx {
+                Some(value) => 0x80 | (value & 7),
+                None => 0,
+            };
+        self
+    }
+
+    pub(crate) const fn with_no_response(mut self, mask: crate::message::NoResponse) -> Self {
+        self.response_policy = (self.response_policy & !24) | (mask.get() & 24);
+        self
+    }
+
+    pub(crate) const fn suppresses(self, code: crate::message::Code) -> bool {
+        crate::message::NoResponse::new(self.response_policy & 24).suppresses(code)
     }
 
     /// OSCORE request binding for protected notifications, if any.
