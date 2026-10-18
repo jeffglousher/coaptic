@@ -67,7 +67,7 @@ pub fn collect(
 ) -> io::Result<Option<Vec<std::ffi::OsString>>> {
     writeln!(
         output,
-        "Coaptic commissioning\n1 Inspect device\n2 Pair\n3 Revoke\n4 Transfer ownership\n5 Recover host pairing\n6 Initialize device identity\n7 Inspect host identity\n8 Initialize host identity\n9 Register touch-required PIV credential\n10 Register touchless development PIV credential\n11 Prepare native credential storage\n12 Connect protected peer\n13 Register Windows WebAuthn operator"
+        "Coaptic commissioning\n1 Inspect device\n2 Pair\n3 Revoke\n4 Transfer ownership\n5 Recover host pairing\n6 Initialize device identity\n7 Inspect host identity\n8 Initialize host identity\n9 Register touch-required PIV credential\n10 Register touchless development PIV credential\n11 Prepare native credential storage\n12 Connect protected peer\n13 Register Windows WebAuthn operator\n14 Test touch-required credential\n15 Test touchless credential"
     )?;
     let Some(choice) = prompt(input, output, "Operation")? else {
         return Ok(None);
@@ -103,6 +103,19 @@ pub fn collect(
             "3" => args.push("--piv-touch".into()),
             _ => {
                 writeln!(output, "Unknown approval mode; no changes made.")?;
+                return Ok(None);
+            }
+        }
+    }
+    if operation.permissions {
+        let Some(access) = prompt(input, output, "Access: 1 read-only, 2 read/write")? else {
+            return Ok(None);
+        };
+        match access.as_str() {
+            "1" => args.push("--read-only".into()),
+            "2" => {}
+            _ => {
+                writeln!(output, "Unknown access selection; no changes made.")?;
                 return Ok(None);
             }
         }
@@ -143,7 +156,7 @@ mod tests {
     #[test]
     fn explicit_touchless_selection_is_preserved() {
         let result = collect(
-            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n2\ncontinue\n"),
+            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n2\n2\ncontinue\n"),
             &mut Vec::new(),
         )
         .unwrap()
@@ -154,7 +167,7 @@ mod tests {
     #[test]
     fn touch_required_selection_is_not_touchless() {
         let result = collect(
-            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n3\ncontinue\n"),
+            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n3\n2\ncontinue\n"),
             &mut Vec::new(),
         )
         .unwrap()

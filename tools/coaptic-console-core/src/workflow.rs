@@ -5,6 +5,7 @@ pub struct Operation {
     pub fields: &'static [&'static str],
     pub approval: bool,
     pub connect: bool,
+    pub permissions: bool,
 }
 
 pub fn operation(choice: &str) -> Option<Operation> {
@@ -67,6 +68,8 @@ pub fn operation(choice: &str) -> Option<Operation> {
             ],
         ),
         "13" => ("operator-init", &[]),
+        "14" => ("piv-touch-test", &[]),
+        "15" => ("development-piv-test", &[]),
         _ => return None,
     };
     Some(Operation {
@@ -74,6 +77,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
         fields,
         approval: matches!(choice, "2" | "3" | "4" | "5"),
         connect: choice == "12",
+        permissions: matches!(choice, "2" | "4"),
     })
 }
 

@@ -213,10 +213,12 @@ pub fn approve<T>(
         return Err("binary was built without the development-piv feature".into());
     }
     #[cfg(not(windows))]
-    return Err(
-        "native WebAuthn approval is unavailable; select an explicitly registered PIV profile"
-            .into(),
-    );
+    {
+        Err(
+            "native WebAuthn approval is unavailable; select an explicitly registered PIV profile"
+                .into(),
+        )
+    }
     #[cfg(windows)]
     {
         let store = OperatorStore::open(directory)?;

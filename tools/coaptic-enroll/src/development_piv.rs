@@ -75,6 +75,14 @@ impl DevelopmentOperator {
         self.profile == "piv-touch-required"
     }
 
+    /// Fresh possession and policy check without issuing an approval or updating records.
+    pub fn self_test(&self) -> Result<(), Error> {
+        self.validate()?;
+        let digest = challenge(self, b"self-test", &[0; 32])?;
+        let signature = self.sign(&digest)?;
+        self.verify(&digest, &signature)
+    }
+
     /// Every signing operation checks the live key's policy and public key first.
     pub fn sign(&self, digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
         self.validate()?;

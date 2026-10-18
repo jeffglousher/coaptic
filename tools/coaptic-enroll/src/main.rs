@@ -64,7 +64,7 @@ fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::err
         );
         #[cfg(feature = "development-piv")]
         println!(
-            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor\npiv-touch-register SERIAL SLOT PUBLIC.pem | piv-touch-check REQUEST.cbor"
+            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor | development-piv-test\npiv-touch-register SERIAL SLOT PUBLIC.pem | piv-touch-check REQUEST.cbor | piv-touch-test"
         );
         println!(
             "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-recover PORT UNPAIRED_HOST [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
@@ -77,6 +77,8 @@ fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::err
         "development-piv-check",
         "piv-touch-register",
         "piv-touch-check",
+        "piv-touch-test",
+        "development-piv-test",
     ]
     .iter()
     .any(|name| command == *name);

@@ -14,7 +14,9 @@ pub fn run(
     mut args: impl Iterator<Item = std::ffi::OsString>,
     directory: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let touch = command == "piv-touch-register" || command == "piv-touch-check";
+    let touch = command == "piv-touch-register"
+        || command == "piv-touch-check"
+        || command == "piv-touch-test";
     let store = RecordStore::<DevelopmentOperator>::open_named(
         directory,
         if touch {
@@ -23,6 +25,25 @@ pub fn run(
             "piv-development"
         },
     )?;
+    if command == "piv-touch-test" || command == "development-piv-test" {
+        if args.next().is_some() {
+            return Err("unexpected arguments".into());
+        }
+        let operator = store.load()?;
+        if operator.requires_touch() != touch {
+            return Err("approval profile mismatch".into());
+        }
+        if touch {
+            println!(
+                "Touch the YubiKey for a signing test; no pairing or operator records will change."
+            );
+        }
+        operator.self_test()?;
+        println!(
+            "Hardware policy and fresh signature verified (touch required: {touch}). No records changed."
+        );
+        return Ok(());
+    }
     if command == "development-piv-register" || command == "piv-touch-register" {
         if store.exists() {
             return Err("development operator already registered".into());
