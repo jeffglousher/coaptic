@@ -1445,8 +1445,9 @@ where
     /// at most seven block sizes against the actual unprotected/protected TX limit.
     /// Later option or Partial-IV growth can still refuse; no security state rewinds.
     /// The handler validates the complete selection and may return 2.03 Valid.
-    /// FETCH Block2 follow-ups repeat the full selection
-    /// and must fit one datagram; their size failure terminates the Call.
+    /// FETCH follow-ups repeat the full selection and re-fragment it when needed.
+    /// Q-Block2 follow-up fragmentation requires a retained Request-Tag. Body
+    /// saturation or minimum-fragment encoding failure terminates the Call.
     #[must_use]
     pub const fn etag(mut self, tag: &'a [u8]) -> Self {
         self.etag = Some(tag);
@@ -2070,31 +2071,35 @@ where
             // Inner Block-wise: fragment first, then protect each
             // datagram (RFC 8613 §4.1.3.4.1). Same path with OSCORE on.
             // Protocol protect failures are `Error::Oscore`, not this arm.
-            send_client_block1(
-                engine,
-                io,
-                ids,
-                oscore,
-                now_ms,
-                spec.dest,
-                spec.ty,
-                spec.code,
-                spec.token,
-                spec.path,
-                spec.queries,
-                spec.accept,
-                spec.payload,
-                spec.request_tag,
-                spec.content_format,
-                spec.echo,
-                spec.no_response,
-                spec.if_match,
-                spec.etag,
-                spec.if_none_match,
-                spec.q_block1,
-                tx,
-                mid,
-            )
+            with_client_options(&spec, false, |controls| {
+                send_client_block1(
+                    engine,
+                    io,
+                    ids,
+                    oscore,
+                    now_ms,
+                    spec.dest,
+                    spec.ty,
+                    spec.code,
+                    spec.token,
+                    spec.path,
+                    spec.queries,
+                    spec.accept,
+                    spec.payload,
+                    spec.request_tag,
+                    spec.content_format,
+                    spec.echo,
+                    spec.no_response,
+                    spec.if_match,
+                    spec.etag,
+                    spec.if_none_match,
+                    spec.q_block1,
+                    tx,
+                    mid,
+                    controls,
+                )
+            })
+            .map_err(|error| Error::Message(SlotMessageError::Encode(error)))?
         }
         Err(e) => {
             let _ = engine.release_tx(tx);
@@ -2128,6 +2133,7 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     q_block1: bool,
     tx: SlotId,
     mid: MessageId,
+    controls: &[Opt<'_>],
 ) -> Result<Call, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
@@ -2165,6 +2171,7 @@ where
             request_tag,
             u32::try_from(payload.len()).ok(),
             &payload[..count],
+            controls,
         ) {
             Ok(()) => break,
             Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
@@ -2197,6 +2204,17 @@ where
             return Err(Error::Block(e));
         }
     };
+    let mut transfer = engine.tx_body_transfer(body).expect("admitted upload");
+    if let Err(error) = transfer.retain_upload_controls(controls).and_then(|()| {
+        engine
+            .storage_mut()
+            .set_tx_body_transfer(body, transfer)
+            .map_err(Into::into)
+    }) {
+        let _ = engine.release_tx(tx);
+        let _ = engine.release_tx_body(body);
+        return Err(Error::Block(error));
+    }
     // The first datagram already owns its MID, jitter and protected RequestRef.
     // Advance the admitted body once and send those exact bytes. A NON Q set
     // continues only after that successful send; CON waits for its matching ACK.
@@ -2916,7 +2934,7 @@ fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     recovery_ty: Option<Type>,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges,
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
     let live = lives.get(Call::new(token, peer));
@@ -3015,9 +3033,63 @@ where
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    if let Err(e) = super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
-        let _ = engine.release_tx(tx);
-        return Err(e);
+    match super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
+        Ok(_) => {}
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+            if code == Code::FETCH =>
+        {
+            let Some(live) = live else {
+                let _ = engine.release_tx(tx);
+                return Err(Error::Saturated);
+            };
+            let mut queries = [""; MAX_PATH_SEGMENTS];
+            let mut count = 0;
+            for query in live.queries.values() {
+                queries[count] = query;
+                count += 1;
+            }
+            // Q response selection uses Q-Block1; same-side classic/Q mixing is
+            // forbidden. The existing request tag remains the operation identity.
+            if !q_block2.is_empty() && live.request_tag.is_absent() {
+                let _ = engine.release_tx(tx);
+                return Err(Error::Block(BlockTransferError::MissingIdentity));
+            }
+            return send_client_block1(
+                engine,
+                io,
+                ids,
+                oscore,
+                now_ms,
+                peer,
+                ty,
+                code,
+                token,
+                live.path.segments(),
+                &queries[..count],
+                live.accept,
+                fetch.as_ref().expect("retained FETCH identity").payload(),
+                live.request_tag,
+                live.content_format,
+                live.echo,
+                live.no_response,
+                live.if_match.as_slice(),
+                if q_block2.is_empty() {
+                    live.etag.as_slice()
+                } else {
+                    None
+                },
+                live.if_none_match,
+                !q_block2.is_empty(),
+                tx,
+                mid,
+                opts.as_slice(),
+            )
+            .map(|_| ());
+        }
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(error);
+        }
     }
     match engine.record_request(tx, peer) {
         Ok(Some(_)) => {}
@@ -3597,6 +3669,18 @@ where
             return Err(error);
         }
     };
+    let transfer = engine.tx_body_transfer(issued.id());
+    let stored = transfer
+        .as_ref()
+        .and_then(|transfer| transfer.upload_controls());
+    let mut controls =
+        OptionsBuilder::<{ crate::storage::BlockTransfer::MAX_PAYLOADS as usize + 2 }>::new();
+    if let Some(stored) = stored {
+        for option in stored.options() {
+            push_opt(&mut controls, Opt::new(option.number(), option.value()))
+                .map_err(|e| Error::Message(SlotMessageError::Encode(e)))?;
+        }
+    }
     if let Err(error) = encode_block1_request(
         dest,
         engine,
@@ -3620,6 +3704,7 @@ where
         tag,
         size1,
         &chunk[..n],
+        controls.as_slice(),
     ) {
         let _ = engine.release_tx(tx);
         return Err(error);
@@ -3652,6 +3737,7 @@ fn encode_block1_request<Mem, E, const REQUESTS: usize>(
     tag: BodyTag,
     size1: Option<u32>,
     payload: &[u8],
+    controls: &[Opt<'_>],
 ) -> Result<(), Error<E>>
 where
     Mem: Storage + DatagramSlots,
@@ -3661,8 +3747,20 @@ where
     let blk = block.encode();
     let size = size1.map(encode_uint);
     let no_response = no_response.map(crate::message::NoResponse::encode);
-    let mut opts = OptionsBuilder::<CLIENT_OPTION_SLOTS>::new();
+    let mut opts = OptionsBuilder::<
+        { CLIENT_OPTION_SLOTS + crate::storage::BlockTransfer::MAX_PAYLOADS as usize + 2 },
+    >::new();
     let filled = (|| -> Result<(), EncodeError> {
+        for option in controls.iter().filter(|o| {
+            matches!(
+                o.number(),
+                crate::message::OptionNumber::OBSERVE
+                    | crate::message::OptionNumber::BLOCK2
+                    | crate::message::OptionNumber::Q_BLOCK2
+            )
+        }) {
+            push_opt(&mut opts, *option)?;
+        }
         if let Some(value) = if_match {
             push_opt(&mut opts, Opt::if_match(value))?;
         }

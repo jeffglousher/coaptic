@@ -1080,18 +1080,20 @@ fn observe_requested_block2_source_updates_and_exact_retry_preserve_cap() {
         let opened = p.open(wire);
         let mid = decode(&opened.bytes[..opened.len]).unwrap().message_id();
         s.signal(&["obs"]);
-        assert!(matches!(
-            s.poll(3004),
-            Err(coaptic::app::Error::ObserveSupersessionUnsupported)
-        ));
-        let retry = s.transport_mut().take().unwrap();
-        assert_eq!(&retry.bytes[..retry.len], &wire.bytes[..wire.len]);
+        s.poll(3004).unwrap();
+        let (replacement_mid, block) = first(&mut s, &p);
+        assert_ne!(replacement_mid, mid);
+        assert_eq!(block.szx(), 0);
         assert!(s.transport_mut().take().is_none());
         s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
         s.poll(3005).unwrap();
+        assert!(
+            s.engine()
+                .lookup_pending_con(replacement_mid, PEER)
+                .is_some()
+        );
+        s.transport_mut().incoming = Some(control(replacement_mid, Type::Acknowledgement));
         s.poll(3006).unwrap();
-        let (_, b) = first(&mut s, &p);
-        assert_eq!(b.szx(), 0);
         finish_notification(&mut s, &mut p, 0, 3010);
     }
 }
