@@ -335,10 +335,10 @@ fn deferred_fetch_allocated_exact_budget_retains_selection() {
 fn bounds<S: AppStorage>(mut server: Server<S>, protected: bool) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
-        // Header/options/marker occupy17 bytes in the retained512-byte selection.
+        // Header/token/options/marker occupy 22 bytes in the retained 512-byte selection.
         // Refusal must leave both deferred rows free for the exact-bound request.
         for mid in 100..112 {
-            server.transport_mut().incoming = Some(peer.request(mid, &[b"v1"], None, &[7; 496]));
+            server.transport_mut().incoming = Some(peer.request(mid, &[b"v1"], None, &[7; 491]));
             server
                 .poll_with(u64::from(mid), |_, candidate| {
                     assert!(candidate.is_none());
@@ -351,7 +351,7 @@ fn bounds<S: AppStorage>(mut server: Server<S>, protected: bool) {
                 Code::SERVICE_UNAVAILABLE
             );
         }
-        server.transport_mut().incoming = Some(peer.request(120, &[b"v1"], None, &[7; 495]));
+        server.transport_mut().incoming = Some(peer.request(120, &[b"v1"], None, &[7; 490]));
         let mut handle = None;
         server
             .poll_with(120, |_, candidate| {
@@ -367,7 +367,7 @@ fn bounds<S: AppStorage>(mut server: Server<S>, protected: bool) {
             decode(&first.bytes[..first.len]).unwrap().payload(),
             &BODY[..1024]
         );
-        server.transport_mut().incoming = Some(peer.request(122, &[b"v1"], Some(1), &[7; 495]));
+        server.transport_mut().incoming = Some(peer.request(122, &[b"v1"], Some(1), &[7; 490]));
         server
             .poll_with(122, |_, _| {
                 panic!("exact-bound selection must reuse snapshot")

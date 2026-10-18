@@ -1,7 +1,7 @@
 # Development
 
 Follow [AGENTS.md](AGENTS.md) for delivery. Use the pinned Rust toolchain;
-the library is edition 2024 with MSRV 1.85. Test peers may require newer tools.
+the library is edition 2024 with MSRV 1.89. Test peers may require newer tools.
 Merges to `main` are squash-only and require the repository's CI checks.
 
 Pre-release development does not require version bumps, backwards compatibility,
@@ -78,8 +78,8 @@ cargo test --no-default-features --features std
 cargo test --features std --test std_fixed_storage
 cargo doc --no-deps --all-features
 cargo package -p coaptic --locked
-cargo +1.85.0 check --locked -p coaptic --no-default-features
-cargo +1.85.0 check --locked -p coaptic --all-features
+cargo +1.89.0 check --locked -p coaptic --no-default-features
+cargo +1.89.0 check --locked -p coaptic --all-features
 ```
 
 Only `coaptic` is published. Harnesses and peers stay out of the crate. Inspect

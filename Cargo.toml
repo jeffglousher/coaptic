@@ -7,7 +7,7 @@ resolver = "2"
 name = "coaptic"
 version = "0.0.10"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 authors = ["Jeff Glousher"]
 license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 description = "Free, open-source CoAP for devices and cloud services. Rust, no_std, no heap required. OSCORE by default."
@@ -42,7 +42,7 @@ oscore = ["dep:aes", "dep:ccm", "dep:hkdf", "dep:sha2"]
 edhoc = ["oscore", "dep:defmt-or-log", "dep:subtle", "dep:p256", "dep:blake3", "dep:uuid"]
 
 [dependencies]
-# aes 0.9.3 requires Rust 1.89; retain the library MSRV of 1.85.
+# Pin the selected AES release; dependency updates are reviewed independently.
 aes = { version = "=0.9.2", default-features = false, optional = true }
 ccm = { version = "0.6.1", default-features = false, optional = true }
 hkdf = { version = "0.13.0", default-features = false, optional = true }

@@ -24,9 +24,6 @@ updates:
           - rustls
     # Major backend changes require protocol/authentication qualification.
     ignore:
-      # aes 0.9.3 raises MSRV above the library Rust 1.85 contract.
-      - dependency-name: aes
-        versions: ["0.9.3"]
       - dependency-name: webrtc-dtls
         update-types: [version-update:semver-major]
       - dependency-name: webrtc-util
