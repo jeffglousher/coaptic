@@ -464,6 +464,50 @@ impl<S: Storage + DedupSlots> Engine<S> {
 }
 
 impl<S: Storage + PendingCons> Engine<S> {
+    /// Reserve NSTART capacity for an initial CON before transport acceptance.
+    ///
+    /// No timer starts and ACK/RST cannot match this reservation. The occupied
+    /// packet remains caller-owned. Commit after acceptance or cancel on refusal
+    /// or cancellation; both operations require the exact returned snapshot.
+    pub fn reserve_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<PendingCon> {
+        let reserved = self.storage.reserve_pending_con(id, endpoint, message_id);
+        if reserved.is_none() {
+            let n = self.storage.capacities().tx_datagram_slots;
+            if outstanding_pending(n, endpoint, |sid| self.storage.pending_con(sid))
+                >= usize::from(crate::message::Transmission::NSTART)
+            {
+                Metrics::inc(&mut self.metrics.nstart_reject);
+            }
+        }
+        reserved
+    }
+
+    /// Start an initial CON's RTO after complete transport acceptance.
+    ///
+    /// `now_ms` is the completion timestamp in the same monotonic clock domain
+    /// as subsequent polling. This does not send. Refusal preserves the packet
+    /// and sidecar; it does not imply that a preceding transport send failed.
+    pub fn commit_pending_con(
+        &mut self,
+        expected: PendingCon,
+        now_ms: u64,
+        jitter_ms: u32,
+    ) -> Option<PendingCon> {
+        self.storage.commit_pending_con(expected, now_ms, jitter_ms)
+    }
+
+    /// Cancel an exact untransmitted reservation without releasing packet bytes.
+    /// Sent, stale or absent reservations refuse. This is local cancellation,
+    /// distinct from wire ACK/RST matching through [`Self::take_pending_con`].
+    pub fn cancel_pending_con(&mut self, expected: PendingCon) -> bool {
+        self.storage.cancel_pending_con(expected)
+    }
+
     /// Atomically replace one exact pending CON, retaining its slot and RTO.
     ///
     /// See [`PendingCons::replace_pending_con`] for staging, MID selection,

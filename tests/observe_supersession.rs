@@ -336,7 +336,7 @@ fn lifecycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
         assert_eq!(server.signal(&["value"]), 1);
         VERSION.with(|v| v.set(2));
         assert_eq!(server.signal(&["value"]), 1);
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         let sent = server.transport().sends;
         server.poll(due - 1).unwrap();
         assert_eq!(server.transport().sends, sent);
@@ -391,7 +391,7 @@ fn lifecycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
         control(&mut server, first.message_id(), true, OTHER, due + 4);
         assert_eq!(pending(&server, key), next);
         // No signal: retransmit exactly the same representation/ciphertext.
-        server.poll(next.rto().next_timeout_ms()).unwrap();
+        server.poll(next.rto().next_timeout_ms().unwrap()).unwrap();
         #[cfg(feature = "oscore")]
         assert_eq!(
             server.oscore().map(|ctx| ctx.sender_seq()),
@@ -407,7 +407,7 @@ fn lifecycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
             first.message_id(),
             true,
             OWNER,
-            next.rto().next_timeout_ms() + 1,
+            next.rto().next_timeout_ms().unwrap() + 1,
         );
         assert!(server.engine().lookup_observe(key).is_none());
         assert!(server.engine().pending_con(next.tx_slot()).is_none());
@@ -447,7 +447,7 @@ fn refusal<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
         VERSION.with(|v| v.set(if mode == 6 { 2 } else { mode }));
         assert_eq!(server.signal(&["value"]), 1);
         FAIL_ENTROPY.with(|f| f.set(mode == 6));
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         let error = server.poll(due).unwrap_err();
         if mode == 6 {
             assert!(matches!(error, coaptic::Error::Identity(_)));
@@ -472,7 +472,7 @@ fn refusal<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
         assert_eq!(retained.oscore(), original.oscore());
         FAIL_ENTROPY.with(|f| f.set(false));
         VERSION.with(|v| v.set(2));
-        let retry = failed.rto().next_timeout_ms();
+        let retry = failed.rto().next_timeout_ms().unwrap();
         server.poll(retry).unwrap();
         assert_eq!(pending(&server, key).rto().attempts(), 2);
         deliver(
@@ -529,7 +529,7 @@ fn finite_chain<S: AppStorage>(mut server: Server<S>, protected: bool) {
         for attempt in 1..=coaptic::message::Transmission::MAX_RETRANSMIT {
             VERSION.with(|v| v.set(1 + (attempt % 2)));
             server.signal(&["value"]);
-            let due = current.rto().next_timeout_ms();
+            let due = current.rto().next_timeout_ms().unwrap();
             server.poll(due).unwrap();
             let next = pending(&server, key);
             assert_eq!(next.rto(), current.rto().next_attempt(due).unwrap());
@@ -544,7 +544,9 @@ fn finite_chain<S: AppStorage>(mut server: Server<S>, protected: bool) {
         }
         server.signal(&["value"]);
         let sent = server.transport().sends;
-        server.poll(current.rto().next_timeout_ms()).unwrap();
+        server
+            .poll(current.rto().next_timeout_ms().unwrap())
+            .unwrap();
         assert_eq!(server.transport().sends, sent);
         assert!(server.engine().lookup_observe(key).is_none());
         assert!(server.engine().pending_con(current.tx_slot()).is_none());
@@ -586,7 +588,7 @@ fn exhausted<S: AppStorage>(mut server: Server<S>) {
             .unwrap();
         VERSION.with(|v| v.set(2));
         server.signal(&["value"]);
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         assert_eq!(
             server.poll(due),
             Err(coaptic::Error::Oscore(
@@ -643,7 +645,7 @@ fn replace_registration<S: AppStorage>(mut server: Server<S>, protected: bool, c
         let first = pending(&server, key);
         VERSION.with(|v| v.set(2));
         server.signal(&["value"]);
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         server.poll(due).unwrap();
         let replaced = pending(&server, key);
         deliver(
@@ -784,7 +786,7 @@ fn refused_staging_ingress<S: AppStorage>(mut server: Server<S>, protected: bool
         server.signal(&["value"]);
         server.transport_mut().incoming = Some(control_frame(first.message_id(), rst, OWNER));
         assert!(matches!(
-            server.poll(first.rto().next_timeout_ms()),
+            server.poll(first.rto().next_timeout_ms().unwrap()),
             Err(coaptic::Error::Message(_))
         ));
         assert!(
@@ -841,7 +843,7 @@ fn pinned_retains_row<S: AppStorage>(mut server: Server<S>, protected: bool) {
         let original = server.engine().observe_interest(row_id).unwrap();
         #[cfg(feature = "oscore")]
         let sender_before = server.oscore().map(|ctx| ctx.sender_seq());
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         assert_eq!(
             server.poll(due),
             Err(coaptic::Error::Io(coaptic::storage::DatagramIoError::Slot(
@@ -912,7 +914,7 @@ fn pinned_delayed_reset<S: AppStorage>(mut server: Server<S>, protected: bool) {
         let first = pending(&server, key);
         VERSION.with(|v| v.set(2));
         server.signal(&["value"]);
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         server.poll(due).unwrap();
         let current = pending(&server, key);
         let row_id = server.engine().lookup_observe(key).unwrap();
@@ -972,7 +974,7 @@ fn terminal_replacement<S: AppStorage>(mut server: Server<S>, protected: bool, m
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
         let old = pending(&server, key);
-        let due = old.rto().next_timeout_ms();
+        let due = old.rto().next_timeout_ms().unwrap();
         VERSION.with(|v| v.set(mode));
         server.signal(&["value"]);
         server.poll(due).unwrap();
@@ -1092,7 +1094,7 @@ fn replace_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, f
         let old = pending(&server, key);
         VERSION.with(|v| v.set(3));
         server.signal(&["value"]);
-        let due = old.rto().next_timeout_ms();
+        let due = old.rto().next_timeout_ms().unwrap();
         server.poll(due).unwrap();
         let first = pending(&server, key);
         assert_eq!(first.tx_slot(), old.tx_slot());
@@ -1112,7 +1114,7 @@ fn replace_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, f
         }
         VERSION.with(|v| v.set(7));
         server.signal(&["value"]);
-        let due = first.rto().next_timeout_ms();
+        let due = first.rto().next_timeout_ms().unwrap();
         server.poll(due).unwrap();
         let second = pending(&server, key);
         assert_eq!(second.tx_slot(), first.tx_slot());
@@ -1151,7 +1153,9 @@ fn replace_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, f
             // A smaller representation releases its obsolete retained body.
             VERSION.with(|v| v.set(2));
             server.signal(&["value"]);
-            server.poll(second.rto().next_timeout_ms()).unwrap();
+            server
+                .poll(second.rto().next_timeout_ms().unwrap())
+                .unwrap();
         }
         assert!(server.engine().tx_body_transfer(body).is_none());
         for id in occupied.into_iter().flatten() {
@@ -1198,7 +1202,9 @@ fn blockwise_refusal<S: AppStorage>(mut server: Server<S, true>, pin_body: bool)
         let body = if pin_body {
             VERSION.with(|v| v.set(3));
             server.signal(&["value"]);
-            server.poll(current.rto().next_timeout_ms()).unwrap();
+            server
+                .poll(current.rto().next_timeout_ms().unwrap())
+                .unwrap();
             current = pending(&server, key);
             let id = server
                 .engine()
@@ -1225,7 +1231,11 @@ fn blockwise_refusal<S: AppStorage>(mut server: Server<S, true>, pin_body: bool)
             .engine()
             .observe_interest(server.engine().lookup_observe(key).unwrap())
             .unwrap();
-        assert!(server.poll(current.rto().next_timeout_ms()).is_err());
+        assert!(
+            server
+                .poll(current.rto().next_timeout_ms().unwrap())
+                .is_err()
+        );
         assert_eq!(pending(&server, key).message_id(), current.message_id());
         assert_eq!(
             server
@@ -1281,7 +1291,7 @@ fn suppressed_terminal<S: AppStorage>(
                 server.notify_confirmable(3, &["value"], source()).unwrap(),
                 1
             );
-            let due = pending(&server, key).rto().next_timeout_ms();
+            let due = pending(&server, key).rto().next_timeout_ms().unwrap();
             let sent = server.transport().sends;
             VERSION.with(|v| v.set(4));
             server.signal(&["value"]);
@@ -1328,7 +1338,7 @@ fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, 
         let old = pending(&server, key);
         VERSION.with(|v| v.set(6));
         server.signal(&["value"]);
-        let due = old.rto().next_timeout_ms();
+        let due = old.rto().next_timeout_ms().unwrap();
         server.poll(due).unwrap();
         assert!(server.engine().lookup_observe(key).is_none());
         let terminal = server.engine().pending_con(old.tx_slot()).unwrap();

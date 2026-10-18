@@ -448,6 +448,55 @@ where
         self.tx.replace_pending(expected, bytes)
     }
 
+    fn reserve_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<PendingCon> {
+        if !self.tx.is_occupied(id) {
+            return None;
+        }
+        if let Some(current) = self.pending_con(id) {
+            return (!current.rto().is_started()
+                && current.message_id() == message_id
+                && current.endpoint() == endpoint)
+                .then_some(current);
+        }
+        let outstanding =
+            outstanding_pending(self.tx.slot_count(), endpoint, |sid| self.pending_con(sid));
+        record_admission(None, message_id, endpoint, outstanding)?;
+        DatagramBytes::set_endpoint(&mut self.tx, id, endpoint).ok()?;
+        DatagramBytes::set_pending(&mut self.tx, id, message_id, PendingRto::reserved()).ok()?;
+        self.pending_con(id)
+    }
+
+    fn commit_pending_con(
+        &mut self,
+        expected: PendingCon,
+        now_ms: u64,
+        jitter_ms: u32,
+    ) -> Option<PendingCon> {
+        if expected.rto().is_started() || self.pending_con(expected.tx_slot()) != Some(expected) {
+            return None;
+        }
+        DatagramBytes::set_pending(
+            &mut self.tx,
+            expected.tx_slot(),
+            expected.message_id(),
+            PendingRto::new(now_ms, jitter_ms),
+        )
+        .ok()?;
+        self.pending_con(expected.tx_slot())
+    }
+
+    fn cancel_pending_con(&mut self, expected: PendingCon) -> bool {
+        if expected.rto().is_started() || self.pending_con(expected.tx_slot()) != Some(expected) {
+            return false;
+        }
+        DatagramBytes::clear_pending_mid(&mut self.tx, expected.tx_slot()).is_ok()
+    }
+
     fn record_pending_con(
         &mut self,
         id: SlotId,
@@ -460,6 +509,9 @@ where
             return None;
         }
         let existing = self.pending_con(id);
+        if existing.is_some_and(|pending| !pending.rto().is_started()) {
+            return None;
+        }
         let outstanding =
             outstanding_pending(self.tx.slot_count(), endpoint, |sid| self.pending_con(sid));
         if !record_admission(existing, message_id, endpoint, outstanding)? {

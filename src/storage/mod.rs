@@ -54,7 +54,7 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
-pub use async_io::AsyncDatagramIo;
+pub use async_io::{AsyncDatagramIo, InitialConSendError};
 pub(crate) use block::classic_block2_range;
 pub use block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,

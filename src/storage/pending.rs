@@ -96,6 +96,7 @@ impl PendingCon {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PendingRto {
     attempts: u8,
+    started: bool,
     next_timeout_ms: u64,
     timeout_ms: u32,
 }
@@ -108,9 +109,26 @@ impl PendingRto {
         let timeout_ms = Transmission::initial_timeout_ms(jitter_ms);
         Self {
             attempts: 0,
+            started: true,
             timeout_ms,
             next_timeout_ms: now_ms.saturating_add(timeout_ms as u64),
         }
+    }
+
+    pub(crate) const fn reserved() -> Self {
+        Self {
+            attempts: 0,
+            started: false,
+            next_timeout_ms: 0,
+            timeout_ms: 0,
+        }
+    }
+
+    /// Whether transport acceptance started this CON's retransmission timer.
+    /// A reservation counts against NSTART but cannot match ACK/RST or expire.
+    #[must_use]
+    pub const fn is_started(self) -> bool {
+        self.started
     }
 
     /// Retransmission counter (0 after the first send).
@@ -119,10 +137,14 @@ impl PendingRto {
         self.attempts
     }
 
-    /// Absolute millisecond time when this timeout fires (`now_ms` domain).
+    /// Absolute timeout in the caller's clock domain, or `None` before send.
     #[must_use]
-    pub const fn next_timeout_ms(self) -> u64 {
-        self.next_timeout_ms
+    pub const fn next_timeout_ms(self) -> Option<u64> {
+        if self.started {
+            Some(self.next_timeout_ms)
+        } else {
+            None
+        }
     }
 
     /// Current timeout duration in milliseconds.
@@ -134,7 +156,7 @@ impl PendingRto {
     /// Whether `now_ms` is at or past [`Self::next_timeout_ms`].
     #[must_use]
     pub const fn is_due(self, now_ms: u64) -> bool {
-        now_ms >= self.next_timeout_ms
+        self.started && now_ms >= self.next_timeout_ms
     }
 
     /// After a due timeout: doubled timeout and incremented counter, or
@@ -144,12 +166,13 @@ impl PendingRto {
     /// schedule; the core does not burst catch-up).
     #[must_use]
     pub const fn next_attempt(self, now_ms: u64) -> Option<Self> {
-        if self.attempts >= Transmission::MAX_RETRANSMIT {
+        if !self.started || self.attempts >= Transmission::MAX_RETRANSMIT {
             return None;
         }
         let timeout_ms = self.timeout_ms.saturating_mul(2);
         Some(Self {
             attempts: self.attempts.saturating_add(1),
+            started: true,
             timeout_ms,
             next_timeout_ms: now_ms.saturating_add(timeout_ms as u64),
         })
@@ -200,6 +223,37 @@ pub trait PendingCons {
         Err(PendingReplaceError::Unsupported)
     }
 
+    /// Reserve occupied TX `id` before an asynchronous first CON send.
+    ///
+    /// Counts against endpoint NSTART but starts no timer and cannot match
+    /// ACK/RST. An identical reservation is idempotent; any other existing
+    /// pending owner or exhausted endpoint capacity refuses without mutation.
+    /// Bytes remain caller-owned and must already contain the intended CON.
+    fn reserve_pending_con(
+        &mut self,
+        id: SlotId,
+        endpoint: Endpoint,
+        message_id: MessageId,
+    ) -> Option<PendingCon>;
+
+    /// Start RTO after the transport accepted the reserved CON in full.
+    ///
+    /// Refuses unless the exact reservation snapshot still owns its slot.
+    /// `now_ms` is acceptance time, not reservation time. This does not send.
+    /// Reservation snapshots are not generation handles: do not recreate an
+    /// identical slot/MID snapshot while an earlier selection remains live.
+    fn commit_pending_con(
+        &mut self,
+        expected: PendingCon,
+        now_ms: u64,
+        jitter_ms: u32,
+    ) -> Option<PendingCon>;
+
+    /// Cancel only the exact untransmitted reservation, releasing NSTART.
+    /// The TX slot and its bytes stay occupied for the caller to release/reuse.
+    /// A sent, replaced or removed snapshot refuses without mutation.
+    fn cancel_pending_con(&mut self, expected: PendingCon) -> bool;
+
     /// Mark occupied TX `id` as pending and start RTO.
     ///
     /// `now_ms` is the caller clock (no OS time in the core). `jitter_ms`
@@ -223,7 +277,8 @@ pub trait PendingCons {
     /// Clear pending and RTO for the matching TX slot. The slot stays occupied.
     fn take_pending_con(&mut self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId>;
 
-    /// Pending CON view at TX `id`, if that slot is marked pending.
+    /// Reserved or transmitted CON view at TX `id`, if marked.
+    /// Inspect [`PendingRto::is_started`] before using its timer deadline.
     fn pending_con(&self, id: SlotId) -> Option<PendingCon>;
 
     /// Select a due pending CON without changing its RTO or selection cursor.
@@ -265,7 +320,7 @@ pub(crate) fn validate_replacement(
     capacity: usize,
     pinned: bool,
 ) -> Result<PendingCon, PendingReplaceError> {
-    if current != Some(expected) {
+    if current != Some(expected) || !expected.rto().is_started() {
         return Err(PendingReplaceError::Stale);
     }
     if pinned {

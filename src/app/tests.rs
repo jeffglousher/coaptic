@@ -14099,7 +14099,7 @@ fn supersession_mid_exhaustion_refuses_and_retained_block2_can_shrink() {
             }
         }
         assert_eq!(app.signal(&["sensors", "temp"]), 1);
-        let due = original.rto().next_timeout_ms();
+        let due = original.rto().next_timeout_ms().unwrap();
         if block_body {
             app.poll(due).unwrap();
             assert_ne!(last_wide(&app).message_id(), mid);
@@ -15095,7 +15095,7 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
         .observe_interest(app.engine.lookup_observe(key).unwrap())
         .unwrap();
     assert_eq!(app.engine.mark_observe_resource_deleted(row.resource()), 1);
-    let due = original.rto().next_timeout_ms();
+    let due = original.rto().next_timeout_ms().unwrap();
     app.poll(due).unwrap();
     let reply = last_wide(&app);
     assert_eq!(reply.code(), Code::NOT_FOUND);
