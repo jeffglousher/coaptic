@@ -1314,7 +1314,7 @@ fn error_only_no_response_preserves_notifications_and_retires_suppressed_termina
     }
 }
 
-fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, finish: bool) {
+fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, mode: u8) {
     let mut client = block_client(protected);
     no_alloc(|| {
         let call = client.get("value").observe().to(OWNER).send(0).unwrap();
@@ -1342,7 +1342,34 @@ fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, 
             )
             .unwrap();
         client.transport_mut().incoming = Some(server.transport().last);
-        if !finish {
+        if mode == 2 {
+            VERSION.with(|v| v.set(2));
+            let renewed = client
+                .get("value")
+                .to(OWNER)
+                .reregister_call(call)
+                .send(due + 1)
+                .unwrap();
+            server.transport_mut().incoming = Some(client.transport().last);
+            server.poll(due + 2).unwrap();
+            assert!(server.engine().tx_body_transfer(body).is_none());
+            assert!(server.engine().pending_con(old.tx_slot()).is_none());
+            assert!(server.engine().lookup_observe(key).is_some());
+            client.transport_mut().incoming = Some(server.transport().last);
+            client.poll(due + 3).unwrap();
+            let _ = client.take_response(renewed);
+            server
+                .notify_confirmable(due + 4, &["value"], source())
+                .unwrap();
+            client.transport_mut().incoming = Some(server.transport().last);
+            client.poll(due + 5).unwrap();
+            assert_eq!(
+                client.take_response(renewed).unwrap().unwrap().payload(),
+                b"latest complete representation"
+            );
+            return;
+        }
+        if mode == 0 {
             control(&mut server, terminal.message_id(), false, OWNER, due + 1);
             let expires = due + u64::from(coaptic::message::Transmission::EXCHANGE_LIFETIME_MS);
             assert!(server.next_timeout().is_some_and(|at| at <= expires));
@@ -1377,10 +1404,10 @@ fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, 
 #[test]
 fn terminal_block2_replacement_retains_error_and_selection_until_completion() {
     for protected in [false, cfg!(feature = "oscore")] {
-        for finish in [false, true] {
-            terminal_blocks(fixed_blocks(protected), protected, finish);
+        for mode in 0..3 {
+            terminal_blocks(fixed_blocks(protected), protected, mode);
             #[cfg(feature = "alloc")]
-            terminal_blocks(allocated_blocks(protected), protected, finish);
+            terminal_blocks(allocated_blocks(protected), protected, mode);
         }
     }
 }
