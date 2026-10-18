@@ -16,6 +16,10 @@ use super::{
     TrustCommitError, TrustError, TrustGrant, TrustRecord,
 };
 
+#[path = "managed_subscription.rs"]
+mod subscription;
+pub use subscription::ManagedSubscription;
+
 const DATAGRAM_BYTES: usize = 1472;
 const MID_RANGES: usize = 8;
 const BOOTSTRAP_MIDS: usize = 16;
@@ -432,7 +436,7 @@ pub struct ManagedConnection<
     state: Option<State<P, T, ROUTES, DEFERRED>>,
     endpoint: Endpoint,
     randomness: RandomSource,
-    observed: [Option<(&'static str, ObserveSource)>; ROUTES],
+    observed: [Option<(&'static str, Option<ObserveSource>)>; ROUTES],
     last_now: u64,
     refresh_blocked: bool,
     validity: PolicyValidity,
@@ -592,6 +596,20 @@ where
         &mut self,
         path: &'static str,
         source: ObserveSource,
+    ) -> Result<(), ManagedError<T::Error>> {
+        self.configure_observable(path, Some(source))
+    }
+
+    /// Configure an observable path whose snapshots are supplied by `notify`.
+    /// The dispatch callback must include Observe on a successful registration.
+    pub fn observable_manual(&mut self, path: &'static str) -> Result<(), ManagedError<T::Error>> {
+        self.configure_observable(path, None)
+    }
+
+    fn configure_observable(
+        &mut self,
+        path: &'static str,
+        source: Option<ObserveSource>,
     ) -> Result<(), ManagedError<T::Error>> {
         if self.grant.is_some() {
             return Err(ManagedError::Busy);
@@ -1217,7 +1235,10 @@ where
             .randomness(self.randomness)
             .oscore(context);
         for &(path, source) in self.observed.iter().flatten() {
-            builder = builder.route_path(path, MethodRouter::new().observe(source));
+            let route = source.map_or(MethodRouter::new(), |source| {
+                MethodRouter::new().observe(source)
+            });
+            builder = builder.route_path(path, route);
         }
         let mut app = builder
             .bind(ConnectionIo::new(None, now))
@@ -1294,7 +1315,7 @@ where
 }
 
 fn observable_path<const ROUTES: usize>(
-    observed: &[Option<(&'static str, ObserveSource)>; ROUTES],
+    observed: &[Option<(&'static str, Option<ObserveSource>)>; ROUTES],
     path: &[&str],
 ) -> bool {
     observed.iter().flatten().any(|(registered, _)| {

@@ -63,7 +63,7 @@ pub use local_pairing::{
 };
 pub use managed::{
     ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError, ManagedIoError,
-    ManagedRefreshError, PolicyValidity,
+    ManagedRefreshError, ManagedSubscription, PolicyValidity,
 };
 pub use pairing_transport::{CommissioningDecoder, CommissioningReply, CommissioningRequest};
 pub use peer_error::{PeerError, PeerErrorCode};
