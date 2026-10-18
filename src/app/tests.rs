@@ -15051,3 +15051,54 @@ fn selected_observe_isolates_payloads_declines_oversize_and_reclaims_on_cancel()
     app.poll(12).unwrap();
     assert_eq!(app.signal(&["obs"]), 1);
 }
+
+#[test]
+fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_wide(
+        Code::GET,
+        &["sensors", "temp"],
+        &[Opt::observe_register()],
+        0x1001,
+    );
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("sensors/temp", get(get_obs).observe(obs_snapshot))
+        .allow_unprotected()
+        .bind(WideLoopback {
+            inbox: Some((peer, wire, n)),
+            ..WideLoopback::default()
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let key = ObserveKey::new(last_wide(&app).token(), peer);
+    app.notify_confirmable(
+        1,
+        &["sensors", "temp"],
+        Response::content(&[7; 2000])
+            .content_format(ContentFormat::TEXT_PLAIN)
+            .etag(b"large"),
+    )
+    .unwrap();
+    let mid = last_wide(&app).message_id();
+    let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
+    let original = app.engine.pending_con(slot).unwrap();
+    let block_key = BlockKey::new(key.token(), peer);
+    assert!(super::response_body_for(&app.engine, block_key).is_some());
+    let row = app
+        .engine
+        .observe_interest(app.engine.lookup_observe(key).unwrap())
+        .unwrap();
+    assert_eq!(app.engine.mark_observe_resource_deleted(row.resource()), 1);
+    let due = original.rto().next_timeout_ms();
+    app.poll(due).unwrap();
+    let reply = last_wide(&app);
+    assert_eq!(reply.code(), Code::NOT_FOUND);
+    assert_ne!(reply.message_id(), mid);
+    assert_eq!(reply.observe(), None);
+    assert!(app.engine.lookup_observe(key).is_none());
+    assert!(super::response_body_for(&app.engine, block_key).is_none());
+    let terminal = app.engine.pending_con(slot).unwrap();
+    assert_eq!(terminal.rto(), original.rto().next_attempt(due).unwrap());
+}

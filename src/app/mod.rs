@@ -2296,8 +2296,9 @@ where
     /// retransmission deadline. A successful single-datagram source response
     /// replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
     /// the same TX slot, retry count and backoff. Without a signal, retries use
-    /// identical bytes. Block2, terminal and Content-Format-changing replacements
-    /// are refused; the due attempt still uses the retained packet.
+    /// identical bytes. Terminal responses end the relation while retaining CON
+    /// delivery; a Content-Format change terminates it with 4.06. Successful
+    /// Block2 replacements are refused; the due attempt uses the retained packet.
     /// Staging refusal does not consume the signal or extend the retry budget.
     ///
     /// Superseded ACKs do not complete or prolong the current chain. Up to four
@@ -3826,21 +3827,29 @@ where
     if deferred.blocks_observe(interest.key()) {
         return Ok(());
     }
-    let Some(source) = site.observe_source(interest.resource()) else {
-        return Ok(());
-    };
-    let Some(mut response) = source.snapshot(&interest, oscore.association(interest.endpoint()))
-    else {
-        return Ok(());
+    let mut response = if interest.is_deleted() {
+        Response::not_found()
+    } else {
+        let Some(source) = site.observe_source(interest.resource()) else {
+            return Ok(());
+        };
+        let Some(response) = source.snapshot(&interest, oscore.association(interest.endpoint()))
+        else {
+            return Ok(());
+        };
+        response
     };
     response.validate().map_err(Error::Response)?;
-    if interest.is_deleted()
-        || !response.code().is_success()
-        || response.format() != interest.content_format()
-        || response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint())).is_some()
-        || interest
-            .block2_max_szx()
-            .is_some_and(|szx| response.payload().len() > (1usize << (szx + 4)))
+    if response.code().is_success() && response.format() != interest.content_format() {
+        response = Response::new(Code::NOT_ACCEPTABLE);
+    }
+    let terminal = !response.code().is_success();
+    if !terminal
+        && (response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
+            .is_some()
+            || interest
+                .block2_max_szx()
+                .is_some_and(|szx| response.payload().len() > (1usize << (szx + 4))))
     {
         return Err(Error::ObserveSupersessionUnsupported);
     }
@@ -3851,7 +3860,11 @@ where
     let replacement = interest
         .supersede_con(now_ms, mid)
         .ok_or(Error::Saturated)?;
-    response.set_observe(replacement.seq());
+    response = if terminal {
+        response.without_observe()
+    } else {
+        response.observe(replacement.seq())
+    };
     let mut wire = S::TxScratch::default();
     let cf = response.format().map(crate::ContentFormat::encode);
     let age = response.max_age_secs().map(EncodedUint::new);
@@ -3861,7 +3874,9 @@ where
         if let Some(tag) = response.etag_bytes() {
             push_opt(&mut options, Opt::etag(tag))?;
         }
-        push_opt(&mut options, Opt::observe(&seq))?;
+        if !terminal {
+            push_opt(&mut options, Opt::observe(&seq))?;
+        }
         if let Some(ref value) = cf {
             push_opt(&mut options, Opt::content_format(value))?;
         }
@@ -3890,7 +3905,14 @@ where
                 Error::ObserveSupersessionUnsupported
             }
             _ => Error::Saturated,
-        })
+        })?;
+    if terminal {
+        // The pending packet retains delivery/retry ownership after the relation
+        // ends. Old notification ACKs cannot acknowledge its new Message ID.
+        release_observe_response_body(engine, interest);
+        let _ = engine.take_observe(interest.key());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6379,8 +6401,8 @@ pub enum Error<E> {
     ObserveRefreshMismatch,
     /// Observe registration/cancellation is defined only for GET and FETCH.
     ObserveMethodUnsupported,
-    /// Signaled CON replacement needs a successful single-datagram representation
-    /// with unchanged Content-Format. Original bytes and delivery budget remain.
+    /// Signaled CON replacement needs blockwise staging or backend support.
+    /// Original bytes and delivery budget remain.
     ObserveSupersessionUnsupported,
     /// Multiple subscriptions match; select one with `deregister_call`.
     ObserveCancellationAmbiguous,
@@ -6450,7 +6472,7 @@ where
             Self::Path => f.write_str("uri-path has too many segments"),
             Self::ObserveMethodUnsupported => f.write_str("Observe requires GET or FETCH"),
             Self::ObserveSupersessionUnsupported => f.write_str(
-                "pending Observe replacement requires a successful single-datagram representation",
+                "pending Observe replacement requires blockwise staging or backend support",
             ),
             Self::ObserveRefreshMismatch => {
                 f.write_str("Observe refresh does not match a live subscription")

@@ -481,28 +481,28 @@ fn refusal<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
 }
 #[test]
 fn fixed_refusal_and_recovery() {
-    for mode in [3, 4, 5, 6] {
+    for mode in [3, 6] {
         refusal(fixed(false), false, mode);
     }
 }
 #[cfg(feature = "alloc")]
 #[test]
 fn allocated_refusal_and_recovery() {
-    for mode in [3, 4, 5, 6] {
+    for mode in [3, 6] {
         refusal(allocated(false), false, mode);
     }
 }
 #[cfg(feature = "oscore")]
 #[test]
 fn protected_refusal_and_recovery() {
-    for mode in [3, 4, 5, 6] {
+    for mode in [3, 6] {
         refusal(fixed(true), true, mode);
     }
 }
 #[cfg(all(feature = "alloc", feature = "oscore"))]
 #[test]
 fn allocated_protected_refusal_and_recovery() {
-    for mode in [3, 4, 5, 6] {
+    for mode in [3, 6] {
         refusal(allocated(true), true, mode);
     }
 }
@@ -766,13 +766,13 @@ fn refused_staging_ingress<S: AppStorage>(mut server: Server<S>, protected: bool
     no_alloc(|| {
         let (_, key) = registered(&mut server, &mut client);
         let first = pending(&server, key);
-        VERSION.with(|v| v.set(4)); // terminal cannot replace the pending CON
+        VERSION.with(|v| v.set(3)); // oversized datagram cannot replace the pending CON
         server.signal(&["value"]);
         server.transport_mut().incoming = Some(control_frame(first.message_id(), rst, OWNER));
-        assert_eq!(
+        assert!(matches!(
             server.poll(first.rto().next_timeout_ms()),
-            Err(coaptic::Error::ObserveSupersessionUnsupported)
-        );
+            Err(coaptic::Error::Message(_))
+        ));
         assert!(
             server
                 .engine()
@@ -951,4 +951,52 @@ fn protected_pinned_delayed_reset_preserves_chain_and_releases_rx() {
 #[test]
 fn allocated_protected_pinned_delayed_reset_preserves_chain_and_releases_rx() {
     pinned_delayed_reset(allocated(true), true);
+}
+
+fn terminal_replacement<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
+    let mut client = client(protected);
+    no_alloc(|| {
+        let (call, key) = registered(&mut server, &mut client);
+        let old = pending(&server, key);
+        let due = old.rto().next_timeout_ms();
+        VERSION.with(|v| v.set(mode));
+        server.signal(&["value"]);
+        server.poll(due).unwrap();
+        let packet = server.transport().last;
+        let mid = decode(&packet.bytes[..packet.len]).unwrap().message_id();
+        assert_ne!(mid, old.message_id());
+        assert!(server.engine().lookup_observe(key).is_none());
+        let next = server.engine().pending_con(old.tx_slot()).unwrap();
+        assert_eq!(next.rto(), old.rto().next_attempt(due).unwrap());
+        // A delayed old ACK must not retire the terminal replacement.
+        control(&mut server, old.message_id(), false, OWNER, due + 1);
+        assert!(server.engine().pending_con(old.tx_slot()).is_some());
+        client.transport_mut().incoming = Some(packet);
+        client.poll(due + 2).unwrap();
+        let reply = client.take_response(call).unwrap().unwrap();
+        assert_eq!(
+            reply.code(),
+            if mode == 5 {
+                coaptic::Code::NOT_ACCEPTABLE
+            } else {
+                coaptic::Code::NOT_FOUND
+            }
+        );
+        assert!(reply.observe_seq().is_none());
+        control(&mut server, mid, false, OWNER, due + 3);
+        assert!(server.engine().pending_con(old.tx_slot()).is_none());
+    });
+}
+
+#[test]
+fn terminal_supersession_ends_relation_and_preserves_delivery_ownership() {
+    for mode in [4, 5] {
+        terminal_replacement(fixed(false), false, mode);
+        #[cfg(feature = "alloc")]
+        terminal_replacement(allocated(false), false, mode);
+        #[cfg(feature = "oscore")]
+        terminal_replacement(fixed(true), true, mode);
+        #[cfg(all(feature = "alloc", feature = "oscore"))]
+        terminal_replacement(allocated(true), true, mode);
+    }
 }
