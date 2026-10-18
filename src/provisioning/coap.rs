@@ -707,6 +707,40 @@ impl<'a> CoapProvisioner<'a> {
         }
     }
 
+    // Pending output does not mask later expirations while the async adapter
+    // waits for writable readiness. Every candidate is filtered independently.
+    fn next_timeout_after(&self, now: u64) -> Option<u64> {
+        let mut next = None;
+        let mut consider = |due: Option<u64>| {
+            if let Some(due) = due.filter(|due| *due > now) {
+                next = Some(next.map_or(due, |old: u64| old.min(due)));
+            }
+        };
+        consider(self.expires);
+        consider(self.control.as_ref().map(|control| control.expires));
+        match &self.role {
+            Role::Client(client) => {
+                consider(client.retry.next_retry);
+                consider(client.retry.wait_until);
+                for ack in client.acks.iter().flatten() {
+                    consider(Some(ack.expires));
+                }
+                if let ClientState::LocalAbort { request, .. } = &client.state {
+                    consider(request.next_timeout_after(now));
+                }
+            }
+            Role::Server(server) => {
+                for exchange in server.exchanges.iter().flatten() {
+                    consider(Some(exchange.expires));
+                }
+                if let ServerState::FinalAbort(receipt) = &server.state {
+                    consider(receipt.next_timeout_after(now));
+                }
+            }
+        }
+        next
+    }
+
     /// Sends pending cached bytes, receives at most one datagram, then sends any
     /// generated reply or due retry. Use an exclusively owned bootstrap transport.
     /// Entropy is used only by a responder's first accepted handshake attempt;
@@ -826,6 +860,7 @@ impl<'a> CoapProvisioner<'a> {
 
     /// Sends cached replies or a due Confirmable retry without receiving traffic.
     /// A failed or short send retains exactly the same bytes for the next call.
+    #[coaptic_io::dual_io(flush_protocol_async, bound(crate::app::async_server::ProtocolIo), visibility(pub(crate)), calls(flush_control => flush_control_async, send => send_async, completion_time => completion_time_async), methods(flush => flush_protocol_async))]
     pub fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -883,7 +918,7 @@ impl<'a> CoapProvisioner<'a> {
                         return Ok(self.status(progress, false));
                     }
                     send(io, self.endpoint, client.request.as_slice())?;
-                    if let Err(failure) = client.retry.sent(now_ms) {
+                    if let Err(failure) = client.retry.sent(completion_time(io, now_ms)) {
                         self.failure = Some(failure);
                         return Err(failure.error());
                     }
@@ -1643,6 +1678,7 @@ fn queue_control(
     Ok(true)
 }
 
+#[coaptic_io::dual_io(flush_control_async, bound(crate::app::async_server::ProtocolIo), calls(send => send_async))]
 fn flush_control<T: DatagramIo>(
     control: &mut Option<Control>,
     io: &mut T,
@@ -1671,6 +1707,7 @@ fn flush_control<T: DatagramIo>(
     Ok(true)
 }
 
+#[coaptic_io::dual_io(send_async, bound(crate::app::async_server::ProtocolIo), methods(send => send))]
 fn send<T: DatagramIo>(
     io: &mut T,
     endpoint: Endpoint,
@@ -1698,3 +1735,10 @@ fn widen<E>(error: PollError) -> PollError<E> {
 #[cfg(test)]
 #[path = "coap_tests.rs"]
 mod tests;
+
+fn completion_time<T>(_: &T, now: u64) -> u64 {
+    now
+}
+async fn completion_time_async<T: crate::app::async_server::ProtocolIo>(io: &T, _: u64) -> u64 {
+    io.completed_at()
+}

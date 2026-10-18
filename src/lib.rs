@@ -135,7 +135,7 @@
 //! - `std` — enable OS networking and standard error integration; independent of `alloc`.
 //! - `oscore` — pairwise OSCORE (RFC 8613). Pulls RustCrypto `aes` /
 //!   `ccm` / `hkdf` / `sha2`. Enabled by default without `std` or an allocator.
-//!   `--no-default-features` retains the zero-dependency Engine and requires
+//!   `--no-default-features` retains an Engine without runtime dependencies and requires
 //!   explicit unprotected opt-out for App construction without cryptography.
 //! - `edhoc` — optional pinned P-256 EDHOC method 3 / suites 2 and 3 provisioning.
 //!   Implies `oscore`, stays `no_std` and uses fixed storage without an allocator.

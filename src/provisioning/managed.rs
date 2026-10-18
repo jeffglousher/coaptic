@@ -8,7 +8,10 @@ use crate::app::{
 };
 use crate::error::BuildError;
 use crate::message::{ContentFormat, MessageId, OptionNumber, Transmission, Type, decode};
-use crate::storage::{DatagramIo, DedupKey, Endpoint, MemoryLayout, MemoryProfile, SlotId};
+use crate::storage::{
+    AsyncDatagramIo, DatagramIo, DatagramTransport, DedupKey, Endpoint, MemoryLayout,
+    MemoryProfile, SlotId,
+};
 use crate::{App, profiles};
 
 use super::{
@@ -16,8 +19,11 @@ use super::{
     TrustCommitError, TrustError, TrustGrant, TrustRecord,
 };
 
+#[path = "managed_async.rs"]
+mod asynchronous;
 #[path = "managed_subscription.rs"]
 mod subscription;
+pub use asynchronous::ManagedAsyncError;
 pub use subscription::ManagedSubscription;
 
 const DATAGRAM_BYTES: usize = 1472;
@@ -266,7 +272,9 @@ impl<T: DatagramIo> ConnectionIo<T> {
         }
         Ok(())
     }
+}
 
+impl<T: DatagramTransport> ConnectionIo<T> {
     fn reserve(&mut self, mid: MessageId) -> Result<(), ManagedIoError<T::Error>> {
         let expires = self
             .now
@@ -323,7 +331,7 @@ impl<T: DatagramIo> ConnectionIo<T> {
     }
 }
 
-impl<T: DatagramIo> crate::storage::DatagramTransport for ConnectionIo<T> {
+impl<T: DatagramTransport> crate::storage::DatagramTransport for ConnectionIo<T> {
     type Error = ManagedIoError<T::Error>;
     fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
         self.raw.as_mut().is_some_and(|raw| raw.fill_random(bytes))
@@ -356,6 +364,51 @@ impl<T: DatagramIo> DatagramIo for ConnectionIo<T> {
             .as_mut()
             .expect("managed transport owned")
             .send(endpoint, bytes)
+            .map_err(ManagedIoError::Transport)
+    }
+}
+
+impl<T: AsyncDatagramIo> ConnectionIo<T> {
+    async fn receive_async(&mut self) -> Result<(), ManagedIoError<T::Error>> {
+        if self.queued.is_some() {
+            return Ok(());
+        }
+        let (len, endpoint) = self
+            .raw
+            .as_mut()
+            .expect("managed transport owned")
+            .recv(&mut self.bytes)
+            .await
+            .map_err(ManagedIoError::Transport)?;
+        if len > self.bytes.len() {
+            return Err(ManagedIoError::DatagramLength);
+        }
+        self.queued = Some((len, endpoint));
+        Ok(())
+    }
+}
+
+impl<T: AsyncDatagramIo> AsyncDatagramIo for ConnectionIo<T> {
+    async fn recv(&mut self, output: &mut [u8]) -> Result<(usize, Endpoint), Self::Error> {
+        self.receive_async().await?;
+        let (len, endpoint) = self.queued.take().expect("received managed packet");
+        if len > output.len() {
+            return Err(ManagedIoError::DatagramLength);
+        }
+        output[..len].copy_from_slice(&self.bytes[..len]);
+        Ok((len, endpoint))
+    }
+    async fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if let Ok(message) = decode(bytes)
+            && matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+        {
+            self.reserve(message.message_id())?;
+        }
+        self.raw
+            .as_mut()
+            .expect("managed transport owned")
+            .send(endpoint, bytes)
+            .await
             .map_err(ManagedIoError::Transport)
     }
 }
@@ -447,7 +500,7 @@ pub struct ManagedConnection<
     _profile: PhantomData<P>,
 }
 
-impl<'a, T: DatagramIo, P, const DEFERRED: usize, const CACHES: usize, const ROUTES: usize>
+impl<'a, T: DatagramTransport, P, const DEFERRED: usize, const CACHES: usize, const ROUTES: usize>
     ManagedConnection<'a, T, P, DEFERRED, CACHES, ROUTES>
 where
     P: MemoryProfile + MemoryLayout<false> + AppAssembled<false>,
@@ -757,7 +810,10 @@ where
         &mut self,
         now_ms: u64,
         dispatch: impl FnMut(&Principal, Request<'_>, Option<ManagedDeferredReply>) -> Response<'static>,
-    ) -> Result<(), ManagedError<T::Error>> {
+    ) -> Result<(), ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.prepare(now_ms)?;
         if self.external_bootstrap {
             let io = state_io(self.state.as_mut().expect("managed state"));
@@ -771,108 +827,12 @@ where
             }
             return self.poll_app(now_ms, dispatch);
         }
-        let pending_con = self.has_pending_con();
         state_io(self.state.as_mut().expect("managed state"))
             .receive()
             .map_err(|error| {
                 ManagedError::Recovery(RecoveryError::Bootstrap(super::PollError::Io(error)))
             })?;
-        let app_mid_collision = match self.state.as_ref().expect("managed state") {
-            State::Established(app) => app.transport().queued.is_some_and(|(len, from)| {
-                decode(&app.transport().bytes[..len]).is_ok_and(|message| {
-                    matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
-                        && app
-                            .engine()
-                            .lookup_dedup(DedupKey::new(message.message_id(), from))
-                            .is_some()
-                })
-            }),
-            State::Waiting(_) => false,
-        };
-        let Self {
-            trust,
-            grant,
-            recovery,
-            state,
-            endpoint,
-            randomness,
-            ..
-        } = self;
-        let io = state_io(state.as_mut().expect("managed state"));
-        if let Some((len, from)) = io.queued {
-            let bootstrap = decode(&io.bytes[..len]).is_ok_and(|message| {
-                if message
-                    .options()
-                    .any(|option| option.number() == OptionNumber::OSCORE)
-                {
-                    return false;
-                }
-                let format = message
-                    .content_format()
-                    .and_then(Result::ok)
-                    .map(|format| format.get());
-                let mut echoes = message
-                    .options()
-                    .filter(|option| option.number() == OptionNumber::ECHO);
-                let echo_challenge = message.code() == crate::message::Code::UNAUTHORIZED
-                    && message.payload().is_empty()
-                    && echoes
-                        .next()
-                        .is_some_and(|option| (1..=40).contains(&option.value().len()))
-                    && echoes.next().is_none()
-                    && recovery.as_ref().is_some_and(CoapRecovery::has_candidate);
-                (message.code() == crate::message::Code::POST
-                    && format == Some(65)
-                    && message
-                        .options()
-                        .filter(|option| option.number() == OptionNumber::URI_PATH)
-                        .map(|option| option.value())
-                        .eq([b".well-known".as_slice(), b"edhoc".as_slice()]))
-                    || ((message.code().is_success()
-                        || message.code().is_client_error()
-                        || message.code().is_server_error())
-                        && format == Some(64))
-                    || echo_challenge
-                    || recovery.as_ref().is_some_and(|recovery| {
-                        recovery.owns_error_response(&io.bytes[..len], from, now_ms)
-                    })
-                    || (message.code().is_empty()
-                        && recovery.as_ref().is_some_and(CoapRecovery::has_candidate))
-            });
-            if from != *endpoint {
-                io.queued = None;
-            } else if bootstrap {
-                let captured = grant.as_ref().expect("prepared grant");
-                let result = if app_mid_collision
-                    || (pending_con
-                        && !recovery
-                            .as_ref()
-                            .expect("prepared recovery")
-                            .has_candidate()
-                        && decode(&io.bytes[..len])
-                            .is_ok_and(|message| message.code().is_request()))
-                {
-                    Ok(super::Status::Ignored)
-                } else {
-                    recovery.as_mut().expect("prepared recovery").ingest(
-                        &io.bytes[..len],
-                        from,
-                        now_ms,
-                        *randomness,
-                        |principal| trust.permits(captured, principal),
-                    )
-                };
-                io.queued = None;
-                result.map_err(|error| ManagedError::Recovery(widen(error)))?;
-            } else if recovery
-                .as_ref()
-                .expect("prepared recovery")
-                .has_candidate()
-                || !matches!(state, Some(State::Established(_)))
-            {
-                state_io(state.as_mut().expect("managed state")).queued = None;
-            }
-        }
+        self.route_ingress(now_ms)?;
         self.flush_recovery(now_ms)?;
         self.install_session(now_ms)?;
         self.ensure_grant()?;
@@ -888,7 +848,10 @@ where
 
     /// Advance a client connection without accepting application resource work.
     /// Authenticated incoming requests receive 4.04 under the current grant.
-    pub fn poll(&mut self, now_ms: u64) -> Result<(), ManagedError<T::Error>> {
+    pub fn poll(&mut self, now_ms: u64) -> Result<(), ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.poll_with(now_ms, |_, _, _| {
             Response::new(crate::message::Code::NOT_FOUND)
         })
@@ -902,7 +865,10 @@ where
         payload: &[u8],
         format: Option<ContentFormat>,
         now_ms: u64,
-    ) -> Result<ManagedCall, ManagedError<T::Error>> {
+    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.request_inner(method, path, payload, format, now_ms, false)
     }
 
@@ -911,7 +877,10 @@ where
         &mut self,
         path: impl IntoPath,
         now_ms: u64,
-    ) -> Result<ManagedCall, ManagedError<T::Error>> {
+    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.request_inner(Method::Get, path, &[], None, now_ms, true)
     }
 
@@ -923,7 +892,10 @@ where
         format: Option<ContentFormat>,
         now_ms: u64,
         observe: bool,
-    ) -> Result<ManagedCall, ManagedError<T::Error>> {
+    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.time(now_ms)?;
         self.ensure_grant()?;
         if self
@@ -990,7 +962,10 @@ where
         handle: ManagedDeferredReply,
         response: Response<'_>,
         now_ms: u64,
-    ) -> Result<(), ManagedError<T::Error>> {
+    ) -> Result<(), ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.time(now_ms)?;
         self.ensure_grant()?;
         self.check_handle(handle.anchor, handle.epoch)?;
@@ -1025,7 +1000,10 @@ where
         path: &[&str],
         response: Response<'static>,
         now_ms: u64,
-    ) -> Result<usize, ManagedError<T::Error>> {
+    ) -> Result<usize, ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.time(now_ms)?;
         self.ensure_grant()?;
         if self
@@ -1251,7 +1229,118 @@ where
         Ok(())
     }
 
-    fn flush_recovery(&mut self, now: u64) -> Result<(), ManagedError<T::Error>> {
+    fn route_ingress(&mut self, now_ms: u64) -> Result<(), ManagedError<T::Error>> {
+        if self.external_bootstrap {
+            let io = state_io(self.state.as_mut().expect("managed state"));
+            if io.queued.is_some_and(|(_, from)| from != self.endpoint) {
+                io.queued = None;
+            }
+            return Ok(());
+        }
+        let pending_con = self.has_pending_con();
+        let app_mid_collision = match self.state.as_ref().expect("managed state") {
+            State::Established(app) => app.transport().queued.is_some_and(|(len, from)| {
+                decode(&app.transport().bytes[..len]).is_ok_and(|message| {
+                    matches!(message.ty(), Type::Confirmable | Type::NonConfirmable)
+                        && app
+                            .engine()
+                            .lookup_dedup(DedupKey::new(message.message_id(), from))
+                            .is_some()
+                })
+            }),
+            State::Waiting(_) => false,
+        };
+        let Self {
+            trust,
+            grant,
+            recovery,
+            state,
+            endpoint,
+            randomness,
+            ..
+        } = self;
+        let io = state_io(state.as_mut().expect("managed state"));
+        if let Some((len, from)) = io.queued {
+            let bootstrap = decode(&io.bytes[..len]).is_ok_and(|message| {
+                if message
+                    .options()
+                    .any(|option| option.number() == OptionNumber::OSCORE)
+                {
+                    return false;
+                }
+                let format = message
+                    .content_format()
+                    .and_then(Result::ok)
+                    .map(|format| format.get());
+                let mut echoes = message
+                    .options()
+                    .filter(|option| option.number() == OptionNumber::ECHO);
+                let echo_challenge = message.code() == crate::message::Code::UNAUTHORIZED
+                    && message.payload().is_empty()
+                    && echoes
+                        .next()
+                        .is_some_and(|option| (1..=40).contains(&option.value().len()))
+                    && echoes.next().is_none()
+                    && recovery.as_ref().is_some_and(CoapRecovery::has_candidate);
+                (message.code() == crate::message::Code::POST
+                    && format == Some(65)
+                    && message
+                        .options()
+                        .filter(|option| option.number() == OptionNumber::URI_PATH)
+                        .map(|option| option.value())
+                        .eq([b".well-known".as_slice(), b"edhoc".as_slice()]))
+                    || ((message.code().is_success()
+                        || message.code().is_client_error()
+                        || message.code().is_server_error())
+                        && format == Some(64))
+                    || echo_challenge
+                    || recovery.as_ref().is_some_and(|recovery| {
+                        recovery.owns_error_response(&io.bytes[..len], from, now_ms)
+                    })
+                    || (message.code().is_empty()
+                        && recovery.as_ref().is_some_and(CoapRecovery::has_candidate))
+            });
+            if from != *endpoint {
+                io.queued = None;
+            } else if bootstrap {
+                let captured = grant.as_ref().expect("prepared grant");
+                let result = if app_mid_collision
+                    || (pending_con
+                        && !recovery
+                            .as_ref()
+                            .expect("prepared recovery")
+                            .has_candidate()
+                        && decode(&io.bytes[..len])
+                            .is_ok_and(|message| message.code().is_request()))
+                {
+                    Ok(super::Status::Ignored)
+                } else {
+                    recovery.as_mut().expect("prepared recovery").ingest(
+                        &io.bytes[..len],
+                        from,
+                        now_ms,
+                        *randomness,
+                        |principal| trust.permits(captured, principal),
+                    )
+                };
+                io.queued = None;
+                result.map_err(|error| ManagedError::Recovery(widen(error)))?;
+            } else if recovery
+                .as_ref()
+                .expect("prepared recovery")
+                .has_candidate()
+                || !matches!(state, Some(State::Established(_)))
+            {
+                state_io(state.as_mut().expect("managed state")).queued = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_recovery(&mut self, now: u64) -> Result<(), ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.ensure_grant()?;
         let io = state_io(self.state.as_mut().expect("managed state"));
         io.bootstrap_mode = true;
@@ -1337,7 +1426,10 @@ where
             Request<'_>,
             Option<ManagedDeferredReply>,
         ) -> Response<'static>,
-    ) -> Result<(), ManagedError<T::Error>> {
+    ) -> Result<(), ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
         self.ensure_grant()?;
         let grant = self.grant.as_ref().expect("prepared grant");
         let captured = grant.principal();

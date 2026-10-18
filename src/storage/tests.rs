@@ -560,6 +560,32 @@ fn progress_retransmit_due() {
 }
 
 #[test]
+fn async_progress_preserves_retry_until_acceptance() {
+    let mut engine = build_default();
+    let ep = Endpoint::v4([192, 0, 2, 81], 5683);
+    let tx = record_pending_at(&mut engine, ep, 21, 0, 0);
+    let pending = engine.pending_con(tx).unwrap();
+    let now = pending.rto().next_timeout_ms().unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            engine
+                .progress_before_dispatch_async(now, |_| true)
+                .retransmit(),
+            Some(Retransmit::Due(pending))
+        );
+        assert_eq!(engine.pending_con(tx), Some(pending));
+    }
+    engine.commit_retransmit(pending, now + 50).unwrap();
+    assert_eq!(engine.pending_con(tx).unwrap().rto().attempts(), 1);
+    assert!(
+        engine
+            .progress_before_dispatch_async(now + 50, |_| true)
+            .retransmit()
+            .is_none()
+    );
+}
+
+#[test]
 fn progress_does_not_release_pinned_rx() {
     let mut engine = build_default();
     let pinned = write_rx_sample(&mut engine, 0x5001);
@@ -1074,6 +1100,50 @@ fn progress_qblock_recover_gap_then_fill() {
         .apply_q_block2(key, b1, &body[16..32], Some(40))
         .expect("fill");
     assert!(engine.progress(q_nrt()).qblock_recover().is_none());
+}
+
+#[test]
+fn async_q_recovery_preserves_budget_until_acceptance() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0xa1]), Endpoint::v4([192, 0, 2, 92], 5683));
+    let body = [1; 40];
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(0, true, 16).unwrap(),
+            &body[..16],
+            Some(40),
+        )
+        .unwrap();
+    engine
+        .apply_q_block2(
+            key,
+            BlockValue::from_size(2, false, 16).unwrap(),
+            &body[32..],
+            Some(40),
+        )
+        .unwrap();
+    assert!(engine.next_qblock_recovery_async(0).0.is_none());
+    let first = engine.next_qblock_recovery_async(q_nrt()).0.unwrap();
+    let wait = engine
+        .rx_body_transfer(first.id())
+        .unwrap()
+        .q_receive()
+        .unwrap();
+    let cursor = engine.storage_mut().rx_body().unwrap().cursor();
+    assert_eq!(wait.attempts(), 0);
+    assert_eq!(engine.next_qblock_recovery_async(q_nrt()).0, Some(first));
+    assert_eq!(engine.storage_mut().rx_body().unwrap().cursor(), cursor);
+    assert!(engine.commit_qblock_recovery(first, wait, q_nrt() + 50));
+    assert!(!engine.commit_qblock_recovery(first, wait, q_nrt() + 50));
+    let committed = engine
+        .rx_body_transfer(first.id())
+        .unwrap()
+        .q_receive()
+        .unwrap();
+    assert_eq!(committed.attempts(), 1);
+    assert_eq!(committed.next_timeout_ms(), q_nrt() * 3 + 50);
+    assert!(engine.next_qblock_recovery_async(q_nrt() + 50).0.is_none());
 }
 
 #[test]
@@ -3555,6 +3625,29 @@ fn q_block2_outgoing_window_advance_and_complete() {
         body_len as u32
     );
     assert_eq!(parsed.payload(), &body[(last as usize) * 16..]);
+}
+
+#[test]
+fn q_block2_selection_commits_only_after_acceptance() {
+    let mut engine = build_default_bodies();
+    let key = BlockKey::new(sample_token(&[0x64]), Endpoint::v4([192, 0, 2, 64], 5683));
+    let id = engine.start_q_block2(key, &[7; 32], 0).unwrap();
+    let before = engine.storage().tx_body_transfer(id).unwrap();
+    let first = engine.peek_q_block2(id).unwrap();
+    assert_eq!(engine.peek_q_block2(id).unwrap(), first);
+    assert_eq!(engine.storage().tx_body_transfer(id).unwrap(), before);
+    engine.commit_q_block2(first).unwrap();
+    assert_eq!(
+        engine.commit_q_block2(first),
+        Err(BlockTransferError::IdentityMismatch)
+    );
+    let last = engine.peek_q_block2(id).unwrap();
+    assert_eq!(last.block().num(), 1);
+    engine.commit_q_block2(last).unwrap();
+    assert_eq!(
+        engine.peek_q_block2(id),
+        Err(BlockTransferError::AlreadyComplete)
+    );
 }
 
 #[test]

@@ -512,6 +512,7 @@ pub(crate) fn cancel<const REQUESTS: usize>(
 }
 
 #[cfg(feature = "oscore")]
+#[coaptic_io::dual_io(send_qblock1_recover_async, bound(crate::app::async_server::ProtocolIo), calls(super::finish_send => super::finish_send_async))]
 pub(crate) fn send_qblock1_recover<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -555,25 +556,19 @@ where
     .with_options(&options)
     .with_payload(response.payload());
     let tx = engine.acquire_tx().ok_or(super::Error::Saturated)?;
-    let result = encode_notification(
+    let encoded = encode_notification(
         ctx,
         recover.key().endpoint(),
         Some(request),
         engine,
         tx,
         &message,
-    )
-    .and_then(|()| {
-        engine
-            .set_tx_endpoint(tx, recover.key().endpoint())
-            .map_err(super::Error::Slot)?;
-        engine
-            .send_tx(io, tx)
-            .map(|_| ())
-            .map_err(super::Error::from)
-    });
-    let _ = engine.release_tx(tx);
-    result
+    );
+    if let Err(error) = encoded {
+        let _ = engine.release_tx(tx);
+        return Err(error);
+    }
+    super::finish_send(engine, io, tx, recover.key().endpoint(), None)
 }
 
 #[cfg(all(test, feature = "alloc", feature = "oscore"))]

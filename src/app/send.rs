@@ -184,6 +184,40 @@ where
     }
 }
 
+// Protocol traversal supplies a transport wrapper that samples its completion
+// clock on each accepted send. Ownership begins at construction, just as for
+// public request sending; dropping before the first poll also releases TX.
+pub(crate) fn finish_protocol<'a, S, T>(
+    engine: &'a mut Engine<S>,
+    io: &'a mut T,
+    tx: SlotId,
+    dest: Endpoint,
+    pending: Option<(u64, MessageId, u32)>,
+) -> impl core::future::Future<Output = Result<(), Error<T::Error>>> + 'a
+where
+    S: Storage + DatagramSlots + PendingCons,
+    T: super::async_server::ProtocolIo,
+{
+    let owner = SendOwner::prepare(engine, tx, dest, pending.map(|(_, mid, _)| mid), None);
+    async move {
+        let mut owner = owner?;
+        owner.engine.send_tx_async(io, tx).await?;
+        if let Some((_, _, jitter)) = pending
+            && !owner.commit(io.completed_at(), jitter)
+        {
+            return Err(Error::CommitAfterSend);
+        }
+        if let Some(deadline) = owner
+            .engine
+            .pending_con(tx)
+            .and_then(|pending| pending.rto().next_timeout_ms())
+        {
+            io.limit_deadline(deadline);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

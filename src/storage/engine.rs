@@ -2100,6 +2100,37 @@ impl<S: Storage + BodySlots> Engine<S> {
         self.storage.next_q_block2(id)
     }
 
+    // The async App retains exclusive Engine ownership between this selection
+    // and commit. Only compact range metadata crosses the transport await.
+    pub(crate) fn peek_q_block2(&self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        let mut transfer = self
+            .storage
+            .tx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != BlockRole::OutgoingQBlock2 {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (block, offset, len) = transfer.issue_q_outgoing()?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
+    }
+
+    pub(crate) fn commit_q_block2(
+        &mut self,
+        expected: OutgoingBlock,
+    ) -> Result<(), BlockTransferError> {
+        if self.peek_q_block2(expected.id())? != expected {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        self.storage.next_q_block2(expected.id())?;
+        Ok(())
+    }
+
     /// Advance an outgoing Q-Block2 window using the peer Continue NUM.
     ///
     /// `num` is the Continue Q-Block2 NUM (RFC 9177 §4.4: `num % MAX_PAYLOADS

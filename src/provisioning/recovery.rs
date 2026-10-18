@@ -6,8 +6,9 @@ use super::super::{ConnectionId, Identity, PeerError, PinnedPeer, Principal, Ses
 use super::{
     ClientState, CoapProvisioner, CompletedCacheMatch, Control, ControlKind, DATAGRAM_CAPACITY,
     EXCHANGE_LIFETIME_MS, ErrorReceipt, ErrorRequest, Exchange, Operation, OptionRole, PollError,
-    ResponseAck, Role, Status, flush_control, has_unsupported_critical, queue_control,
-    request_metadata, request_path, request_peer_error, same_mid_namespace, send,
+    ResponseAck, Role, Status, flush_control, flush_control_async, has_unsupported_critical,
+    queue_control, request_metadata, request_path, request_peer_error, same_mid_namespace, send,
+    send_async,
 };
 use crate::message::{Code, Message as CoapMessage, MessageId, Type, decode};
 use crate::storage::{DatagramIo, Endpoint};
@@ -296,6 +297,7 @@ impl Cache {
         }
     }
 
+    #[coaptic_io::dual_io(flush_protocol_async, bound(crate::app::async_server::ProtocolIo), calls(flush_control => flush_control_async, send => send_async), methods(flush => flush_protocol_async))]
     fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -607,6 +609,7 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
     /// Sends pending completion bytes and the candidate's due work, without recv.
     /// Failed or short sends retain the exact pending datagram for retry.
     /// An expired completed candidate is removed and returns [`Status::Expired`].
+    #[coaptic_io::dual_io(flush_protocol_async, bound(crate::app::async_server::ProtocolIo), visibility(pub(crate)), calls(flush_control => flush_control_async), methods(flush => flush_protocol_async))]
     pub fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -782,6 +785,35 @@ impl<'a, const CACHES: usize> CoapRecovery<'a, CACHES> {
         for cache in self.caches.iter().flatten() {
             let deadline = cache.next_deadline(self.last_now);
             next = Some(next.map_or(deadline, |previous| previous.min(deadline)));
+        }
+        next
+    }
+
+    pub(crate) fn next_timeout_after(&self, now: u64) -> Option<u64> {
+        let mut next = self
+            .candidate
+            .as_ref()
+            .and_then(|candidate| candidate.next_timeout_after(now));
+        let mut consider = |due: Option<u64>| {
+            if let Some(due) = due.filter(|due| *due > now) {
+                next = Some(next.map_or(due, |old| old.min(due)));
+            }
+        };
+        consider(self.candidate_expires);
+        consider(self.control.as_ref().map(|control| control.expires));
+        for cache in self.caches.iter().flatten() {
+            consider(Some(cache.expires));
+            consider(cache.control.as_ref().map(|control| control.expires));
+            match &cache.role {
+                CachedRole::Client {
+                    abort: Some(abort), ..
+                } => consider(abort.next_timeout_after(now)),
+                CachedRole::Server {
+                    final_error: Some(receipt),
+                    ..
+                } => consider(receipt.next_timeout_after(now)),
+                _ => {}
+            }
         }
         next
     }

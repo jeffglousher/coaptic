@@ -148,7 +148,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// Empty tables are skipped in O(1) via [`super::SlotPool::occupied_count`]
     /// (CON / Observe / Q-Block scans run only while that area is occupied).
     pub fn progress(&mut self, now_ms: u64) -> Progress {
-        self.progress_inner(now_ms, true, |_| true)
+        self.progress_inner(now_ms, true, true, |_| true)
     }
 
     // App reserves a pending candidate without consuming its signal. Ingress
@@ -162,7 +162,17 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         now_ms: u64,
         eligible_rx: impl FnMut(SlotId) -> bool,
     ) -> Progress {
-        self.progress_inner(now_ms, false, eligible_rx)
+        self.progress_inner(now_ms, false, true, eligible_rx)
+    }
+
+    // Awaitable drivers commit a retry only after transport acceptance. Give-up
+    // requires no I/O, so it retires here just as in the synchronous driver.
+    pub(crate) fn progress_before_dispatch_async(
+        &mut self,
+        now_ms: u64,
+        eligible_rx: impl FnMut(SlotId) -> bool,
+    ) -> Progress {
+        self.progress_inner(now_ms, false, false, eligible_rx)
     }
 
     pub(crate) fn claim_observe_notification(&mut self, id: SlotId, now_ms: u64) -> Option<SlotId> {
@@ -184,14 +194,61 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         now_ms: u64,
     ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
         let mut expired = None;
-        let recover = progress_qblock(self, now_ms, &mut expired);
+        let recover = progress_qblock(self, now_ms, &mut expired, true);
         (recover, expired)
+    }
+
+    pub(crate) fn next_qblock_recovery_async(
+        &mut self,
+        now_ms: u64,
+    ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
+        let mut expired = None;
+        let recover = progress_qblock(self, now_ms, &mut expired, false);
+        (recover, expired)
+    }
+
+    // The caller holds exclusive Engine ownership across send. Compare the
+    // small timer snapshot and range identity; never keep a whole body sidecar.
+    pub(crate) fn commit_qblock_recovery(
+        &mut self,
+        recover: QBlockRecover,
+        expected: super::QBlockReceiveWait,
+        now_ms: u64,
+    ) -> bool {
+        let Some(mut transfer) = self.rx_body_transfer(recover.id()) else {
+            return false;
+        };
+        if transfer.q_receive() != Some(expected)
+            || !expected.is_due(now_ms)
+            || transfer.key() != recover.key()
+            || transfer.role() != recover.role()
+            || transfer.window_base() != recover.window_base()
+            || transfer.szx() != recover.szx()
+            || transfer.q_holes() != Some((recover.missing_num(), recover.hole_mask()))
+        {
+            return false;
+        }
+        if transfer.note_q_recover(now_ms).is_none()
+            || self
+                .storage_mut()
+                .set_rx_body_transfer(recover.id(), transfer)
+                .is_err()
+        {
+            return false;
+        }
+        if let Some(pool) = self.storage_mut().rx_body() {
+            let n = pool.slot_count();
+            let advance = (recover.id().index() + n - pool.cursor()) % n + 1;
+            self.advance_rx_body(advance);
+        }
+        true
     }
 
     fn progress_inner(
         &mut self,
         now_ms: u64,
         immediate_later_work: bool,
+        consume_retransmit: bool,
         eligible_rx: impl FnMut(SlotId) -> bool,
     ) -> Progress {
         Metrics::inc(&mut self.metrics_mut().progress);
@@ -206,7 +263,17 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             return Progress::idle();
         }
         let retransmit = if tx_busy {
-            self.poll_retransmit(now_ms)
+            if consume_retransmit {
+                self.poll_retransmit(now_ms)
+            } else {
+                self.peek_retransmit(now_ms).and_then(|pending| {
+                    if pending.rto().next_attempt(now_ms).is_some() {
+                        Some(Retransmit::Due(pending))
+                    } else {
+                        self.commit_retransmit(pending, now_ms)
+                    }
+                })
+            }
         } else {
             None
         };
@@ -233,7 +300,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
             },
             observe_expired,
             qblock_recover: if qblock_busy && immediate_later_work {
-                progress_qblock(self, now_ms, &mut None)
+                progress_qblock(self, now_ms, &mut None, true)
             } else {
                 None
             },
@@ -309,6 +376,7 @@ fn progress_qblock<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
     client_expired: &mut Option<super::ExchangeKey>,
+    consume: bool,
 ) -> Option<QBlockRecover> {
     if engine
         .storage_mut()
@@ -347,10 +415,11 @@ fn progress_qblock<S: Storage + BodySlots>(
             give_up = Some((id, offset, client));
             break;
         }
-        if engine
-            .storage_mut()
-            .set_rx_body_transfer(id, transfer)
-            .is_err()
+        if consume
+            && engine
+                .storage_mut()
+                .set_rx_body_transfer(id, transfer)
+                .is_err()
         {
             continue;
         }
@@ -376,7 +445,9 @@ fn progress_qblock<S: Storage + BodySlots>(
     }
     match found {
         Some((offset, recover)) => {
-            engine.advance_rx_body(offset + 1);
+            if consume {
+                engine.advance_rx_body(offset + 1);
+            }
             Some(recover)
         }
         None => None,

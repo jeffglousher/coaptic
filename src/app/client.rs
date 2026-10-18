@@ -59,6 +59,12 @@
 //! Larger FETCH requests return [`Error::FetchRequestTooLarge`] before I/O;
 //! use caller-managed Engine transfers for larger selection bodies.
 
+#[path = "client_async.rs"]
+mod asynchronous;
+pub(crate) use asynchronous::{
+    complete_client_async, continue_qblock1_ack_async, pace_qblock1_async, recover_qblock2_async,
+};
+
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
@@ -609,34 +615,37 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         )
     }
 
-    pub(super) fn next_timeout<Mem: Storage + Exchanges + ObserveSlots>(
+    pub(super) fn next_timeout_after<Mem: Storage + Exchanges + ObserveSlots>(
         &self,
         engine: &Engine<Mem>,
         inbox: &ClientInbox<CALLS>,
+        after: Option<u64>,
     ) -> Option<u64> {
         self.rows
             .iter()
             .flatten()
-            .filter_map(|live| {
-                let mut next = (live.backoff_until_ms != 0).then_some(live.backoff_until_ms);
-                if live.retired {
-                    return next;
-                }
-                if live.q_pace_ms != 0 {
-                    next = Some(next.map_or(live.q_pace_ms, |old| old.min(live.q_pace_ms)));
-                }
-                if !inbox.contains(live.call) || client_observe_live(engine, live.call) {
-                    next = next.into_iter().chain(live.deadline_ms).min();
-                    if live.due_ms != 0
-                        && engine
-                            .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer))
-                            .is_some()
-                    {
-                        next = Some(next.map_or(live.due_ms, |old| old.min(live.due_ms)));
-                    }
-                }
-                next
+            .flat_map(|live| {
+                let active = !live.retired;
+                let waiting = active
+                    && (!inbox.contains(live.call) || client_observe_live(engine, live.call));
+                (live.backoff_until_ms != 0)
+                    .then_some(live.backoff_until_ms)
+                    .into_iter()
+                    .chain((active && live.q_pace_ms != 0).then_some(live.q_pace_ms))
+                    .chain(live.deadline_ms.filter(|_| waiting))
+                    .chain(
+                        (waiting
+                            && live.due_ms != 0
+                            && engine
+                                .lookup_exchange(ExchangeKey::new(
+                                    live.call.token(),
+                                    live.call.peer,
+                                ))
+                                .is_some())
+                        .then_some(live.due_ms),
+                    )
             })
+            .filter(|deadline| after.is_none_or(|after| *deadline > after))
             .min()
     }
 
@@ -1631,7 +1640,7 @@ where
     where
         T: DatagramIo,
     {
-        self.prepare(now_ms)?.send()
+        self.prepare(now_ms, None)?.send()
     }
 
     /// Encode and admit this request, then await complete datagram acceptance.
@@ -1643,27 +1652,87 @@ where
     /// datagram. Cancellation and errors do not rewind OSCORE sequence numbers;
     /// the peer may already have acted on earlier datagrams in a Q payload set.
     /// Driving subsequent responses, retransmissions and deadlines remains the
-    /// caller's responsibility. The clock must finish in bounded time.
+    /// caller's responsibility. The clock must finish in bounded time and use
+    /// the same nondecreasing monotonic domain as `now_ms` and later App polling.
+    /// The configured request deadline is checked before transport acceptance,
+    /// races every pending send, and is checked again against completion time.
+    /// The timer uses the same monotonic domain and unregisters on cancellation.
     pub fn send_async<C: 'a>(
         self,
         now_ms: u64,
         completed_at: impl FnMut() -> Result<u64, C> + 'a,
+        timer: &'a mut impl crate::platform::AsyncTimer,
     ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
     where
         T: crate::storage::AsyncDatagramIo,
     {
-        let prepared = self.prepare(now_ms);
+        self.send_with_limit(now_ms, completed_at, timer, None)
+    }
+
+    /// Send with an additional absolute driving deadline, without changing the
+    /// installed Call's response deadline or lifetime.
+    ///
+    /// Uses the same eager ownership and cancellation contract as [`Self::send_async`].
+    /// Expiry of `send_deadline_ms` returns [`AsyncCallError::ProgressRequired`];
+    /// expiry of the request's own `.deadline(...)` remains [`Error::DeadlineElapsed`].
+    /// Either result can follow acceptance of earlier Q-Block payloads.
+    pub fn send_until_async<C: 'a>(
+        self,
+        now_ms: u64,
+        completed_at: impl FnMut() -> Result<u64, C> + 'a,
+        timer: &'a mut impl crate::platform::AsyncTimer,
+        send_deadline_ms: u64,
+    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    where
+        T: crate::storage::AsyncDatagramIo,
+    {
+        self.send_with_limit(now_ms, completed_at, timer, Some(send_deadline_ms))
+    }
+
+    fn send_with_limit<C: 'a>(
+        self,
+        now_ms: u64,
+        completed_at: impl FnMut() -> Result<u64, C> + 'a,
+        timer: &'a mut impl crate::platform::AsyncTimer,
+        send_deadline: Option<u64>,
+    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    where
+        T: crate::storage::AsyncDatagramIo,
+    {
+        let progress_deadline = self
+            .app
+            .next_timeout()
+            .into_iter()
+            .chain(send_deadline)
+            .min();
+        let prepared = self.prepare(now_ms, progress_deadline);
         async move {
-            prepared
-                .map_err(AsyncCallError::Request)?
-                .send_async(completed_at)
-                .await
+            let mut prepared = prepared.map_err(AsyncCallError::Request)?;
+            let mut completed_at = completed_at;
+            if prepared.staged.is_none() {
+                return Ok(prepared.commit());
+            }
+            let staged = prepared.accept(&mut completed_at, timer).await?;
+            if staged.continue_q {
+                let body = staged.body.expect("Q body");
+                while let Some(complete) = prepared
+                    .stage_next_q(body)
+                    .map_err(AsyncCallError::Request)?
+                {
+                    prepared.accept(&mut completed_at, timer).await?;
+                    if complete {
+                        break;
+                    }
+                }
+            }
+            Ok(prepared.commit())
         }
     }
 
     fn prepare(
         self,
         now_ms: u64,
+        progress_deadline: Option<u64>,
     ) -> Result<PreparedCall<'a, S, T, CALLS, REQUESTS>, Error<T::Error>> {
         #[cfg(feature = "oscore")]
         if !self.association_valid {
@@ -1793,6 +1862,7 @@ where
                     inbox,
                     lives,
                     oscore,
+                    progress_deadline,
                     staged: None,
                     pending: None,
                     live: None,
@@ -1928,6 +1998,7 @@ where
             ..
         } = self.app;
         let mut prepared = PreparedCall {
+            progress_deadline,
             engine,
             io,
             ids,
@@ -2095,6 +2166,13 @@ struct StagedClient {
 
 #[cfg(test)]
 mod async_request_tests {
+    struct NeverTimer;
+    impl crate::platform::AsyncTimer for NeverTimer {
+        async fn wait_until(&mut self, _: u64) {
+            core::future::pending::<()>().await;
+        }
+    }
+
     use super::*;
     use core::{
         cell::Cell,
@@ -2117,6 +2195,11 @@ mod async_request_tests {
     struct AsyncOnly<'a>(&'a State);
     impl crate::storage::DatagramTransport for AsyncOnly<'_> {
         type Error = ();
+    }
+    impl crate::app::async_server::ProtocolIo for AsyncOnly<'_> {
+        fn completed_at(&self) -> u64 {
+            90
+        }
     }
     impl crate::storage::AsyncDatagramIo for AsyncOnly<'_> {
         async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), ()> {
@@ -2147,6 +2230,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_initial_call_drop_and_acceptance_share_existing_slots() {
+        let mut timer = NeverTimer;
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()
@@ -2154,12 +2238,20 @@ mod async_request_tests {
             .bind(AsyncOnly(&state))
             .unwrap();
         let initial = app.engine.tx_occupied();
-        drop(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+        drop(
+            app.get("sensor")
+                .to(PEER)
+                .send_async(0, || Ok::<_, ()>(90), &mut timer),
+        );
         assert_eq!(state.entered.get(), 0);
         assert_eq!(app.engine.tx_occupied(), initial);
         assert_eq!(app.lives.rows.iter().flatten().count(), 0);
         {
-            let mut send = pin!(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+            let mut send = pin!(app.get("sensor").to(PEER).send_async(
+                0,
+                || Ok::<_, ()>(90),
+                &mut timer
+            ));
             assert!(
                 send.as_mut()
                     .poll(&mut Context::from_waker(Waker::noop()))
@@ -2169,7 +2261,11 @@ mod async_request_tests {
         assert_eq!(app.engine.tx_occupied(), initial);
         assert_eq!(app.lives.rows.iter().flatten().count(), 0);
         let call = {
-            let mut send = pin!(app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90)));
+            let mut send = pin!(app.get("sensor").to(PEER).send_async(
+                0,
+                || Ok::<_, ()>(90),
+                &mut timer
+            ));
             let mut cx = Context::from_waker(Waker::noop());
             assert!(send.as_mut().poll(&mut cx).is_pending());
             state.ready.set(true);
@@ -2196,6 +2292,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_block1_and_q_window_acceptance_and_partial_failure() {
+        let mut timer = NeverTimer;
         let payload = [7; 1500];
         for q in [false, true] {
             for fail in [false, true] {
@@ -2215,7 +2312,7 @@ mod async_request_tests {
                             .q_block1()
                             .request_tag(BodyTag::new(b"tag").unwrap());
                     }
-                    let mut send = pin!(request.send_async(0, || Ok::<_, ()>(90)));
+                    let mut send = pin!(request.send_async(0, || Ok::<_, ()>(90), &mut timer));
                     let mut cx = Context::from_waker(Waker::noop());
                     let mut result = None;
                     for _ in 0..32 {
@@ -2252,6 +2349,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_clock_failure_after_send_leaves_no_call() {
+        let mut timer = NeverTimer;
         for non in [false, true] {
             let state = State::default();
             state.ready.set(true);
@@ -2263,7 +2361,7 @@ mod async_request_tests {
             {
                 let request = app.get("sensor").to(PEER);
                 let request = if non { request.non() } else { request };
-                let mut send = pin!(request.send_async(0, || Err(42)));
+                let mut send = pin!(request.send_async(0, || Err(42), &mut timer));
                 assert!(matches!(
                     send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
                     Poll::Ready(Err(AsyncCallError::ClockAfterSend(42)))
@@ -2276,7 +2374,206 @@ mod async_request_tests {
     }
 
     #[test]
+    fn native_async_clock_regression_after_send_leaves_no_call() {
+        let mut timer = NeverTimer;
+        for non in [false, true] {
+            let state = State::default();
+            state.ready.set(true);
+            let mut app = App::with_resources(crate::resources::SmallDevice::new())
+                .deterministic_for_tests()
+                .allow_unprotected()
+                .bind(AsyncOnly(&state))
+                .unwrap();
+            {
+                let request = app.get("sensor").to(PEER);
+                let request = if non { request.non() } else { request };
+                let mut send = pin!(request.send_async(50, || Ok::<_, ()>(49), &mut timer));
+                assert!(matches!(
+                    send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Ready(Err(AsyncCallError::ClockRegressedAfterSend {
+                        previous_ms: 50,
+                        observed_ms: 49,
+                    }))
+                ));
+            }
+            assert_eq!(state.sent.get(), 1);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            assert_eq!(app.lives.rows.iter().flatten().count(), 0);
+        }
+    }
+
+    #[test]
+    fn native_async_deadline_wakes_pending_transport_and_cleans_upload() {
+        struct ManualTimer<'a> {
+            ready: &'a Cell<bool>,
+            due: &'a Cell<Option<u64>>,
+            waker: &'a core::cell::RefCell<Option<Waker>>,
+        }
+        impl crate::platform::AsyncTimer for ManualTimer<'_> {
+            async fn wait_until(&mut self, deadline: u64) {
+                struct Registration<'a>(&'a core::cell::RefCell<Option<Waker>>);
+                impl Drop for Registration<'_> {
+                    fn drop(&mut self) {
+                        self.0.borrow_mut().take();
+                    }
+                }
+                let _registration = Registration(self.waker);
+                self.due.set(Some(deadline));
+                core::future::poll_fn(|cx| {
+                    if self.ready.get() {
+                        Poll::Ready(())
+                    } else {
+                        *self.waker.borrow_mut() = Some(cx.waker().clone());
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+        }
+        for partial_q in [false, true] {
+            let state = State::default();
+            state.ready.set(partial_q);
+            let ready = Cell::new(false);
+            let due = Cell::new(None);
+            let waker = core::cell::RefCell::new(None);
+            let mut timer = ManualTimer {
+                ready: &ready,
+                due: &due,
+                waker: &waker,
+            };
+            let mut app =
+                App::with_resources(crate::resources::SmallDevice::new().block_wise::<true>())
+                    .deterministic_for_tests()
+                    .allow_unprotected()
+                    .bind(AsyncOnly(&state))
+                    .unwrap();
+            let body = [42; 1500];
+            {
+                let request = app.post("upload").to(PEER).deadline(50);
+                let request = if partial_q {
+                    request
+                        .non()
+                        .payload(&body)
+                        .request_tag(BodyTag::new(b"deadline").unwrap())
+                        .q_block1()
+                } else {
+                    request
+                };
+                let mut send = pin!(request.send_async(0, || Ok::<_, ()>(10), &mut timer));
+                assert!(
+                    send.as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+                assert_eq!(due.get(), Some(50));
+                assert!(waker.borrow().is_some());
+                ready.set(true);
+                waker.borrow_mut().take().unwrap().wake();
+                // Deadline wins even when transport becomes ready in the same poll.
+                state.ready.set(true);
+                assert!(matches!(
+                    send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Ready(Err(AsyncCallError::Request(Error::DeadlineElapsed)))
+                ));
+            }
+            assert_eq!(state.sent.get(), usize::from(partial_q));
+            assert_eq!(app.engine.tx_occupied(), 0);
+            assert_eq!(app.storage_usage().tx_body.unwrap().occupied, 0);
+            assert!(app.lives.rows.iter().all(Option::is_none));
+            assert!(waker.borrow().is_none());
+        }
+    }
+
+    #[test]
+    fn native_async_pending_send_yields_for_other_live_call_deadline() {
+        struct DueTimer;
+        impl crate::platform::AsyncTimer for DueTimer {
+            async fn wait_until(&mut self, deadline: u64) {
+                assert_eq!(deadline, 50);
+            }
+        }
+        let state = State::default();
+        state.ready.set(true);
+        let mut app = App::with_resources(crate::resources::SmallDevice::new().client_calls::<2>())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        let mut timer = NeverTimer;
+        let first = {
+            let mut send = pin!(app.get("first").to(PEER).non().deadline(50).send_async(
+                0,
+                || Ok::<_, ()>(10),
+                &mut timer
+            ));
+            match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                Poll::Ready(Ok(call)) => call,
+                _ => panic!("first accepted"),
+            }
+        };
+        let mut due = DueTimer;
+        {
+            let mut send = pin!(app.get("second").to(PEER).non().send_async(
+                10,
+                || Ok::<_, ()>(50),
+                &mut due
+            ));
+            assert!(matches!(
+                send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(AsyncCallError::ProgressRequired { at_ms: 50 }))
+            ));
+        }
+        assert_eq!(state.sent.get(), 1);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        assert!(app.lives.get(first).is_some());
+        assert_eq!(app.lives.rows.iter().flatten().count(), 1);
+    }
+
+    #[test]
+    fn native_async_driving_limit_preserves_call_response_lifetime() {
+        let state = State::default();
+        state.ready.set(true);
+        let mut timer = NeverTimer;
+        let mut app = App::with_resources(crate::resources::SmallDevice::new().client_calls::<2>())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        let call = {
+            let mut send = pin!(app.get("first").to(PEER).non().send_until_async(
+                0,
+                || Ok::<_, ()>(10),
+                &mut timer,
+                50
+            ));
+            match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                Poll::Ready(Ok(call)) => call,
+                _ => panic!("accepted before driving limit"),
+            }
+        };
+        let live = app.lives.get(call).unwrap();
+        assert_eq!(live.deadline_ms, None);
+        assert!(live.due_ms > 50);
+        {
+            let mut send = pin!(app.get("second").to(PEER).non().send_until_async(
+                10,
+                || Ok::<_, ()>(10),
+                &mut timer,
+                10
+            ));
+            assert!(matches!(
+                send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(AsyncCallError::ProgressRequired { at_ms: 10 }))
+            ));
+        }
+        assert_eq!(state.sent.get(), 1);
+        assert_eq!(app.engine.tx_occupied(), 0);
+        assert!(app.lives.get(call).is_some());
+    }
+
+    #[test]
     fn native_async_deadline_at_acceptance_stops_call_installation() {
+        let mut timer = NeverTimer;
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()
@@ -2284,12 +2581,11 @@ mod async_request_tests {
             .bind(AsyncOnly(&state))
             .unwrap();
         {
-            let mut send = pin!(
-                app.get("sensor")
-                    .to(PEER)
-                    .deadline(50)
-                    .send_async(0, || Ok::<_, ()>(50))
-            );
+            let mut send = pin!(app.get("sensor").to(PEER).deadline(50).send_async(
+                0,
+                || Ok::<_, ()>(50),
+                &mut timer
+            ));
             let mut cx = Context::from_waker(Waker::noop());
             assert!(send.as_mut().poll(&mut cx).is_pending());
             state.ready.set(true);
@@ -2303,9 +2599,278 @@ mod async_request_tests {
         assert_eq!(app.lives.rows.iter().flatten().count(), 0);
     }
 
+    #[test]
+    fn native_async_response_continuation_cancellation_reclaims_call_and_ack() {
+        let mut timer = NeverTimer;
+        for poll_before_drop in [false, true] {
+            let state = State::default();
+            state.ready.set(true);
+            let mut app = App::with_resources(crate::resources::SmallDevice::new())
+                .deterministic_for_tests()
+                .allow_unprotected()
+                .bind(AsyncOnly(&state))
+                .unwrap();
+            let call = {
+                let mut send = pin!(app.get("sensor").to(PEER).send_async(
+                    0,
+                    || Ok::<_, ()>(90),
+                    &mut timer
+                ));
+                match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                    Poll::Ready(Ok(call)) => call,
+                    _ => panic!("initial acceptance"),
+                }
+            };
+            let message = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(70))
+                .with_token(call.token())
+                .with_payload(b"reply");
+            let mut wire = [0; 128];
+            let len = crate::message::encode(&message, &mut wire).unwrap();
+            let parsed = crate::message::decode(&wire[..len]).unwrap();
+            let rx = app.engine.acquire_rx().unwrap();
+            app.engine.encode_rx(rx, &message).unwrap();
+            app.engine.set_rx_endpoint(rx, PEER).unwrap();
+            {
+                let future = complete_client_async(
+                    &mut app.engine,
+                    &mut app.io,
+                    &mut app.inbox,
+                    &mut app.lives,
+                    &mut app.ids,
+                    &mut app.oscore,
+                    super::super::oscore::ResponseState::None,
+                    false,
+                    90,
+                    PEER,
+                    &parsed,
+                    rx,
+                );
+                let mut future = pin!(future);
+                if poll_before_drop {
+                    assert!(
+                        future
+                            .as_mut()
+                            .poll(&mut Context::from_waker(Waker::noop()))
+                            .is_pending()
+                    );
+                }
+            }
+            assert_eq!(app.engine.tx_occupied(), 0);
+            assert_eq!(app.engine.rx_occupied(), 0);
+            assert!(matches!(
+                app.take_response(call),
+                Some(Err(CallFailure::ContinuationFailed))
+            ));
+        }
+    }
+
+    #[test]
+    fn native_async_ack_clock_failure_retires_only_ambiguous_call() {
+        for before_acceptance in [false, true] {
+            let mut timer = NeverTimer;
+            let state = State::default();
+            state.ready.set(true);
+            let mut app = App::with_resources(crate::resources::SmallDevice::new())
+                .deterministic_for_tests()
+                .allow_unprotected()
+                .bind(AsyncOnly(&state))
+                .unwrap();
+            let call = {
+                let mut send = pin!(app.get("sensor").to(PEER).send_async(
+                    0,
+                    || Ok::<_, ()>(90),
+                    &mut timer
+                ));
+                match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                    Poll::Ready(Ok(call)) => call,
+                    _ => panic!("initial acceptance"),
+                }
+            };
+            let response = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(70))
+                .with_token(call.token())
+                .with_payload(b"reply");
+            let rx = app.engine.acquire_rx().unwrap();
+            app.engine.encode_rx(rx, &response).unwrap();
+            app.engine.set_rx_endpoint(rx, PEER).unwrap();
+            state.ready.set(true);
+            let mut samples =
+                [if before_acceptance { Err(42) } else { Ok(90) }, Err(42)].into_iter();
+            let mut clock = || samples.next().unwrap();
+            {
+                let mut progress = pin!(app.progress_async(90, &mut clock, &mut timer, 1000));
+                let Poll::Ready(Err(Error::Io(crate::storage::DatagramIoError::Io(error)))) =
+                    progress
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                else {
+                    panic!("clock failure must be reported");
+                };
+                assert!(matches!(
+                    (before_acceptance, error),
+                    (true, crate::app::AsyncIoError::ClockBeforeSend(42))
+                        | (false, crate::app::AsyncIoError::ClockAfterSend(42))
+                ));
+            }
+            assert_eq!(state.sent.get(), if before_acceptance { 1 } else { 2 });
+            assert_eq!(app.engine.rx_occupied(), 0);
+            if before_acceptance {
+                assert!(app.take_response(call).is_none());
+                assert!(app.lives.get(call).is_some());
+                assert_eq!(app.engine.tx_occupied(), 1);
+            } else {
+                assert_eq!(app.engine.tx_occupied(), 0);
+                assert!(matches!(
+                    app.take_response(call),
+                    Some(Err(CallFailure::ContinuationFailed))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn native_async_response_continuation_acceptance_keeps_completion() {
+        let mut timer = NeverTimer;
+        let state = State::default();
+        state.ready.set(true);
+        let mut app = App::with_resources(crate::resources::SmallDevice::new())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncOnly(&state))
+            .unwrap();
+        let call = {
+            let mut send = pin!(app.get("sensor").to(PEER).send_async(
+                0,
+                || Ok::<_, ()>(90),
+                &mut timer
+            ));
+            match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                Poll::Ready(Ok(call)) => call,
+                _ => panic!("initial acceptance"),
+            }
+        };
+        let message = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(70))
+            .with_token(call.token())
+            .with_payload(b"reply");
+        let mut wire = [0; 128];
+        let len = crate::message::encode(&message, &mut wire).unwrap();
+        let parsed = crate::message::decode(&wire[..len]).unwrap();
+        let rx = app.engine.acquire_rx().unwrap();
+        app.engine.encode_rx(rx, &message).unwrap();
+        app.engine.set_rx_endpoint(rx, PEER).unwrap();
+        {
+            let future = complete_client_async(
+                &mut app.engine,
+                &mut app.io,
+                &mut app.inbox,
+                &mut app.lives,
+                &mut app.ids,
+                &mut app.oscore,
+                super::super::oscore::ResponseState::None,
+                false,
+                90,
+                PEER,
+                &parsed,
+                rx,
+            );
+            let continuation_bytes = core::mem::size_of_val(&future);
+            assert!(
+                continuation_bytes <= 16 * 1024,
+                "client response future: {continuation_bytes}"
+            );
+            #[cfg(feature = "std")]
+            std::println!(
+                "SmallDevice Constrained unprotected fixed blockwise=false ClientResponseFuture={continuation_bytes}"
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            state.ready.set(true);
+            assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        }
+        assert_eq!(app.engine.tx_occupied(), 0);
+        let response = app.take_response(call).unwrap().unwrap();
+        assert_eq!(response.payload(), b"reply");
+    }
+
+    #[test]
+    fn native_async_q_ack_cancellation_retires_advanced_upload() {
+        let mut timer = NeverTimer;
+        let payload = [7; 1500];
+        for poll_before_drop in [false, true] {
+            let state = State::default();
+            state.ready.set(true);
+            let mut app =
+                App::with_resources(crate::resources::SmallDevice::new().block_wise::<true>())
+                    .deterministic_for_tests()
+                    .allow_unprotected()
+                    .bind(AsyncOnly(&state))
+                    .unwrap();
+            let call = {
+                let mut send = pin!(
+                    app.post("upload")
+                        .to(PEER)
+                        .payload(&payload)
+                        .q_block1()
+                        .request_tag(BodyTag::new(b"tag").unwrap())
+                        .send_async(0, || Ok::<_, ()>(90), &mut timer)
+                );
+                match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                    Poll::Ready(Ok(call)) => call,
+                    _ => panic!("first Q payload"),
+                }
+            };
+            let exchange = app
+                .engine
+                .lookup_exchange(ExchangeKey::new(call.token(), PEER))
+                .unwrap();
+            let entry = app.engine.exchange_entry(exchange).unwrap();
+            let tx = app
+                .engine
+                .take_pending_con(entry.message_id(), PEER)
+                .unwrap();
+            app.engine.release_tx(tx).unwrap();
+            {
+                let mut future = pin!(continue_qblock1_ack_async(
+                    &mut app.engine,
+                    &mut app.io,
+                    &mut app.inbox,
+                    &mut app.lives,
+                    &mut app.ids,
+                    &mut app.oscore,
+                    90,
+                    entry.message_id(),
+                    PEER,
+                ));
+                if poll_before_drop {
+                    assert!(
+                        future
+                            .as_mut()
+                            .poll(&mut Context::from_waker(Waker::noop()))
+                            .is_pending()
+                    );
+                }
+            }
+            assert_eq!(state.sent.get(), 1);
+            assert_eq!(app.engine.tx_occupied(), 0);
+            assert!(
+                app.engine
+                    .lookup_exchange(ExchangeKey::new(call.token(), PEER))
+                    .is_none()
+            );
+            for i in 0..app.engine.capacities().tx_body_slots.unwrap_or(0) {
+                assert!(app.engine.tx_body_transfer(SlotId::from_index(i)).is_none());
+            }
+            assert!(matches!(
+                app.take_response(call),
+                Some(Err(CallFailure::ContinuationFailed))
+            ));
+        }
+    }
+
     #[cfg(feature = "oscore")]
     #[test]
     fn native_async_protected_observe_preserves_identity_and_consumed_sequences() {
+        let mut timer = NeverTimer;
         use crate::oscore::{DeriveParams, SecurityContext};
         let context = |sender, recipient| {
             SecurityContext::derive(DeriveParams {
@@ -2327,18 +2892,17 @@ mod async_request_tests {
             app.get("sensor")
                 .to(PEER)
                 .observe()
-                .send_async(0, || Ok::<_, ()>(90)),
+                .send_async(0, || Ok::<_, ()>(90), &mut timer),
         );
         assert_eq!(app.oscore().unwrap().sender_seq(), 1);
         assert_eq!(state.sent.get(), 0);
         assert_eq!(app.engine.tx_occupied(), 0);
         let call = {
-            let mut send = pin!(
-                app.get("sensor")
-                    .to(PEER)
-                    .observe()
-                    .send_async(0, || Ok::<_, ()>(90))
-            );
+            let mut send = pin!(app.get("sensor").to(PEER).observe().send_async(
+                0,
+                || Ok::<_, ()>(90),
+                &mut timer
+            ));
             let mut cx = Context::from_waker(Waker::noop());
             assert!(send.as_mut().poll(&mut cx).is_pending());
             state.ready.set(true);
@@ -2375,6 +2939,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_small_device_independent_storage_ceilings() {
+        let mut timer = NeverTimer;
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()
@@ -2382,10 +2947,13 @@ mod async_request_tests {
             .bind(AsyncOnly(&state))
             .unwrap();
         let app_bytes = core::mem::size_of_val(&app);
-        let prepared = app.get("sensor").to(PEER).prepare(0).unwrap();
+        let prepared = app.get("sensor").to(PEER).prepare(0, None).unwrap();
         let prepared_bytes = core::mem::size_of_val(&prepared);
         drop(prepared);
-        let future = app.get("sensor").to(PEER).send_async(0, || Ok::<_, ()>(90));
+        let future = app
+            .get("sensor")
+            .to(PEER)
+            .send_async(0, || Ok::<_, ()>(90), &mut timer);
         let future_bytes = core::mem::size_of_val(&future);
         assert!(app_bytes <= 32 * 1024, "whole SmallDevice App: {app_bytes}");
         assert!(prepared_bytes <= 4096, "prepared Call: {prepared_bytes}");
@@ -2410,6 +2978,19 @@ pub enum AsyncCallError<E, C> {
     Request(Error<E>),
     /// A complete datagram was accepted, then its completion clock failed.
     ClockAfterSend(C),
+    /// A datagram was accepted, then its completion clock moved backwards.
+    ClockRegressedAfterSend {
+        /// Preparation or previous accepted datagram time.
+        previous_ms: u64,
+        /// Invalid clock sample after transport acceptance.
+        observed_ms: u64,
+    },
+    /// Existing App work needs a protocol pass before this send can wait longer.
+    /// Earlier packets in this request may already have reached the peer.
+    ProgressRequired {
+        /// Existing App deadline that interrupted this initial send.
+        at_ms: u64,
+    },
     /// A complete CON was accepted, then its reservation commit failed.
     CommitAfterSend,
 }
@@ -2428,6 +3009,7 @@ impl<E, C> From<super::send::AsyncSendError<E, C>> for AsyncCallError<E, C> {
 // Ownership uses existing packet/body pools. Only the same bounded LiveCall
 // options that sync send constructs are retained while the transport waits.
 struct PreparedCall<'a, S: super::AppStorage, T, const C: usize, const R: usize> {
+    progress_deadline: Option<u64>,
     engine: &'a mut Engine<S>,
     io: &'a mut T,
     ids: &'a mut AppIds,
@@ -2583,32 +3165,85 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
     async fn accept<CError>(
         &mut self,
         completed_at: &mut impl FnMut() -> Result<u64, CError>,
+        timer: &mut impl crate::platform::AsyncTimer,
     ) -> Result<StagedClient, AsyncCallError<T::Error, CError>>
     where
         T: crate::storage::AsyncDatagramIo,
     {
+        let completed = core::cell::Cell::new(None);
+        let own_deadline = self.live.as_ref().and_then(|live| live.deadline_ms);
+        let other_deadline = self
+            .lives
+            .next_timeout_after(self.engine, self.inbox, None)
+            .into_iter()
+            .chain(self.progress_deadline)
+            .chain(
+                (0..self.engine.capacities().tx_datagram_slots).filter_map(|index| {
+                    self.engine
+                        .pending_con(SlotId::from_index(index))
+                        .and_then(|pending| pending.rto().next_timeout_ms())
+                }),
+            )
+            .min();
+        let deadline = own_deadline.into_iter().chain(other_deadline).min();
+        if let Some(deadline) = deadline.filter(|due| *due <= self.now_ms) {
+            return Err(if own_deadline == Some(deadline) {
+                AsyncCallError::Request(Error::DeadlineElapsed)
+            } else {
+                AsyncCallError::ProgressRequired { at_ms: deadline }
+            });
+        }
         let staged = self.staged.take().expect("staged datagram");
         let pending = self.pending.take();
-        let completed = core::cell::Cell::new(None);
-        super::send::finish_async(
-            self.engine,
-            self.io,
-            staged.tx,
-            self.call.peer,
-            pending.map(|p| (p.message_id(), staged.jitter)),
-            pending,
-            || {
-                let now = completed_at()?;
-                completed.set(Some(now));
-                Ok(now)
-            },
-        )
-        .await
-        .map_err(AsyncCallError::from)?;
-        self.now_ms = match completed.get() {
+        {
+            use core::future::Future;
+            let send = super::send::finish_async(
+                self.engine,
+                self.io,
+                staged.tx,
+                self.call.peer,
+                pending.map(|p| (p.message_id(), staged.jitter)),
+                pending,
+                || {
+                    let now = completed_at()?;
+                    completed.set(Some(now));
+                    Ok(now)
+                },
+            );
+            let mut send = core::pin::pin!(send);
+            match deadline {
+                Some(deadline) => {
+                    let mut timeout = core::pin::pin!(timer.wait_until(deadline));
+                    core::future::poll_fn(|cx| {
+                        if timeout.as_mut().poll(cx).is_ready() {
+                            return core::task::Poll::Ready(Err(
+                                if own_deadline == Some(deadline) {
+                                    AsyncCallError::Request(Error::DeadlineElapsed)
+                                } else {
+                                    AsyncCallError::ProgressRequired { at_ms: deadline }
+                                },
+                            ));
+                        }
+                        send.as_mut()
+                            .poll(cx)
+                            .map(|result| result.map_err(AsyncCallError::from))
+                    })
+                    .await
+                }
+                None => send.await.map_err(AsyncCallError::from),
+            }
+        }?;
+        let observed_ms = match completed.get() {
             Some(now) => now,
             None => completed_at().map_err(AsyncCallError::ClockAfterSend)?,
         };
+        if observed_ms < self.now_ms {
+            return Err(AsyncCallError::ClockRegressedAfterSend {
+                previous_ms: self.now_ms,
+                observed_ms,
+            });
+        }
+        self.now_ms = observed_ms;
         if self
             .live
             .as_ref()
@@ -2619,32 +3254,10 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         }
         Ok(staged)
     }
-
-    async fn send_async<CError>(
-        mut self,
-        mut completed_at: impl FnMut() -> Result<u64, CError>,
-    ) -> Result<Call, AsyncCallError<T::Error, CError>>
-    where
-        T: crate::storage::AsyncDatagramIo,
-    {
-        if self.staged.is_none() {
-            return Ok(self.commit());
-        }
-        let staged = self.accept(&mut completed_at).await?;
-        if staged.continue_q {
-            let body = staged.body.expect("Q body");
-            while let Some(complete) = self.stage_next_q(body).map_err(AsyncCallError::Request)? {
-                self.accept(&mut completed_at).await?;
-                if complete {
-                    break;
-                }
-            }
-        }
-        Ok(self.commit())
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_staged_client_async, bound(crate::app::async_server::ProtocolIo), calls(issue_q_block1_window => issue_q_block1_window_async, finish_client_send => finish_client_send_async))]
 fn send_staged_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -2658,7 +3271,7 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
-    let sent = finish_client_send(
+    let mut sent = finish_client_send(
         engine,
         io,
         staged.tx,
@@ -2667,37 +3280,33 @@ where
         now_ms,
         staged.mid,
         staged.jitter,
-    )
-    .and_then(|()| {
-        if staged.continue_q {
-            issue_q_block1_window(
-                engine,
-                io,
-                ids,
-                oscore,
-                now_ms,
-                spec.dest,
-                spec.ty,
-                spec.code,
-                spec.token,
-                spec.path,
-                spec.queries,
-                spec.accept,
-                spec.content_format,
-                spec.echo,
-                spec.no_response,
-                spec.if_match,
-                spec.etag,
-                spec.if_none_match,
-                staged.body.expect("Q upload body"),
-                None,
-                None,
-            )
-            .map(|_| ())
-        } else {
-            Ok(())
-        }
-    });
+    );
+    if sent.is_ok() && staged.continue_q {
+        sent = issue_q_block1_window(
+            engine,
+            io,
+            ids,
+            oscore,
+            now_ms,
+            spec.dest,
+            spec.ty,
+            spec.code,
+            spec.token,
+            spec.path,
+            spec.queries,
+            spec.accept,
+            spec.content_format,
+            spec.echo,
+            spec.no_response,
+            spec.if_match,
+            spec.etag,
+            spec.if_none_match,
+            staged.body.expect("Q upload body"),
+            None,
+            None,
+        )
+        .map(|_| ());
+    }
     if sent.is_err()
         && let Some(body) = staged.body
     {
@@ -2806,6 +3415,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_client_block1_async, bound(crate::app::async_server::ProtocolIo), calls(send_staged_client => send_staged_client_async))]
 fn send_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3018,6 +3628,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(complete_client_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_block2_continue => send_block2_continue_async, send_q_block2_continue => send_q_block2_continue_async, reissue_qblock1_missing => reissue_qblock1_missing_async, continue_block1_tx => continue_block1_tx_async, super::send_empty_rst => super::send_empty_rst_async, super::send_empty_ack => super::send_empty_ack_async))]
 pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3550,6 +4161,7 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_block2_continue_async, bound(crate::app::async_server::ProtocolIo), calls(send_followup => send_followup_async))]
 fn send_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3587,6 +4199,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_q_block2_continue_async, bound(crate::app::async_server::ProtocolIo), calls(send_followup => send_followup_async))]
 fn send_q_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3624,6 +4237,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(recover_qblock2_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_followup => send_followup_async))]
 pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3680,6 +4294,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_followup_async, bound(crate::app::async_server::ProtocolIo), calls(send_client_block1 => send_client_block1_async, super::finish_send => super::finish_send_async))]
 fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3868,6 +4483,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(reissue_qblock1_missing_async, bound(crate::app::async_server::ProtocolIo), calls(send_block1_issued => send_block1_issued_async, super::completion_time => super::async_server::completion_time_async))]
 fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -3933,7 +4549,8 @@ where
         )?;
     }
     if count != 0 {
-        arm_q_pacing(engine, lives, ids, now_ms, live.call);
+        let completed = super::completion_time(io, now_ms);
+        arm_q_pacing(engine, lives, ids, completed, live.call);
     }
     Ok(())
 }
@@ -3982,6 +4599,7 @@ fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
 /// not accumulate send credit. Ingress runs first so valid Continue/recovery can
 /// disarm or rearm this opportunity before selection.
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(pace_qblock1_io_async, bound(crate::app::async_server::ProtocolIo), calls(continue_block1_tx => continue_block1_tx_async))]
 pub(crate) fn pace_qblock1<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4018,9 +4636,8 @@ where
     let Some(body) = upload_body(engine, lives.upload_key(live.call)) else {
         return Ok(());
     };
-    let result = (|| {
-        engine.pace_q_block1(body).map_err(Error::Block)?;
-        continue_block1_tx(
+    let result = match engine.pace_q_block1(body).map_err(Error::Block) {
+        Ok(()) => continue_block1_tx(
             engine,
             io,
             lives,
@@ -4032,8 +4649,9 @@ where
             None,
             live.call.peer,
             body,
-        )
-    })();
+        ),
+        Err(error) => Err(error),
+    };
     if result.is_err() {
         abandon_send(engine, oscore, live.call.token(), live.call.peer);
         fail_call(
@@ -4050,6 +4668,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(continue_qblock1_ack_io_async, bound(crate::app::async_server::ProtocolIo), calls(continue_block1_tx => continue_block1_tx_async))]
 pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4086,15 +4705,19 @@ where
     if transfer.role() != BlockRole::OutgoingQBlock1 || transfer.is_complete() {
         return Ok(());
     }
-    let outcome = (|| {
+    let acknowledged =
         if transfer.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1 {
             // Every earlier payload was individually ACKed before the next
             // was issued, so this ACK confirms the entire current set.
             engine
                 .ack_q_block1(body, transfer.num())
-                .map_err(Error::Block)?;
-        }
-        continue_block1_tx(
+                .map_err(Error::Block)
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+    let outcome = match acknowledged {
+        Ok(()) => continue_block1_tx(
             engine,
             io,
             lives,
@@ -4106,8 +4729,9 @@ where
             None,
             peer,
             body,
-        )
-    })();
+        ),
+        Err(error) => Err(error),
+    };
     if outcome.is_err() {
         abandon_send(engine, oscore, call.token(), peer);
         fail_call(
@@ -4124,6 +4748,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(continue_block1_tx_async, bound(crate::app::async_server::ProtocolIo), calls(issue_block1 => issue_block1_async, issue_q_block1_window => issue_q_block1_window_async, super::completion_time => super::async_server::completion_time_async))]
 fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4248,7 +4873,8 @@ where
                 Some((token, peer)),
             )
             .map(|_| ())?;
-            arm_q_pacing(engine, lives, ids, now_ms, Call::new(token, peer));
+            let completed = super::completion_time(io, now_ms);
+            arm_q_pacing(engine, lives, ids, completed, Call::new(token, peer));
             Ok(())
         }
         _ => Ok(()),
@@ -4256,6 +4882,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_block1_async, bound(crate::app::async_server::ProtocolIo), calls(send_block1_issued => send_block1_issued_async))]
 fn issue_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4309,6 +4936,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_q_block1_window_async, bound(crate::app::async_server::ProtocolIo), calls(send_block1_issued => send_block1_issued_async))]
 fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4380,6 +5008,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_block1_issued_async, bound(crate::app::async_server::ProtocolIo), calls(finish_client_send => finish_client_send_async))]
 fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4642,6 +5271,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(finish_client_send_async, bound(crate::app::async_server::ProtocolIo), calls(super::finish_send => super::finish_send_async))]
 fn finish_client_send<Mem, T>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4812,6 +5442,20 @@ pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
 {
+    fail_pending_client(engine, inbox, lives, oscore, tx, CallFailure::TimedOut);
+}
+
+/// Retire a pending request with its actual completion failure classification.
+pub(crate) fn fail_pending_client<Mem, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox<CALLS>,
+    lives: &mut ClientLives<CALLS>,
+    oscore: &mut super::oscore::Field<REQUESTS>,
+    tx: SlotId,
+    failure: CallFailure,
+) where
+    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
+{
     if let Some(entry) = exchange_for_tx(engine, tx) {
         fail_call(
             engine,
@@ -4819,7 +5463,7 @@ pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
             lives,
             oscore,
             Call::new(entry.token(), entry.endpoint()),
-            CallFailure::TimedOut,
+            failure,
             false,
         );
     }

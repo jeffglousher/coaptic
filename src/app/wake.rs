@@ -31,6 +31,14 @@ impl<
 where
     P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
+    #[cfg(feature = "edhoc")]
+    pub(crate) async fn receive_async(&mut self) -> Result<SlotId, Error<T::Error>> {
+        self.engine
+            .recv_from_async(&mut self.io)
+            .await
+            .map_err(Error::Io)
+    }
+
     /// Await ingress, the earliest protocol deadline, or caller-owned local work.
     ///
     /// Existing eligible work returns immediately without receiving another
