@@ -133,7 +133,7 @@ impl Call {
     /// Destination of the request / source of the matched response.
     #[must_use]
     pub const fn peer(self) -> Endpoint {
-        self.peer
+        self.peer.physical()
     }
 }
 
@@ -169,6 +169,8 @@ impl std::error::Error for ResponseBufferError {}
 pub enum CallFailure {
     /// Caller cancelled this call locally (no deregistration is sent).
     Cancelled,
+    /// The owning security association was revoked locally.
+    AssociationRevoked,
     /// Explicit cancellation could not be sent; local subscription is retired.
     CancellationFailed,
     /// Re-registration could not be sent; local subscription is retired.
@@ -194,6 +196,7 @@ pub enum CallFailure {
 impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::AssociationRevoked => f.write_str("security association revoked"),
             Self::Cancelled => f.write_str("call cancelled"),
             Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
             Self::ReregistrationFailed => f.write_str("Observe re-registration send failed"),
@@ -347,6 +350,17 @@ pub(crate) struct ClientInbox<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientInbox<CALLS> {
+    pub(super) fn usage(&self) -> (usize, usize) {
+        (
+            self.rows.iter().flatten().count(),
+            self.rows
+                .iter()
+                .flatten()
+                .filter(|row| row.complete)
+                .count(),
+        )
+    }
+
     pub(super) fn has_protocol_state(&self) -> bool {
         self.rows.iter().any(Option::is_some)
     }
@@ -586,6 +600,44 @@ pub(crate) struct ClientLives<const CALLS: usize> {
 }
 
 impl<const CALLS: usize> ClientLives<CALLS> {
+    pub(super) fn usage(&self) -> (usize, usize) {
+        (
+            self.rows.iter().flatten().count(),
+            self.rows.iter().flatten().filter(|row| row.retired).count(),
+        )
+    }
+
+    pub(super) fn next_timeout<Mem: Storage + Exchanges + ObserveSlots>(
+        &self,
+        engine: &Engine<Mem>,
+        inbox: &ClientInbox<CALLS>,
+    ) -> Option<u64> {
+        self.rows
+            .iter()
+            .flatten()
+            .filter_map(|live| {
+                let mut next = (live.backoff_until_ms != 0).then_some(live.backoff_until_ms);
+                if live.retired {
+                    return next;
+                }
+                if live.q_pace_ms != 0 {
+                    next = Some(next.map_or(live.q_pace_ms, |old| old.min(live.q_pace_ms)));
+                }
+                if !inbox.contains(live.call) || client_observe_live(engine, live.call) {
+                    next = next.into_iter().chain(live.deadline_ms).min();
+                    if live.due_ms != 0
+                        && engine
+                            .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer))
+                            .is_some()
+                    {
+                        next = Some(next.map_or(live.due_ms, |old| old.min(live.due_ms)));
+                    }
+                }
+                next
+            })
+            .min()
+    }
+
     pub(super) fn has_protocol_state(&self) -> bool {
         self.rows.iter().flatten().any(|row| !row.retired)
     }
@@ -897,13 +949,15 @@ pub struct Outgoing<
     const DEFERRED: usize = 0,
     const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
     const REQUESTS: usize = 4,
+    const ASSOCIATIONS: usize = 1,
 > where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
-    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>,
+    app: &'a mut App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>,
     code: Code,
     ty: Type,
     dest: Option<Endpoint>,
+    association_valid: bool,
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
@@ -934,7 +988,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -946,7 +1001,8 @@ where
     pub fn get(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Get, path)
     }
 
@@ -955,7 +1011,8 @@ where
     pub fn put(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Put, path)
     }
 
@@ -964,7 +1021,8 @@ where
     pub fn post(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Post, path)
     }
 
@@ -973,7 +1031,8 @@ where
     pub fn delete(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Delete, path)
     }
 
@@ -983,7 +1042,8 @@ where
     pub fn fetch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Fetch, path)
     }
 
@@ -992,7 +1052,8 @@ where
     pub fn patch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::Patch, path)
     }
 
@@ -1001,7 +1062,8 @@ where
     pub fn ipatch(
         &mut self,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         self.request(Method::IPatch, path)
     }
 
@@ -1011,12 +1073,14 @@ where
         &mut self,
         method: Method,
         path: impl IntoPath,
-    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'_, P, T, N, Missing, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         Outgoing {
             app: self,
             code: method.code(),
             ty: Type::Confirmable,
             dest: None,
+            association_valid: true,
             path: path_from_into(path),
             payload: &[],
             content_format: None,
@@ -1049,7 +1113,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1096,7 +1161,7 @@ where
         let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
-            super::oscore::cancel(&mut self.oscore, call.token());
+            super::oscore::cancel(&mut self.oscore, call.peer, call.token());
         }
         if let Some(id) = body {
             if rx_body_payload(&self.engine, id)
@@ -1191,7 +1256,7 @@ where
         }
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
-            super::oscore::cancel(&mut self.oscore, call.token());
+            super::oscore::cancel(&mut self.oscore, call.peer, call.token());
         }
         Ok(Some(response.map(|response| {
             response.with_complete_payload(&output[..len], body.is_some())
@@ -1232,7 +1297,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> Outgoing<'a, P, T, N, Dest, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
 {
@@ -1241,12 +1307,14 @@ where
     pub fn to(
         self,
         peer: Endpoint,
-    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS> {
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
         Outgoing {
             app: self.app,
             code: self.code,
             ty: self.ty,
             dest: Some(peer),
+            association_valid: self.association_valid,
             path: self.path,
             payload: self.payload,
             content_format: self.content_format,
@@ -1267,6 +1335,19 @@ where
             deadline_ms: self.deadline_ms,
             _dest: core::marker::PhantomData,
         }
+    }
+
+    /// Select an association issued by this App, including when peers share an endpoint.
+    #[must_use]
+    pub fn to_association(
+        mut self,
+        association: super::Association,
+    ) -> Outgoing<'a, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+    {
+        use super::associations::ContextStorage;
+        self.association_valid =
+            self.app.oscore.association(association.route) == Some(association);
+        self.to(association.route)
     }
 
     /// Absolute deadline in the same monotonic millisecond clock as `send`/`poll`.
@@ -1313,8 +1394,9 @@ where
     /// ACKs; NON masks 2/18 pace each new ten-payload set after a sampled 2..=3s
     /// delay unless Continue arrives first. Poll sends at most one timed set,
     /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
-    /// missing-block reports. Other nonzero Q-Block1 masks and nonzero masks on
-    /// Observe registration remain explicit App boundaries.
+    /// missing-block reports. Q-Block1 rejects suppression of 4.xx; other bitmap
+    /// bits are preserved without changing upload admission or pacing.
+    /// Nonzero Observe registration masks remain an explicit App boundary.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1515,7 +1597,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> Outgoing<'_, P, T, N, Present, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 where
     P: crate::storage::MemoryProfile + MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
     T: DatagramIo,
@@ -1538,13 +1621,21 @@ where
     /// [`Error::Saturated`] if the configured client Call table is full and
     /// this Token is not one of its retained Calls. No reply is evicted.
     pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>> {
+        #[cfg(feature = "oscore")]
+        if !self.association_valid {
+            return Err(Error::Oscore(crate::oscore::Error::Context));
+        }
+
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
         }
         if self.code == Code::FETCH && self.content_format.is_none() {
             return Err(Error::FetchContentFormatRequired);
         }
-        let dest = self.dest.expect("typestate: to() was called");
+        let dest = super::oscore::resolve(
+            &self.app.oscore,
+            self.dest.expect("typestate: to() was called"),
+        )?;
         let path = self.path.map_err(|_| Error::Path)?;
         let observe = self.observe;
         let refreshing = observe == OutgoingObserve::Register && self.observe_target.is_some();
@@ -1554,7 +1645,7 @@ where
         }
         if self
             .no_response
-            .is_some_and(|value| !matches!(value.get(), 0 | 2 | 16 | 18))
+            .is_some_and(|value| value.suppresses(Code::REQUEST_ENTITY_INCOMPLETE))
             && self.q_block1
         {
             return Err(Error::NoResponseUploadUnsupported);
@@ -1782,7 +1873,8 @@ impl<
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
-> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS>
+    const ASSOCIATIONS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 {
     fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
         for _ in 0..8 {
@@ -1936,7 +2028,7 @@ where
             .with_token(spec.token)
             .with_options(options)
             .with_payload(spec.payload);
-        super::oscore::encode_request(oscore, engine, tx, &msg)
+        super::oscore::encode_request(oscore, spec.dest, engine, tx, &msg)
     });
     let encoded = match encoded {
         Ok(result) => result,
@@ -1958,17 +2050,13 @@ where
         )
         .map(|()| Call::new(spec.token, spec.dest)),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
-            // Classic Block1 requires 2.xx Continue. This bounded App combination
-            // supports only the defined error-class bits; undefined bits are an
-            // API boundary, not a wire-validity judgment. CON Q uploads use
-            // transport ACKs, so their admitted 2/18 masks do not hide progress.
+            // Classic Block1 requires 2.xx Continue. Test the suppressed class,
+            // preserving unrelated bitmap bits on every fragment. CON Q uploads
+            // use transport ACKs; their success-suppression bit does not hide ACKs.
             if !spec.q_block1
-                && spec.no_response.is_some_and(|value| {
-                    value.get()
-                        & !(crate::message::NoResponse::SUPPRESS_4
-                            | crate::message::NoResponse::SUPPRESS_5)
-                        != 0
-                })
+                && spec
+                    .no_response
+                    .is_some_and(|value| value.suppresses(Code::CONTINUE))
             {
                 let _ = engine.release_tx(tx);
                 return Err(Error::NoResponseUploadUnsupported);
@@ -2055,6 +2143,7 @@ where
             .map_err(BlockTransferError::from)
             .map_err(Error::Block)?;
         match encode_block1_request(
+            dest,
             engine,
             oscore,
             tx,
@@ -2240,7 +2329,7 @@ where
             return Err(e);
         }
     }
-    if let Err(error) = super::oscore::commit_response(oscore, response_state) {
+    if let Err(error) = super::oscore::commit_response(oscore, peer, response_state) {
         let _ = engine.release_rx(rx);
         return Err(error);
     }
@@ -2792,13 +2881,13 @@ where
         oscore,
         now_ms,
         call.token(),
-        call.peer(),
+        call.peer,
         None,
         &blocks[..count],
         Some(Type::NonConfirmable),
     );
     if outcome.is_err() {
-        abandon_send(engine, oscore, call.token(), call.peer());
+        abandon_send(engine, oscore, call.token(), call.peer);
         fail_call(
             engine,
             inbox,
@@ -2926,7 +3015,7 @@ where
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
-    if let Err(e) = super::oscore::encode_request(oscore, engine, tx, &msg) {
+    if let Err(e) = super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
         let _ = engine.release_tx(tx);
         return Err(e);
     }
@@ -3044,7 +3133,7 @@ fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
             && live.ty == Type::NonConfirmable
             && live
                 .no_response
-                .is_some_and(|mask| matches!(mask.get(), 2 | 18))
+                .is_some_and(|mask| mask.suppresses(Code::CONTINUE))
         {
             now_ms
                 .checked_add(u64::from(
@@ -3109,12 +3198,12 @@ where
             live.call.token(),
             None,
             None,
-            live.call.peer(),
+            live.call.peer,
             body,
         )
     })();
     if result.is_err() {
-        abandon_send(engine, oscore, live.call.token(), live.call.peer());
+        abandon_send(engine, oscore, live.call.token(), live.call.peer);
         fail_call(
             engine,
             inbox,
@@ -3281,7 +3370,7 @@ where
         }
         BlockRole::OutgoingQBlock1 => {
             let paced = ty == Type::NonConfirmable
-                && no_response.is_some_and(|mask| matches!(mask.get(), 2 | 18));
+                && no_response.is_some_and(|mask| mask.suppresses(Code::CONTINUE));
             if paced {
                 if let Some(q) = q_ack {
                     if transfer
@@ -3509,6 +3598,7 @@ where
         }
     };
     if let Err(error) = encode_block1_request(
+        dest,
         engine,
         oscore,
         tx,
@@ -3540,6 +3630,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn encode_block1_request<Mem, E, const REQUESTS: usize>(
+    dest: Endpoint,
     engine: &mut Engine<Mem>,
     oscore: &mut super::oscore::Field<REQUESTS>,
     tx: SlotId,
@@ -3619,7 +3710,7 @@ where
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(payload);
-    super::oscore::encode_request(oscore, engine, tx, &msg)
+    super::oscore::encode_request(oscore, dest, engine, tx, &msg)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3697,7 +3788,7 @@ fn abandon_send<Mem, const REQUESTS: usize>(
             let _ = engine.release_tx_body(id);
         }
     }
-    super::oscore::cancel(oscore, token);
+    super::oscore::cancel(oscore, peer, token);
 }
 
 fn drop_exchange_for_tx<Mem: Storage + Exchanges>(engine: &mut Engine<Mem>, tx: SlotId) {
@@ -3749,7 +3840,7 @@ fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotI
 }
 
 fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
-    let key = ObserveKey::new_client(call.token(), call.peer());
+    let key = ObserveKey::new_client(call.token(), call.peer);
     engine.lookup_observe(key).is_some()
 }
 
@@ -3866,7 +3957,7 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let key = ExchangeKey::new(call.token(), call.peer());
+    let key = ExchangeKey::new(call.token(), call.peer);
     if let Some(entry) = engine.take_exchange(key) {
         // NON/empty ACK may have released and reused the old TX slot. Only
         // a matching pending CON still establishes ownership of that slot.
@@ -3876,7 +3967,7 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
             }
         }
     }
-    let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer()));
+    let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer));
     if let Some(rx) = inbox.take_datagram(call) {
         let _ = engine.release_rx(rx);
     }
@@ -3887,7 +3978,7 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
         let id = SlotId::from_index(i);
         if engine.rx_body_transfer(id).is_some_and(|transfer| {
             transfer.key().token() == call.token()
-                && transfer.key().endpoint() == call.peer()
+                && transfer.key().endpoint() == call.peer
                 && matches!(
                     transfer.role(),
                     BlockRole::IncomingBlock2 | BlockRole::IncomingQBlock2
@@ -3906,7 +3997,7 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
             let _ = engine.release_tx_body(body);
         }
     }
-    super::oscore::cancel(oscore, call.token());
+    super::oscore::cancel(oscore, call.peer, call.token());
     // Untaken failures occupy the same bounded completion budget as replies.
     for live in lives
         .rows
@@ -3969,7 +4060,7 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
         } else if live.due_ms != 0
             && now_ms >= live.due_ms
             && engine
-                .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer()))
+                .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer))
                 .is_some()
         {
             Some(CallFailure::TimedOut)
@@ -3980,5 +4071,33 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
     }
     for (call, failure) in due.into_iter().flatten() {
         fail_call(engine, inbox, lives, oscore, call, failure, true);
+    }
+}
+
+#[cfg(feature = "oscore")]
+pub(super) fn revoke_association<S: super::AppStorage, const C: usize, const R: usize>(
+    engine: &mut Engine<S>,
+    inbox: &mut ClientInbox<C>,
+    lives: &mut ClientLives<C>,
+    oscore: &mut super::oscore::Field<R>,
+    peer: Endpoint,
+) {
+    for i in 0..C {
+        if let Some(call) = lives.rows[i]
+            .as_ref()
+            .map(|live| live.call)
+            .filter(|call| call.peer == peer)
+        {
+            fail_call(
+                engine,
+                inbox,
+                lives,
+                oscore,
+                call,
+                CallFailure::AssociationRevoked,
+                true,
+            );
+            lives.rows[i] = None;
+        }
     }
 }

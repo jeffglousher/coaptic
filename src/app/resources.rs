@@ -28,7 +28,7 @@ pub struct Allocated {
 /// `P` determines fixed pool/table sizes. Other dimensions remain const generics
 /// so disabled areas occupy no memory and no allocator is required. Customize
 /// this value, then move it to [`App::with_resources`]. Existing `AppBuilder`
-/// construction remains available for compatibility with earlier callers.
+/// construction also supports staged configuration.
 pub struct Resources<
     P = crate::profiles::Default,
     const ROUTES: usize = 8,
@@ -37,6 +37,7 @@ pub struct Resources<
     const CALLS: usize = 4,
     S = Fixed,
     const REQUESTS: usize = 4,
+    const ASSOCIATIONS: usize = 1,
 > {
     storage: S,
     _profile: PhantomData<P>,
@@ -62,7 +63,8 @@ impl<
     const D: usize,
     const C: usize,
     const REQUESTS: usize,
-> Resources<P, N, B, D, C, Fixed, REQUESTS>
+    const ASSOCIATIONS: usize,
+> Resources<P, N, B, D, C, Fixed, REQUESTS, ASSOCIATIONS>
 {
     /// Create fixed resource bounds from a memory profile and the type's dimensions.
     #[must_use]
@@ -98,7 +100,8 @@ impl<
     #[must_use]
     pub const fn observe_entries<const M: usize>(
         self,
-    ) -> Resources<crate::profiles::WithObserve<P, M>, N, B, D, C, Fixed, REQUESTS> {
+    ) -> Resources<crate::profiles::WithObserve<P, M>, N, B, D, C, Fixed, REQUESTS, ASSOCIATIONS>
+    {
         Resources {
             storage: Fixed,
             _profile: PhantomData,
@@ -123,7 +126,8 @@ impl<
     #[must_use]
     pub const fn dedup_entries<const M: usize>(
         self,
-    ) -> Resources<crate::profiles::WithDedup<P, M>, N, B, D, C, Fixed, REQUESTS> {
+    ) -> Resources<crate::profiles::WithDedup<P, M>, N, B, D, C, Fixed, REQUESTS, ASSOCIATIONS>
+    {
         Resources {
             storage: Fixed,
             _profile: PhantomData,
@@ -134,7 +138,7 @@ impl<
     #[must_use]
     pub const fn block_wise<const ENABLED: bool>(
         self,
-    ) -> Resources<P, N, ENABLED, D, C, Fixed, REQUESTS> {
+    ) -> Resources<P, N, ENABLED, D, C, Fixed, REQUESTS, ASSOCIATIONS> {
         Resources {
             storage: Fixed,
             _profile: PhantomData,
@@ -148,7 +152,10 @@ impl<
     /// No growth occurs after binding. Requires `alloc`, independently of `std`.
     #[cfg(feature = "alloc")]
     #[must_use]
-    pub fn allocated(self, heap_limit: usize) -> Resources<P, N, B, D, C, Allocated, REQUESTS> {
+    pub fn allocated(
+        self,
+        heap_limit: usize,
+    ) -> Resources<P, N, B, D, C, Allocated, REQUESTS, ASSOCIATIONS> {
         let capacities = self.pool_capacities();
         Resources {
             storage: Allocated {
@@ -167,16 +174,38 @@ impl<
     const D: usize,
     const C: usize,
     const REQUESTS: usize,
-> Default for Resources<P, N, B, D, C, Fixed, REQUESTS>
+    const ASSOCIATIONS: usize,
+> Default for Resources<P, N, B, D, C, Fixed, REQUESTS, ASSOCIATIONS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const REQUESTS: usize>
-    Resources<P, N, B, D, C, S, REQUESTS>
+impl<
+    P,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+    S,
+    const REQUESTS: usize,
+    const ASSOCIATIONS: usize,
+> Resources<P, N, B, D, C, S, REQUESTS, ASSOCIATIONS>
 {
+    /// Number of independently owned OSCORE contexts stored inline.
+    pub const fn association_capacity(&self) -> usize {
+        ASSOCIATIONS
+    }
+
+    /// Select association capacity without changing shared packet/body pools.
+    pub fn associations<const M: usize>(self) -> Resources<P, N, B, D, C, S, REQUESTS, M> {
+        Resources {
+            storage: self.storage,
+            _profile: PhantomData,
+        }
+    }
+
     /// Inline OSCORE request-binding capacity, independent of Calls and packet pools.
     /// Without the `oscore` feature this table occupies no memory.
     #[must_use]
@@ -192,7 +221,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
     /// Table memory remains inline for fixed and allocated Apps; it is outside the
     /// allocated pool heap limit. No resizing occurs while polling.
     #[must_use]
-    pub fn security_requests<const M: usize>(self) -> Resources<P, N, B, D, C, S, M> {
+    pub fn security_requests<const M: usize>(self) -> Resources<P, N, B, D, C, S, M, ASSOCIATIONS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -218,7 +247,9 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
     }
     /// Set inline client Call/completion capacity, including retained Observe Calls.
     #[must_use]
-    pub fn client_calls<const M: usize>(self) -> Resources<P, N, B, D, M, S, REQUESTS> {
+    pub fn client_calls<const M: usize>(
+        self,
+    ) -> Resources<P, N, B, D, M, S, REQUESTS, ASSOCIATIONS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -226,7 +257,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
     }
     /// Set route capacity before routes are registered.
     #[must_use]
-    pub fn routes<const M: usize>(self) -> Resources<P, M, B, D, C, S, REQUESTS> {
+    pub fn routes<const M: usize>(self) -> Resources<P, M, B, D, C, S, REQUESTS, ASSOCIATIONS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -234,7 +265,7 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
     }
     /// Set inline deferred server-work capacity.
     #[must_use]
-    pub fn deferred<const M: usize>(self) -> Resources<P, N, B, M, C, S, REQUESTS> {
+    pub fn deferred<const M: usize>(self) -> Resources<P, N, B, M, C, S, REQUESTS, ASSOCIATIONS> {
         Resources {
             storage: self.storage,
             _profile: PhantomData,
@@ -243,8 +274,15 @@ impl<P, const N: usize, const B: bool, const D: usize, const C: usize, S, const 
 }
 
 #[cfg(feature = "alloc")]
-impl<P, const N: usize, const B: bool, const D: usize, const C: usize, const REQUESTS: usize>
-    Resources<P, N, B, D, C, Allocated, REQUESTS>
+impl<
+    P,
+    const N: usize,
+    const B: bool,
+    const D: usize,
+    const C: usize,
+    const REQUESTS: usize,
+    const ASSOCIATIONS: usize,
+> Resources<P, N, B, D, C, Allocated, REQUESTS, ASSOCIATIONS>
 {
     /// Set the shared client/server Observe-interest count in allocated storage.
     ///
@@ -311,8 +349,9 @@ pub struct ConfiguredBuilder<
     const C: usize,
     S,
     const REQUESTS: usize = 4,
+    const ASSOCIATIONS: usize = 1,
 > {
-    inner: AppBuilder<P, Present, N, B, D, C, REQUESTS>,
+    inner: AppBuilder<P, Present, N, B, D, C, REQUESTS, ASSOCIATIONS>,
     storage: S,
 }
 
@@ -327,6 +366,7 @@ impl App {
     /// ```
     #[must_use]
     pub fn with_resources<
+        const ASSOCIATIONS: usize,
         P: MemoryProfile,
         const N: usize,
         const B: bool,
@@ -335,10 +375,10 @@ impl App {
         S,
         const REQUESTS: usize,
     >(
-        resources: Resources<P, N, B, D, C, S, REQUESTS>,
-    ) -> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS> {
+        resources: Resources<P, N, B, D, C, S, REQUESTS, ASSOCIATIONS>,
+    ) -> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS, ASSOCIATIONS> {
         ConfiguredBuilder {
-            inner: Self::profile_requests::<P, REQUESTS>()
+            inner: Self::profile_requests::<P, REQUESTS, ASSOCIATIONS>()
                 .block_wise::<B>()
                 .routes::<N>()
                 .deferred::<D>()
@@ -357,7 +397,8 @@ impl<
     const C: usize,
     S,
     const REQUESTS: usize,
-> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS>
+    const ASSOCIATIONS: usize,
+> ConfiguredBuilder<P, N, B, D, C, S, REQUESTS, ASSOCIATIONS>
 {
     /// Register a handler within the selected route capacity.
     /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
@@ -453,6 +494,14 @@ impl<
         self.inner = self.inner.oscore(context);
         self
     }
+    /// Refuse application traffic until an explicitly owned association is installed.
+    #[cfg(feature = "oscore")]
+    #[must_use]
+    pub fn require_associations(mut self) -> Self {
+        self.inner = self.inner.require_associations();
+        self
+    }
+
     /// Require durable replay checkpointing before inbound effects.
     #[cfg(feature = "oscore")]
     #[must_use]
@@ -481,7 +530,8 @@ impl<
     const D: usize,
     const C: usize,
     const REQUESTS: usize,
-> ConfiguredBuilder<P, N, B, D, C, Fixed, REQUESTS>
+    const ASSOCIATIONS: usize,
+> ConfiguredBuilder<P, N, B, D, C, Fixed, REQUESTS, ASSOCIATIONS>
 {
     /// Bind fixed storage and a caller-owned stateful cryptographic RNG.
     /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
@@ -492,7 +542,17 @@ impl<
         io: T,
         random: R,
     ) -> Result<
-        App<P, crate::platform::WithEntropy<T, R>, N, B, AppStore<P, B>, D, C, REQUESTS>,
+        App<
+            P,
+            crate::platform::WithEntropy<T, R>,
+            N,
+            B,
+            AppStore<P, B>,
+            D,
+            C,
+            REQUESTS,
+            ASSOCIATIONS,
+        >,
         BuildError,
     > {
         self.inner.bind_with_entropy(io, random)
@@ -502,7 +562,7 @@ impl<
     pub fn bind<T>(
         self,
         io: T,
-    ) -> Result<App<P, T, N, B, AppStore<P, B>, D, C, REQUESTS>, BuildError> {
+    ) -> Result<App<P, T, N, B, AppStore<P, B>, D, C, REQUESTS, ASSOCIATIONS>, BuildError> {
         let Fixed = self.storage;
         self.inner.bind(io)
     }
@@ -516,7 +576,8 @@ impl<
     const D: usize,
     const C: usize,
     const REQUESTS: usize,
-> ConfiguredBuilder<P, N, B, D, C, Allocated, REQUESTS>
+    const ASSOCIATIONS: usize,
+> ConfiguredBuilder<P, N, B, D, C, Allocated, REQUESTS, ASSOCIATIONS>
 {
     /// Bind bounded heap storage and a stateful cryptographic RNG, without `std`.
     /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
@@ -534,11 +595,12 @@ impl<
             D,
             C,
             REQUESTS,
+            ASSOCIATIONS,
         >,
         BuildError,
     > {
         self.inner.validate_entropy_source()?;
-        AppBuilder::<P, Present, N, B, D, C, REQUESTS>::validate_scratch::<
+        AppBuilder::<P, Present, N, B, D, C, REQUESTS, ASSOCIATIONS>::validate_scratch::<
             crate::storage::AllocMemory,
         >(self.storage.capacities)?;
         let (inner, io) = self.inner.prepare_entropy(io, random)?;
@@ -553,9 +615,12 @@ impl<
     pub fn bind<T>(
         self,
         io: T,
-    ) -> Result<App<P, T, N, B, crate::storage::AllocMemory, D, C, REQUESTS>, BuildError> {
+    ) -> Result<
+        App<P, T, N, B, crate::storage::AllocMemory, D, C, REQUESTS, ASSOCIATIONS>,
+        BuildError,
+    > {
         self.inner.validate_security()?;
-        AppBuilder::<P, Present, N, B, D, C, REQUESTS>::validate_scratch::<
+        AppBuilder::<P, Present, N, B, D, C, REQUESTS, ASSOCIATIONS>::validate_scratch::<
             crate::storage::AllocMemory,
         >(self.storage.capacities)?;
         let storage =

@@ -9,8 +9,8 @@
 //! Persist identity and trust, then run a fresh handshake after either peer
 //! restarts. Supply fresh cryptographically secure entropy on every attempt.
 //! Session keys are volatile: never restore them into a new App. A new
-//! [`Session`] belongs to a new App, without old exchanges, replay state,
-//! cached replies or Observe registrations. Reusing a session key instead
+//! [`Session`] belongs to a fresh App or a newly installed association, without
+//! old exchanges, replay state, cached replies or Observe registrations. Reusing a session key instead
 //! requires the durable sequence and replay contracts in [`crate::oscore`].
 //!
 //! Handshake state and keys have redacted Debug output. Lakers internally
@@ -862,7 +862,8 @@ impl Session {
     }
 
     /// Moves the fresh context and peer identity to the caller.
-    /// Bind a new secure App and carry this identity into its authorization policy.
+    /// Bind a secure App or install a fresh association and carry this identity into
+    /// its authorization policy.
     /// Use [`PeerTrust::accept_session`] before this move when enforcing durable
     /// trust; the local identity metadata is no longer available afterward.
     pub fn into_parts(self) -> (SecurityContext, Principal) {

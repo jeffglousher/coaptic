@@ -22,6 +22,33 @@ pub type HandlerFn = fn(Request<'_>) -> Response<'static>;
 /// representation when Engine pacing surfaces a notify.
 pub type ObserveSource = fn() -> Response<'static>;
 
+#[derive(Clone, Copy)]
+pub(crate) enum SnapshotSource {
+    Plain(ObserveSource),
+    Selected(HandlerFn),
+}
+
+impl SnapshotSource {
+    pub(crate) fn snapshot(
+        self,
+        interest: &crate::storage::ObserveInterest,
+        association: Option<super::Association>,
+    ) -> Option<Response<'static>> {
+        match self {
+            Self::Plain(source) => Some(source()),
+            Self::Selected(source) => {
+                let selection = interest.selection()?;
+                let parsed =
+                    crate::message::decode(&selection.bytes[..usize::from(selection.len)]).ok()?;
+                let request = Request::from_decoded(parsed, interest.endpoint().physical(), None)
+                    .ok()?
+                    .with_association(association);
+                Some(source(request))
+            }
+        }
+    }
+}
+
 /// Per-path method table (Ohkami-style bits; Axum-style `.get().put()` chain).
 ///
 /// Built with [`get`], [`put`], [`post`], [`delete`], [`fetch`], [`patch`],
@@ -41,7 +68,7 @@ pub type ObserveSource = fn() -> Response<'static>;
 #[derive(Clone, Copy)]
 pub struct MethodRouter {
     handlers: [Option<HandlerFn>; METHOD_COUNT],
-    observe: Option<ObserveSource>,
+    observe: Option<SnapshotSource>,
 }
 
 const METHOD_COUNT: usize = 7;
@@ -62,20 +89,31 @@ impl MethodRouter {
     /// [`Response`] still registers without this. This hook lets
     /// [`App::poll`](super::App::poll) encode a notification when Engine
     /// progress yields `observe_notify` (after [`App::signal`](super::App::signal)).
-    /// App declines FETCH and query-bearing GET registration with an ordinary
-    /// selected response,
-    /// including when the handler explicitly sets Observe. This requestless
-    /// source cannot retain each observer's request selection. Client-side FETCH
-    /// and query-bearing GET Observe against capable peers, and explicit
-    /// low-level Engine interests, remain available.
+    /// This requestless source declines FETCH and query-bearing GET registration.
+    /// Use [`Self::observe_selected`] to retain and supply each observer's selection.
     #[must_use]
     pub const fn observe(self, source: ObserveSource) -> Self {
         let mut this = self;
-        this.observe = Some(source);
+        this.observe = Some(SnapshotSource::Plain(source));
         this
     }
 
-    pub(crate) const fn observe_source(self) -> Option<ObserveSource> {
+    /// Register a selection-aware notification source for GET or FETCH.
+    ///
+    /// The callback receives retained method, path, ordered queries, Accept,
+    /// Content-Format and FETCH payload, plus the relation's peer and association.
+    /// Its Message ID/type are synthetic; it is a snapshot input, not new ingress.
+    /// Encoded selection is bounded by `BlockTransfer::REQUEST_IDENTITY_BYTES`
+    /// (512 bytes, including options and framing). Oversize selection declines
+    /// Observe registration while returning the ordinary response. Retention
+    /// belongs to the Observe row and ends with that relation.
+    #[must_use]
+    pub const fn observe_selected(mut self, source: HandlerFn) -> Self {
+        self.observe = Some(SnapshotSource::Selected(source));
+        self
+    }
+
+    pub(crate) const fn observe_source(self) -> Option<SnapshotSource> {
         self.observe
     }
 

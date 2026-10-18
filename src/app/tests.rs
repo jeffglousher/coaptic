@@ -2797,7 +2797,12 @@ fn qblock2_recover_sent_from_poll() {
             Some(40),
         )
         .expect("2");
+    assert_eq!(app.next_timeout(), Some(0));
     app.poll(0).expect("arm");
+    assert_eq!(
+        app.next_timeout(),
+        Some(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
+    );
     assert!(app.transport().last_send.is_none());
     app.poll(u64::from(QBlockTransmission::NON_RECEIVE_TIMEOUT_MS))
         .expect("poll recover");
@@ -4470,6 +4475,55 @@ fn record_client() -> App<profiles::Default, RecordIo> {
         .expect("bind")
 }
 
+#[test]
+fn next_timeout_observes_retransmission_without_consuming_it() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    assert_eq!(app.next_timeout(), None);
+    let call = app.get("value").to(peer).send(100).unwrap();
+    let first = app.next_timeout().unwrap();
+    assert_eq!(app.next_poll_at(100), Some(first));
+    assert_eq!(app.next_poll_at(first + 1), Some(first + 1));
+    assert!(first >= 100 + u64::from(Transmission::ACK_TIMEOUT_MS));
+    let sent = app.transport().sent_n;
+    assert_eq!(app.next_timeout(), Some(first));
+    assert_eq!(app.transport().sent_n, sent);
+    app.poll(first - 1).unwrap();
+    assert_eq!(app.transport().sent_n, sent);
+    app.poll(first).unwrap();
+    assert_eq!(app.transport().sent_n, sent + 1);
+    assert!(app.next_timeout().unwrap() > first);
+    assert!(app.cancel(call));
+    assert_eq!(app.next_timeout(), None);
+}
+
+#[test]
+fn next_poll_at_retained_ingress_does_not_rotate_or_consume_slots() {
+    let mut app = record_client();
+    assert_eq!(app.next_poll_at(10), None);
+    let rx = app.engine_mut().acquire_rx().unwrap();
+    let cursor = app.engine_mut().rx_cursor();
+    assert_eq!(app.next_poll_at(10), Some(10));
+    assert_eq!(app.next_poll_at(11), Some(11));
+    assert_eq!(app.engine_mut().rx_cursor(), cursor);
+    assert_eq!(app.engine_mut().rx_occupied(), 1);
+    app.engine_mut().release_rx(rx).unwrap();
+    assert_eq!(app.next_poll_at(12), None);
+}
+
+#[test]
+fn next_timeout_excludes_completed_call_deadline_until_collection() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let call = app.get("value").to(peer).deadline(9_000).send(0).unwrap();
+    overload_reply(&mut app, call, Code::CONTENT, None, 1);
+    assert_eq!(app.next_timeout(), None);
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap().code(),
+        Code::CONTENT
+    );
+}
+
 fn inject_piggyback_ack(
     app: &mut App<profiles::Default, RecordIo>,
     peer: Endpoint,
@@ -5136,6 +5190,7 @@ fn options_full_500_under_oscore_is_protected() {
     let ctx = Some(server);
     super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
+        Endpoint::v4([127, 0, 0, 1], 5683),
         tx,
         Type::Acknowledgement,
         MessageId::new(1),
@@ -5186,6 +5241,7 @@ fn options_full_500_oscore_without_request_is_not_plaintext() {
     let ctx = Some(server);
     let err = super::encode_options_full_500::<_, &'static str, 4>(
         &mut engine,
+        Endpoint::v4([127, 0, 0, 1], 5683),
         tx,
         Type::Acknowledgement,
         MessageId::new(1),
@@ -5865,6 +5921,7 @@ fn deadline_refusal_boundary_and_reused_tx_ownership() {
         .send(10)
         .unwrap();
     let second = app.get("other").to(peer).send(11).unwrap();
+    assert_eq!(app.next_timeout(), Some(20));
     app.poll(19).unwrap();
     assert!(app.take_response(first).is_none());
     app.poll(20).unwrap();
@@ -5878,7 +5935,9 @@ fn deadline_refusal_boundary_and_reused_tx_ownership() {
         "expired NON must not free another call's reused TX"
     );
     assert!(client_exchange_live(&app, second));
+    assert!(app.next_timeout().unwrap() > 20);
     assert!(app.cancel(second));
+    assert_eq!(app.next_timeout(), None);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
     assert_eq!(
         app.transport().sent_n,
@@ -7100,7 +7159,9 @@ fn no_response_upload_refusal_preserves_capacity_for_zero_recovery() {
     for qblock in [false, true] {
         let mut app = pipe_app();
         for mask in [2, 8, 16, 24, 26, 1, 128, 255] {
-            if mask == 16 || (qblock && mask == 2) || (!qblock && matches!(mask, 8 | 24)) {
+            if (qblock && mask & NoResponse::SUPPRESS_4 == 0)
+                || (!qblock && mask & NoResponse::SUPPRESS_2 == 0)
+            {
                 continue;
             }
             let mut request = app
@@ -7795,18 +7856,16 @@ fn fixture_echo_mac(
     let mut mac = hkdf::hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap();
     mac.update(b"coaptic-echo-fixture-v1");
     mac.update(&issued.to_be_bytes());
-    match peer {
-        Endpoint::V4(address, port) => {
-            mac.update(&[4]);
-            mac.update(&address);
-            mac.update(&port.to_be_bytes());
-        }
-        Endpoint::V6(address, port, scope) => {
-            mac.update(&[6]);
-            mac.update(&address);
-            mac.update(&port.to_be_bytes());
-            mac.update(&scope.to_be_bytes());
-        }
+    if let Some((address, port)) = peer.as_ipv4() {
+        mac.update(&[4]);
+        mac.update(&address);
+        mac.update(&port.to_be_bytes());
+    } else {
+        let (address, port) = peer.as_ipv6().expect("IPv6");
+        mac.update(&[6]);
+        mac.update(&address);
+        mac.update(&port.to_be_bytes());
+        mac.update(&peer.scope_id().to_be_bytes());
     }
     mac.update(&[u8::from(protected)]);
     mac
@@ -9087,6 +9146,9 @@ fn failed_delete_keeps_observers_and_pending_non_hold_delays_successful_delete_n
         0,
         "deletion does not discard prior NON pacing hold"
     );
+    let wake = 2 + u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    assert_eq!(app.next_poll_at(4), Some(wake));
+    assert_eq!(app.next_poll_at(wake), Some(wake));
     app.poll(10_000).unwrap();
     assert_eq!(last_wide(&app).code(), Code::NOT_FOUND);
     assert_eq!(last_wide(&app).ty(), Type::Confirmable);
@@ -12852,6 +12914,11 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
     app.poll(1).unwrap();
     app.poll(2).unwrap(); // held RX must not be dispatched a second time
     assert_eq!(app.engine_mut().rx_occupied(), 1);
+    assert_eq!(
+        app.next_poll_at(2),
+        None,
+        "held response is not dispatch work"
+    );
     let mut short = [0xA5; 199];
     assert!(matches!(
         app.take_response_into(call, &mut short),
@@ -13164,6 +13231,10 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
         .unwrap();
         assert!(handle.is_some());
     }
+    let full = app.resource_usage();
+    assert_eq!(full.deferred.capacity, 4);
+    assert_eq!(full.deferred.occupied, 4);
+    assert_eq!(app.next_timeout(), Some(10));
     let (wire, n) = encode_req_mid(Code::POST, &["durable"], b"work", 104);
     app.transport_mut().inbox = Some((peer, wire, n));
     app.poll_with(1, |_, candidate| {
@@ -13178,6 +13249,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
     );
     assert!(app.cancel_deferred(handles[0].unwrap()));
     assert!(!app.cancel_deferred(handles[0].unwrap()));
+    assert_eq!(app.resource_usage().deferred.occupied, 3);
     app.transport_mut().inbox = Some((peer, wire, n));
     let mut new = None;
     // New MID is needed after the refusal's live duplicate history.
@@ -14196,7 +14268,14 @@ fn overload_backoff_defaults_zero_expiry_and_collection() {
             let mut app = record_client();
             let call = app.get("target").to(peer).send(0).unwrap();
             overload_reply(&mut app, call, code, age, 10);
+            assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             assert_eq!(app.take_response(call).unwrap().unwrap().code(), code);
+            let usage = app.resource_usage();
+            assert_eq!(usage.client_cooldowns, usize::from(delay > 0));
+            assert_eq!(usage.client_requests.occupied, usize::from(delay > 0));
+            assert_eq!(usage.completed_replies, 0);
+            assert_eq!(usage.client_replies.occupied, 0);
+            assert_eq!(app.next_timeout(), (delay > 0).then_some(10 + delay));
             if delay > 0 {
                 let sent = app.transport().sent_n;
                 assert_eq!(
@@ -14392,4 +14471,583 @@ fn overload_oscore_requires_authenticated_response_and_resets_with_context() {
     );
     app.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
     assert!(app.get("target").to(peer).send(4).is_ok());
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn associations_isolate_same_endpoint_token_mid_and_deferred_replies() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let make = |secret: u8, sender: &[u8], recipient: &[u8]| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[secret; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let client = || {
+        App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .allow_unprotected()
+            .bind(WideLoopback::default())
+            .unwrap()
+    };
+    let mut a = client();
+    let mut b = client();
+    a.set_oscore(&mut Some(make(3, &[1], &[0]))).unwrap();
+    b.set_oscore(&mut Some(make(4, &[2], &[0]))).unwrap();
+    let mut server = App::with_resources(
+        super::resources::SmallDevice::new()
+            .associations::<2>()
+            .deferred::<2>(),
+    )
+    .deterministic_for_tests()
+    .require_associations()
+    .bind(WideLoopback::default())
+    .unwrap();
+    let owner_a = server
+        .install_association(peer, [1; 32], 7, &mut Some(make(3, &[0], &[1])))
+        .unwrap();
+    let owner_b = server
+        .install_association(peer, [2; 32], 8, &mut Some(make(4, &[0], &[2])))
+        .unwrap();
+    let mut excess = Some(make(5, &[0], &[3]));
+    assert_eq!(
+        server.install_association(peer, [3; 32], 9, &mut excess),
+        Err(super::OscoreInstallError::Capacity)
+    );
+    assert!(excess.is_some());
+    assert!(matches!(
+        server.get("x").to(peer).send(0),
+        Err(Error::Oscore(crate::oscore::Error::Context))
+    ));
+    let ca = a.post("work").to(peer).payload(b"a").send(0).unwrap();
+    let cb = b.post("work").to(peer).payload(b"b").send(0).unwrap();
+    assert_eq!(ca.token(), cb.token());
+    let mut handles = [None; 2];
+    for (i, (client, owner)) in [(&mut a, owner_a), (&mut b, owner_b)]
+        .into_iter()
+        .enumerate()
+    {
+        let io = client.transport_mut();
+        server.transport_mut().inbox = Some((peer, io.sends[0], io.send_lens[0]));
+        server
+            .poll_with(i as u64 + 1, |request, handle| {
+                assert_eq!(request.association(), Some(owner));
+                assert_eq!(request.peer(), peer);
+                handles[i] = handle;
+                Response::deferred()
+            })
+            .unwrap();
+    }
+    for (i, (client, call, payload)) in [
+        (&mut a, ca, b"owner-a".as_slice()),
+        (&mut b, cb, b"owner-b".as_slice()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        server
+            .complete(
+                handles[i].unwrap(),
+                Response::changed().payload_copy(payload),
+                3 + i as u64,
+            )
+            .unwrap();
+        let io = server.transport_mut();
+        client.transport_mut().inbox = Some((peer, io.sends[2 + i], io.send_lens[2 + i]));
+        client.poll(5 + i as u64).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().payload(),
+            payload
+        );
+        let io = client.transport_mut();
+        server.transport_mut().inbox = Some((peer, io.sends[1], io.send_lens[1]));
+        server.poll(7 + i as u64).unwrap();
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn associations_revoke_pending_calls_and_refuse_stale_slot_handles() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let make = |id: u8| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[id; 16],
+            master_salt: &[],
+            sender_id: &[0],
+            recipient_id: &[id],
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let a = Endpoint::v4([192, 0, 2, 1], 5683);
+    let b = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::with_resources(
+        super::resources::SmallDevice::new()
+            .associations::<2>()
+            .client_calls::<2>(),
+    )
+    .deterministic_for_tests()
+    .require_associations()
+    .bind(WideLoopback::default())
+    .unwrap();
+    let old = app
+        .install_association(a, [1; 32], 1, &mut Some(make(1)))
+        .unwrap();
+    let other = app
+        .install_association(b, [2; 32], 1, &mut Some(make(2)))
+        .unwrap();
+    let call = app.get("x").to_association(old).send(0).unwrap();
+    let survivor = app.get("x").to_association(other).send(0).unwrap();
+    let context = app.remove_association(old).unwrap();
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        super::CallFailure::AssociationRevoked
+    );
+    assert!(app.take_response(survivor).is_none());
+    let fresh = app
+        .install_association(a, [1; 32], 2, &mut Some(context))
+        .unwrap();
+    assert_ne!(fresh, old);
+    assert!(matches!(
+        app.get("x").to_association(old).send(1),
+        Err(Error::Oscore(crate::oscore::Error::Context))
+    ));
+    assert_eq!(
+        app.remove_association(old).unwrap_err(),
+        super::OscoreInstallError::UnknownAssociation
+    );
+    let fresh_call = app.get("x").to_association(fresh).send(1).unwrap();
+    assert_ne!(fresh_call, call);
+    assert!(app.cancel(fresh_call));
+    app.take_response(fresh_call).unwrap().unwrap_err();
+    app.remove_association(fresh).unwrap();
+    app.remove_association(other).unwrap();
+    assert!(matches!(
+        app.get("x").to(a).send(2),
+        Err(Error::Oscore(crate::oscore::Error::Context))
+    ));
+    assert_eq!(app.transport_mut().send_n, 3);
+    app.poll(5_000).unwrap();
+    assert_eq!(
+        app.transport_mut().send_n,
+        3,
+        "revocation cancels retransmits"
+    );
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn associations_checkpoint_failure_blocks_effects_and_restored_replay_stays_rejected() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let make = |sender: &[u8], recipient: &[u8]| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[7; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut client = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .oscore(make(&[1], &[0]))
+        .bind(WideLoopback::default())
+        .unwrap();
+    let build = || {
+        App::with_resources(super::resources::SmallDevice::new().associations::<2>())
+            .deterministic_for_tests()
+            .require_associations()
+            .require_oscore_checkpoint()
+            .bind(WideLoopback::default())
+            .unwrap()
+    };
+    let mut server = build();
+    let owner = server
+        .install_association(peer, [1; 32], 9, &mut Some(make(&[0], &[1])))
+        .unwrap();
+    let other = server
+        .install_association(
+            Endpoint::v4([192, 0, 2, 2], 5683),
+            [2; 32],
+            10,
+            &mut Some(make(&[0], &[2])),
+        )
+        .unwrap();
+    client.post("effect").to(peer).send(0).unwrap();
+    let io = client.transport_mut();
+    let packet = (peer, io.sends[0], io.send_lens[0]);
+    server.transport_mut().inbox = Some(packet);
+    let mut initial = None;
+    let mut accepted = None;
+    let mut other_checkpoint = None;
+    let mut effects = 0;
+    assert!(matches!(
+        server.poll_with_association_checkpoint(
+            1,
+            |association, checkpoint| {
+                let association = association.unwrap();
+                if association == owner {
+                    if initial.is_none() {
+                        initial = Some(checkpoint);
+                        true
+                    } else {
+                        accepted = Some(checkpoint);
+                        false
+                    }
+                } else {
+                    assert_eq!(association, other);
+                    other_checkpoint = Some(checkpoint);
+                    true
+                }
+            },
+            |_, _| {
+                effects += 1;
+                Response::changed()
+            }
+        ),
+        Err(Error::OscoreCheckpointFailed)
+    ));
+    assert_eq!(effects, 0);
+    assert_eq!(server.transport_mut().send_n, 0);
+    assert_ne!(initial, accepted);
+    assert!(other_checkpoint.is_some());
+    server
+        .poll_with_association_checkpoint(
+            2,
+            |_, _| true,
+            |_, _| panic!("failed request must not redispatch"),
+        )
+        .unwrap();
+    let mut restored = make(&[0], &[1]);
+    restored.restore_replay(accepted.unwrap()).unwrap();
+    restored.restore_sender_reservation(64).unwrap();
+    restored
+        .reserve_sender_sequences(64, |end| {
+            assert_eq!(end, 128);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    let mut restarted = build();
+    let restored_owner = restarted
+        .install_association(peer, [1; 32], 9, &mut Some(restored))
+        .unwrap();
+    assert_eq!(
+        restarted
+            .association_context(restored_owner)
+            .unwrap()
+            .sender_seq(),
+        64
+    );
+    restarted.transport_mut().inbox = Some(packet);
+    restarted
+        .poll_with_association_checkpoint(
+            3,
+            |association, _| {
+                assert_eq!(association.unwrap().epoch(), 9);
+                true
+            },
+            |_, _| panic!("replayed ciphertext must not perform effects"),
+        )
+        .unwrap();
+    assert_eq!(restarted.transport_mut().send_n, 0);
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn associations_share_endpoint_nstart_and_pinned_revocation_stops_old_sends() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let make = |id: u8| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[id; 16],
+            master_salt: &[],
+            sender_id: &[0],
+            recipient_id: &[id],
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::with_resources(
+        super::resources::SmallDevice::new()
+            .associations::<2>()
+            .client_calls::<2>(),
+    )
+    .deterministic_for_tests()
+    .require_associations()
+    .bind(WideLoopback::default())
+    .unwrap();
+    let a = app
+        .install_association(peer, [1; 32], 1, &mut Some(make(1)))
+        .unwrap();
+    let b = app
+        .install_association(peer, [2; 32], 2, &mut Some(make(2)))
+        .unwrap();
+    let call = app.get("x").to_association(a).send(0).unwrap();
+    assert!(matches!(
+        app.get("x").to_association(b).send(0),
+        Err(Error::Saturated)
+    ));
+    let tx = app
+        .engine()
+        .lookup_exchange(ExchangeKey::new(call.token(), a.route))
+        .unwrap();
+    let tx = app.engine().exchange_entry(tx).unwrap().tx_slot();
+    app.engine_mut()
+        .storage_mut()
+        .tx_datagram_mut()
+        .pin(tx)
+        .unwrap();
+    assert_eq!(
+        app.remove_association(a).unwrap_err(),
+        super::OscoreInstallError::Busy
+    );
+    assert!(!app.association_is_active(a));
+    let revoked = app.resource_usage();
+    assert_eq!(revoked.security.unwrap().occupied, 2);
+    assert_eq!(revoked.revoked_associations, 1);
+    assert!(!app.association_context(a).unwrap().has_live_requests());
+    assert_eq!(
+        app.take_response(call).unwrap().unwrap_err(),
+        super::CallFailure::AssociationRevoked
+    );
+    let survivor = app.get("x").to_association(b).send(1).unwrap();
+    app.poll(2001).unwrap();
+    assert_eq!(app.transport_mut().send_n, 3);
+    assert_eq!(
+        app.transport().sends[1],
+        app.transport().sends[2],
+        "only surviving ciphertext retransmits"
+    );
+    app.engine_mut()
+        .storage_mut()
+        .tx_datagram_mut()
+        .unpin(tx)
+        .unwrap();
+    app.remove_association(a).unwrap();
+    let reclaimed = app.resource_usage();
+    assert_eq!(reclaimed.security.unwrap().occupied, 1);
+    assert_eq!(reclaimed.revoked_associations, 0);
+    assert!(app.association_is_active(b));
+    assert!(app.cancel(survivor));
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn association_notification_wakeup_observes_other_owner_physical_hold() {
+    use crate::storage::ObserveInterest;
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("held", get(get_obs))
+        .route("pending", get(get_obs).observe(obs_snapshot))
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let physical = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut held = ObserveInterest::new(Token::new(&[1]).unwrap(), physical.with_association(1))
+        .with_resource(app.site.observe_resource(&["held"]));
+    held.record_notify(10, MessageId::new(42), false);
+    app.engine.insert_observe(held).unwrap();
+    let pending = app.site.observe_resource(&["pending"]);
+    app.engine
+        .insert_observe(
+            ObserveInterest::new(Token::new(&[2]).unwrap(), physical.with_association(2))
+                .with_resource(pending),
+        )
+        .unwrap();
+    assert_eq!(app.engine.signal_observe_resource(pending), 1);
+    let due = 10 + u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    assert_eq!(app.next_poll_at(11), Some(due));
+    assert_eq!(app.next_poll_at(due), Some(due));
+}
+
+#[test]
+fn selected_observe_retains_get_and_fetch_selection_through_deferred_completion() {
+    fn selected(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.path(), &["obs"]);
+        assert!(request.uri_query().map(Result::unwrap).eq(["b=2", "a=1"]));
+        if request.method() == Some(Method::Fetch) {
+            assert_eq!(request.content_format(), Some(Ok(ContentFormat::CBOR)));
+            assert_eq!(request.payload(), b"selector");
+            Response::content(b"fetch-result").content_format(ContentFormat::TEXT_PLAIN)
+        } else {
+            assert_eq!(request.method(), Some(Method::Get));
+            Response::content(b"get-result").content_format(ContentFormat::TEXT_PLAIN)
+        }
+    }
+    for method in [Code::GET, Code::FETCH] {
+        for deferred in [false, true] {
+            let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+            let mut app = App::profile::<profiles::Constrained>()
+                .deterministic_for_tests()
+                .deferred::<1>()
+                .block_wise::<false>()
+                .route(
+                    "obs",
+                    get(selected).fetch(selected).observe_selected(selected),
+                )
+                .allow_unprotected()
+                .bind(WideLoopback::default())
+                .unwrap();
+            let cf = ContentFormat::CBOR.encode();
+            let mut options = OptionsBuilder::<6>::new();
+            options.push(Opt::observe_register()).unwrap();
+            options.push(Opt::uri_path("obs")).unwrap();
+            if method == Code::FETCH {
+                options.push(Opt::content_format(&cf)).unwrap();
+            }
+            options.push(Opt::uri_query("b=2")).unwrap();
+            options.push(Opt::uri_query("a=1")).unwrap();
+            let message = Message::new(Type::Confirmable, method, MessageId::new(300))
+                .with_token(Token::from_checked(&[0xa1]))
+                .with_options(options.as_slice())
+                .with_payload(if method == Code::FETCH {
+                    b"selector"
+                } else {
+                    b""
+                });
+            let mut wire = [0; 1472];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            if deferred {
+                let mut handle = None;
+                app.poll_with(0, |_, candidate| {
+                    handle = candidate;
+                    Response::deferred()
+                })
+                .unwrap();
+                app.complete(
+                    handle.unwrap(),
+                    Response::content(b"initial").content_format(ContentFormat::TEXT_PLAIN),
+                    1,
+                )
+                .unwrap();
+                let i = app.transport().send_n - 1;
+                let mid = decode(&app.transport().sends[i][..app.transport().send_lens[i]])
+                    .unwrap()
+                    .message_id();
+                let ack = crate::message::empty_ack(mid);
+                let mut wire = [0; 1472];
+                let n = encode(&ack, &mut wire).unwrap();
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(2).unwrap();
+            } else {
+                app.poll(0).unwrap();
+            }
+            assert_eq!(app.signal(&["obs"]), 1);
+            app.poll(10).unwrap();
+            let i = app.transport().send_n - 1;
+            let parsed = decode(&app.transport().sends[i][..app.transport().send_lens[i]]).unwrap();
+            assert_eq!(parsed.observe().and_then(Result::ok), Some(1));
+            assert_eq!(
+                parsed.payload(),
+                if method == Code::FETCH {
+                    b"fetch-result".as_slice()
+                } else {
+                    b"get-result".as_slice()
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn selected_observe_isolates_payloads_declines_oversize_and_reclaims_on_cancel() {
+    fn source(request: Request<'_>) -> Response<'static> {
+        if request.payload().len() > 128 {
+            Response::content(b"ordinary")
+        } else {
+            Response::content_copy(request.payload())
+        }
+    }
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("obs", fetch(source).observe_selected(source))
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let cf = ContentFormat::CBOR.encode();
+    let mut options = OptionsBuilder::<4>::new();
+    options.push(Opt::observe_register()).unwrap();
+    options.push(Opt::uri_path("obs")).unwrap();
+    options.push(Opt::content_format(&cf)).unwrap();
+    for (i, payload) in [b"first".as_slice(), b"second".as_slice(), &[0; 600]]
+        .into_iter()
+        .enumerate()
+    {
+        let peer = Endpoint::v4([192, 0, 2, i as u8 + 1], 5683);
+        let message = Message::new(
+            Type::Confirmable,
+            Code::FETCH,
+            MessageId::new(i as u16 + 10),
+        )
+        .with_token(Token::from_checked(&[1]))
+        .with_options(options.as_slice())
+        .with_payload(payload);
+        let mut wire = [0; WIRE];
+        let n = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(i as u64).unwrap();
+        let t = app.transport();
+        let last = t.send_n - 1;
+        let reply = decode(&t.sends[last][..t.send_lens[last]]).unwrap();
+        assert_eq!(reply.observe().is_some(), i < 2);
+    }
+    app.transport_mut().send_n = 0;
+    let block = crate::message::BlockValue::new(1, false, 0)
+        .unwrap()
+        .encode();
+    let followup = [
+        Opt::uri_path("obs"),
+        Opt::content_format(&cf),
+        Opt::block2(&block),
+    ];
+    let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(90))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(&followup)
+        .with_payload(b"different");
+    let mut wire = [0; WIRE];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((Endpoint::v4([192, 0, 2, 1], 5683), wire, n));
+    app.poll(9).unwrap();
+    let t = app.transport();
+    assert_eq!(
+        decode(&t.sends[0][..t.send_lens[0]]).unwrap().code(),
+        Code::BAD_REQUEST
+    );
+    app.transport_mut().send_n = 0;
+    assert_eq!(app.signal(&["obs"]), 2);
+    app.poll(10).unwrap();
+    app.poll(11).unwrap();
+    let t = app.transport();
+    assert_eq!(t.send_n, 2);
+    let a = decode(&t.sends[0][..t.send_lens[0]]).unwrap();
+    let b = decode(&t.sends[1][..t.send_lens[1]]).unwrap();
+    assert!([a.payload(), b.payload()].contains(&b"first".as_slice()));
+    assert!([a.payload(), b.payload()].contains(&b"second".as_slice()));
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let opts = [
+        Opt::observe_deregister(),
+        Opt::uri_path("obs"),
+        Opt::content_format(&cf),
+    ];
+    let message = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(99))
+        .with_token(Token::from_checked(&[1]))
+        .with_options(&opts)
+        .with_payload(b"first");
+    let mut wire = [0; WIRE];
+    let n = encode(&message, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(12).unwrap();
+    assert_eq!(app.signal(&["obs"]), 1);
 }

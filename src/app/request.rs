@@ -142,6 +142,7 @@ pub struct Request<'a> {
     message: ParsedMessage<'a>,
     path: Path<'a>,
     peer: Endpoint,
+    association: Option<super::Association>,
     method: Option<Method>,
     body: Option<&'a [u8]>,
     retained_if_none_match: bool,
@@ -159,6 +160,7 @@ impl<'a> Request<'a> {
             message,
             path,
             peer,
+            association: None,
             method,
             body,
             retained_if_none_match: false,
@@ -168,6 +170,16 @@ impl<'a> Request<'a> {
     pub(crate) fn with_retained_if_none_match(mut self, retained: bool) -> Self {
         self.retained_if_none_match = retained;
         self
+    }
+
+    pub(crate) fn with_association(mut self, association: Option<super::Association>) -> Self {
+        self.association = association;
+        self
+    }
+
+    /// Authenticated association for this request, or None for unprotected/primary mode.
+    pub const fn association(&self) -> Option<super::Association> {
+        self.association
     }
 
     /// Request method, if `code` is a known class-0 method.
@@ -191,7 +203,7 @@ impl<'a> Request<'a> {
     /// Remote peer that sent this datagram.
     #[must_use]
     pub const fn peer(&self) -> Endpoint {
-        self.peer
+        self.peer.physical()
     }
 
     /// This datagram's payload (empty if the 0xFF marker is absent).

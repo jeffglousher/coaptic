@@ -167,6 +167,81 @@ impl AdmittedSession {
     }
 }
 
+/// Session handoff refusal leaves the staged session and App unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppInstallError {
+    /// No completed session was staged.
+    Missing,
+    /// Captured authorization or local identity is no longer current.
+    Unauthorized,
+    /// App refused capacity or recipient identity before moving any keys.
+    App(crate::app::OscoreInstallError),
+}
+
+/// Failure while sharing one transport between admission and the application.
+#[derive(Debug)]
+pub enum SharedAppError<E> {
+    /// Admission, trust maintenance or its bounded reply failed.
+    Admission(CloudError<E>),
+    /// Application protocol progress or checkpointing failed.
+    Application(crate::app::Error<E>),
+}
+
+impl AdmittedSession {
+    /// Move a fresh session into shared App storage after current trust revalidation.
+    /// `epoch` is the caller's durable key-epoch identity, not a trust generation.
+    /// Refusal preserves the candidate; successful installation consumes it once.
+    pub fn install<
+        P,
+        T,
+        const N: usize,
+        const B: bool,
+        S,
+        const D: usize,
+        const C: usize,
+        const A: usize,
+    >(
+        candidate: &mut Option<Self>,
+        app: &mut crate::App<P, T, N, B, S, D, C, 4, A>,
+        registry: &impl AdmissionRegistry,
+        epoch: u64,
+    ) -> Result<crate::app::Association, AppInstallError>
+    where
+        P: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        S: crate::app::AppStorage,
+    {
+        let staged = candidate.as_ref().ok_or(AppInstallError::Missing)?;
+        let metadata = staged.association;
+        let trust = registry
+            .resolve(metadata.reference)
+            .ok_or(AppInstallError::Unauthorized)?;
+        if !trust.permits(&metadata.grant, staged.session.principal())
+            || staged.session.local_principal().fingerprint()
+                != trust.checkpoint().local_principal()
+        {
+            return Err(AppInstallError::Unauthorized);
+        }
+        app.check_association_install(
+            metadata.endpoint,
+            *staged.session.principal().fingerprint(),
+            epoch,
+            &staged.session.context,
+        )
+        .map_err(AppInstallError::App)?;
+        let staged = candidate.take().expect("checked staged session");
+        let (context, principal) = staged.session.into_parts();
+        let installed = app
+            .install_association(
+                metadata.endpoint,
+                *principal.fingerprint(),
+                epoch,
+                &mut Some(context),
+            )
+            .expect("exclusive preflight established capacity and identity");
+        Ok(installed)
+    }
+}
+
 struct Wire {
     bytes: [u8; DATAGRAM_CAPACITY],
     len: usize,
@@ -640,6 +715,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
 
     /// Sends at most one saved datagram, without receiving, with round-robin fairness.
     /// A failed or short send preserves exact bytes and grants are rechecked first.
+    /// Every attempted send advances the cursor, including transport failures.
+    /// A continuously queued owner therefore receives an attempt within
+    /// `PENDING + RETAINED + 1` calls; successful delivery still depends on I/O.
     pub fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -653,8 +731,11 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             if index < P {
                 if let Some(pending) = &mut self.pending[index] {
                     for exchange in pending.exchanges.iter_mut().flatten() {
-                        if send_exchange(io, pending.endpoint, exchange, now_ms)? {
+                        let sent = send_exchange(io, pending.endpoint, exchange, now_ms);
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
+                        }
+                        if sent? {
                             return exchange.notice.map_or(Ok(Status::Progress), |notice| {
                                 Err(notice.error(pending.endpoint, pending.local_id))
                             });
@@ -663,7 +744,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     if let Some(receipt) = &mut pending.final_error {
                         let sent =
                             flush_receipt(io, pending.endpoint, pending.local_id, receipt, now_ms);
-                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
                             return sent.map(|_| Status::Progress);
                         }
@@ -673,8 +754,12 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             } else if index < P + C {
                 if let Some(retained) = &mut self.retained[index - P] {
                     for exchange in retained.exchanges.iter_mut().flatten() {
-                        if send_exchange(io, retained.association.endpoint, exchange, now_ms)? {
+                        let sent =
+                            send_exchange(io, retained.association.endpoint, exchange, now_ms);
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
+                        }
+                        if sent? {
                             return exchange.notice.map_or(Ok(Status::Progress), |notice| {
                                 Err(notice.error(
                                     retained.association.endpoint,
@@ -691,7 +776,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                             receipt,
                             now_ms,
                         );
-                        if matches!(sent, Ok(true) | Err(CloudError::PeerAbort { .. })) {
+                        if !matches!(sent, Ok(false)) {
                             self.send_cursor = (index + 1) % count;
                             return sent.map(|_| Status::Progress);
                         }
@@ -699,9 +784,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     }
                 }
             } else if let Some(challenge) = &self.challenge {
+                self.send_cursor = (index + 1) % count;
                 send(io, challenge.endpoint, challenge.response.as_bytes())?;
                 self.challenge = None;
-                self.send_cursor = (index + 1) % count;
                 return Ok(Status::Progress);
             }
         }
@@ -710,6 +795,9 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
 
     /// Moves one session after complete M4 transmission and current trust checks.
     /// Saturated completion storage retains keys internally until space or expiry.
+    /// Among ready sessions, the oldest admitted handshake wins. Monotonically
+    /// allocated connection IDs provide this ordering without another queue;
+    /// reuse of an earlier array slot cannot starve an older ready owner.
     pub fn take_session(
         &mut self,
         now_ms: u64,
@@ -722,11 +810,16 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         let Some(active_slot) = self.active.iter().position(Option::is_none) else {
             return Ok(None);
         };
-        let Some(pending_slot) = self.pending.iter().position(|entry| {
-            entry.as_ref().is_some_and(|item| {
+        let Some((pending_slot, _)) = self
+            .pending
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, entry)| entry.as_ref().map(|item| (slot, item)))
+            .filter(|(_, item)| {
                 item.ready.is_some() && !item.exchanges.iter().flatten().any(|item| item.queued)
             })
-        }) else {
+            .min_by(|(_, a), (_, b)| a.local_id.as_bytes().cmp(b.local_id.as_bytes()))
+        else {
             return Ok(None);
         };
         let mut pending = self.pending[pending_slot].take().expect("ready slot");
@@ -805,6 +898,155 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                     && current(registry, association)
             })
             .copied())
+    }
+
+    /// Poll one shared UDP transport for bootstrap and authenticated application work.
+    /// Admission borrows App's received slot; it does not allocate another ingress queue.
+    /// Each call retains App's bounded progress and flushes at most one bootstrap reply.
+    /// Use `take_session` and `AdmittedSession::install` to complete a ready handoff.
+    /// The checkpoint callback must honor the same durable contract as App polling.
+    pub fn poll_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+        now_ms: u64,
+        mut entropy: impl FnMut(&mut [u8]) -> bool,
+        checkpoint: impl FnMut(Option<crate::app::Association>, crate::oscore::ReplayCheckpoint) -> bool,
+        dispatch: impl FnMut(
+            crate::Request<'_>,
+            Option<crate::app::DeferredReply>,
+        ) -> crate::Response<'static>,
+    ) -> Result<Status, SharedAppError<T::Error>>
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+        T: DatagramIo,
+    {
+        let maintenance = self.maintain(now_ms, registry);
+        self.reconcile_app(app, registry);
+        maintenance.map_err(|error| SharedAppError::Admission(widen(error)))?;
+        let mut ingress_error = None;
+        let progress = app.poll_with_association_ingress(
+            now_ms,
+            |bytes, endpoint| {
+                let Ok(parsed) = decode(bytes) else {
+                    return false;
+                };
+                if parsed.uri_path().eq([Ok(".well-known"), Ok("edhoc")]) {
+                    if let Err(error) = self.ingest(bytes, endpoint, now_ms, registry, &mut entropy)
+                    {
+                        ingress_error = Some(error);
+                    }
+                    true
+                } else {
+                    parsed.code().is_request()
+                        && self.reserves_message_id(parsed.message_id(), endpoint, now_ms)
+                }
+            },
+            checkpoint,
+            dispatch,
+        );
+        // A transient application I/O failure must not starve queued admission.
+        let flushed = self.flush(app.transport_mut(), now_ms, registry);
+        progress.map_err(SharedAppError::Application)?;
+        if let Some(error) = ingress_error {
+            return Err(SharedAppError::Admission(widen(error)));
+        }
+        flushed.map_err(SharedAppError::Admission)
+    }
+
+    /// Revalidate every installed association before an App operation.
+    /// This App must contain only sessions admitted by this listener. Revoked
+    /// owners lose queued work immediately; pinned storage retains a disabled row
+    /// and is reclaimed on a later call. No packet or body buffer is duplicated.
+    pub fn reconcile_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+    ) -> usize
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+    {
+        let mut removed = 0;
+        for index in 0..app.association_capacity() {
+            let Some(owner) = app.association_at(index) else {
+                continue;
+            };
+            let reservation = app.association_context(owner).and_then(|context| {
+                self.active
+                    .iter()
+                    .flatten()
+                    .find(|entry| {
+                        entry.endpoint == owner.endpoint()
+                            && entry.local_id.as_bytes() == context.recipient_id()
+                            && entry.grant.principal().fingerprint() == owner.owner()
+                    })
+                    .copied()
+            });
+            if !self.blocked
+                && app.association_is_active(owner)
+                && reservation
+                    .as_ref()
+                    .is_some_and(|entry| current(registry, entry))
+            {
+                continue;
+            }
+            if app.remove_association(owner).is_ok() {
+                if let Some(reservation) = reservation {
+                    self.release(reservation);
+                }
+                removed += 1;
+            }
+        }
+        removed
+    }
+
+    /// Run one application action after synchronously revoking stale owners.
+    /// Refresh the registry under the same event-loop/management lock first.
+    pub fn with_app<
+        MP,
+        T,
+        const N: usize,
+        const B: bool,
+        ST,
+        const D: usize,
+        const CC: usize,
+        const R: usize,
+        const AA: usize,
+        O,
+    >(
+        &mut self,
+        app: &mut crate::App<MP, T, N, B, ST, D, CC, R, AA>,
+        registry: &impl AdmissionRegistry,
+        action: impl FnOnce(&mut crate::App<MP, T, N, B, ST, D, CC, R, AA>) -> O,
+    ) -> O
+    where
+        MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
+        ST: crate::app::AppStorage,
+    {
+        self.reconcile_app(app, registry);
+        action(app)
     }
 
     /// Releases active capacity only after the corresponding application is quiesced.
@@ -901,12 +1143,22 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
             })
     }
 
-    /// Earliest queued-send opportunity or original state expiry.
+    /// Earliest queued send, available session handoff or original state expiry.
+    ///
+    /// Uses the last accepted caller time; a value at/before the current time
+    /// calls for `flush` and `take_session`. Handoff readiness is suppressed when
+    /// active or completion storage is full, avoiding a capacity-induced busy loop.
+    /// Trust is rechecked by those operations, not by this scheduling hint.
+    /// Socket readiness, policy updates and caller-released capacity must wake the
+    /// event loop separately. No clock, I/O, allocation or state mutation occurs;
+    /// the scan is bounded by `ACTIVE + PENDING + RETAINED` rows.
     #[must_use]
     pub fn next_deadline(&self) -> Option<u64> {
         if self.blocked {
             return None;
         }
+        let can_handoff =
+            self.active.iter().any(Option::is_none) && self.retained.iter().any(Option::is_none);
         let mut deadline = self.challenge.as_ref().map(|_| self.last_now);
         for item in self.pending.iter().flatten() {
             let due = if item
@@ -915,6 +1167,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
                 .flatten()
                 .any(|exchange| exchange.queued)
                 || item.final_error.as_ref().is_some_and(ErrorReceipt::pending)
+                || (can_handoff && item.ready.is_some())
             {
                 self.last_now
             } else {
@@ -1008,9 +1261,10 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         if self.datagrams >= self.limits.global_datagrams {
             return None;
         }
-        let address = match endpoint {
-            Endpoint::V4(bytes, _) => Endpoint::v4(bytes, 0),
-            Endpoint::V6(bytes, _, scope) => Endpoint::v6_scoped(bytes, 0, scope),
+        let address = if let Some((bytes, _)) = endpoint.as_ipv4() {
+            Endpoint::v4(bytes, 0)
+        } else {
+            Endpoint::v6_scoped(endpoint.as_ipv6().expect("IPv6").0, 0, endpoint.scope_id())
         };
         let slot = self
             .sources
@@ -1058,18 +1312,16 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     fn echo(&self, endpoint: Endpoint, issued: u64) -> [u8; ECHO_LEN] {
         let mut hash = blake3::Hasher::new_keyed(&self.echo_key);
         hash.update(ECHO_DOMAIN);
-        match endpoint {
-            Endpoint::V4(address, port) => {
-                hash.update(&[4]);
-                hash.update(&address);
-                hash.update(&port.to_be_bytes());
-            }
-            Endpoint::V6(address, port, scope) => {
-                hash.update(&[6]);
-                hash.update(&address);
-                hash.update(&port.to_be_bytes());
-                hash.update(&scope.to_be_bytes());
-            }
+        if let Some((address, port)) = endpoint.as_ipv4() {
+            hash.update(&[4]);
+            hash.update(&address);
+            hash.update(&port.to_be_bytes());
+        } else {
+            let (address, port) = endpoint.as_ipv6().expect("IPv6");
+            hash.update(&[6]);
+            hash.update(&address);
+            hash.update(&port.to_be_bytes());
+            hash.update(&endpoint.scope_id().to_be_bytes());
         }
         hash.update(&issued.to_be_bytes());
         let mut token = [0; ECHO_LEN];

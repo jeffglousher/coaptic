@@ -9,3 +9,7 @@ and [DEVELOPMENT.md](../../DEVELOPMENT.md) for the delivery loop and validation.
 Own the agreed outcome. Keep implementing useful authorized work while CI or
 review runs; monitor PRs in the background. A watcher, open PR or green check does
 not complete missing requirements. Preserve the required quality and release gates.
+
+Complete coding and integration first. Follow AGENTS.md's deterministic resource
+design: reuse storage, account for total memory, compare named SmallDevice
+configurations, and report current-source evidence without historical digressions.

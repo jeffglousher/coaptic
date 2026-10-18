@@ -545,7 +545,7 @@ impl AuthorityConnection {
         Ok(ProtectedPolicyResponse {
             endpoint,
             bytes,
-            len,
+            len: len as u16,
         })
     }
 }
@@ -645,14 +645,14 @@ impl PendingPolicy {
 pub struct ProtectedPolicyResponse {
     endpoint: Endpoint,
     bytes: [u8; DATAGRAM_LEN],
-    len: usize,
+    len: u16,
 }
 
 impl ProtectedPolicyResponse {
     /// Destination and immutable bytes for bounded exact retransmission.
     #[must_use]
     pub fn datagram(&self) -> (Endpoint, &[u8]) {
-        (self.endpoint, &self.bytes[..self.len])
+        (self.endpoint, &self.bytes[..usize::from(self.len)])
     }
 }
 

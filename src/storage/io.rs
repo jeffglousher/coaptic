@@ -133,7 +133,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
                     Metrics::inc(&mut self.metrics_mut().rx_error);
                     return Err(DatagramIoError::Slot(e));
                 }
-                if let Err(e) = self.storage_mut().set_rx_endpoint(id, endpoint) {
+                if let Err(e) = self.storage_mut().set_rx_endpoint(id, endpoint.physical()) {
                     let _ = self.release_rx(id);
                     Metrics::inc(&mut self.metrics_mut().rx_error);
                     return Err(DatagramIoError::Slot(e));
@@ -176,7 +176,7 @@ impl<S: Storage + DatagramSlots> Engine<S> {
         let outcome = match self.access_tx(id) {
             Ok(access) => {
                 let bytes = access.as_bytes();
-                io.send(dest, bytes)
+                io.send(dest.physical(), bytes)
                     .map_err(DatagramIoError::Io)
                     .and_then(|actual| {
                         if actual == bytes.len() {
