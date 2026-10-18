@@ -44,7 +44,7 @@ jobs:
           targets: thumbv6m-none-eabi
       - name: Install Linux native adapter dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libdbus-1-dev pkg-config gnome-keyring dbus-x11
       - name: Select native Windows Perl for vendored OpenSSL
         if: runner.os == 'Windows'
         shell: pwsh
@@ -64,6 +64,34 @@ jobs:
       - run: cargo test --locked --manifest-path ../coaptic-console-core/Cargo.toml
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-targets --all-features --locked
+      - name: Verify Linux Secret Service custody
+        if: runner.os == 'Linux'
+        env:
+          COAPTIC_NATIVE_CUSTODY_TEST: '1'
+        run: |
+          dbus-run-session -- bash <<'SCRIPT'
+            set -euo pipefail
+            XDG_DATA_HOME=$(mktemp -d)
+            export XDG_DATA_HOME
+            trap 'rm -rf "$XDG_DATA_HOME"' EXIT
+            printf "coaptic-ci-only\n" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --all-features --locked native_custody_roundtrip_and_missing_key_refusal -- --ignored
+          SCRIPT
+      - name: Verify macOS Keychain custody
+        if: runner.os == 'macOS'
+        env:
+          COAPTIC_NATIVE_CUSTODY_TEST: '1'
+        run: |
+          keychain="$RUNNER_TEMP/coaptic-custody.keychain-db"
+          previous=$(security default-keychain -d user | tr -d '"' | xargs)
+          keychains=()
+          while IFS= read -r item; do keychains+=("$(echo "$item" | xargs)"); done < <(security list-keychains -d user)
+          trap 'security default-keychain -d user -s "$previous"; security list-keychains -d user -s "${keychains[@]}"; security delete-keychain "$keychain"' EXIT
+          security create-keychain -p coaptic-ci-only "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security unlock-keychain -p coaptic-ci-only "$keychain"
+          cargo test --all-features --locked native_custody_roundtrip_and_missing_key_refusal -- --ignored
       - run: cargo build --all-features --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

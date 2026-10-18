@@ -66,3 +66,51 @@ mod tests {
         assert!(super::unseal(b"record").is_err());
     }
 }
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+
+    /// Run only in an isolated CI credential store, never against user custody.
+    #[test]
+    #[ignore = "requires an isolated, unlocked native credential store"]
+    fn native_custody_roundtrip_and_missing_key_refusal() {
+        assert_eq!(
+            std::env::var("COAPTIC_NATIVE_CUSTODY_TEST").as_deref(),
+            Ok("1")
+        );
+        let entry = entry().unwrap();
+        assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
+        let directory =
+            std::env::temp_dir().join(format!("coaptic-native-custody-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = super::entry()
+                    .and_then(|entry| entry.delete_credential().map_err(|_| Error::Persistence));
+                let _ = std::fs::remove_dir(self.0.join("Devices"));
+                let _ = std::fs::remove_dir(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+        initialize(&directory).unwrap();
+        let sealed = protect(b"native custody roundtrip").unwrap();
+        // Load the key again from the OS store for each operation.
+        assert_eq!(
+            unseal(&sealed).unwrap().as_slice(),
+            b"native custody roundtrip"
+        );
+        initialize(&directory).unwrap();
+        assert!(unseal(&sealed).is_ok());
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(unseal(&tampered).is_err());
+        std::fs::create_dir(directory.join("Devices")).unwrap();
+        entry.delete_credential().unwrap();
+        assert!(unseal(&sealed).is_err());
+        assert!(protect(b"new record").is_err());
+        assert!(initialize(&directory).is_err());
+        assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
+    }
+}
