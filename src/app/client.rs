@@ -1396,7 +1396,9 @@ where
     /// without catch-up bursts or inferred acknowledgement. All modes keep 4.08
     /// missing-block reports. Q-Block1 rejects suppression of 4.xx; other bitmap
     /// bits are preserved without changing upload admission or pacing.
-    /// Nonzero Observe registration masks remain an explicit App boundary.
+    /// Observe permits error-only masks; 2.xx suppression refuses registration.
+    /// Suppressed terminal errors end server interest without a notification;
+    /// use freshness recovery or a deadline to bound the client wait.
     #[must_use]
     pub const fn no_response(mut self, value: crate::message::NoResponse) -> Self {
         self.no_response = Some(value);
@@ -1651,7 +1653,9 @@ where
         {
             return Err(Error::NoResponseUploadUnsupported);
         }
-        if self.no_response.is_some_and(|value| value.get() != 0)
+        if self
+            .no_response
+            .is_some_and(|value| value.suppresses(Code::CONTENT))
             && observe == OutgoingObserve::Register
         {
             return Err(Error::NoResponseObserveUnsupported);

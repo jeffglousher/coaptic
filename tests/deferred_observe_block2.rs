@@ -1207,3 +1207,53 @@ fn ordinary_separate_block2_without_body_storage_preserves_small_response() {
     assert!(m.block2().is_none());
     assert!(s.transport_mut().take().is_none());
 }
+
+#[test]
+fn deferred_error_only_no_response_keeps_observe_and_suppresses_terminal() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for initial_error in [false, true] {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            let observe = coaptic::message::encode_uint(0);
+            let mask = coaptic::message::NoResponse::new(24).encode();
+            let options = [
+                Opt::observe(&observe),
+                Opt::uri_path("obs"),
+                Opt::no_response(&mask),
+            ];
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+                        .with_token(Token::new(b"owner").unwrap())
+                        .with_options(&options),
+                ),
+            );
+            let mut handle = None;
+            s.poll_with(0, |_, candidate| {
+                handle = candidate;
+                Response::deferred()
+            })
+            .unwrap();
+            assert!(s.transport_mut().take().is_some());
+            let h = handle.expect("deferred Observe registration");
+            if initial_error {
+                s.complete(h, Response::new(Code::INTERNAL_SERVER_ERROR), 1)
+                    .unwrap();
+                assert!(s.transport_mut().take().is_none());
+            } else {
+                s.complete(h, response(b"initial"), 1).unwrap();
+                let mid = content(&mut s, &p, b"initial", 0, Type::Confirmable);
+                s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                s.poll(2).unwrap();
+                assert_eq!(
+                    s.notify_confirmable(3, &["obs"], Response::new(Code::INTERNAL_SERVER_ERROR))
+                        .unwrap(),
+                    0
+                );
+                assert!(s.transport_mut().take().is_none());
+            }
+            assert!(s.engine().lookup_observe(key()).is_none());
+            assert_eq!(s.engine_mut().tx_occupied(), 0);
+        }
+    }
+}

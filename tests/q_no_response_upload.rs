@@ -459,7 +459,7 @@ fn refuse_and_reclaim<S: AppStorage>(client: &mut Peer<S>) {
                 .get("upload")
                 .to(PEER)
                 .observe()
-                .no_response(NoResponse::new(16))
+                .no_response(NoResponse::new(2))
                 .send(now),
             Err(Error::NoResponseObserveUnsupported)
         );
