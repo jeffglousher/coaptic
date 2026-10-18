@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          toolchain: 1.85.0
+          toolchain: 1.89.0
       - run: cargo check --locked -p coaptic --no-default-features
       - run: cargo check --locked -p coaptic --all-features
 
@@ -121,8 +121,8 @@ jobs:
 
   validation:
     name: Companion validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@1a5d1ddbd984d68302f951fcbf44b475e1085e31
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@05bcd1132fe7a3f20d9aa034449935d27e5939bc
     with:
-      suite_revision: 1a5d1ddbd984d68302f951fcbf44b475e1085e31
+      suite_revision: 05bcd1132fe7a3f20d9aa034449935d27e5939bc
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
