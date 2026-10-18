@@ -1,6 +1,8 @@
 //! Caller-owned input for desktop and embedded commissioning consoles.
 #![no_std]
 
+pub mod workflow;
+
 /// Explicit operator approval; PIV touch presence is distinct from WebAuthn UV.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ApprovalMode {

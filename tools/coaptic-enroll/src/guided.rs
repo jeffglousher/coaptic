@@ -72,70 +72,12 @@ pub fn collect(
     let Some(choice) = prompt(input, output, "Operation")? else {
         return Ok(None);
     };
-    let (command, fields): (&str, &[&str]) = match choice.as_str() {
-        "1" => ("serial-info", &["Serial port"]),
-        "2" => (
-            "serial-pair",
-            &[
-                "Serial port",
-                "Existing host identity name",
-                "Host IPv4 address:port",
-            ],
-        ),
-        "3" => (
-            "serial-revoke",
-            &["Serial port", "Existing host identity name"],
-        ),
-        "4" => (
-            "serial-transfer",
-            &[
-                "Serial port",
-                "New unpaired host identity name",
-                "Host IPv4 address:port",
-                "Verified new owner commitment (hex)",
-            ],
-        ),
-        "5" => (
-            "serial-recover",
-            &["Serial port", "Unpaired host identity name"],
-        ),
-        "6" => ("serial-init", &["Serial port", "Credential ID (0-255)"]),
-        "7" => ("device-info", &["Host identity name"]),
-        "8" => (
-            "device-init",
-            &["New host identity name", "Credential ID (0-255)"],
-        ),
-        "9" => (
-            "piv-touch-register",
-            &[
-                "YubiKey serial",
-                "Existing PIV slot (hex)",
-                "Public key PEM path",
-            ],
-        ),
-        "10" => (
-            "development-piv-register",
-            &[
-                "YubiKey serial",
-                "Existing PIV slot (hex)",
-                "Public key PEM path",
-            ],
-        ),
-        "11" => ("custody-init", &[]),
-        "12" => (
-            "peer",
-            &[
-                "Host identity name",
-                "Local address:port",
-                "Peer address:port",
-            ],
-        ),
-        "13" => ("operator-init", &[]),
-        _ => {
-            writeln!(output, "Unknown operation; no changes made.")?;
-            return Ok(None);
-        }
+    let Some(operation) = coaptic_console_core::workflow::operation(&choice) else {
+        writeln!(output, "Unknown operation; no changes made.")?;
+        return Ok(None);
     };
+    let command = operation.command;
+    let fields = operation.fields;
     let mut args = vec![command.into()];
     for field in fields {
         let Some(value) = prompt(input, output, field)? else {
@@ -143,10 +85,10 @@ pub fn collect(
         };
         args.push(std::ffi::OsString::from(value));
     }
-    if choice == "12" {
+    if operation.connect {
         args.push("--connect".into());
     }
-    if matches!(choice.as_str(), "2" | "3" | "4" | "5") {
+    if operation.approval {
         let Some(mode) = prompt(
             input,
             output,

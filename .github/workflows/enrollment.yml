@@ -29,6 +29,7 @@ jobs:
       run:
         working-directory: tools/coaptic-enroll
     env:
+      RUSTUP_TOOLCHAIN: '1.89.0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'

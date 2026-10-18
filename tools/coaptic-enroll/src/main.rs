@@ -25,16 +25,32 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let supplied: Vec<_> = std::env::args_os().skip(1).collect();
-    let supplied = if supplied.is_empty() || supplied == [std::ffi::OsString::from("guide")] {
-        let Some(args) =
-            guided::collect(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?
-        else {
-            return Ok(());
-        };
-        args
-    } else {
-        supplied
-    };
+    if supplied.is_empty() || supplied == [std::ffi::OsString::from("guide")] {
+        println!(
+            "Start with device inspection. New hosts need native storage preparation and an identity before pairing."
+        );
+        if let Ok(ports) = serialport::available_ports() {
+            for port in ports {
+                println!("Available serial port: {}", port.port_name);
+            }
+        }
+        loop {
+            let Some(args) =
+                guided::collect(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?
+            else {
+                return Ok(());
+            };
+            if let Err(error) = run_command(args) {
+                eprintln!(
+                    "Operation failed: {error}\nNo automatic retry. Inspect pairing state after an uncertain transport or storage outcome."
+                );
+            }
+        }
+    }
+    run_command(supplied)
+}
+
+fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = supplied.into_iter();
     let command = args
         .next()
