@@ -590,6 +590,78 @@ where
             && !matches!(self.validity, PolicyValidity::OnlineUntil { deadline_ms, .. } if self.last_now >= deadline_ms)
     }
 
+    /// Earliest recovery, active application or online-policy deadline.
+    ///
+    /// Recovery can report an immediately pending send. Application timers are
+    /// excluded while a recovery candidate pauses App polling. Blocked owners
+    /// return `None`: only an explicit policy refresh can resume their work.
+    /// Passive MID reservations are pruned on the next action, not by a separate
+    /// wakeup. Caller-owned subscriptions and admission retries have their own
+    /// scheduling obligations.
+    ///
+    /// No I/O, clock advancement, allocation or state mutation occurs. This
+    /// scans existing bounded recovery and App storage without storing timers.
+    /// Socket readiness, local commands and policy changes need independent wakes.
+    #[must_use]
+    pub fn next_timeout(&self) -> Option<u64> {
+        if self.is_blocked() {
+            return None;
+        }
+        let mut next = self.recovery.as_ref().and_then(CoapRecovery::next_deadline);
+        if let PolicyValidity::OnlineUntil { deadline_ms, .. } = self.validity {
+            next = Some(next.map_or(deadline_ms, |due| due.min(deadline_ms)));
+        }
+        if !self
+            .recovery
+            .as_ref()
+            .is_some_and(CoapRecovery::has_candidate)
+            && let Some(State::Established(app)) = &self.state
+            && let Some(due) = app.next_timeout()
+        {
+            next = Some(next.map_or(due, |old| old.min(due)));
+        }
+        next
+    }
+
+    /// Next opportunity to drive this owner, using the same clock as [`Self::poll`].
+    ///
+    /// Combines [`Self::next_timeout`] with retained ingress and active App
+    /// readiness. Elapsed deadlines and invalid clock values return `now_ms` so
+    /// the next poll can advance or fail closed; this query does neither itself.
+    /// Recompute after any state change. It does not promise I/O or admission
+    /// success: wait for transport readiness or caller retry policy after failure,
+    /// and wake independently for released pins, local work and policy changes.
+    ///
+    /// No I/O, allocation or timer mutation occurs. The mutable borrow permits
+    /// App's capacity-bounded storage scan; no extra buffers or tables are used.
+    #[must_use]
+    pub fn next_poll_at(&mut self, now_ms: u64) -> Option<u64> {
+        if self.is_blocked() {
+            return None;
+        }
+        if now_ms < self.last_now || now_ms.checked_add(LIFETIME).is_none() {
+            return Some(now_ms);
+        }
+        let mut next = self.next_timeout().map(|due| due.max(now_ms));
+        let paused = self
+            .recovery
+            .as_ref()
+            .is_some_and(CoapRecovery::has_candidate);
+        match self.state.as_mut() {
+            Some(State::Waiting(io)) if io.queued.is_some() => return Some(now_ms),
+            Some(State::Established(app)) => {
+                if app.transport().queued.is_some() {
+                    return Some(now_ms);
+                }
+                if !paused && let Some(due) = app.next_poll_at(now_ms) {
+                    next = Some(next.map_or(due, |old| old.min(due)));
+                }
+            }
+            _ => {}
+        }
+        next
+    }
+
     /// Configure an observable path before starting a connection.
     /// Its snapshot callback runs only inside authorized polling.
     pub fn observable(
