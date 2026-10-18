@@ -24,6 +24,7 @@
 //! [`crate::App::metrics`].
 
 mod access;
+mod async_io;
 mod block;
 mod builder;
 mod capacities;
@@ -53,6 +54,7 @@ mod tests;
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
 pub use alloc_memory::AllocMemory;
+pub use async_io::AsyncDatagramIo;
 pub(crate) use block::classic_block2_range;
 pub use block::{
     BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,

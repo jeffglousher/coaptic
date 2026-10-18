@@ -226,6 +226,27 @@ pub trait PendingCons {
     /// Pending CON view at TX `id`, if that slot is marked pending.
     fn pending_con(&self, id: SlotId) -> Option<PendingCon>;
 
+    /// Select a due pending CON without changing its RTO or selection cursor.
+    ///
+    /// The result is the exact current snapshot, before counting a retransmit.
+    /// Dropping it has no effect. Owned backends select round-robin, advancing
+    /// only at commit. Every backend must expose its actual pending work.
+    fn peek_retransmit(&self, now_ms: u64) -> Option<PendingCon>;
+
+    /// Commit a previously selected timeout after the caller completes its work.
+    ///
+    /// `expected` must still match the entire pending snapshot and be due at
+    /// `now_ms`. ACK removal, replacement or a previous commit makes it stale;
+    /// refusal returns `None` without changing pending state or the cursor.
+    /// This is a snapshot, not a generation handle: callers must not recreate
+    /// an identical slot/MID/RTO snapshot while a selection remains outstanding.
+    ///
+    /// On `Due`, counts one retransmit and schedules backoff from `now_ms`;
+    /// on `GiveUp`, clears pending but leaves TX bytes occupied. Neither sends
+    /// nor releases bytes. Commit only after successful resend (or after the
+    /// caller accepts give-up). The returned `Due` contains the updated RTO.
+    fn commit_retransmit(&mut self, expected: PendingCon, now_ms: u64) -> Option<Retransmit>;
+
     /// Next pending CON whose timeout is due at `now_ms`, if any.
     ///
     /// Owned fixed and allocated backends scan round-robin (O(n)), advancing
@@ -307,23 +328,30 @@ pub(crate) fn next_due_slot(
         let Some(pending) = pending_at(id) else {
             continue;
         };
-        if !pending.rto().is_due(now_ms) {
-            continue;
+        if let Some(due) = due_snapshot(pending, now_ms) {
+            return Some(due);
         }
-        return Some(match pending.rto().next_attempt(now_ms) {
-            Some(rto) => DueSlot {
-                id,
-                event: Retransmit::Due(pending.with_rto(rto)),
-                mark: Some(PendingMark::new(pending.message_id(), rto)),
-            },
-            None => DueSlot {
-                id,
-                event: Retransmit::GiveUp(pending),
-                mark: None,
-            },
-        });
     }
     None
+}
+
+pub(crate) fn due_snapshot(pending: PendingCon, now_ms: u64) -> Option<DueSlot> {
+    if !pending.rto().is_due(now_ms) {
+        return None;
+    }
+    let id = pending.tx_slot();
+    Some(match pending.rto().next_attempt(now_ms) {
+        Some(rto) => DueSlot {
+            id,
+            event: Retransmit::Due(pending.with_rto(rto)),
+            mark: Some(PendingMark::new(pending.message_id(), rto)),
+        },
+        None => DueSlot {
+            id,
+            event: Retransmit::GiveUp(pending),
+            mark: None,
+        },
+    })
 }
 
 pub(crate) fn outstanding_pending(

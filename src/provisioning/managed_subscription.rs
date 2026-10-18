@@ -42,6 +42,70 @@ impl<T: DatagramIo, P, const DEFERRED: usize, const CACHES: usize, const ROUTES:
 where
     P: MemoryProfile + MemoryLayout<false> + AppAssembled<false>,
 {
+    /// Next opportunity to poll this caller-owned desired subscription.
+    ///
+    /// Combine this with [`Self::next_poll_at`] and external readiness. This
+    /// reports only subscription work: it does not drive recovery, collect a
+    /// response, or include the connection's future policy deadline. Recompute
+    /// after connection polling, response collection, or local changes.
+    ///
+    /// Stopped, blocked, disconnected and bootstrap-paused interest has no
+    /// opportunity. A changed connection epoch makes an active subscription
+    /// immediately eligible; a changed grant or invalid clock instead makes its
+    /// next poll immediately eligible to report the error. Retire stale interest
+    /// after that error rather than repeatedly polling it.
+    ///
+    /// No I/O, allocation, clock advancement or state mutation occurs. The query
+    /// reads existing subscription and connection metadata in constant space.
+    #[must_use]
+    pub fn next_subscription_poll_at(
+        &self,
+        subscription: &ManagedSubscription,
+        now_ms: u64,
+    ) -> Option<u64> {
+        if subscription.is_stopped() || self.is_blocked() {
+            return None;
+        }
+        if now_ms < self.last_now
+            || now_ms.checked_add(LIFETIME).is_none()
+            || matches!(self.validity, PolicyValidity::OnlineUntil { deadline_ms, .. } if now_ms >= deadline_ms)
+        {
+            return Some(now_ms);
+        }
+        if !self.is_connected()
+            || self
+                .recovery
+                .as_ref()
+                .is_some_and(CoapRecovery::has_candidate)
+        {
+            return None;
+        }
+        let anchor = self.grant.as_ref().expect("connected grant").anchor();
+        let epoch = match self.state.as_ref().expect("managed state") {
+            super::State::Established(app) => app.transport().epoch,
+            super::State::Waiting(_) => return None,
+        };
+        match subscription.state {
+            State::Stopped => None,
+            State::New => Some(now_ms),
+            State::Waiting {
+                anchor: original,
+                retry_at,
+            } => Some(if original != anchor {
+                now_ms
+            } else {
+                retry_at.max(now_ms)
+            }),
+            State::Active { call, refresh_at } => {
+                Some(if call.anchor != anchor || call.epoch != epoch {
+                    now_ms
+                } else {
+                    refresh_at.max(now_ms)
+                })
+            }
+        }
+    }
+
     /// Attempt at most one registration/refresh for caller-owned desired interest.
     ///
     /// Returns true when a request was sent. Failed attempts are spaced by one
