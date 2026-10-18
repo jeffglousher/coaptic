@@ -14054,7 +14054,7 @@ fn explicit_con_notification_preserves_per_endpoint_admission_and_validation() {
 }
 
 #[test]
-fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry() {
+fn supersession_mid_exhaustion_refuses_and_retained_block2_can_shrink() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     for block_body in [false, true] {
         let (wire, n) = encode_wide(
@@ -14100,15 +14100,24 @@ fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry()
         }
         assert_eq!(app.signal(&["sensors", "temp"]), 1);
         let due = original.rto().next_timeout_ms();
-        let error = app.poll(due).unwrap_err();
         if block_body {
-            assert_eq!(error, Error::ObserveSupersessionUnsupported);
-        } else {
-            assert_eq!(
-                error,
-                Error::Identity(super::IdentityError::MessageIdExhausted)
+            app.poll(due).unwrap();
+            assert_ne!(last_wide(&app).message_id(), mid);
+            assert_eq!(last_wide(&app).payload(), b"obs-snap");
+            assert!(
+                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).is_none()
             );
+            assert_eq!(
+                app.engine.pending_con(slot).unwrap().rto(),
+                original.rto().next_attempt(due).unwrap()
+            );
+            continue;
         }
+        let error = app.poll(due).unwrap_err();
+        assert_eq!(
+            error,
+            Error::Identity(super::IdentityError::MessageIdExhausted)
+        );
         assert_eq!(last_wide(&app).message_id(), mid);
         assert_eq!(
             &app.transport().sends[2][..app.transport().send_lens[2]],
@@ -14121,11 +14130,6 @@ fn supersession_mid_exhaustion_and_retained_block2_refuse_without_losing_retry()
         assert_eq!(row.seq(), old_row.seq());
         assert!(row.is_pending());
         assert!(row.superseded_con_mids().is_empty());
-        if block_body {
-            let body =
-                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).unwrap();
-            assert_eq!(app.engine.tx_body_payload(body), Some(&[7; 2000][..]));
-        }
     }
 }
 

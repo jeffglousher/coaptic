@@ -1177,3 +1177,92 @@ impl<const ENTRIES: usize> SlotPool for ObserveTable<ENTRIES> {
         self.occ.cursor()
     }
 }
+
+// Only the owned backends call this helper: after preflight, their exclusive
+// borrow guarantees that body writes and occupied-row updates cannot fail.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replace_owned_observe_body<S>(
+    storage: &mut S,
+    pending: super::PendingCon,
+    original: ObserveInterest,
+    replacement: ObserveInterest,
+    bytes: &[u8],
+    previous: Option<SlotId>,
+    transfer: super::BlockTransfer,
+    payload: &[u8],
+) -> Result<(), super::PendingReplaceError>
+where
+    S: super::Storage + super::PendingCons + super::ObserveSlots + super::BodySlots,
+{
+    use super::PendingReplaceError as E;
+    let row = validate_observe_replacement(storage, pending, original, replacement, bytes)?;
+    if transfer.role() != super::BlockRole::OutgoingBlock2
+        || transfer.endpoint() != original.endpoint()
+        || transfer.key().token() != original.token()
+        || transfer.filled() != payload.len()
+    {
+        return Err(E::InvalidMessage);
+    }
+    let retained = (0..storage.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+        let id = SlotId::from_index(index);
+        let old = storage.tx_body_transfer(id)?;
+        (old.role() == super::BlockRole::OutgoingBlock2
+            && old.endpoint() == original.endpoint()
+            && old.key().token() == original.token())
+        .then_some(id)
+    });
+    if retained != previous {
+        return Err(E::Stale);
+    }
+    let id = if let Some(id) = previous {
+        let old = storage.tx_body_transfer(id).ok_or(E::Stale)?;
+        if old.role() != super::BlockRole::OutgoingBlock2
+            || old.endpoint() != original.endpoint()
+            || old.key().token() != original.token()
+        {
+            return Err(E::Stale);
+        }
+        let guard = storage.access_tx_body_mut(id).map_err(E::Slot)?;
+        if payload.len() > guard.capacity() {
+            return Err(E::Slot(SlotError::LengthExceedsSlot));
+        }
+        id
+    } else {
+        storage
+            .start_block2(transfer.key(), payload, transfer.szx())
+            .map_err(E::Body)?
+    };
+    if let Err(error) = storage.replace_pending_con(pending, bytes) {
+        if previous.is_none() {
+            storage
+                .tx_body()
+                .unwrap()
+                .release(id)
+                .expect("new unpinned body");
+        }
+        return Err(error);
+    }
+    if previous.is_some() {
+        let mut guard = storage
+            .access_tx_body_mut(id)
+            .expect("preflighted owned body");
+        guard.bytes_mut()[..payload.len()].copy_from_slice(payload);
+        guard
+            .set_len(payload.len())
+            .expect("preflighted body capacity");
+    }
+    storage
+        .set_tx_body_transfer(id, transfer)
+        .expect("occupied owned body");
+    storage
+        .set_observe_interest(row, replacement)
+        .expect("occupied owned row");
+    if transfer.is_complete() {
+        storage
+            .tx_body()
+            .unwrap()
+            .release(id)
+            .expect("committed unpinned body");
+    }
+    Ok(())
+}

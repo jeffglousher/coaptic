@@ -61,7 +61,8 @@ fn source() -> Response<'static> {
         0 => Response::content(b"initial complete").etag(b"v0"),
         1 => Response::content(b"intermediate complete").etag(b"v1"),
         2 => Response::content(b"latest complete representation").etag(b"v2"),
-        3 => Response::content(LARGE),
+        3 => Response::content(LARGE).etag(b"large"),
+        7 => Response::content(&[8; 2000]).etag(b"newlarge"),
         4 => Response::not_found(),
         _ => {
             Response::content(b"changed format").content_format(coaptic::ContentFormat::TEXT_PLAIN)
@@ -106,7 +107,7 @@ impl DatagramIo for Io {
         Ok(bytes.len())
     }
 }
-type Server<S> = App<profiles::Default, Io, 8, false, S>;
+type Server<S, const BLOCK: bool = false> = App<profiles::Default, Io, 8, BLOCK, S>;
 type Client = Server<AppStore<profiles::Default, false>>;
 #[cfg(feature = "oscore")]
 fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext {
@@ -191,7 +192,10 @@ fn allocated(protected: bool) -> Server<coaptic::storage::AllocMemory> {
     };
     builder.bind(Io::default()).unwrap()
 }
-fn pending<S: AppStorage>(app: &Server<S>, key: ObserveKey) -> PendingCon {
+fn pending<S: AppStorage, const BLOCK: bool>(app: &Server<S, BLOCK>, key: ObserveKey) -> PendingCon
+where
+    profiles::Default: coaptic::storage::MemoryLayout<BLOCK> + coaptic::app::AppAssembled<BLOCK>,
+{
     let row = app
         .engine()
         .observe_interest(app.engine().lookup_observe(key).unwrap())
@@ -200,13 +204,15 @@ fn pending<S: AppStorage>(app: &Server<S>, key: ObserveKey) -> PendingCon {
     let tx = app.engine().lookup_pending_con(mid, OWNER).unwrap();
     app.engine().pending_con(tx).unwrap()
 }
-fn control<S: AppStorage>(
-    app: &mut Server<S>,
+fn control<S: AppStorage, const BLOCK: bool>(
+    app: &mut Server<S, BLOCK>,
     mid: MessageId,
     rst: bool,
     peer: Endpoint,
     now: u64,
-) {
+) where
+    profiles::Default: coaptic::storage::MemoryLayout<BLOCK> + coaptic::app::AppAssembled<BLOCK>,
+{
     app.transport_mut().incoming = Some(control_frame(mid, rst, peer));
     app.poll(now).unwrap();
 }
@@ -220,21 +226,26 @@ fn control_frame(mid: MessageId, rst: bool, peer: Endpoint) -> Frame {
     frame.bytes[..4].copy_from_slice(&[if rst { 0x70 } else { 0x60 }, 0, (m >> 8) as u8, m as u8]);
     frame
 }
-fn deliver<S: AppStorage>(
-    server: &Server<S>,
+fn deliver<S: AppStorage, const BLOCK: bool>(
+    server: &Server<S, BLOCK>,
     client: &mut Client,
     call: coaptic::Call,
     body: &[u8],
     now: u64,
-) {
+) where
+    profiles::Default: coaptic::storage::MemoryLayout<BLOCK> + coaptic::app::AppAssembled<BLOCK>,
+{
     client.transport_mut().incoming = Some(server.transport().last);
     client.poll(now).unwrap();
     assert_eq!(client.take_response(call).unwrap().unwrap().payload(), body);
 }
-fn registered<S: AppStorage>(
-    server: &mut Server<S>,
+fn registered<S: AppStorage, const BLOCK: bool>(
+    server: &mut Server<S, BLOCK>,
     client: &mut Client,
-) -> (coaptic::Call, ObserveKey) {
+) -> (coaptic::Call, ObserveKey)
+where
+    profiles::Default: coaptic::storage::MemoryLayout<BLOCK> + coaptic::app::AppAssembled<BLOCK>,
+{
     let call = client.get("value").observe().to(OWNER).send(0).unwrap();
     server.transport_mut().incoming = Some(client.transport().last);
     server.poll(1).unwrap();
@@ -998,5 +1009,246 @@ fn terminal_supersession_ends_relation_and_preserves_delivery_ownership() {
         terminal_replacement(fixed(true), true, mode);
         #[cfg(all(feature = "alloc", feature = "oscore"))]
         terminal_replacement(allocated(true), true, mode);
+    }
+}
+
+fn fixed_blocks(protected: bool) -> Server<AppStore<profiles::Default, true>, true> {
+    reset();
+    let builder =
+        App::with_resources(resources::Resources::<profiles::Default>::new().block_wise::<true>())
+            .randomness(random)
+            .route("value", get(|_| source()).observe(source));
+    #[cfg(feature = "oscore")]
+    let builder = if protected {
+        builder.oscore(context(&[2], &[1]))
+    } else {
+        builder.allow_unprotected()
+    };
+    #[cfg(not(feature = "oscore"))]
+    let builder = {
+        assert!(!protected);
+        builder.allow_unprotected()
+    };
+    builder.bind(Io::default()).unwrap()
+}
+#[cfg(feature = "alloc")]
+fn allocated_blocks(protected: bool) -> Server<coaptic::storage::AllocMemory, true> {
+    reset();
+    let config = resources::Resources::<profiles::Default>::new()
+        .block_wise::<true>()
+        .allocated(usize::MAX);
+    let required = config.required_heap_bytes().unwrap();
+    let short = resources::Resources::<profiles::Default>::new()
+        .block_wise::<true>()
+        .allocated(required - 1);
+    assert!(matches!(
+        App::with_resources(short)
+            .allow_unprotected()
+            .randomness(random)
+            .bind(Io::default()),
+        Err(coaptic::BuildError::HeapBudgetExceeded { .. })
+    ));
+    let builder = App::with_resources(
+        resources::Resources::<profiles::Default>::new()
+            .block_wise::<true>()
+            .allocated(required),
+    )
+    .randomness(random)
+    .route("value", get(|_| source()).observe(source));
+    #[cfg(feature = "oscore")]
+    let builder = if protected {
+        builder.oscore(context(&[2], &[1]))
+    } else {
+        builder.allow_unprotected()
+    };
+    #[cfg(not(feature = "oscore"))]
+    let builder = {
+        assert!(!protected);
+        builder.allow_unprotected()
+    };
+    builder.bind(Io::default()).unwrap()
+}
+
+fn replace_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, follow: bool) {
+    let mut client = block_client(protected);
+    no_alloc(|| {
+        let call = client.get("value").observe().to(OWNER).send(0).unwrap();
+        server.transport_mut().incoming = Some(client.transport().last);
+        server.poll(1).unwrap();
+        client.transport_mut().incoming = Some(server.transport().last);
+        client.poll(2).unwrap();
+        assert_eq!(
+            client.take_response(call).unwrap().unwrap().payload(),
+            b"initial complete"
+        );
+        let key = ObserveKey::new(call.token(), OWNER);
+        assert_eq!(
+            server.notify_confirmable(3, &["value"], source()).unwrap(),
+            1
+        );
+        let old = pending(&server, key);
+        VERSION.with(|v| v.set(3));
+        server.signal(&["value"]);
+        let due = old.rto().next_timeout_ms();
+        server.poll(due).unwrap();
+        let first = pending(&server, key);
+        assert_eq!(first.tx_slot(), old.tx_slot());
+        assert_eq!(first.rto(), old.rto().next_attempt(due).unwrap());
+        let body = server
+            .engine()
+            .lookup_tx_body(
+                coaptic::storage::BlockKey::new(key.token(), OWNER)
+                    .with_identity(coaptic::storage::BodyTag::new(b"large").unwrap()),
+            )
+            .unwrap();
+        assert_eq!(server.engine().tx_body_payload(body), Some(LARGE));
+        // Saturate all other body slots: supersession must reuse the same one.
+        let mut occupied = [None; 8];
+        for slot in &mut occupied {
+            *slot = server.engine_mut().acquire_tx_body();
+        }
+        VERSION.with(|v| v.set(7));
+        server.signal(&["value"]);
+        let due = first.rto().next_timeout_ms();
+        server.poll(due).unwrap();
+        let second = pending(&server, key);
+        assert_eq!(second.tx_slot(), first.tx_slot());
+        assert_ne!(second.message_id(), first.message_id());
+        assert_eq!(second.rto(), first.rto().next_attempt(due).unwrap());
+        assert_eq!(server.engine().tx_body_payload(body), Some(&[8; 2000][..]));
+        assert_eq!(
+            server
+                .engine()
+                .tx_body_transfer(body)
+                .unwrap()
+                .key()
+                .identity(),
+            coaptic::storage::BodyTag::new(b"newlarge").unwrap()
+        );
+        if follow {
+            client.transport_mut().incoming = Some(server.transport().last);
+            let mut completed = false;
+            for step in 0..8 {
+                let now = due + 1 + step * 2;
+                client.poll(now).unwrap();
+                if let Some(reply) = client.take_response(call) {
+                    assert_eq!(reply.unwrap().body(), Some(&[8; 2000][..]));
+                    completed = true;
+                    break;
+                }
+                server.transport_mut().incoming = Some(client.transport().last);
+                server.poll(now + 1).unwrap();
+                client.transport_mut().incoming = Some(server.transport().last);
+            }
+            assert!(
+                completed,
+                "replacement body must reassemble through follow-up requests"
+            );
+        } else {
+            // A smaller representation releases its obsolete retained body.
+            VERSION.with(|v| v.set(2));
+            server.signal(&["value"]);
+            server.poll(second.rto().next_timeout_ms()).unwrap();
+        }
+        assert!(server.engine().tx_body_transfer(body).is_none());
+        for id in occupied.into_iter().flatten() {
+            server.engine_mut().release_tx_body(id).unwrap();
+        }
+    });
+}
+#[test]
+fn blockwise_supersession_reuses_body_and_retry_budget() {
+    for follow in [false, true] {
+        replace_blocks(fixed_blocks(false), false, follow);
+        #[cfg(feature = "alloc")]
+        replace_blocks(allocated_blocks(false), false, follow);
+        #[cfg(feature = "oscore")]
+        replace_blocks(fixed_blocks(true), true, follow);
+        #[cfg(all(feature = "alloc", feature = "oscore"))]
+        replace_blocks(allocated_blocks(true), true, follow);
+    }
+}
+
+fn block_client(protected: bool) -> Server<AppStore<profiles::Default, true>, true> {
+    let builder =
+        App::with_resources(resources::Resources::<profiles::Default>::new().block_wise::<true>())
+            .deterministic_for_tests();
+    #[cfg(feature = "oscore")]
+    let builder = if protected {
+        builder.oscore(context(&[1], &[2]))
+    } else {
+        builder.allow_unprotected()
+    };
+    #[cfg(not(feature = "oscore"))]
+    let builder = {
+        assert!(!protected);
+        builder.allow_unprotected()
+    };
+    builder.bind(Io::default()).unwrap()
+}
+
+fn blockwise_refusal<S: AppStorage>(mut server: Server<S, true>, pin_body: bool) {
+    let mut client = client(false);
+    no_alloc(|| {
+        let (_, key) = registered(&mut server, &mut client);
+        let mut current = pending(&server, key);
+        let body = if pin_body {
+            VERSION.with(|v| v.set(3));
+            server.signal(&["value"]);
+            server.poll(current.rto().next_timeout_ms()).unwrap();
+            current = pending(&server, key);
+            let id = server
+                .engine()
+                .lookup_tx_body(
+                    coaptic::storage::BlockKey::new(key.token(), OWNER)
+                        .with_identity(coaptic::storage::BodyTag::new(b"large").unwrap()),
+                )
+                .unwrap();
+            core::mem::forget(server.engine_mut().access_tx_body_mut(id).unwrap());
+            Some(id)
+        } else {
+            core::mem::forget(server.engine_mut().access_tx(current.tx_slot()).unwrap());
+            None
+        };
+        let occupied = server
+            .engine_mut()
+            .storage_mut()
+            .tx_body()
+            .unwrap()
+            .occupied_count();
+        VERSION.with(|v| v.set(7));
+        server.signal(&["value"]);
+        let row = server
+            .engine()
+            .observe_interest(server.engine().lookup_observe(key).unwrap())
+            .unwrap();
+        assert!(server.poll(current.rto().next_timeout_ms()).is_err());
+        assert_eq!(pending(&server, key).message_id(), current.message_id());
+        assert_eq!(
+            server
+                .engine()
+                .observe_interest(server.engine().lookup_observe(key).unwrap()),
+            Some(row)
+        );
+        assert_eq!(
+            server
+                .engine_mut()
+                .storage_mut()
+                .tx_body()
+                .unwrap()
+                .occupied_count(),
+            occupied
+        );
+        if let Some(id) = body {
+            assert_eq!(server.engine().tx_body_payload(id), Some(LARGE));
+        }
+    });
+}
+#[test]
+fn blockwise_replacement_refusal_preserves_body_and_packet_ownership() {
+    for pin_body in [false, true] {
+        blockwise_refusal(fixed_blocks(false), pin_body);
+        #[cfg(feature = "alloc")]
+        blockwise_refusal(allocated_blocks(false), pin_body);
     }
 }

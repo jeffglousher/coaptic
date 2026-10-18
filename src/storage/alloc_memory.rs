@@ -628,6 +628,32 @@ impl DedupSlots for AllocMemory {
 }
 
 impl BodySlots for AllocMemory {
+    #[allow(clippy::too_many_arguments)]
+    fn replace_observe_body(
+        &mut self,
+        pending: super::PendingCon,
+        original: ObserveInterest,
+        replacement: ObserveInterest,
+        bytes: &[u8],
+        previous: Option<SlotId>,
+        transfer: BlockTransfer,
+        payload: &[u8],
+    ) -> Result<(), super::PendingReplaceError>
+    where
+        Self: Storage + PendingCons + ObserveSlots,
+    {
+        super::table::replace_owned_observe_body(
+            self,
+            pending,
+            original,
+            replacement,
+            bytes,
+            previous,
+            transfer,
+            payload,
+        )
+    }
+
     fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]> {
         self.rx_body.as_ref()?.payload(id)
     }

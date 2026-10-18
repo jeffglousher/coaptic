@@ -345,6 +345,29 @@ pub trait ObserveSlots {
 /// Q-Block1 / Q-Block2 use the Incoming Body Pool; outgoing Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Outgoing Body Pool.
 pub trait BodySlots {
+    /// Atomically replace a pending Observe CON, its row, and its retained body.
+    ///
+    /// Reuse `previous` when present; otherwise acquire one body slot. On any
+    /// refusal, preserve the old packet, row and body. `transfer` describes the
+    /// staged first Block2 response and `payload` is the complete new snapshot.
+    /// Custom backends default to refusal without mutation.
+    #[allow(clippy::too_many_arguments)]
+    fn replace_observe_body(
+        &mut self,
+        _pending: PendingCon,
+        _original: ObserveInterest,
+        _replacement: ObserveInterest,
+        _bytes: &[u8],
+        _previous: Option<SlotId>,
+        _transfer: BlockTransfer,
+        _payload: &[u8],
+    ) -> Result<(), PendingReplaceError>
+    where
+        Self: Storage + PendingCons + ObserveSlots,
+    {
+        Err(PendingReplaceError::Unsupported)
+    }
+
     /// Filled incoming body, if `id` is occupied.
     fn rx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
 

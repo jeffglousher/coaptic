@@ -2297,8 +2297,8 @@ where
     /// replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
     /// the same TX slot, retry count and backoff. Without a signal, retries use
     /// identical bytes. Terminal responses end the relation while retaining CON
-    /// delivery; a Content-Format change terminates it with 4.06. Successful
-    /// Block2 replacements are refused; the due attempt uses the retained packet.
+    /// delivery; a Content-Format change terminates it with 4.06.
+    /// Block2 replacements reuse the retained body slot and stage a new first block.
     /// Staging refusal does not consume the signal or extend the retry budget.
     ///
     /// Superseded ACKs do not complete or prolong the current chain. Up to four
@@ -3844,15 +3844,8 @@ where
         response = Response::new(Code::NOT_ACCEPTABLE);
     }
     let terminal = !response.code().is_success();
-    if !terminal
-        && (response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
-            .is_some()
-            || interest
-                .block2_max_szx()
-                .is_some_and(|szx| response.payload().len() > (1usize << (szx + 4))))
-    {
-        return Err(Error::ObserveSupersessionUnsupported);
-    }
+    let previous_body =
+        response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()));
     if interest.superseded_con_mids().len() == usize::from(Transmission::MAX_RETRANSMIT) {
         return Err(Error::Saturated);
     }
@@ -3866,22 +3859,143 @@ where
         response.observe(replacement.seq())
     };
     let mut wire = S::TxScratch::default();
+    let preferred = interest.block2_max_szx();
+    let oversized =
+        !terminal && preferred.is_some_and(|szx| response.payload().len() > (1usize << (szx + 4)));
+    let staged = if oversized {
+        Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::BufferTooSmall,
+        )))
+    } else {
+        stage_observe_replacement(
+            oscore,
+            interest,
+            mid,
+            &response,
+            None,
+            response.payload(),
+            wire.as_mut(),
+        )
+    };
+    let mut body = None;
+    let n = match staged {
+        Ok(n) => n,
+        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) if !terminal => {
+            let Some(capacity) = engine.capacities().tx_body_bytes else {
+                return Err(Error::Message(SlotMessageError::Encode(
+                    EncodeError::BufferTooSmall,
+                )));
+            };
+            let key = response_block_key(interest.token(), interest.endpoint(), &response)?;
+            let maximum = preferred.unwrap_or(BlockValue::SZX_MAX);
+            let mut encoded = None;
+            for szx in (0..=maximum).rev() {
+                let mut transfer = crate::storage::BlockTransfer::outgoing(
+                    key,
+                    BlockRole::OutgoingBlock2,
+                    response.payload().len(),
+                    szx,
+                    capacity,
+                )
+                .map_err(Error::Block)?;
+                transfer.remember_notification(response.format(), response.max_age_secs());
+                let (block, offset, len) = transfer.issue_outgoing().map_err(Error::Block)?;
+                match stage_observe_replacement(
+                    oscore,
+                    interest,
+                    mid,
+                    &response,
+                    Some(block),
+                    &response.payload()[offset..offset + len],
+                    wire.as_mut(),
+                ) {
+                    Ok(n) => {
+                        body = Some(transfer);
+                        encoded = Some(n);
+                        break;
+                    }
+                    Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                        if szx > 0 => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            encoded.expect("finite SZX staging returns at zero")
+        }
+        Err(error) => return Err(error),
+    };
+    if body.is_none() {
+        if let Some(id) = previous_body {
+            drop(engine.access_tx_body_mut(id)?);
+        }
+    }
+    let commit = if let Some(transfer) = body {
+        engine.storage_mut().replace_observe_body(
+            pending,
+            interest,
+            replacement,
+            &wire.as_ref()[..n],
+            previous_body,
+            transfer,
+            response.payload(),
+        )
+    } else {
+        engine.supersede_observe_con(pending, interest, replacement, &wire.as_ref()[..n])
+    };
+    commit.map_err(|error| match error {
+        crate::storage::PendingReplaceError::Slot(slot) => Error::Slot(slot),
+        crate::storage::PendingReplaceError::Body(error) => Error::Block(error),
+        crate::storage::PendingReplaceError::Unsupported => Error::ObserveSupersessionUnsupported,
+        _ => Error::Saturated,
+    })?;
+    #[cfg(feature = "diagnostics")]
+    if body.is_some() {
+        crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().raw_tx_copied_bytes, n);
+        crate::storage::WorkMetrics::add(
+            &mut engine.work_metrics_mut().block_tx_staged_bytes,
+            response.payload().len(),
+        );
+    }
+    if body.is_none() {
+        release_observe_response_body(engine, interest);
+    }
+    if terminal {
+        // The pending packet retains delivery/retry ownership after the relation
+        // ends. Old notification ACKs cannot acknowledge its new Message ID.
+        let _ = engine.take_observe(interest.key());
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_observe_replacement<E, const REQUESTS: usize>(
+    oscore: &mut oscore::Field<REQUESTS>,
+    interest: ObserveInterest,
+    mid: MessageId,
+    response: &Response<'_>,
+    block: Option<BlockValue>,
+    payload: &[u8],
+    wire: &mut [u8],
+) -> Result<usize, Error<E>> {
     let cf = response.format().map(crate::ContentFormat::encode);
     let age = response.max_age_secs().map(EncodedUint::new);
-    let seq = encode_uint(replacement.seq());
-    let mut options = OptionsBuilder::<4>::new();
+    let seq = response.observe_seq().map(encode_uint);
+    let block = block.map(|block| block.encode());
+    let mut options = OptionsBuilder::<5>::new();
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(tag) = response.etag_bytes() {
             push_opt(&mut options, Opt::etag(tag))?;
         }
-        if !terminal {
-            push_opt(&mut options, Opt::observe(&seq))?;
+        if let Some(ref seq) = seq {
+            push_opt(&mut options, Opt::observe(seq))?;
         }
-        if let Some(ref value) = cf {
-            push_opt(&mut options, Opt::content_format(value))?;
+        if let Some(ref cf) = cf {
+            push_opt(&mut options, Opt::content_format(cf))?;
         }
-        if let Some(ref value) = age {
-            push_opt(&mut options, Opt::max_age(value))?;
+        if let Some(ref age) = age {
+            push_opt(&mut options, Opt::max_age(age))?;
+        }
+        if let Some(ref block) = block {
+            push_opt(&mut options, Opt::block2(block))?;
         }
         Ok(())
     })();
@@ -3889,30 +4003,14 @@ where
     let message = Message::new(Type::Confirmable, response.code(), mid)
         .with_token(interest.token())
         .with_options(options.as_slice())
-        .with_payload(response.payload());
-    let n = oscore::stage_notification(
+        .with_payload(payload);
+    oscore::stage_notification(
         oscore,
         interest.endpoint(),
         oscore::request_from_interest(interest),
         &message,
-        wire.as_mut(),
-    )?;
-    engine
-        .supersede_observe_con(pending, interest, replacement, &wire.as_ref()[..n])
-        .map_err(|error| match error {
-            crate::storage::PendingReplaceError::Slot(slot) => Error::Slot(slot),
-            crate::storage::PendingReplaceError::Unsupported => {
-                Error::ObserveSupersessionUnsupported
-            }
-            _ => Error::Saturated,
-        })?;
-    if terminal {
-        // The pending packet retains delivery/retry ownership after the relation
-        // ends. Old notification ACKs cannot acknowledge its new Message ID.
-        release_observe_response_body(engine, interest);
-        let _ = engine.take_observe(interest.key());
-    }
-    Ok(())
+        wire,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6401,7 +6499,7 @@ pub enum Error<E> {
     ObserveRefreshMismatch,
     /// Observe registration/cancellation is defined only for GET and FETCH.
     ObserveMethodUnsupported,
-    /// Signaled CON replacement needs blockwise staging or backend support.
+    /// The storage backend has not implemented the required atomic replacement.
     /// Original bytes and delivery budget remain.
     ObserveSupersessionUnsupported,
     /// Multiple subscriptions match; select one with `deregister_call`.
@@ -6471,9 +6569,9 @@ where
             Self::Block(e) => write!(f, "{e}"),
             Self::Path => f.write_str("uri-path has too many segments"),
             Self::ObserveMethodUnsupported => f.write_str("Observe requires GET or FETCH"),
-            Self::ObserveSupersessionUnsupported => f.write_str(
-                "pending Observe replacement requires blockwise staging or backend support",
-            ),
+            Self::ObserveSupersessionUnsupported => {
+                f.write_str("storage backend does not support this atomic Observe replacement")
+            }
             Self::ObserveRefreshMismatch => {
                 f.write_str("Observe refresh does not match a live subscription")
             }

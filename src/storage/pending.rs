@@ -17,6 +17,8 @@ pub enum PendingReplaceError {
     InvalidMessage,
     /// The occupied slot is pinned or the replacement exceeds its capacity.
     Slot(super::SlotError),
+    /// The replacement body cannot be admitted within the configured pool.
+    Body(crate::error::BlockTransferError),
     /// A custom storage backend has not implemented atomic replacement.
     Unsupported,
 }
