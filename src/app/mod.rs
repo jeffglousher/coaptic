@@ -2310,12 +2310,13 @@ where
     /// already have the [`Response`].
     ///
     /// For an outstanding CON notification, signals coalesce until its next
-    /// retransmission deadline. A successful single-datagram source response
-    /// replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
+    /// retransmission deadline. A new source response replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
     /// the same TX slot, retry count and backoff. Without a signal, retries use
     /// identical bytes. Terminal responses end the relation while retaining CON
     /// delivery; a Content-Format change terminates it with 4.06.
     /// Block2 replacements reuse the retained body slot and stage a new first block.
+    /// Terminal bodies retain their error and selection after the row ends, until
+    /// completion, replacement registration or EXCHANGE_LIFETIME expiry.
     /// Staging refusal does not consume the signal or extend the retry budget.
     ///
     /// Superseded ACKs do not complete or prolong the current chain. Up to four
@@ -3629,6 +3630,13 @@ where
     .ok()
     .map(|request| ObservePlan::from_request(site, &request));
     if request_plan.is_some_and(|plan| plan.register || plan.deregister) {
+        if let Err(error) = retire_terminal_response(engine, parsed.token(), peer) {
+            if let InboundBody::Complete(id) = assembled {
+                let _ = engine.release_rx_body(id);
+            }
+            let _ = engine.release_rx(rx);
+            return Err(error.into());
+        }
         if let Err(error) =
             deferred.supersede_observe(engine, ObserveKey::new(parsed.token(), peer))
         {
@@ -4925,6 +4933,47 @@ fn response_block_key<E>(
         )),
         None => Ok(key),
     }
+}
+
+// A new same-token registration/deregistration replaces a completed relation's
+// terminal transfer too. Preflight every owner before releasing any of them.
+fn retire_terminal_response<S: Storage + BodySlots + PendingCons + DatagramSlots>(
+    engine: &mut Engine<S>,
+    token: crate::message::Token,
+    peer: Endpoint,
+) -> Result<(), crate::storage::SlotError> {
+    let Some(body) = response_body_for(engine, BlockKey::new(token, peer)) else {
+        return Ok(());
+    };
+    if engine
+        .tx_body_transfer(body)
+        .and_then(|t| t.terminal_deadline())
+        .is_none()
+    {
+        return Ok(());
+    }
+    if engine.tx_body_is_pinned(body) {
+        return Err(crate::storage::SlotError::Pinned);
+    }
+    for commit in [false, true] {
+        for index in 0..engine.capacities().tx_datagram_slots {
+            let tx = SlotId::from_index(index);
+            let belongs = engine
+                .pending_con(tx)
+                .is_some_and(|pending| pending.endpoint() == peer)
+                && engine
+                    .decode_tx(tx)
+                    .is_ok_and(|packet| packet.token() == token && packet.code().is_response());
+            if belongs {
+                if commit {
+                    engine.release_tx(tx)?;
+                } else if engine.tx_is_pinned(tx) {
+                    return Err(crate::storage::SlotError::Pinned);
+                }
+            }
+        }
+    }
+    engine.release_tx_body(body)
 }
 
 // Suppressed terminal responses still end the relation and all owned retries.
