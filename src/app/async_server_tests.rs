@@ -49,6 +49,7 @@ const PEER: Endpoint = Endpoint::v4([192, 0, 2, 8], 5683);
 fn async_transaction_metadata_has_independent_small_device_ceilings() {
     type Memory = crate::storage::Memory<profiles::Constrained>;
     type Clock = fn() -> Result<u64, ()>;
+    #[cfg(feature = "std")]
     std::println!(
         "async metadata bytes: transport={} packet={} rx={} body={} notify={} deferred_observe={}",
         core::mem::size_of::<ProtocolTransport<'_, Io<'_>, Clock, Timer>>(),
