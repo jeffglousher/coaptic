@@ -752,7 +752,6 @@ impl ObserveInterest {
     pub(crate) fn supersede_con(mut self, now_ms: u64, mid: MessageId) -> Option<Self> {
         let old = self.notify_hold?.con_mid()?;
         if !self.pending
-            || self.deleted
             || self.key.is_client()
             || usize::from(self.superseded_len) == self.superseded.len()
             || mid == old
