@@ -354,6 +354,17 @@ fn enrollment_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
 #[cfg(unix)]
 fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    // Refuse existing symlinks before recursive creation can follow an ancestor.
+    for ancestor in directory.ancestors() {
+        match ancestor.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err("operator directory ancestors must not be symlinks".into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true).mode(0o700);
     builder.create(directory)?;
@@ -362,6 +373,57 @@ fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::err
         return Err("enrollment directory must be a private directory (mode 0700)".into());
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod private_directory_tests {
+    use super::private_directory;
+    use std::os::unix::fs::{MetadataExt, symlink};
+
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let mut nonce = [0; 8];
+            getrandom::fill(&mut nonce).unwrap();
+            // macOS's temporary directory can itself have a symlink ancestor.
+            let directory = std::env::temp_dir().canonicalize().unwrap().join(format!(
+                "coaptic-private-directory-{}-{:016x}",
+                std::process::id(),
+                u64::from_ne_bytes(nonce)
+            ));
+            std::fs::create_dir(&directory).unwrap();
+            Self(directory)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn symlink_ancestor_is_refused_before_creating_children() {
+        let root = TestDirectory::new();
+        let target = root.0.join("target");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.0.join("link");
+        symlink(&target, &link).unwrap();
+
+        assert!(private_directory(&link.join("new/enrollment")).is_err());
+        assert!(!target.join("new").exists());
+        assert!(private_directory(&link).is_err());
+    }
+
+    #[test]
+    fn ordinary_private_directory_can_be_created_and_reopened() {
+        let root = TestDirectory::new();
+        let directory = root.0.join("new/enrollment");
+        private_directory(&directory).unwrap();
+        private_directory(&directory).unwrap();
+        assert_eq!(directory.symlink_metadata().unwrap().mode() & 0o777, 0o700);
+    }
 }
 
 fn device_directory(
