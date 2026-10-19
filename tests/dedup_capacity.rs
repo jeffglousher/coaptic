@@ -468,7 +468,7 @@ fn tx_pressure<S: AppStorage>(mut server: Server<12, S>) {
                 &[0x5a; DedupEntry::REPLAY_MAX + 16]
             );
         }
-        assert_eq!(server.engine_mut().tx_occupied(), 8);
+        assert_eq!(server.engine_mut().tx_occupied(), 7); // One TX stays available for control.
         assert!(server.engine().lookup_dedup(key(1)).is_some());
         let first = deliver(&mut server, wire(1), 13);
         assert!(decode(&first.bytes[..first.len]).unwrap().is_empty_ack());

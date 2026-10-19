@@ -1339,7 +1339,7 @@ fn deferred_effect_invocation_is_consumed_before_failure_and_rejects_expiry_or_c
     let b = identity(2, 2);
     let (mut client, mut server, _) = pair(&a, &b);
     let now = connect(&mut client, &mut server, 0) + 1;
-    client
+    let first_call = client
         .request(Method::Post, "work", &[], None, now)
         .unwrap();
     let mut deferred = None;
@@ -1371,6 +1371,16 @@ fn deferred_effect_invocation_is_consumed_before_failure_and_rejects_expiry_or_c
     ));
     assert_eq!(effects, 1);
     client.poll_with(now + 1, idle).unwrap();
+    // The server abandoned this deferred reply; retire its client receive credit.
+    assert!(client.cancel(first_call, now + 1).unwrap());
+    let mut discarded = [0; 1];
+    assert!(
+        client
+            .take_response_into(first_call, &mut discarded, now + 1)
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
     client
         .request(Method::Post, "later", &[], None, now + 2)
         .unwrap();

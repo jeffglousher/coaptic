@@ -1083,6 +1083,14 @@ fn default_capacity_supports_64_active_associations_with_fixed_storage() {
 
 #[test]
 fn admitted_sessions_install_into_shared_app_and_revoke_independently() {
+    // Two simultaneous full-response CON requests plus RX/TX control headroom.
+    crate::memory_profile! {
+        TwoCalls {
+            rx_datagram: (3, 1152), tx_datagram: (3, 1152),
+            rx_body: (1, 4096), tx_body: (1, 4096),
+            dedup: 4, observe: 2,
+        }
+    }
     let server = identity(254, 254);
     let first = identity(1, 1);
     let second = identity(2, 2);
@@ -1093,7 +1101,7 @@ fn admitted_sessions_install_into_shared_app_and_revoke_independently() {
     let mut one = Some(finish(&mut cloud, &registry, &first, FIRST, 0).server);
     let mut two = Some(finish(&mut cloud, &registry, &second, SECOND, 1_000).server);
     let mut app = crate::App::with_resources(
-        crate::resources::SmallDevice::new()
+        crate::resources::Resources::<TwoCalls>::new()
             .associations::<2>()
             .client_calls::<2>(),
     )

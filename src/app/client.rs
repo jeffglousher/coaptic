@@ -79,7 +79,7 @@ use crate::storage::{
 use super::identity::AppIds;
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, path_from_into};
 use super::response::{AppAssembled, INLINE_PAYLOAD, Response};
-use super::{App, Error, Method, push_opt};
+use super::{App, Error, Method, Metrics, push_opt};
 
 /// Option slots for an outbound request (path + query + Table 4 extras).
 const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
@@ -175,6 +175,8 @@ impl std::error::Error for ResponseBufferError {}
 /// Local terminal outcome of a client call, distinct from a remote CoAP response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallFailure {
+    /// Retaining the reply would consume mandatory packet headroom.
+    PacketHeadroom,
     /// Caller cancelled this call locally (no deregistration is sent).
     Cancelled,
     /// The owning security association was revoked locally.
@@ -204,6 +206,7 @@ pub enum CallFailure {
 impl core::fmt::Display for CallFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::PacketHeadroom => f.write_str("response cannot retain the last RX packet"),
             Self::AssociationRevoked => f.write_str("security association revoked"),
             Self::Cancelled => f.write_str("call cancelled"),
             Self::CancellationFailed => f.write_str("Observe cancellation send failed"),
@@ -647,6 +650,32 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             })
             .filter(|deadline| after.is_none_or(|after| *deadline > after))
             .min()
+    }
+
+    pub(super) fn response_credits(&self, inbox: &ClientInbox<CALLS>) -> usize {
+        self.rows
+            .iter()
+            .flatten()
+            .filter(|row| {
+                !row.retired
+                    && !inbox.rows.iter().flatten().any(|reply| {
+                        reply.call == row.call && reply.complete && reply.meta.is_err()
+                    })
+            })
+            .count()
+            + inbox
+                .rows
+                .iter()
+                .flatten()
+                .filter(|row| {
+                    row.meta.is_ok()
+                        && !self
+                            .rows
+                            .iter()
+                            .flatten()
+                            .any(|live| !live.retired && live.call == row.call)
+                })
+                .count()
     }
 
     pub(super) fn has_protocol_state(&self) -> bool {
@@ -1873,6 +1902,19 @@ where
                 });
             }
         }
+        if self.app.full_responses
+            && !replacing
+            && self.app.lives.response_credits(&self.app.inbox)
+                >= self
+                    .app
+                    .engine
+                    .capacities()
+                    .rx_datagram_slots
+                    .saturating_sub(super::admission::RX_HEADROOM)
+        {
+            Metrics::inc(&mut self.app.engine.metrics_mut().admission_rx_refused);
+            return Err(Error::Saturated);
+        }
         if !replacing && self.app.lives.rows.iter().flatten().count() >= CALLS {
             return Err(Error::Saturated);
         }
@@ -1943,6 +1985,15 @@ where
                 },
                 true,
             );
+        }
+        // Cached server replies share the TX pool with outgoing Calls. Reclaim
+        // evictable pins before deciding ordinary admission, preserving reserve.
+        for _ in 0..=super::admission::TX_HEADROOM {
+            if super::admission::free_tx(&mut self.app.engine) > super::admission::TX_HEADROOM
+                || !super::evict_one_dedup_pin(&mut self.app.engine)
+            {
+                break;
+            }
         }
         let staged = stage_client(
             &mut self.app.engine,
@@ -2494,11 +2545,14 @@ mod async_request_tests {
         }
         let state = State::default();
         state.ready.set(true);
-        let mut app = App::with_resources(crate::resources::SmallDevice::new().client_calls::<2>())
-            .deterministic_for_tests()
-            .allow_unprotected()
-            .bind(AsyncOnly(&state))
-            .unwrap();
+        let mut app = App::with_resources(
+            crate::resources::Resources::<super::super::tests::AdmissionTwoRxCalls, 4>::new()
+                .client_calls::<2>(),
+        )
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .bind(AsyncOnly(&state))
+        .unwrap();
         let mut timer = NeverTimer;
         let first = {
             let mut send = pin!(app.get("first").to(PEER).non().deadline(50).send_async(
@@ -2534,11 +2588,14 @@ mod async_request_tests {
         let state = State::default();
         state.ready.set(true);
         let mut timer = NeverTimer;
-        let mut app = App::with_resources(crate::resources::SmallDevice::new().client_calls::<2>())
-            .deterministic_for_tests()
-            .allow_unprotected()
-            .bind(AsyncOnly(&state))
-            .unwrap();
+        let mut app = App::with_resources(
+            crate::resources::Resources::<super::super::tests::AdmissionTwoRxCalls, 4>::new()
+                .client_calls::<2>(),
+        )
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .bind(AsyncOnly(&state))
+        .unwrap();
         let call = {
             let mut send = pin!(app.get("first").to(PEER).non().send_until_async(
                 0,
@@ -3331,7 +3388,7 @@ where
         return Err(Error::Path);
     }
     let mid = ids.next_for(engine, io, now_ms)?;
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = super::admission::ordinary_tx(engine) else {
         return Err(Error::Saturated);
     };
     let encoded = with_client_options(spec, false, |options| {
@@ -3992,6 +4049,31 @@ where
         }
     }
 
+    // An Observe replacement releases its previous RX ownership before keeping
+    // the new packet. Unexpected/custom states still cannot consume headroom.
+    let replacing_rx = inbox
+        .rows
+        .iter()
+        .flatten()
+        .any(|row| row.call == call && row.datagram.is_some());
+    if full_responses
+        && !replacing_rx
+        && super::admission::free_rx(engine) < super::admission::RX_HEADROOM
+    {
+        Metrics::inc(&mut engine.metrics_mut().admission_rx_refused);
+        fail_call(
+            engine,
+            inbox,
+            lives,
+            oscore,
+            call,
+            CallFailure::PacketHeadroom,
+            true,
+        );
+        let _ = engine.release_rx(rx);
+        return Ok(());
+    }
+
     lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
     accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
     take_exchange(engine, parsed, peer);
@@ -4405,7 +4487,7 @@ where
                 .map(|request| request.payload())
                 .unwrap_or(&[]),
         );
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = super::admission::ordinary_tx(engine) else {
         return Err(Error::Saturated);
     };
     match super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
@@ -5111,7 +5193,7 @@ where
         .and_then(|len| u32::try_from(len).ok());
     let tx = match tx {
         Some(tx) => tx,
-        None => engine.acquire_tx().ok_or(Error::Saturated)?,
+        None => super::admission::ordinary_tx(engine).ok_or(Error::Saturated)?,
     };
     let mid = match ids.next_for(engine, io, now_ms) {
         Ok(mid) => mid,
