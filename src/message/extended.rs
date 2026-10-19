@@ -83,6 +83,17 @@ impl<const N: usize> core::fmt::Debug for Token<N> {
     }
 }
 
+impl<const N: usize> super::OwnedToken for Token<N> {
+    const EMPTY: Self = Self::EMPTY;
+    const MAX_LEN: usize = if N < MAX_TOKEN_LEN { N } else { MAX_TOKEN_LEN };
+    fn try_from_bytes(bytes: &[u8]) -> Result<Self, CapacityError> {
+        Self::new(bytes)
+    }
+    fn as_bytes(&self) -> &[u8] {
+        Token::as_bytes(self)
+    }
+}
+
 /// Validated borrowed datagram, retaining the entire token without copying it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Datagram<'a> {

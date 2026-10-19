@@ -47,7 +47,9 @@ impl HopLimit {
     }
 
     /// Hop-Limit on `parsed`. `Ok(None)` if absent.
-    pub fn from_message(parsed: &ParsedMessage<'_>) -> Result<Option<Self>, ValueError> {
+    pub fn from_message(
+        parsed: &ParsedMessage<'_, impl super::OwnedToken>,
+    ) -> Result<Option<Self>, ValueError> {
         match parsed.hop_limit() {
             None => Ok(None),
             Some(result) => result.map(Some),

@@ -42,7 +42,7 @@ pub mod value;
 mod tests;
 
 pub use builder::OptionsBuilder;
-pub use decode::{ParsedMessage, decode};
+pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
 pub use echo::{Echo, EchoFreshness};
 #[cfg(feature = "oscore")]
 pub(crate) use encode::write_option;
@@ -64,6 +64,31 @@ pub use value::{
 pub use crate::error::{OptionsFull, ValueError};
 
 use core::fmt;
+
+/// Owned token representation selected by protocol storage.
+///
+/// Implementations must preserve every input byte on successful construction,
+/// reject lengths above their capacity, and compare/hash exact length and bytes.
+/// The default [`Token`] remains nine bytes; [`extended::Token`] selects a larger
+/// caller-bounded representation without changing compact instances.
+pub trait OwnedToken: Copy + Default + Eq + core::hash::Hash + fmt::Debug + 'static {
+    /// Empty token in this representation.
+    const EMPTY: Self;
+    /// Maximum accepted token bytes, never above [`extended::MAX_TOKEN_LEN`].
+    const MAX_LEN: usize;
+    /// Checked, non-truncating copy into this representation.
+    fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError>;
+    /// Actual bytes, without unused capacity/padding.
+    fn as_bytes(&self) -> &[u8];
+    /// Actual token length.
+    fn len(&self) -> usize {
+        self.as_bytes().len()
+    }
+    /// Whether this token is empty.
+    fn is_empty(&self) -> bool {
+        self.as_bytes().is_empty()
+    }
+}
 
 /// CoAP message type (header T field).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -233,6 +258,20 @@ impl Default for Token {
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Token").field(&self.as_bytes()).finish()
+    }
+}
+
+impl OwnedToken for Token {
+    const EMPTY: Self = Self::EMPTY;
+    const MAX_LEN: usize = Self::MAX_LEN;
+    fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError> {
+        Self::new(bytes).ok_or(extended::CapacityError {
+            required: bytes.len(),
+            available: Self::MAX_LEN,
+        })
+    }
+    fn as_bytes(&self) -> &[u8] {
+        Token::as_bytes(self)
     }
 }
 
