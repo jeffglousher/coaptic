@@ -1,16 +1,6 @@
 name: Enrollment provider
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tools/coaptic-enroll/**'
-      - 'tools/coaptic-console-core/**'
-      - 'tools/coaptic-async-host/**'
-      - 'src/provisioning/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/enrollment.yml'
   workflow_dispatch:
 
 permissions:
