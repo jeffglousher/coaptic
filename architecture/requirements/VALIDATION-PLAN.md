@@ -26,8 +26,8 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | --- | --- | --- |
 | Q1 / [#199](https://github.com/jeffglousher/coaptic/issues/199) | Literal supported UDP TD directions: companion `crates/coaptic-plugtest`, original `tests/plugtest/td-coap4` fixtures. | Completed selected inventory in companion #90: 52 required IDs, 133 passing direct-UDP directions, exact conditional/readback grading and 87 refusal mutations. All 52 same-Coaptic scenarios pass. The 23 mixed-peer Observe fixture skips remain Q2; DTLS02 is a reviewed alert conflict, never literal PASS. |
 | Q2 / [#200](https://github.com/jeffglousher/coaptic/issues/200) | Independent UDP/OSCORE directions: companion `tools/interop/capabilities.json`, process runner and protected fixtures. | Source-matched discovery, extended tokens, selected Observe/transfers and ownership/error directions against actual independent implementations. Record each unsupported peer capability instead of substituting a different scenario or shared crypto backend. |
-| Q3 / #200 | Scoped/routed IPv6 and network errors using actual interfaces/routes. | Nonzero zone identity, PMTU/ICMP and exact endpoint matching; compound loss/malformed traffic followed by a valid operation. `::1` proves neither routing nor nonzero zone handling. Requires a named usable network topology. |
-| Q4 / #200 | Non-idempotent effects against alternative servers. | Duplicate/lost-reply schedules bind one effect to its exact operation and owner; report actual peer behavior, bounded refusal and fresh recovery. A successful repeated GET does not qualify it. |
+| Q3 / #200 | Scoped/routed IPv6 and network errors using actual interfaces/routes. | Completed selected six cases in companion #100-102: four scoped/routed IPv6 roles, wrong-zone refusal/fresh recovery, actual host-socket ICMPv6 PTB/PMTU recovery, and lost-reply/malformed traffic with exact retransmission and fresh work. Owned topology cleanup passes. This is not automatic App PMTU adaptation. |
+| Q4 / #200 | Non-idempotent effects against alternative servers. | Companion #98 characterizes both retained alternative-server fixtures: duplicate CON POST applies twice, distinct fresh POST and GET succeed. This is an explicit fixture limitation, not successful suppression or a whole-library verdict. Installed one-effect/lost-receipt recovery remains Q8. |
 | Q5 / [#202](https://github.com/jeffglousher/coaptic/issues/202) | Host parser/state/resource campaigns: companion `tools/qualification/{contracts,host,seeded,fuzz}.py` and `contracts.json`; core integration tests. | Selected finite inventory executed: 52 named protocol groups, bounded parser/CBOR mutations, fixed/allocated storage churn, replay models and compound lifecycle schedules. Four evidence-oracle refusal tests reject absent, ignored, failed or stale test records. See the source-bound result below; coverage percentages and totals are not whole-RFC proof. |
 | Q6 / #202 | Diagnostic host/export adapter consuming #521. | Delivered in companion #88: synchronized caller-owned recorder, sampled maxima, explicit reset/drop behavior and bounded CBOR v1 export. Nine focused host/service tests cover isolation and unchanged durability/replay outcomes; strict Clippy passes. No mandatory logger, exporter thread or allocation in core. Overhead remains unmeasured. |
 | Q7 / [#333](https://github.com/jeffglousher/coaptic/issues/333) | Reserved ESP32-S3 durable local pairing and installed service; companion `tools/esphome/rust`, `tools/durable-host`. | Source-matched cold power cycle, interrupted/ambiguous commits and lost administrative replies; same identity/owner/permissions or explicit fail-closed repair. Preserve original NVS and credentials. Software restart and an archive build are separate evidence. |
@@ -71,7 +71,8 @@ cover required fields, extensions and malformed, indefinite and nested inputs.
 These finite schedules establish their named refusal/recovery contracts. They do
 not establish independent peer, physical device or exhaustive concurrency proof.
 Earlier 32-bit and s390x results retain their earlier sources; neither was rerun
-for this snapshot. Q2–Q4 and Q7–Q12 retain their separate owners.
+for this snapshot. Q2 and Q7–Q12 retain their separate owners; completed Q3/Q4
+slices are recorded below.
 
 Q2 has an executed partial slice in [companion #91](https://github.com/jeffglousher/coaptic-validation/pull/91),
 merged as `a9f7d5d814b368e43f7549fece7b6f88946e8d81`. Fifteen supported
@@ -82,28 +83,70 @@ exposed the format-binding and GET continuation defects corrected in core #612;
 the retained successful captures identify their exact intermediate sources.
 The final async cancellation regression passes independently of those captures.
 Host fixture stack and response-buffer allowances are not device RAM results.
-Protected, routed/scoped and exact-effect directions remain separately open.
+Selected GET/FETCH and CON Q-Observe directions, one protected extended-token
+capacity/refusal boundary and four native-EDHOC/CoAP-envelope option-extension
+profiles remain Q2. Existing method/option and protected receipts retain their
+source-specific validity; no full option/security cross-product is required.
 
-Q12 now has the manual advisory Linux workflow delivered by
-[companion #92](https://github.com/jeffglousher/coaptic-validation/pull/92), merged
-as `712428bcb5f49903788de47db8130a298ff962a5`. Its source covers finite kernel
-classification, unchanged packet bytes, per-CPU/saturating counters and owned
-veth lifecycle/termination recovery. Tool and object inputs are pinned; the
-hosted kernel/image identity is observed per run. Adding the workflow and passing
-portable checks do not establish verifier or hook success.
+Q2 also includes the finite independent EDHOC slice in
+[companion #95](https://github.com/jeffglousher/coaptic-validation/pull/95):
+24 raw sessions across both selected suites/roles, ordered EAD, private exporter
+contexts and six UDP error directions with fresh protected recovery. The
+[evidence index](https://github.com/jeffglousher/coaptic-validation/blob/574c5b5c034e4ee0511eacce6a1a47aeaf4ae177/tools/qualification/evidence/independent-edhoc/index.json)
+identifies native adapters, unsupported full-u64 labels/padding and callback
+timing limits. These are finite profile results, not whole-RFC certification.
+
+Q3 passes at exact core `edfd1eb1669e8c164fc318e47f531d1c7e41e7a5` /
+companion `d5e93eb4f4b8b91bf51878ce6ec76d1dbc629e0f` for four addressing roles
+([run39246185107](https://github.com/jeffglousher/coaptic-validation/actions/runs/39246185107)),
+and core `567899121ace814ebfb417b55705adbcb1299215` /
+companion `d290314823343b0f6caf8f0b7a5cc0d0c6e39569` for actual PMTU and
+compound traffic
+([run39247160176](https://github.com/jeffglousher/coaptic-validation/actions/runs/39247160176)).
+Both have complete owned-network cleanup; the initial fixture/cleanup failure
+is retained. Q4's exact counter-fixture sources and limitation receipts are in
+[companion #98](https://github.com/jeffglousher/coaptic-validation/pull/98).
+
+Q7/Q8 have current installed echo-only proof: core `775b42c` / companion
+`0b597ea`, run `ab15edb5b3bc49078e5c2751d53c9e69`, plus host liveness fix
+#619. Two fresh host processes establish authenticated sessions and protected
+echoes without a device reset or unnecessary rekey; the second accepts Observe.
+Identity and pairing are preserved. This does not qualify telemetry effects,
+revocation, physical power interruption or production custody. The installed
+telemetry integration is delivered by core #623 / companion #103: exact permission
+restoration, authenticated Pending transitions, bounded producer drain/hold and
+an explicit AfterSync lost-receipt boundary. Twenty focused pairing tests include
+real UDP restart/drain proof; actual installed telemetry execution remains open.
+Missing/unverifiable history never means first use.
+
+Q12 now has actual kernel acceptance at core
+`244809ebcd852cfeaf912bd2f5ba5956b6495bfc`, companion `d290314`,
+[run39249773527](https://github.com/jeffglousher/coaptic-validation/actions/runs/39249773527).
+Both instrumented cycles pass 4,556 differential cases, multi-CPU counters,
+protected/unprotected unchanged bytes and live attach/detach/reload. The kernel
+reports 352+0 bytes stack and 344 translated instructions. A 20-second child
+startup deadline expired while matching successful verifier loads took about
+20.3 seconds; terminated-child recovery, ordinary loader and capability refusal
+were not reached. Companion #105 extends the bounded startup budget; exact
+[run39252498484](https://github.com/jeffglousher/coaptic-validation/actions/runs/39252498484)
+executes those stages against the same core. Earlier failed
+verifier objects/logs are preserved. WSL2 installation is separate and still
+requires administrator elevation while the operator is away.
 
 ## Execution order and prerequisites
 
 1. Preserve the delivered #486/#520/#521 fixes and completed Q1/Q5/Q6 slices.
    Implement concrete fixture or integration gaps in coherent batches, then commit
    a clean source snapshot before provenance-enforcing execution.
-2. Complete Q2/Q4 with independent UDP/OSCORE peers and exact effect ownership.
+2. Complete the finite remaining Q2 integration directions and installed Q8
+   effect ownership.
    Reuse proof when its exact source and required boundary still match. Keep
    optional DTLS fixtures and their reviewed RFC conflicts separate from the MVP.
 3. Execute Q7–Q10 on a source-matched installed image. Hardware touch is only
    needed by the selected administrative approval policy, not ordinary traffic.
    An interrupted commit must be recoverable without regenerating identity keys.
-4. Execute Q3 and Q12 when their network/Linux prerequisites are available. A WSL2
+4. Preserve completed Q3; finish the remaining Q12 lifecycle stages on the hosted
+   Linux lane. A WSL2
    lane requires installed virtualization support and an actual distribution;
    installation alone does not establish BPF support or a passing verifier result.
 5. Execute Q11 as a short controlled report, then widen only for a measured

@@ -254,7 +254,7 @@ Exp means Experimental. Titles are shortened for readability.
 | [9203](../knowledge/rfcs/rfc9203.txt) — ACE OSCORE Profile; ST | Contribution opportunity: standardized authorization interoperability for a named delegated-access use case. | L0: ACE wire profile. | ACE framework/token roles, context provisioning, policy/audience/expiry and independent profile proof if adopted. Custom enrollment/current policy is not ACE. [#365](https://github.com/jeffglousher/coaptic/issues/365). |
 | [9290](../knowledge/rfcs/rfc9290.txt) — Concise Problem Details; ST | Committed: bounded CBOR problem APIs. | L3: public encode/decode/response API and direct tests. | Clause-level required-field, extension, text/metadata, malformed-input and round-trip proof; no general media-codec claim. [#202](https://github.com/jeffglousher/coaptic/issues/202). |
 | [9423](../knowledge/rfcs/rfc9423.txt) — Target Attributes Registry; Info | Reference with committed applicability: registered discovery attribute names/semantics. | L3: registered attribute semantics in the bounded metadata API. | Discovery parser/serializer and registry applicability are assessed in the discovery ledger. RD is unsupported; registry administration is not a deliverable. #519/#200. |
-| [9668](../knowledge/rfcs/rfc9668.txt) — EDHOC with CoAP and OSCORE; ST | Committed: baseline transport/context establishment for the named provisioning profile. Interest: optional combined-request profile, outside the message_4-required MVP profile. | L3: sequential bootstrap with message_4 required and suites 2/3; [bootstrap option ledger](requirements/RFC7252-EDHOC-OPTIONS.md) and [security ledger](requirements/SECURITY-PROFILES.md). | Independent establishment/error/EAD proof remains #200/#365. Combined requests are optional and unsupported by the message_4-required profile; do not advertise combined support. |
+| [9668](../knowledge/rfcs/rfc9668.txt) — EDHOC with CoAP and OSCORE; ST | Committed: baseline transport/context establishment for the named provisioning profile. Interest: optional combined-request profile, outside the message_4-required MVP profile. | L3: sequential bootstrap with message_4 required and suites 2/3; [bootstrap option ledger](requirements/RFC7252-EDHOC-OPTIONS.md) and [security ledger](requirements/SECURITY-PROFILES.md). | Finite independent establishment/error/EAD proof is delivered in core #614 / companion #95, with explicit backend limits. Independent bootstrap-option extensions remain #200; installed policy/effects remain #365. Combined requests are optional and unsupported by the message_4-required profile; do not advertise combined support. |
 | [9876](../knowledge/rfcs/rfc9876.txt) — Content-Format Registration Updates; ST | Reference with committed applicability: identifier use and documentation reservations. | Not rated. | Apply relevant registry rules; no new content codec or registration campaign is implied. |
 | [9952](../knowledge/rfcs/rfc9952.txt) — CoAP over DTLS ALPN; Info | Reference conditional on a contributed DTLS adapter profile; no MVP gate. | L0: supported core binding absent. | State ALPN applicability/support in a contributed backend profile and qualify it when used. This RFC adds no universal new DTLS ALPN handshake requirement. [#515](https://github.com/jeffglousher/coaptic/issues/515). |
 
@@ -273,7 +273,7 @@ requirement ledger is created.
 | [9147](https://www.rfc-editor.org/rfc/rfc9147.html) — DTLS 1.3; ST | Contribution opportunity: reviewed backend/version profile; no delivery promise or MVP gate. | L0. | A contributed profile needs version-specific state/record/identity/congestion behavior and independent proof; DTLS 1.2 evidence is not reusable as version compliance. [#515](https://github.com/jeffglousher/coaptic/issues/515). |
 | [9200](https://www.rfc-editor.org/rfc/rfc9200.html) — ACE-OAuth; ST | Contribution opportunity: authorization-server/resource-server/client wire roles for delegated access. | L0: ACE; custom policy foundations exist separately. | Unsupported in this milestone. Adoption needs named token formats, audience/expiry/current-policy/owner isolation and interoperable endpoints. [#365](https://github.com/jeffglousher/coaptic/issues/365). |
 | [9202](https://www.rfc-editor.org/rfc/rfc9202.html) — ACE DTLS Profile; ST, updated by RFC 9430 | Contribution opportunity: standardized DTLS authorization profile; no MVP gate. | L0. | A contributed profile needs applicable update inventory, authz-info/token/bootstrap and policy proof; ordinary DTLS is insufficient. [#365](https://github.com/jeffglousher/coaptic/issues/365), [#515](https://github.com/jeffglousher/coaptic/issues/515). |
-| [9528](../knowledge/rfcs/rfc9528.txt) — EDHOC; ST | Committed: method 3 and declared credential/application profile, with applicable section 8 requirements. | L3: method 3, pinned CCS/kid, suites 2/3, full-width exporter, bounded EAD/errors/CIDs and secret erasure; [security ledger](requirements/SECURITY-PROFILES.md). | Scoped section-8 audit and erasure fixes delivered in #598. Complete independent profile proof remains #200/#365. Other authentication/credential profiles are unsupported; local vectors do not establish independent interoperability. |
+| [9528](../knowledge/rfcs/rfc9528.txt) — EDHOC; ST | Committed: method 3 and declared credential/application profile, with applicable section 8 requirements. | L3: method 3, pinned CCS/kid, suites 2/3, full-width exporter, bounded EAD/errors/CIDs and secret erasure; [security ledger](requirements/SECURITY-PROFILES.md). | Scoped section-8 audit and erasure fixes delivered in #598. Selected suite/role/EAD/exporter/error proof is delivered by companion #95; its backend adapters, callback timing and unsupported full-u64-label/padding directions stay explicit. Installed policy/effect proof remains #365. Other authentication/credential profiles are unsupported; local vectors do not establish independent interoperability. |
 | [9594](https://www.rfc-editor.org/rfc/rfc9594.html) — ACE Group Key Provisioning; ST | Interest: group KDC framework plus separately selected specialized provisioning profile. | L0. | Not a current gate; framework alone is not complete Group OSCORE provisioning. [#518](https://github.com/jeffglousher/coaptic/issues/518). |
 | [8949](https://www.rfc-editor.org/rfc/rfc8949.html) — CBOR; ST | Reference: encoding/decoding required by problem details, security and declared native payloads. | Selected fixed-storage codecs exist. | Record exact accepted types/deterministic encoding/limits per consumer. No universal CBOR implementation claim. [#202](https://github.com/jeffglousher/coaptic/issues/202). |
 | [9052](https://www.rfc-editor.org/rfc/rfc9052.html) — COSE Structures; ST | Reference: applicable OSCORE/EDHOC structures. | Selected protected-message structures exist. | Trace exact structures and reconcile superseded draft references; no general COSE feature claim. [#365](https://github.com/jeffglousher/coaptic/issues/365), [#202](https://github.com/jeffglousher/coaptic/issues/202). |
@@ -349,17 +349,34 @@ delivered; independent and physical qualification retain their separate owners.
 limited to one security association; its remaining deployment accounting belongs
 with #333/#341 rather than a second association implementation.
 
-The [qualification plan](requirements/VALIDATION-PLAN.md) separates the completed
-literal inventory (#199), remaining independent peers/addressing (#200), completed finite
-host/parser campaigns and diagnostic adapters (#202), physical custody/persistence (#333),
-and controlled measurements (#341). These are actual remaining proof, not CI
-requirements and not implied by cross-compilation or layout tests. #365 owns the
-installed authorization/recovery boundary and its unresolved counterexamples.
-Companion #89 delivers the observation-only Rust ingress classifier, XDP program
-and owned-interface loader for #522. Portable tests, Linux loader cross-checks
-and BPF target type-checking pass. Linked-object proof remains; verifier and
-live-hook proof require an actual Linux execution lane. Windows tests and
-cross-compilation cannot establish kernel acceptance or behavior.
+The [qualification plan](requirements/VALIDATION-PLAN.md) separates completed
+literal inventory (#199), finite host/parser/export campaigns (#202), remaining
+independent integrations (#200), physical custody/persistence (#333), deployment
+budgets/progress (#340) and controlled measurements (#341). Companion #91
+records 15 supported newer independent profiles; #95 records selected EDHOC
+suite/role/EAD/exporter/error proof. #98 characterizes actual duplicate-effect
+fixture limitations. #100-102 complete the selected scoped/routed IPv6,
+host-socket PMTU/ICMP and compound-traffic slice with exact sources and owned
+network cleanup. These results do not supply unsupported roles or automatic App
+PMTU adaptation.
+
+The installed core #616 / companion #99 image plus host #619 passes fresh
+host-process EDHOC/OSCORE recovery, protected echo and accepted Observe while
+preserving identity and pairing. #365 owns installed one-effect/lost-receipt
+proof. Core #623 / companion #103 deliver the concrete telemetry transition
+batch: exact permission restoration,
+authenticated Pending custody, bounded producer drain/hold and explicit fault
+injection. Missing/unverifiable history never means unused storage; immediate
+revocation cannot depend on an unreachable peer.
+
+The observation-only XDP program now passes actual kernel verification with the
+shared decoder at core #622. Run39249773527 passes both differential/live cycles,
+including protected-byte preservation, counters and attach/detach/reload. A child
+startup deadline expired before its approximately 20.3-second verifier load;
+terminated-child recovery, ordinary-loader and capability-refusal stages remain
+#522; companion #105 corrects that bounded deadline and run39252498484 executes
+the remaining stages. Linked-object or verifier success alone does not close those lifecycle
+requirements. WSL2 installation separately requires administrator elevation.
 
 Publication #132 is an owner decision after a concrete candidate, package review
 and requested release qualification. No development issue, project status or

@@ -1,7 +1,7 @@
 # Security profile acceptance ledger
 
-This ledger assesses the committed portable implementation, starting at core
-`b371059`, against the selected roles below. **Implemented** means code and
+This ledger assesses the portable implementation and direct tests in the same
+source revision against the selected roles below. **Implemented** means code and
 identified direct tests exist. It does not mean independent interoperability,
 physical qualification, all-RFC certification, or closure of unexamined errata.
 Executed evidence must name the exact core, companion, toolchain and firmware.
@@ -142,12 +142,18 @@ types are not implicitly required by RFC 9528 section 8.
 
 ## Remaining evidence and issue disposition
 
-[#365](https://github.com/jeffglousher/coaptic/issues/365) should separate completed
-software above from independent EDHOC suite/EAD/exporter peers, installed-path
-fault execution and any specifically accepted management integration still
-without a matching-source result. The inventory does not identify another
-mandatory coding gap within the stated core profile. A working handshake and
-same-library loopback do not discharge independent-peer acceptance.
+[#365](https://github.com/jeffglousher/coaptic/issues/365) owns the remaining
+installed authorization/effect integration. Independent selected EDHOC proof is
+delivered by core #614 / companion #95:24 raw sessions plus six UDP error
+directions, with exact native adapters/capability limits in the evidence index.
+This does not establish whole-RFC certification or authenticate native EAD
+callbacks that run before MAC verification. Installed host restart/echo now
+passes with #619; exact permission restoration, authenticated Pending custody
+transitions, producer drain/hold and explicit lost-receipt integration are
+delivered in core #623 / companion #103 with focused host/UDP proof. Their
+installed telemetry execution remains open. Missing/unverifiable journals refuse
+rather than authorizing new effects; revocation must not wait for an unreachable
+peer.
 
 [#333](https://github.com/jeffglousher/coaptic/issues/333) remains physical
 qualification: actual power cuts at persistence boundaries, entropy/custody,
