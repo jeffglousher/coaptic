@@ -352,12 +352,6 @@ impl<
         self
     }
 
-    /// Compatibility alias for [`Self::allow_unprotected`].
-    #[must_use]
-    pub const fn allow_plaintext(self) -> Self {
-        self.allow_unprotected()
-    }
-
     pub(super) fn validate_security(&self) -> Result<(), BuildError> {
         if self.oscore_checkpoint.required() && !oscore::is_active(&self.oscore) {
             return Err(BuildError::SecurityRequired);

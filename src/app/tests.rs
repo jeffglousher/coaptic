@@ -8129,21 +8129,17 @@ fn app_security_is_required_before_entropy_storage_or_transport_work() {
         ),
         Err(crate::BuildError::SecurityRequired)
     ));
-    for legacy in [false, true] {
-        let builder = App::builder().deterministic_for_tests();
-        let builder = if legacy {
-            builder.allow_plaintext()
-        } else {
-            builder.allow_unprotected()
-        };
-        let mut plain = builder.bind(Loopback::default()).unwrap();
-        let peer = Endpoint::v4([192, 0, 2, 2], 5683);
-        plain.get("test").to(peer).send(0).unwrap();
-        let (_, bytes, n) = plain.transport().last_send.unwrap();
-        let packet = decode(&bytes[..n]).unwrap();
-        assert_eq!(packet.code(), Code::GET);
-        assert!(packet.oscore().is_none());
-    }
+    let mut unprotected = App::builder()
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .bind(Loopback::default())
+        .unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    unprotected.get("test").to(peer).send(0).unwrap();
+    let (_, bytes, n) = unprotected.transport().last_send.unwrap();
+    let packet = decode(&bytes[..n]).unwrap();
+    assert_eq!(packet.code(), Code::GET);
+    assert!(packet.oscore().is_none());
 }
 
 #[test]

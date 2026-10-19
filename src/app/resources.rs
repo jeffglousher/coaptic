@@ -489,11 +489,6 @@ impl<
         self.inner = self.inner.allow_unprotected();
         self
     }
-    /// Compatibility alias for [`Self::allow_unprotected`].
-    #[must_use]
-    pub fn allow_plaintext(self) -> Self {
-        self.allow_unprotected()
-    }
     /// Supply a provisioned OSCORE context; protection is required by default.
     #[cfg(feature = "oscore")]
     #[must_use]

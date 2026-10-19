@@ -1,9 +1,5 @@
-//! RAM locks for Default / Constrained App vs Memory (#93 / PERF-00).
-//!
-//! `.block_wise::<false>()` must not pay `WithBodies` padding or the
-//! client Block2 assembled hold (`RESPONSE_BODY`). Host `usize=8`
-//! magnitudes at `06a39cd`: Memory Default 13416, WithBodies 30312
-//! (Δ16896), App-with-enum 33600.
+//! Whole-object RAM ceilings for App and its owned storage.
+//! Without blockwise, App omits body pools and the assembled-response hold.
 
 use core::mem::size_of;
 

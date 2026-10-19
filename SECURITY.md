@@ -7,8 +7,8 @@ Do not use public issues for vulnerability reports.
 
 Pairwise OSCORE is enabled by default, using a caller-owned `SecurityContext`
 with AES-CCM-16-64-128. Ordinary App construction requires a provisioned context.
-Unprotected operation requires `.allow_unprotected()`; `.allow_plaintext()` is
-its compatibility alias. Disabling Cargo defaults does not disable this check.
+Unprotected operation requires `.allow_unprotected()`.
+Disabling Cargo defaults does not disable this check.
 
 An attached context rejects non-empty messages without OSCORE. Unprotected
 requests receive 4.01; unprotected responses, Observe notifications and block-wise
