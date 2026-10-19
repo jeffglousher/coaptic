@@ -1,5 +1,5 @@
-//! Trusted local Windows operator registration and device-key provisioning.
-//! PINs are handled by Windows Security, never by this process or its logs.
+//! Cross-platform hardware-approved commissioning and device-key provisioning.
+//! Optional Windows WebAuthn delegates user verification to Windows Security.
 #[cfg(all(windows, feature = "webauthn"))]
 use coaptic_enroll::{
     Request, begin_registration, origin,

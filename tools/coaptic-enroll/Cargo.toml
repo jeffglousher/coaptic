@@ -26,6 +26,8 @@ webauthn-rs = { version = "=0.5.5", optional = true, default-features = false, f
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
 webauthn-authenticator-rs = { version = "=0.5.5", optional = true, default-features = false }
 aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+# aes-gcm's zeroize feature does not propagate to its AES key schedule.
+aes = { version = "=0.8.4", features = ["zeroize"] }
 p256 = { version = "=0.13.2", optional = true, features = ["ecdsa", "pem"] }
 p384 = { version = "=0.13.1", optional = true, features = ["ecdsa"] }
 rsa = { version = "=0.9.10", optional = true }

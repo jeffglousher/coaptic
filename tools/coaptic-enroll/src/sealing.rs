@@ -51,6 +51,14 @@ pub(crate) fn open(key: &[u8; 32], input: &[u8]) -> Result<Zeroizing<Vec<u8>>, E
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aes_backend_erases_expanded_key_on_drop() {
+        // Check the exact backend re-exported by aes-gcm, so dependency/version
+        // changes cannot silently lose the key-schedule cleanup feature.
+        fn requires_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<aes_gcm::aes::Aes256>();
+    }
     #[test]
     fn refuses_modified_records_and_wrong_key() {
         let key = [7; 32];
