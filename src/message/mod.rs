@@ -67,6 +67,21 @@ pub use crate::error::{OptionsFull, ValueError};
 
 use core::fmt;
 
+// BPF_END can erase scalar bounds in the kernel verifier. Preserve the
+// decoded field's range after LLVM optimization before using it as a length.
+#[inline(always)]
+fn decode_u16_be(bytes: [u8; 2]) -> u16 {
+    let value = u16::from_be_bytes(bytes);
+    #[cfg(target_arch = "bpf")]
+    {
+        (core::hint::black_box(usize::from(value)) & 0xffff) as u16
+    }
+    #[cfg(not(target_arch = "bpf"))]
+    {
+        value
+    }
+}
+
 /// Owned token representation selected by protocol storage.
 ///
 /// Implementations must preserve every input byte on successful construction,

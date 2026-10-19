@@ -247,7 +247,7 @@ fn take_extended(bytes: &[u8], i: &mut usize, n: &mut u32) -> Result<(), ParseEr
             if *i + 1 >= bytes.len() {
                 return Err(ParseError::TruncatedOption);
             }
-            *n = 269 + u32::from(u16::from_be_bytes([bytes[*i], bytes[*i + 1]]));
+            *n = 269 + u32::from(super::decode_u16_be([bytes[*i], bytes[*i + 1]]));
             *i += 2;
             Ok(())
         }
