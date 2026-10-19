@@ -493,10 +493,18 @@ where
         Some(PendingCon::new(message_id, endpoint, id).with_rto(rto))
     }
 
-    fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+    fn peek_retransmit(&self, now_ms: u64) -> Option<PendingCon> {
         let due = next_due_slot(self.tx.slot_count(), self.retransmit_cursor, now_ms, |id| {
             self.pending_con(id)
         })?;
+        self.pending_con(due.id)
+    }
+
+    fn commit_retransmit(&mut self, expected: PendingCon, now_ms: u64) -> Option<Retransmit> {
+        if self.pending_con(expected.tx_slot()) != Some(expected) {
+            return None;
+        }
+        let due = super::pending::due_snapshot(expected, now_ms)?;
         match due.mark {
             Some(mark) => {
                 DatagramBytes::set_pending(&mut self.tx, due.id, mark.message_id, mark.rto).ok()?;
@@ -507,6 +515,11 @@ where
         }
         self.retransmit_cursor = due.id.index() + 1;
         Some(due.event)
+    }
+
+    fn poll_retransmit(&mut self, now_ms: u64) -> Option<Retransmit> {
+        let expected = self.peek_retransmit(now_ms)?;
+        self.commit_retransmit(expected, now_ms)
     }
 }
 

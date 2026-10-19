@@ -1,0 +1,13 @@
+[package]
+name = "coaptic-async-host"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[dependencies]
+coaptic = { path = "../..", default-features = false, features = ["std"] }
+async-io = "2.6"

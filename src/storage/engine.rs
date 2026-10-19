@@ -578,6 +578,32 @@ impl<S: Storage + PendingCons> Engine<S> {
         Ok(self.storage.take_pending_con(message_id, endpoint))
     }
 
+    /// Select a due pending CON without consuming its retry or changing timers.
+    ///
+    /// Use this before an awaitable send, then [`Self::commit_retransmit`] after
+    /// transport acceptance. Dropping a pending send leaves this view unchanged.
+    /// The returned snapshot follows [`PendingCons::peek_retransmit`].
+    pub fn peek_retransmit(&self, now_ms: u64) -> Option<PendingCon> {
+        self.storage.peek_retransmit(now_ms)
+    }
+
+    /// Commit one selected retry or give-up at the current completion timestamp.
+    ///
+    /// An ACK, cancellation or other state change makes the snapshot stale and
+    /// returns `None` without changing counters or timers. A successful Due
+    /// commit starts the next RTO here, not at the start of an asynchronous wait.
+    /// Inspect the selected RTO before sending: an exhausted retry is a GiveUp
+    /// and must be committed without transmitting another packet.
+    pub fn commit_retransmit(&mut self, expected: PendingCon, now_ms: u64) -> Option<Retransmit> {
+        let event = self.storage.commit_retransmit(expected, now_ms);
+        match event {
+            Some(Retransmit::Due(_)) => Metrics::inc(&mut self.metrics.con_retransmit),
+            Some(Retransmit::GiveUp(_)) => Metrics::inc(&mut self.metrics.give_up),
+            None => {}
+        }
+        event
+    }
+
     /// Next pending CON whose timeout is due at caller `now_ms`, if any.
     ///
     /// The owned fixed and allocated backends scan pending TX slots round-robin

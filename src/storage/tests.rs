@@ -5361,6 +5361,12 @@ fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
         fn poll_retransmit(&mut self, _: u64) -> Option<Retransmit> {
             panic!("unexpected mutation")
         }
+        fn peek_retransmit(&self, _: u64) -> Option<PendingCon> {
+            panic!("unexpected access")
+        }
+        fn commit_retransmit(&mut self, _: PendingCon, _: u64) -> Option<Retransmit> {
+            panic!("unexpected mutation")
+        }
     }
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut pool = DatagramPool::<1, 16>::new();
@@ -5548,4 +5554,110 @@ fn storage_usage_allocated() {
         let storage = super::AllocMemory::try_new(c, 64 * 1024).unwrap();
         check_storage_usage(Engine::from_storage(storage));
     }
+}
+
+fn two_phase_retransmit_contract<S>(mut engine: Engine<S>)
+where
+    S: Storage + DatagramSlots + super::PendingCons,
+{
+    let first_peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let second_peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let first_mid = MessageId::new(701);
+    let second_mid = MessageId::new(702);
+    let first = engine.acquire_tx().unwrap();
+    let second = engine.acquire_tx().unwrap();
+    for (id, peer, mid) in [
+        (first, first_peer, first_mid),
+        (second, second_peer, second_mid),
+    ] {
+        engine
+            .encode_tx(id, &Message::new(Type::Confirmable, Code::GET, mid))
+            .unwrap();
+        engine.record_pending_con(id, peer, mid, 0, 0).unwrap();
+    }
+    let now = u64::from(Transmission::ACK_TIMEOUT_MS);
+    let expected = engine.pending_con(first).unwrap();
+    assert_eq!(engine.storage_mut().peek_retransmit(now - 1), None);
+    assert_eq!(engine.storage_mut().peek_retransmit(now), Some(expected));
+    assert_eq!(engine.storage_mut().peek_retransmit(now), Some(expected));
+    assert_eq!(engine.pending_con(first), Some(expected));
+    assert_eq!(
+        engine.storage_mut().commit_retransmit(expected, now - 1),
+        None
+    );
+    assert_eq!(engine.storage_mut().peek_retransmit(now), Some(expected));
+    let committed = match engine
+        .storage_mut()
+        .commit_retransmit(expected, now + 1000)
+        .unwrap()
+    {
+        Retransmit::Due(pending) => pending,
+        Retransmit::GiveUp(_) => panic!("first timeout cannot give up"),
+    };
+    assert_eq!(committed.rto().attempts(), 1);
+    assert_eq!(committed.rto().next_timeout_ms(), now + 1000 + 2 * now);
+    assert_eq!(
+        engine.storage_mut().commit_retransmit(expected, u64::MAX),
+        None
+    );
+    assert_eq!(engine.pending_con(first), Some(committed));
+    // Even when the first row is due again, committing it advanced fairness.
+    let second_expected = engine.storage_mut().peek_retransmit(u64::MAX).unwrap();
+    assert_eq!(second_expected.tx_slot(), second);
+    let rx = engine.acquire_rx().unwrap();
+    let mut bytes = [0; 8];
+    let len = encode(&empty_ack(second_mid), &mut bytes).unwrap();
+    engine.write_rx(rx, &bytes[..len], second_peer).unwrap();
+    assert_eq!(engine.match_empty_ack_rst_rx(rx).unwrap(), Some(second));
+    assert_eq!(
+        engine
+            .storage_mut()
+            .commit_retransmit(second_expected, u64::MAX),
+        None
+    );
+    assert_eq!(engine.pending_con(second), None);
+    assert_eq!(
+        engine.storage_mut().peek_retransmit(u64::MAX),
+        Some(committed)
+    );
+    for _ in 1..Transmission::MAX_RETRANSMIT {
+        let expected = engine.storage_mut().peek_retransmit(u64::MAX).unwrap();
+        assert!(matches!(
+            engine.storage_mut().commit_retransmit(expected, u64::MAX),
+            Some(Retransmit::Due(_))
+        ));
+        assert_eq!(
+            engine.storage_mut().commit_retransmit(expected, u64::MAX),
+            None
+        );
+    }
+    let last = engine.storage_mut().peek_retransmit(u64::MAX).unwrap();
+    assert_eq!(last.rto().attempts(), Transmission::MAX_RETRANSMIT);
+    assert_eq!(engine.pending_con(first), Some(last));
+    assert_eq!(
+        engine.storage_mut().commit_retransmit(last, u64::MAX),
+        Some(Retransmit::GiveUp(last))
+    );
+    assert_eq!(engine.storage_mut().commit_retransmit(last, u64::MAX), None);
+    assert_eq!(engine.storage_mut().peek_retransmit(u64::MAX), None);
+    assert_eq!(engine.tx_occupied(), 2);
+    assert_eq!(engine.decode_tx(first).unwrap().message_id(), first_mid);
+    engine.release_tx(first).unwrap();
+    engine.release_tx(second).unwrap();
+}
+
+#[test]
+fn fixed_two_phase_retransmit_preserves_selection_until_commit() {
+    two_phase_retransmit_contract(build_default());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_two_phase_retransmit_preserves_selection_until_commit() {
+    let engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build_alloc(Capacities::from_profile::<profiles::Default>())
+        .unwrap();
+    two_phase_retransmit_contract(engine);
 }

@@ -1669,3 +1669,105 @@ fn desired_subscription_refreshes_reconnects_and_stops_at_grant_change() {
     assert_eq!(network.borrow().sent.len(), sent);
     assert!(core::mem::size_of::<ManagedSubscription>() <= 192);
 }
+
+#[test]
+fn subscription_scheduling_retries_without_io_and_stops() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    let mut desired = ManagedSubscription::new("identity");
+    assert_eq!(client.next_subscription_poll_at(&desired, 0), None);
+    let now = connect(&mut client, &mut server, 0) + 1;
+    assert_eq!(client.next_subscription_poll_at(&desired, now), Some(now));
+    network.borrow_mut().fail = Some(CLIENT);
+    assert!(client.poll_subscription(&mut desired, now).is_err());
+    let sent = network.borrow().sent.len();
+    let receives = network.borrow().receives;
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now),
+        Some(now + 1000)
+    );
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 999),
+        Some(now + 1000)
+    );
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 1001),
+        Some(now + 1001)
+    );
+    assert_eq!(client.last_now, now);
+    assert_eq!(network.borrow().sent.len(), sent);
+    assert_eq!(network.borrow().receives, receives);
+    network.borrow_mut().fail = None;
+    assert!(client.poll_subscription(&mut desired, now + 1000).unwrap());
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 1000),
+        Some(now + 31_000)
+    );
+    assert_eq!(client.next_subscription_poll_at(&desired, now), Some(now));
+    client.stop_subscription(&mut desired, now + 1000).unwrap();
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 40_000),
+        None
+    );
+    let desired = ManagedSubscription::new("identity");
+    client.refresh_blocked = true;
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 40_000),
+        None
+    );
+}
+
+#[test]
+fn subscription_scheduling_resumes_after_recovery_and_reports_changed_grant() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, _) = pair(&a, &b);
+    server.observable_manual("identity").unwrap();
+    let mut desired = ManagedSubscription::new("identity");
+    let now = connect(&mut client, &mut server, 0) + 1;
+    assert!(client.poll_subscription(&mut desired, now).unwrap());
+    server
+        .poll_with(now, |_, _, _| {
+            Response::content(b"identity").max_age(60).observe(0)
+        })
+        .unwrap();
+    client.poll(now).unwrap();
+    let mut output = [0; 32];
+    client
+        .take_subscription_response_into(&mut desired, &mut output, now)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let due = client.next_subscription_poll_at(&desired, now).unwrap();
+    assert!((now + 65_000..=now + 75_000).contains(&due));
+    client.connect(now + 1).unwrap();
+    assert_eq!(client.next_subscription_poll_at(&desired, due), None);
+    client
+        .recovery
+        .as_mut()
+        .unwrap()
+        .discard_candidate(now + 1)
+        .unwrap();
+    assert_eq!(
+        client.next_subscription_poll_at(&desired, now + 1),
+        Some(due)
+    );
+    let now = connect(&mut client, &mut server, now + 2) + 1;
+    assert_eq!(client.next_subscription_poll_at(&desired, now), Some(now));
+    client
+        .replace(b.peer().clone(), true, |_, _, _| Ok::<_, ()>(()))
+        .unwrap();
+    server
+        .replace(a.peer().clone(), true, |_, _, _| Ok::<_, ()>(()))
+        .unwrap();
+    assert_eq!(client.next_subscription_poll_at(&desired, now), None);
+    let now = connect(&mut client, &mut server, now + 1) + 1;
+    assert_eq!(client.next_subscription_poll_at(&desired, now), Some(now));
+    assert!(matches!(
+        client.poll_subscription(&mut desired, now),
+        Err(ManagedError::StaleHandle)
+    ));
+}
