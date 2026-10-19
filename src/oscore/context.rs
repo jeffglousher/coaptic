@@ -224,6 +224,7 @@ impl<const REQUESTS: usize, T: OwnedToken> core::fmt::Debug
 impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     /// Move a newly established context into the selected token table.
     /// Existing request bindings must be retired explicitly before conversion.
+    #[cfg(feature = "edhoc")]
     pub(crate) fn into_token_storage<K: OwnedToken>(
         self,
     ) -> Result<BoundedSecurityContext<REQUESTS, K>, Error> {
