@@ -208,9 +208,8 @@ evidence; none declares whole-RFC compliance. The
 platform and campaign proof, with exact prerequisites and exit conditions.
 
 This assessment is versioned with the implementation: local ledger/source links
-resolve within the same Git tree. The reconciliation starts from merged core
-`b371059` and companion `72a87df`; accompanying source changes and their focused
-proof are recorded by their delivery PRs and owner issues. Historical firmware or
+resolve within the same Git tree. Delivery PRs and owner issues record exact execution sources separately from
+this implementation assessment. Historical firmware or
 captures retain their exact earlier revisions. Ratings describe a named role,
 not every role or all requirements in its RFC.
 
@@ -268,8 +267,8 @@ requirement ledger is created.
 
 | RFC / document state | Commitment and implementation boundary | Implementation | Remaining proof / owner |
 | --- | --- | --- | --- |
-| [5246](https://www.rfc-editor.org/rfc/rfc5246.html) — TLS 1.2; ST, obsoleted by RFC 8446 | Reference: applicable DTLS 1.2 record/alert rules. | Companion profile evidence only. | Preserve exact failure-stage alert semantics and the unresolved GCM finding; no general core TLS claim. [#486](https://github.com/jeffglousher/coaptic/issues/486), [#199](https://github.com/jeffglousher/coaptic/issues/199). |
-| [6347](https://www.rfc-editor.org/rfc/rfc6347.html) — DTLS 1.2; ST, obsoleted by RFC 9147 | Contribution opportunity: named Rust adapter/identity profiles; no delivery promise or MVP gate. | L2: companion PSK qualification; L0: supported core endpoint binding. | A contributed profile needs a supported endpoint API, declared PSK/RPK/X.509 trust profiles, bounds, independent proof and exact literal-test dispositions. Existing companion findings remain open. No obsolete/unsafe suite is required merely by retaining this version. [#515](https://github.com/jeffglousher/coaptic/issues/515), [#199](https://github.com/jeffglousher/coaptic/issues/199), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
+| [5246](https://www.rfc-editor.org/rfc/rfc5246.html) — TLS 1.2; ST, obsoleted by RFC 8446 | Reference: applicable DTLS 1.2 record/alert rules. | Companion profile evidence only. | Preserve exact failure-stage alert semantics and the source-bound corrected GCM proof; no general core TLS claim. [#486](https://github.com/jeffglousher/coaptic/issues/486), [#199](https://github.com/jeffglousher/coaptic/issues/199). |
+| [6347](https://www.rfc-editor.org/rfc/rfc6347.html) — DTLS 1.2; ST, obsoleted by RFC 9147 | Contribution opportunity: named Rust adapter/identity profiles; no delivery promise or MVP gate. | L2: companion PSK qualification; L0: supported core endpoint binding. | A contributed profile needs a supported endpoint API, declared PSK/RPK/X.509 trust profiles, bounds, independent proof and exact literal-test dispositions. Retained GCM finding #486 is corrected; complete contributed-profile proof remains separate. No obsolete/unsafe suite is required merely by retaining this version. [#515](https://github.com/jeffglousher/coaptic/issues/515), [#199](https://github.com/jeffglousher/coaptic/issues/199), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
 | [7250](https://www.rfc-editor.org/rfc/rfc7250.html) — Raw Public Keys; ST | Contribution opportunity: DTLS RPK profile, conditional on a contributed binding. | L0: DTLS RPK path unsupported. | A contributed profile needs credential negotiation/trust/identity and actual RPK loss/refusal/recovery proof; X.509 does not substitute. EDHOC pinned public-key credentials are a different protocol binding. [#515](https://github.com/jeffglousher/coaptic/issues/515), [#199](https://github.com/jeffglousher/coaptic/issues/199). |
 | [9147](https://www.rfc-editor.org/rfc/rfc9147.html) — DTLS 1.3; ST | Contribution opportunity: reviewed backend/version profile; no delivery promise or MVP gate. | L0. | A contributed profile needs version-specific state/record/identity/congestion behavior and independent proof; DTLS 1.2 evidence is not reusable as version compliance. [#515](https://github.com/jeffglousher/coaptic/issues/515). |
 | [9200](https://www.rfc-editor.org/rfc/rfc9200.html) — ACE-OAuth; ST | Contribution opportunity: authorization-server/resource-server/client wire roles for delegated access. | L0: ACE; custom policy foundations exist separately. | Unsupported in this milestone. Adoption needs named token formats, audience/expiry/current-policy/owner isolation and interoperable endpoints. [#365](https://github.com/jeffglousher/coaptic/issues/365). |
@@ -339,10 +338,11 @@ Observe/transfer work, durable owner/backup recovery and receipt integration, an
 EDHOC erasure. #589 delivered shared sync/async capabilities. These are present
 code, not an unstarted backlog. Later changes update their specific ledgers.
 
-This reconciliation implements #520 nonzero/selection/validator interactions and
-#521 caller-owned diagnostics without additional App storage. #486 corrects the
-companion connection-level GCM failure policy and requires its own exact capture
-proof. Each closes only after merged success/refusal/recovery proof. #340 no longer describes the App as
+Merged #608 completes #520 nonzero/selection/validator interactions and #521
+caller-owned diagnostics without additional App storage. Companion #87 corrects
+#486 connection-level GCM failure policy with finite exact control, wrong-key
+refusal and fresh-recovery captures; the core pins that merged companion. These
+implementation slices are delivered; their separate qualification owners remain. #340 no longer describes the App as
 limited to one security association; its remaining deployment accounting belongs
 with #333/#341 rather than a second association implementation.
 

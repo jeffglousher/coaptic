@@ -38,11 +38,9 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | Q12 / [#522](https://github.com/jeffglousher/coaptic/issues/522) | Observation-only Rust eBPF ingress pilot on a named Linux hook. | Actual object/compiler/kernel/hook identity and verifier result; bounded stack/instructions/maps/work, shared CoAP parsing, conservative pass on unsupported packets, differential cases and concurrent attach/detach/reload recovery. Windows execution/cross-compilation alone cannot satisfy this slice. No kernel authentication or admission authority is implied. |
 
 The companion process manifest is an executable case inventory, not an RFC
-requirement ledger. At baseline `72a87df` it contains 181 cases, including DTLS
-qualification fixtures outside active MVP scope; `contracts.json` contains 37
-selected requirement groups. These counts identify the inventory snapshot, not
-passed current-source results or a conformance percentage. New supported features
-need explicit rows/tests rather than treating that old inventory as complete.
+requirement ledger. DTLS qualification fixtures remain distinct from the active
+MVP. New supported features need explicit requirement/test rows; older inventory
+counts cannot establish that the current feature set is qualified.
 
 ## Execution order and prerequisites
 
