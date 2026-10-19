@@ -4454,9 +4454,9 @@ where
                 push_opt(&mut opts, Opt::if_none_match())?;
             }
             // Missing GET blocks retrieve bytes, rather than revalidate the
-            // original cached response. FETCH retains its explicit selection.
+            // original cached response. Other methods retain their selection.
             if q_block2.is_empty()
-                && code == Code::FETCH
+                && code != Code::GET
                 && let Some(tag) = live.etag.as_slice()
             {
                 push_opt(&mut opts, Opt::etag(tag))?;
@@ -4551,7 +4551,7 @@ where
                 live.echo,
                 live.no_response,
                 live.if_match.as_slice(),
-                if q_block2.is_empty() && code == Code::FETCH {
+                if q_block2.is_empty() && code != Code::GET {
                     live.etag.as_slice()
                 } else {
                     None
