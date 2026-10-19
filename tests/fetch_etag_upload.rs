@@ -192,7 +192,10 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 type Peer<S> = App<Buffers, Io, 1, true, S>;
-fn exercise<C: AppStorage, S: AppStorage>(
+fn exercise<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Peer<C>,
     mut server: Peer<S>,
     protected: bool,

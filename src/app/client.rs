@@ -61,14 +61,19 @@
 
 #[path = "client_async.rs"]
 mod asynchronous;
+#[path = "client_probe.rs"]
+mod probe;
 pub(crate) use asynchronous::{
     complete_client_async, continue_qblock1_ack_async, pace_qblock1_async, recover_qblock2_async,
+};
+pub use probe::{
+    TokenProbe, TokenProbeCall, TokenSupport, TokenSupportLifetimeError, TokenSupportOutcome,
 };
 
 use crate::error::{BlockTransferError, EncodeError, SlotMessageError};
 use crate::message::{
-    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, ParsedMessage, Token,
-    Transmission, Type, encode_uint,
+    BlockValue, Code, ContentFormat, Message, MessageId, Opt, OptionsBuilder, OwnedToken,
+    ParsedMessage, Token, Transmission, Type, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
@@ -122,19 +127,19 @@ const CLIENT_OPTION_SLOTS: usize = 10 + 2 * MAX_PATH_SEGMENTS;
 /// # let _ = response;
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Call {
-    token: Token,
+pub struct Call<K: OwnedToken = Token> {
+    token: K,
     peer: Endpoint,
 }
 
-impl Call {
-    pub(crate) const fn new(token: Token, peer: Endpoint) -> Self {
+impl<K: OwnedToken> Call<K> {
+    pub(crate) const fn new(token: K, peer: Endpoint) -> Self {
         Self { token, peer }
     }
 
     /// Token sent on the request (and expected on the response).
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> K {
         self.token
     }
 
@@ -257,7 +262,7 @@ impl ReplyMeta {
     }
 
     pub(super) fn from_parsed(
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, impl OwnedToken>,
         peer: Endpoint,
         received_at_ms: u64,
     ) -> Result<Self, CallFailure> {
@@ -300,10 +305,11 @@ impl ReplyMeta {
         })
     }
 
-    pub(super) fn response(&self) -> Response<'_> {
+    pub(super) fn response<K: OwnedToken>(&self) -> Response<'_, K> {
         // The stored header was produced by the encoder and is immutable.
-        let parsed = crate::message::decode(&self.header[..usize::from(self.header_len)])
-            .expect("encoded response header");
+        let parsed =
+            crate::message::decode_with_token::<K>(&self.header[..usize::from(self.header_len)])
+                .expect("encoded response header");
         let mut response = Response::from_client(
             parsed.code(),
             parsed.ty(),
@@ -345,9 +351,9 @@ impl ReplyMeta {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct InboxRow {
+struct InboxRow<K: OwnedToken = Token> {
     complete: bool,
-    call: Call,
+    call: Call<K>,
     meta: Result<ReplyMeta, CallFailure>,
     body: Option<SlotId>,
     datagram: Option<SlotId>,
@@ -355,12 +361,12 @@ struct InboxRow {
 
 /// Bounded completed-reply table (not a seventh memory area).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientInbox<const CALLS: usize> {
-    rows: [Option<InboxRow>; CALLS],
+pub(crate) struct ClientInbox<const CALLS: usize, K: OwnedToken = Token> {
+    rows: [Option<InboxRow<K>>; CALLS],
     held: Option<ReplyMeta>,
 }
 
-impl<const CALLS: usize> ClientInbox<CALLS> {
+impl<const CALLS: usize, K: OwnedToken> ClientInbox<CALLS, K> {
     pub(super) fn usage(&self) -> (usize, usize) {
         (
             self.rows.iter().flatten().count(),
@@ -389,7 +395,7 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
     /// different Call — caller must not evict an untaken reply.
     fn insert(
         &mut self,
-        call: Call,
+        call: Call<K>,
         meta: Result<ReplyMeta, CallFailure>,
         body: Option<SlotId>,
     ) -> Result<Option<SlotId>, ()> {
@@ -427,7 +433,7 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
             .any(|row| row.datagram == Some(rx))
     }
 
-    fn take_datagram(&mut self, call: Call) -> Option<SlotId> {
+    fn take_datagram(&mut self, call: Call<K>) -> Option<SlotId> {
         self.rows
             .iter_mut()
             .flatten()
@@ -436,14 +442,14 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
             .take()
     }
 
-    fn completed(&self, call: Call) -> Option<&InboxRow> {
+    fn completed(&self, call: Call<K>) -> Option<&InboxRow<K>> {
         self.rows
             .iter()
             .flatten()
             .find(|row| row.complete && row.call == call)
     }
 
-    fn discard(&mut self, call: Call) {
+    fn discard(&mut self, call: Call<K>) {
         for row in &mut self.rows {
             if row.as_ref().is_some_and(|row| row.call == call) {
                 *row = None;
@@ -451,13 +457,13 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
         }
     }
 
-    fn contains(&self, call: Call) -> bool {
+    fn contains(&self, call: Call<K>) -> bool {
         self.rows
             .iter()
             .flatten()
             .any(|row| row.call == call && row.complete)
     }
-    fn partial_meta(&self, call: Call, body: SlotId) -> Option<ReplyMeta> {
+    fn partial_meta(&self, call: Call<K>, body: SlotId) -> Option<ReplyMeta> {
         self.rows
             .iter()
             .flatten()
@@ -468,7 +474,7 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
 
     fn retain_partial(
         &mut self,
-        call: Call,
+        call: Call<K>,
         meta: ReplyMeta,
         body: SlotId,
     ) -> Result<Option<SlotId>, ()> {
@@ -482,7 +488,11 @@ impl<const CALLS: usize> ClientInbox<CALLS> {
         Ok(previous)
     }
 
-    fn take(&mut self, call: Call) -> Option<(Result<Response<'_>, CallFailure>, Option<SlotId>)> {
+    #[allow(clippy::type_complexity)]
+    fn take(
+        &mut self,
+        call: Call<K>,
+    ) -> Option<(Result<Response<'_, K>, CallFailure>, Option<SlotId>)> {
         let i = self.rows.iter().position(|row| {
             row.as_ref().is_some_and(|row| {
                 row.complete && row.call.token == call.token && row.call.peer == call.peer
@@ -555,8 +565,10 @@ struct ObserveRequest {
 impl ObserveRequest {
     fn same_target(&self, other: &Self) -> bool {
         use crate::message::OptionNumber as N;
-        let left = crate::message::decode(&self.bytes[..self.len]).expect("encoded identity");
-        let right = crate::message::decode(&other.bytes[..other.len]).expect("encoded identity");
+        let left =
+            crate::message::extended::decode(&self.bytes[..self.len]).expect("encoded identity");
+        let right =
+            crate::message::extended::decode(&other.bytes[..other.len]).expect("encoded identity");
         let cache_key = |number: N| {
             !number.is_no_cache_key()
                 && !matches!(number, N::BLOCK1 | N::BLOCK2 | N::Q_BLOCK1 | N::Q_BLOCK2)
@@ -575,8 +587,8 @@ impl ObserveRequest {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct LiveCall {
-    call: Call,
+struct LiveCall<K: OwnedToken = Token> {
+    call: Call<K>,
     queries: RetainedQueries,
     accept: Option<ContentFormat>,
     request_tag: BodyTag,
@@ -606,11 +618,11 @@ struct LiveCall {
 
 /// Path / type for an outstanding client request (Block1 / Block2 Continue).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientLives<const CALLS: usize> {
-    rows: [Option<LiveCall>; CALLS],
+pub(crate) struct ClientLives<const CALLS: usize, K: OwnedToken = Token> {
+    rows: [Option<LiveCall<K>>; CALLS],
 }
 
-impl<const CALLS: usize> ClientLives<CALLS> {
+impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
     pub(super) fn usage(&self) -> (usize, usize) {
         (
             self.rows.iter().flatten().count(),
@@ -618,10 +630,10 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         )
     }
 
-    pub(super) fn next_timeout_after<Mem: Storage + Exchanges + ObserveSlots>(
+    pub(super) fn next_timeout_after<Mem: Storage<Token = K> + Exchanges + ObserveSlots>(
         &self,
         engine: &Engine<Mem>,
-        inbox: &ClientInbox<CALLS>,
+        inbox: &ClientInbox<CALLS, K>,
         after: Option<u64>,
     ) -> Option<u64> {
         self.rows
@@ -652,7 +664,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             .min()
     }
 
-    pub(super) fn response_credits(&self, inbox: &ClientInbox<CALLS>) -> usize {
+    pub(super) fn response_credits(&self, inbox: &ClientInbox<CALLS, K>) -> usize {
         self.rows
             .iter()
             .flatten()
@@ -722,7 +734,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             .max()
     }
 
-    fn record_backoff(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+    fn record_backoff(&mut self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) {
         if !matches!(
             parsed.code(),
             Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
@@ -758,14 +770,14 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         }
     }
 
-    fn can_admit(&self, token: Token, peer: Endpoint) -> bool {
+    fn can_admit(&self, token: K, peer: Endpoint) -> bool {
         self.rows.iter().any(|row| match row {
             None => true,
             Some(live) => !live.retired && live.call.token == token && live.call.peer == peer,
         })
     }
 
-    fn insert(&mut self, live: LiveCall) {
+    fn insert(&mut self, live: LiveCall<K>) {
         if let Some(existing) = self.rows.iter_mut().find(|row| {
             row.as_ref().is_some_and(|row| {
                 !row.retired && row.call.token == live.call.token && row.call.peer == live.call.peer
@@ -779,7 +791,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         }
     }
 
-    fn get(&self, call: Call) -> Option<LiveCall> {
+    fn get(&self, call: Call<K>) -> Option<LiveCall<K>> {
         self.rows.iter().copied().find_map(|row| {
             row.filter(|row| {
                 !row.retired && row.call.token == call.token && row.call.peer == call.peer
@@ -787,7 +799,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         })
     }
 
-    fn observe_fresh(&self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) -> bool {
+    fn observe_fresh(&self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) -> bool {
         let Some(sequence) = observation_start(parsed) else {
             return true;
         };
@@ -800,8 +812,8 @@ impl<const CALLS: usize> ClientLives<CALLS> {
 
     pub(crate) fn observe_format_admissible(
         &self,
-        call: Call,
-        parsed: &ParsedMessage<'_>,
+        call: Call<K>,
+        parsed: &ParsedMessage<'_, K>,
         now_ms: u64,
         protected: bool,
     ) -> bool {
@@ -809,7 +821,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             || self.observe_format_matches(call, parsed)
     }
 
-    fn observe_format_matches(&self, call: Call, parsed: &ParsedMessage<'_>) -> bool {
+    fn observe_format_matches(&self, call: Call<K>, parsed: &ParsedMessage<'_, K>) -> bool {
         if observation_start(parsed).is_none() {
             return true;
         }
@@ -832,7 +844,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
             .is_none_or(|initial| initial == parsed.content_format().and_then(Result::ok))
     }
 
-    fn record_observation(&mut self, call: Call, parsed: &ParsedMessage<'_>, now_ms: u64) {
+    fn record_observation(&mut self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) {
         if let Some(sequence) = observation_start(parsed)
             && let Some(live) = self
                 .rows
@@ -849,7 +861,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         }
     }
 
-    fn upload_key(&self, call: Call) -> BlockKey {
+    fn upload_key(&self, call: Call<K>) -> BlockKey<K> {
         BlockKey::new(call.token, call.peer).with_identity(
             self.get(call)
                 .map(|live| live.request_tag)
@@ -857,7 +869,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         )
     }
 
-    fn remove(&mut self, call: Call) {
+    fn remove(&mut self, call: Call<K>) {
         let Some(index) = self.rows.iter().position(|row| {
             row.as_ref()
                 .is_some_and(|row| !row.retired && row.call == call)
@@ -899,9 +911,9 @@ impl<const CALLS: usize> ClientLives<CALLS> {
         &self,
         peer: Endpoint,
         identity: ObserveRequest,
-        target: Option<Call>,
-        is_live: impl Fn(Call) -> bool,
-    ) -> Result<Call, Error<E>> {
+        target: Option<Call<K>>,
+        is_live: impl Fn(Call<K>) -> bool,
+    ) -> Result<Call<K>, Error<E>> {
         let mut matches = self.rows.iter().flatten().filter(|live| {
             live.call.peer == peer
                 && live.observe == OutgoingObserve::Register
@@ -922,7 +934,7 @@ impl<const CALLS: usize> ClientLives<CALLS> {
 }
 
 // RFC 7959 section 2.6: only block zero carries a new notification.
-fn observation_start(parsed: &ParsedMessage<'_>) -> Option<u32> {
+fn observation_start(parsed: &ParsedMessage<'_, impl OwnedToken>) -> Option<u32> {
     if !parsed.code().is_success()
         || parsed
             .block2()
@@ -986,7 +998,7 @@ pub struct Outgoing<
     const N: usize,
     Dest = Missing,
     const BLOCK_WISE: bool = false,
-    S: super::AppStorage = super::AppStore<P, BLOCK_WISE>,
+    S: super::AppStorage<Token = P::Token> = super::AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
     const CALLS: usize = { super::DEFAULT_CLIENT_CALLS },
     const REQUESTS: usize = 4,
@@ -1015,7 +1027,7 @@ pub struct Outgoing<
     q_block2: bool,
     block2: Option<BlockValue>,
     observe: OutgoingObserve,
-    observe_target: Option<Call>,
+    observe_target: Option<Call<S::Token>>,
     deadline_ms: Option<u64>,
     _dest: core::marker::PhantomData<Dest>,
 }
@@ -1025,7 +1037,7 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: super::AppStorage,
+    S: super::AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -1150,7 +1162,7 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: super::AppStorage,
+    S: super::AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -1195,7 +1207,10 @@ where
     /// [`RESPONSE_OPTION_COUNT`] / [`RESPONSE_OPTION_BYTES`]. Block-wise replies
     /// retain the first accepted fragment's header metadata; no response is
     /// exposed until assembly completes. Metadata and assembled bytes borrow App.
-    pub fn take_response(&mut self, call: Call) -> Option<Result<Response<'_>, CallFailure>> {
+    pub fn take_response(
+        &mut self,
+        call: Call<S::Token>,
+    ) -> Option<Result<Response<'_, S::Token>, CallFailure>> {
         if let Some(rx) = self.inbox.take_datagram(call) {
             let _ = self.engine.release_rx(rx);
         }
@@ -1232,11 +1247,12 @@ where
     /// Block2 / Q-Block2 require block-wise storage. Without it, the Call
     /// fails with [`CallFailure::BlockTransfer`] containing
     /// [`BlockTransferError::NoBodyPools`], rather than returning one fragment.
+    #[allow(clippy::type_complexity)]
     pub fn take_response_into<'a>(
         &'a mut self,
-        call: Call,
+        call: Call<S::Token>,
         output: &'a mut [u8],
-    ) -> Result<Option<Result<Response<'a>, CallFailure>>, ResponseBufferError> {
+    ) -> Result<Option<Result<Response<'a, S::Token>, CallFailure>>, ResponseBufferError> {
         let Some(row) = self.inbox.completed(call) else {
             return Ok(None);
         };
@@ -1308,7 +1324,7 @@ where
     /// state. The next `take_response` yields `Err(CallFailure::Cancelled)`.
     /// No wire message is sent; use `Outgoing::deregister` for Observe signaling.
     /// Returns false for unknown/already terminal ordinary calls.
-    pub fn cancel(&mut self, call: Call) -> bool {
+    pub fn cancel(&mut self, call: Call<S::Token>) -> bool {
         if self.lives.get(call).is_none()
             || (self.inbox.contains(call) && !client_observe_live(&self.engine, call))
         {
@@ -1334,7 +1350,7 @@ impl<
     const N: usize,
     Dest,
     const BLOCK_WISE: bool,
-    S: super::AppStorage,
+    S: super::AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -1601,7 +1617,7 @@ where
     /// The caller schedules refresh, including RFC 7641 section 3.3's randomized
     /// delay after Max-Age. App does not automatically refresh subscriptions.
     #[must_use]
-    pub const fn reregister_call(mut self, call: Call) -> Self {
+    pub const fn reregister_call(mut self, call: Call<S::Token>) -> Self {
         self.observe = OutgoingObserve::Register;
         self.observe_target = Some(call);
         self
@@ -1625,7 +1641,7 @@ where
     /// Cancel a specific subscription, with the same request checks as
     /// [`Self::deregister`]. The Call must still be live at the selected peer.
     #[must_use]
-    pub const fn deregister_call(mut self, call: Call) -> Self {
+    pub const fn deregister_call(mut self, call: Call<S::Token>) -> Self {
         self.observe = OutgoingObserve::Deregister;
         self.observe_target = Some(call);
         self
@@ -1638,7 +1654,7 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: super::AppStorage,
+    S: super::AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -1665,7 +1681,7 @@ where
     ///
     /// [`Error::Saturated`] if the configured client Call table is full and
     /// this Token is not one of its retained Calls. No reply is evicted.
-    pub fn send(self, now_ms: u64) -> Result<Call, Error<T::Error>>
+    pub fn send(self, now_ms: u64) -> Result<Call<S::Token>, Error<T::Error>>
     where
         T: DatagramIo,
     {
@@ -1691,7 +1707,7 @@ where
         now_ms: u64,
         completed_at: impl FnMut() -> Result<u64, C> + 'a,
         timer: &'a mut impl crate::platform::AsyncTimer,
-    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    ) -> impl core::future::Future<Output = Result<Call<S::Token>, AsyncCallError<T::Error, C>>> + 'a
     where
         T: crate::storage::AsyncDatagramIo,
     {
@@ -1711,7 +1727,7 @@ where
         completed_at: impl FnMut() -> Result<u64, C> + 'a,
         timer: &'a mut impl crate::platform::AsyncTimer,
         send_deadline_ms: u64,
-    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    ) -> impl core::future::Future<Output = Result<Call<S::Token>, AsyncCallError<T::Error, C>>> + 'a
     where
         T: crate::storage::AsyncDatagramIo,
     {
@@ -1724,7 +1740,7 @@ where
         completed_at: impl FnMut() -> Result<u64, C> + 'a,
         timer: &'a mut impl crate::platform::AsyncTimer,
         send_deadline: Option<u64>,
-    ) -> impl core::future::Future<Output = Result<Call, AsyncCallError<T::Error, C>>> + 'a
+    ) -> impl core::future::Future<Output = Result<Call<S::Token>, AsyncCallError<T::Error, C>>> + 'a
     where
         T: crate::storage::AsyncDatagramIo,
     {
@@ -1831,7 +1847,7 @@ where
             dest,
             ty: self.ty,
             code: self.code,
-            token: Token::EMPTY,
+            token: S::Token::EMPTY,
             path: path.segments(),
             payload: self.payload,
             content_format: self.content_format,
@@ -2074,14 +2090,14 @@ impl<
     T: crate::storage::DatagramTransport,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: super::AppStorage,
+    S: super::AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
     const ASSOCIATIONS: usize,
 > App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
 {
-    fn next_token<E>(&mut self) -> Result<Token, Error<E>> {
+    fn next_token<E>(&mut self) -> Result<S::Token, Error<E>> {
         for _ in 0..8 {
             let token = self
                 .ids
@@ -2101,11 +2117,11 @@ impl<
     }
 }
 
-struct ClientSend<'a> {
+struct ClientSend<'a, K: OwnedToken = Token> {
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: K,
     path: &'a [&'a str],
     payload: &'a [u8],
     content_format: Option<ContentFormat>,
@@ -2125,7 +2141,7 @@ struct ClientSend<'a> {
 
 // One option builder feeds both wire encoding and exact cancellation identity.
 fn with_client_options<R>(
-    spec: &ClientSend<'_>,
+    spec: &ClientSend<'_, impl OwnedToken>,
     identity_only: bool,
     use_options: impl FnOnce(&[Opt<'_>]) -> R,
 ) -> Result<R, EncodeError> {
@@ -2193,7 +2209,9 @@ fn with_client_options<R>(
     Ok(use_options(opts.as_slice()))
 }
 
-fn request_identity_identity(spec: &ClientSend<'_>) -> Result<ObserveRequest, EncodeError> {
+fn request_identity_identity(
+    spec: &ClientSend<'_, impl OwnedToken>,
+) -> Result<ObserveRequest, EncodeError> {
     with_client_options(spec, true, |options| {
         let mut identity = ObserveRequest {
             bytes: [0; OBSERVE_REQUEST_BYTES],
@@ -3070,13 +3088,13 @@ struct PreparedCall<'a, S: super::AppStorage, T, const C: usize, const R: usize>
     engine: &'a mut Engine<S>,
     io: &'a mut T,
     ids: &'a mut AppIds,
-    inbox: &'a mut ClientInbox<C>,
-    lives: &'a mut ClientLives<C>,
-    oscore: &'a mut super::oscore::Field<R>,
+    inbox: &'a mut ClientInbox<C, S::Token>,
+    lives: &'a mut ClientLives<C, S::Token>,
+    oscore: &'a mut super::oscore::Field<R, S::Token>,
     staged: Option<StagedClient>,
     pending: Option<crate::storage::PendingCon>,
-    live: Option<LiveCall>,
-    call: Call,
+    live: Option<LiveCall<S::Token>>,
+    call: Call<S::Token>,
     now_ms: u64,
     replacing: bool,
     owned: bool,
@@ -3117,7 +3135,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         Ok(())
     }
 
-    fn commit(&mut self) -> Call {
+    fn commit(&mut self) -> Call<S::Token> {
         if let Some(mut live) = self.live.take() {
             if self.replacing {
                 if let Some(rx) = self.inbox.take_datagram(self.call) {
@@ -3182,7 +3200,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         Ok(Some(issued.complete()))
     }
 
-    fn send(mut self) -> Result<Call, Error<T::Error>>
+    fn send(mut self) -> Result<Call<S::Token>, Error<T::Error>>
     where
         T: DatagramIo,
     {
@@ -3319,11 +3337,11 @@ fn send_staged_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     staged: StagedClient,
-    spec: &ClientSend<'_>,
-) -> Result<Call, Error<T::Error>>
+    spec: &ClientSend<'_, Mem::Token>,
+) -> Result<Call<Mem::Token>, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
@@ -3376,9 +3394,9 @@ fn stage_client<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    spec: &ClientSend<'_>,
+    spec: &ClientSend<'_, Mem::Token>,
 ) -> Result<StagedClient, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
@@ -3477,12 +3495,12 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -3498,7 +3516,7 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     tx: SlotId,
     mid: MessageId,
     controls: &[Opt<'_>],
-) -> Result<Call, Error<T::Error>>
+) -> Result<Call<Mem::Token>, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
@@ -3558,12 +3576,12 @@ fn stage_client_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     _io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     _now_ms: u64,
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -3689,15 +3707,15 @@ where
 pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
-    response_state: super::oscore::ResponseState,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    response_state: super::oscore::ResponseState<Mem::Token>,
     full_responses: bool,
     now_ms: u64,
     peer: Endpoint,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
@@ -4099,10 +4117,10 @@ where
 #[allow(clippy::too_many_arguments)]
 fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
-    parsed: &ParsedMessage<'_>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
     rx: SlotId,
     body: SlotId,
@@ -4131,8 +4149,10 @@ fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
         return;
     }
     let metadata = inbox.partial_meta(call, body).unwrap_or(metadata);
-    let original = crate::message::decode(&metadata.header[..usize::from(metadata.header_len)])
-        .expect("encoded response header");
+    let original = crate::message::decode_with_token::<Mem::Token>(
+        &metadata.header[..usize::from(metadata.header_len)],
+    )
+    .expect("encoded response header");
     accept_client_observe(
         engine,
         lives,
@@ -4154,8 +4174,8 @@ fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
 
 fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    call: Call,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    call: Call<Mem::Token>,
     meta: ReplyMeta,
     body: Option<SlotId>,
 ) {
@@ -4181,7 +4201,7 @@ fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
 /// Check unencrypted routing fields before touching protected response state.
 pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots + PendingCons>(
     engine: &Engine<Mem>,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
 ) -> bool {
     matching_exchange(engine, parsed, peer).is_some() || matching_observe(engine, parsed, peer)
@@ -4189,7 +4209,7 @@ pub(super) fn has_response_target<Mem: Storage + Exchanges + ObserveSlots + Pend
 
 fn matching_observe<Mem: Storage + ObserveSlots>(
     engine: &Engine<Mem>,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
 ) -> bool {
     parsed.code().is_response()
@@ -4201,9 +4221,9 @@ fn matching_observe<Mem: Storage + ObserveSlots>(
 
 fn matching_exchange<Mem: Storage + Exchanges + PendingCons>(
     engine: &Engine<Mem>,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
-) -> Option<crate::storage::ExchangeEntry> {
+) -> Option<crate::storage::ExchangeEntry<Mem::Token>> {
     let id = engine.lookup_exchange(ExchangeKey::new(parsed.token(), peer))?;
     let entry = engine.exchange_entry(id)?;
     (entry.matches_response(parsed) && !exchange_is_unsent(engine, entry)).then_some(entry)
@@ -4214,7 +4234,7 @@ fn matching_exchange<Mem: Storage + Exchanges + PendingCons>(
 // an old NON exchange may refer to a TX slot reused by another request.
 fn exchange_is_unsent<Mem: Storage + PendingCons>(
     engine: &Engine<Mem>,
-    entry: ExchangeEntry,
+    entry: ExchangeEntry<Mem::Token>,
 ) -> bool {
     engine.pending_con(entry.tx_slot()).is_some_and(|pending| {
         pending.message_id() == entry.message_id()
@@ -4225,7 +4245,7 @@ fn exchange_is_unsent<Mem: Storage + PendingCons>(
 
 fn take_exchange<Mem: Storage + Exchanges>(
     engine: &mut Engine<Mem>,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
 ) {
     let _ = engine.take_exchange(ExchangeKey::new(parsed.token(), peer));
@@ -4247,11 +4267,11 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
 fn send_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS>,
+    lives: &ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
     body: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -4285,11 +4305,11 @@ where
 fn send_q_block2_continue<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS>,
+    lives: &ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
     body: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -4323,12 +4343,12 @@ where
 pub(crate) fn recover_qblock2<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    recover: crate::storage::QBlockRecover,
+    recover: crate::storage::QBlockRecover<Mem::Token>,
 ) -> Result<bool, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -4380,11 +4400,11 @@ where
 fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS>,
+    lives: &ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    token: Token,
+    token: Mem::Token,
     peer: Endpoint,
     block2: Option<BlockValue>,
     q_block2: &[BlockValue],
@@ -4419,7 +4439,7 @@ where
         .filter(|live| live.code == Code::FETCH)
         .and_then(|live| live.request_identity.as_ref())
         .map(|identity| {
-            crate::message::decode(&identity.bytes[..identity.len])
+            crate::message::decode_with_token::<Mem::Token>(&identity.bytes[..identity.len])
                 .expect("encoded request identity")
         });
     let cf = live
@@ -4569,11 +4589,11 @@ where
 fn reissue_qblock1_missing<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &mut ClientLives<CALLS>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
     body: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -4641,10 +4661,10 @@ where
 // bounded unbiased 0..=1000ms jitter sample also schedules its next payload set.
 fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
     engine: &Engine<Mem>,
-    lives: &mut ClientLives<CALLS>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &AppIds,
     now_ms: u64,
-    call: Call,
+    call: Call<Mem::Token>,
 ) {
     let body = upload_body(engine, lives.upload_key(call));
     let ready = body
@@ -4685,10 +4705,10 @@ fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
 pub(crate) fn pace_qblock1<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -4754,10 +4774,10 @@ where
 pub(crate) fn continue_qblock1_ack<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     mid: MessageId,
     peer: Endpoint,
@@ -4834,11 +4854,11 @@ where
 fn continue_block1_tx<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &mut ClientLives<CALLS>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    token: Token,
+    token: Mem::Token,
     block1: Option<BlockValue>,
     q_ack: Option<BlockValue>,
     peer: Endpoint,
@@ -4969,12 +4989,12 @@ fn issue_block1<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -5023,12 +5043,12 @@ fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     dest: Endpoint,
     first_ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -5040,7 +5060,7 @@ fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     if_none_match: bool,
     body: SlotId,
     mut tx: Option<SlotId>,
-    take_first: Option<(Token, Endpoint)>,
+    take_first: Option<(Mem::Token, Endpoint)>,
 ) -> Result<bool, Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
@@ -5095,12 +5115,12 @@ fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -5158,12 +5178,12 @@ fn stage_block1_issued<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     dest: Endpoint,
     ty: Type,
     code: Code,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -5258,12 +5278,12 @@ where
 fn encode_block1_request<Mem, E, const REQUESTS: usize>(
     dest: Endpoint,
     engine: &mut Engine<Mem>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     tx: SlotId,
     ty: Type,
     code: Code,
     mid: MessageId,
-    token: Token,
+    token: Mem::Token,
     path: &[&str],
     queries: &[&str],
     accept: Option<ContentFormat>,
@@ -5394,8 +5414,8 @@ where
 // OSCORE sequence numbers: a transport error does not prove non-delivery.
 fn abandon_send<Mem, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
-    token: Token,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    token: Mem::Token,
     peer: Endpoint,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
@@ -5465,7 +5485,10 @@ fn copy_tx_range<Mem: Storage + BodySlots>(
     Ok(issued.len())
 }
 
-fn upload_body<Mem: Storage + BodySlots>(engine: &Engine<Mem>, key: BlockKey) -> Option<SlotId> {
+fn upload_body<Mem: Storage + BodySlots>(
+    engine: &Engine<Mem>,
+    key: BlockKey<Mem::Token>,
+) -> Option<SlotId> {
     engine
         .lookup_tx_body_role(key, BlockRole::OutgoingBlock1)
         .or_else(|| engine.lookup_tx_body_role(key, BlockRole::OutgoingQBlock1))
@@ -5479,15 +5502,18 @@ fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotI
     let _ = engine.release_rx_body(id);
 }
 
-fn client_observe_live<Mem: Storage + ObserveSlots>(engine: &Engine<Mem>, call: Call) -> bool {
+fn client_observe_live<Mem: Storage + ObserveSlots>(
+    engine: &Engine<Mem>,
+    call: Call<Mem::Token>,
+) -> bool {
     let key = ObserveKey::new_client(call.token(), call.peer);
     engine.lookup_observe(key).is_some()
 }
 
 fn accept_client_observe<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
-    lives: &ClientLives<CALLS>,
-    parsed: &ParsedMessage<'_>,
+    lives: &ClientLives<CALLS, Mem::Token>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
     now_ms: u64,
     via_exchange: bool,
@@ -5517,9 +5543,9 @@ fn accept_client_observe<Mem, const CALLS: usize>(
 /// Retransmission give-up completes the call rather than silently losing it.
 pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     tx: SlotId,
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
@@ -5530,9 +5556,9 @@ pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
 /// Retire a pending request with its actual completion failure classification.
 pub(crate) fn fail_pending_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     tx: SlotId,
     failure: CallFailure,
 ) where
@@ -5554,7 +5580,7 @@ pub(crate) fn fail_pending_client<Mem, const CALLS: usize, const REQUESTS: usize
 fn exchange_for_tx<Mem: Storage + Exchanges>(
     engine: &Engine<Mem>,
     tx: SlotId,
-) -> Option<ExchangeEntry> {
+) -> Option<ExchangeEntry<Mem::Token>> {
     let n = engine.capacities().tx_datagram_slots;
     (0..n).find_map(|i| {
         let entry = engine.exchange_entry(SlotId::from_index(i))?;
@@ -5566,7 +5592,7 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
     engine: &Engine<Mem>,
     message_id: MessageId,
     peer: Endpoint,
-) -> Option<ExchangeEntry> {
+) -> Option<ExchangeEntry<Mem::Token>> {
     let n = engine.capacities().tx_datagram_slots;
     (0..n).find_map(|i| {
         let entry = engine.exchange_entry(SlotId::from_index(i))?;
@@ -5578,10 +5604,10 @@ fn exchange_for_mid<Mem: Storage + Exchanges>(
 // The inbox must not keep a partial SlotId that another transfer can reuse.
 pub(crate) fn qblock_give_up<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
-    key: ExchangeKey,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    key: ExchangeKey<Mem::Token>,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
@@ -5602,10 +5628,10 @@ pub(crate) fn qblock_give_up<Mem, const CALLS: usize, const REQUESTS: usize>(
 #[allow(clippy::too_many_arguments)]
 fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
-    call: Call,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    call: Call<Mem::Token>,
     failure: CallFailure,
     release_pending: bool,
 ) where
@@ -5678,9 +5704,9 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
 
 pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     message_id: MessageId,
     peer: Endpoint,
 ) where
@@ -5837,9 +5863,9 @@ mod reservation_tests {
 
 pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS>,
-    lives: &mut ClientLives<CALLS>,
-    oscore: &mut super::oscore::Field<REQUESTS>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    lives: &mut ClientLives<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -5875,9 +5901,9 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
 #[cfg(feature = "oscore")]
 pub(super) fn revoke_association<S: super::AppStorage, const C: usize, const R: usize>(
     engine: &mut Engine<S>,
-    inbox: &mut ClientInbox<C>,
-    lives: &mut ClientLives<C>,
-    oscore: &mut super::oscore::Field<R>,
+    inbox: &mut ClientInbox<C, S::Token>,
+    lives: &mut ClientLives<C, S::Token>,
+    oscore: &mut super::oscore::Field<R, S::Token>,
     peer: Endpoint,
 ) {
     for i in 0..C {

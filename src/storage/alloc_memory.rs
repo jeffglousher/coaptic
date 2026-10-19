@@ -1,5 +1,6 @@
 //! [`AllocMemory`]: runtime-sized Storage, allocated once, then no growth.
 
+use crate::message::{OwnedToken, Token};
 use alloc::vec::Vec;
 
 use super::Access;
@@ -47,18 +48,18 @@ use crate::message::{BlockValue, MessageId};
 /// is refused before modifying bytes or progress, matching fixed body pools.
 /// Due-CON selection uses one inline `usize` cursor, with no additional heap
 /// array or change to [`Self::required_heap_bytes`].
-pub struct AllocMemory {
+pub struct AllocMemory<T: OwnedToken = Token> {
     retransmit_cursor: usize,
     rx: AllocDatagramPool,
     tx: AllocDatagramPool,
     dedup: AllocDedupTable,
-    observe: AllocObserveTable,
-    exchange: AllocExchangeTable,
-    rx_body: Option<AllocBodyPool>,
-    tx_body: Option<AllocBodyPool>,
+    observe: AllocObserveTable<T>,
+    exchange: AllocExchangeTable<T>,
+    rx_body: Option<AllocBodyPool<T>>,
+    tx_body: Option<AllocBodyPool<T>>,
 }
 
-impl AllocMemory {
+impl<T: OwnedToken> AllocMemory<T> {
     /// Checked sum of heap array layout sizes on this target, without allocating.
     ///
     /// Includes both payloads and metadata. See [`Self::try_new`] for exclusions.
@@ -68,11 +69,11 @@ impl AllocMemory {
         bytes.pool::<AllocSlot>(c.rx_datagram_slots, c.rx_datagram_bytes)?;
         bytes.pool::<AllocSlot>(c.tx_datagram_slots, c.tx_datagram_bytes)?;
         bytes.table::<Option<DedupEntry>>(c.dedup_entries)?;
-        bytes.table::<Option<ObserveInterest>>(c.observe_entries)?;
-        bytes.table::<Option<ExchangeEntry>>(c.tx_datagram_slots)?;
+        bytes.table::<Option<ObserveInterest<T>>>(c.observe_entries)?;
+        bytes.table::<Option<ExchangeEntry<T>>>(c.tx_datagram_slots)?;
         if let Some((rx_slots, rx_bytes, tx_slots, tx_bytes)) = c.body_dims() {
-            bytes.pool::<AllocBodySlot>(rx_slots, rx_bytes)?;
-            bytes.pool::<AllocBodySlot>(tx_slots, tx_bytes)?;
+            bytes.pool::<AllocBodySlot<T>>(rx_slots, rx_bytes)?;
+            bytes.pool::<AllocBodySlot<T>>(tx_slots, tx_bytes)?;
         }
         Ok(bytes.0)
     }
@@ -95,7 +96,7 @@ impl AllocMemory {
     /// ```
     /// use coaptic::{profiles, storage::{AllocMemory, Capacities}};
     /// let capacities = Capacities::from_profile::<profiles::Constrained>();
-    /// let storage = AllocMemory::try_new(capacities, 64 * 1024)?;
+    /// let storage = AllocMemory::<coaptic::message::Token>::try_new(capacities, 64 * 1024)?;
     /// // Pass storage to AppBuilder::bind_storage with the platform transport.
     /// # Ok::<(), coaptic::BuildError>(())
     /// ```
@@ -192,15 +193,16 @@ pub(super) fn try_array<T>(
     Ok(values)
 }
 
-impl core::fmt::Debug for AllocMemory {
+impl<T: OwnedToken> core::fmt::Debug for AllocMemory<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("AllocMemory")
+        f.debug_struct("AllocMemory<T>")
             .field("capacities", &self.capacities())
             .finish_non_exhaustive()
     }
 }
 
-impl Storage for AllocMemory {
+impl<T: OwnedToken> Storage for AllocMemory<T> {
+    type Token = T;
     fn capacities(&self) -> Capacities {
         self.capacities()
     }
@@ -435,7 +437,7 @@ impl SlotPool for AllocDatagramPool {
     }
 }
 
-impl DatagramSlots for AllocMemory {
+impl<T: OwnedToken> DatagramSlots for AllocMemory<T> {
     type RxScratch = super::DatagramScratch<{ super::profiles::Default::RX_DATAGRAM_BYTES }>;
     type TxScratch = super::DatagramScratch<{ super::profiles::Default::TX_DATAGRAM_BYTES }>;
 
@@ -508,7 +510,7 @@ impl DatagramSlots for AllocMemory {
     }
 }
 
-impl PendingCons for AllocMemory {
+impl<T: OwnedToken> PendingCons for AllocMemory<T> {
     fn replace_pending_con(
         &mut self,
         expected: PendingCon,
@@ -661,25 +663,25 @@ impl PendingCons for AllocMemory {
     }
 }
 
-impl Exchanges for AllocMemory {
-    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+impl<T: OwnedToken> Exchanges for AllocMemory<T> {
+    fn insert_exchange(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId> {
         self.exchange.insert(entry)
     }
 
-    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+    fn lookup_exchange(&self, key: ExchangeKey<T>) -> Option<SlotId> {
         self.exchange.lookup(key)
     }
 
-    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    fn take_exchange(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>> {
         self.exchange.take(key)
     }
 
-    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<T>> {
         self.exchange.entry(id)
     }
 }
 
-impl DedupSlots for AllocMemory {
+impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
     }
@@ -697,16 +699,16 @@ impl DedupSlots for AllocMemory {
     }
 }
 
-impl BodySlots for AllocMemory {
+impl<T: OwnedToken> BodySlots for AllocMemory<T> {
     #[allow(clippy::too_many_arguments)]
     fn replace_observe_body(
         &mut self,
         pending: super::PendingCon,
-        original: ObserveInterest,
-        replacement: ObserveInterest,
+        original: ObserveInterest<Self::Token>,
+        replacement: ObserveInterest<Self::Token>,
         bytes: &[u8],
         previous: Option<SlotId>,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<Self::Token>,
         payload: &[u8],
     ) -> Result<(), super::PendingReplaceError>
     where
@@ -732,14 +734,14 @@ impl BodySlots for AllocMemory {
         self.tx_body.as_ref()?.payload(id)
     }
 
-    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         self.rx_body.as_ref()?.transfer(id)
     }
 
     fn set_rx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<T>,
     ) -> Result<(), SlotError> {
         self.rx_body
             .as_mut()
@@ -747,14 +749,14 @@ impl BodySlots for AllocMemory {
             .set_transfer(id, transfer)
     }
 
-    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         self.tx_body.as_ref()?.transfer(id)
     }
 
     fn set_tx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<T>,
     ) -> Result<(), SlotError> {
         self.tx_body
             .as_mut()
@@ -762,17 +764,17 @@ impl BodySlots for AllocMemory {
             .set_transfer(id, transfer)
     }
 
-    fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup_rx_body(&self, key: BlockKey<T>) -> Option<SlotId> {
         self.rx_body.as_ref()?.lookup(key)
     }
 
-    fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup_tx_body(&self, key: BlockKey<T>) -> Option<SlotId> {
         self.tx_body.as_ref()?.lookup(key)
     }
 
     fn admit_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -797,7 +799,7 @@ impl BodySlots for AllocMemory {
 
     fn apply_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -810,7 +812,7 @@ impl BodySlots for AllocMemory {
 
     fn admit_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -835,7 +837,7 @@ impl BodySlots for AllocMemory {
 
     fn apply_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -848,7 +850,7 @@ impl BodySlots for AllocMemory {
 
     fn admit_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -873,7 +875,7 @@ impl BodySlots for AllocMemory {
 
     fn apply_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -886,7 +888,7 @@ impl BodySlots for AllocMemory {
 
     fn admit_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -911,7 +913,7 @@ impl BodySlots for AllocMemory {
 
     fn apply_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -924,7 +926,7 @@ impl BodySlots for AllocMemory {
 
     fn start_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -961,7 +963,7 @@ impl BodySlots for AllocMemory {
 
     fn start_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -991,7 +993,7 @@ impl BodySlots for AllocMemory {
 
     fn start_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1024,7 +1026,7 @@ impl BodySlots for AllocMemory {
 
     fn start_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1063,12 +1065,12 @@ impl BodySlots for AllocMemory {
     }
 }
 
-impl ObserveSlots for AllocMemory {
+impl<T: OwnedToken> ObserveSlots for AllocMemory<T> {
     fn replace_observe_con(
         &mut self,
         pending: PendingCon,
-        original: ObserveInterest,
-        replacement: ObserveInterest,
+        original: ObserveInterest<T>,
+        replacement: ObserveInterest<T>,
         bytes: &[u8],
     ) -> Result<(), super::PendingReplaceError>
     where
@@ -1089,48 +1091,48 @@ impl ObserveSlots for AllocMemory {
             .expect("validated occupied Observe row");
         Ok(())
     }
-    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+    fn insert_observe(&mut self, interest: ObserveInterest<T>) -> Option<SlotId> {
         self.observe.insert(interest)
     }
 
-    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+    fn lookup_observe(&self, key: ObserveKey<T>) -> Option<SlotId> {
         self.observe.lookup(key)
     }
 
-    fn remove_observe(&mut self, key: ObserveKey) -> bool {
+    fn remove_observe(&mut self, key: ObserveKey<T>) -> bool {
         self.observe.remove(key)
     }
 
-    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    fn take_observe(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>> {
         self.observe.take(key)
     }
 
-    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<T>> {
         self.observe.entry(id)
     }
 
     fn set_observe_interest(
         &mut self,
         id: SlotId,
-        interest: ObserveInterest,
+        interest: ObserveInterest<T>,
     ) -> Result<(), SlotError> {
         self.observe.set_entry(id, interest)
     }
 }
 
-struct AllocBodySlot {
+struct AllocBodySlot<T: OwnedToken = Token> {
     buf: Vec<u8>,
     len: usize,
-    transfer: Option<BlockTransfer>,
+    transfer: Option<BlockTransfer<T>>,
 }
 
-struct AllocBodyPool {
-    slots: Vec<AllocBodySlot>,
+struct AllocBodyPool<T: OwnedToken = Token> {
+    slots: Vec<AllocBodySlot<T>>,
     slot_bytes: usize,
     occ: HeapOccupancy,
 }
 
-impl AllocBodyPool {
+impl<T: OwnedToken> AllocBodyPool<T> {
     fn new(slots: usize, bytes: usize) -> Result<Self, BuildError> {
         let slots_storage = try_array(slots, || {
             Ok(AllocBodySlot {
@@ -1178,14 +1180,14 @@ impl AllocBodyPool {
         Ok(AccessMut::new(id, slot.buf.as_mut(), &mut slot.len, pin))
     }
 
-    fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
         self.slots.get(id.index())?.transfer
     }
 
-    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < self.occ.slot_count() {
                 SlotError::NotOccupied
@@ -1201,7 +1203,7 @@ impl AllocBodyPool {
         Ok(())
     }
 
-    fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.transfer(id) {
@@ -1213,7 +1215,7 @@ impl AllocBodyPool {
 
     /// Occupied body with the exact key and transfer role.
     #[must_use]
-    fn lookup_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    fn lookup_role(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
             self.transfer(id)
@@ -1222,7 +1224,7 @@ impl AllocBodyPool {
         })
     }
 
-    fn lookup_identity(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    fn lookup_identity(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         if key.identity().is_absent() {
             return None;
         }
@@ -1237,7 +1239,7 @@ impl AllocBodyPool {
 
     fn admit_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1313,7 +1315,7 @@ impl AllocBodyPool {
 
     fn apply_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1340,7 +1342,7 @@ impl AllocBodyPool {
 
     fn start_outgoing(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
         szx: u8,
@@ -1474,26 +1476,26 @@ impl AllocBodyPool {
     }
 }
 
-impl BodyOps for AllocBodyPool {
+impl<T: OwnedToken> BodyOps<T> for AllocBodyPool<T> {
     fn payload(&self, id: SlotId) -> Option<&[u8]> {
         AllocBodyPool::payload(self, id)
     }
 
-    fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         AllocBodyPool::transfer(self, id)
     }
 
-    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
         AllocBodyPool::set_transfer(self, id, transfer)
     }
 
-    fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         AllocBodyPool::lookup(self, key)
     }
 
     fn admit_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1514,7 +1516,7 @@ impl BodyOps for AllocBodyPool {
 
     fn apply_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1525,7 +1527,7 @@ impl BodyOps for AllocBodyPool {
 
     fn start_outgoing(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
         szx: u8,
@@ -1577,7 +1579,7 @@ impl BodyOps for AllocBodyPool {
     }
 }
 
-impl SlotPool for AllocBodyPool {
+impl<T: OwnedToken> SlotPool for AllocBodyPool<T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);
@@ -1670,12 +1672,12 @@ impl DedupStore for AllocDedupTable {
     }
 }
 
-struct AllocExchangeTable {
-    entries: Vec<Option<ExchangeEntry>>,
+struct AllocExchangeTable<T: OwnedToken = Token> {
+    entries: Vec<Option<ExchangeEntry<T>>>,
     occ: HeapOccupancy,
 }
 
-impl AllocExchangeTable {
+impl<T: OwnedToken> AllocExchangeTable<T> {
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
@@ -1690,8 +1692,8 @@ impl AllocExchangeTable {
     }
 }
 
-impl ExchangeStore for AllocExchangeTable {
-    fn insert(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+impl<T: OwnedToken> ExchangeStore<T> for AllocExchangeTable<T> {
+    fn insert(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId> {
         if let Some(id) = self.lookup(entry.key()) {
             return Some(id);
         }
@@ -1700,7 +1702,7 @@ impl ExchangeStore for AllocExchangeTable {
         Some(id)
     }
 
-    fn lookup(&self, key: ExchangeKey) -> Option<SlotId> {
+    fn lookup(&self, key: ExchangeKey<T>) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.entry(id) {
@@ -1710,14 +1712,14 @@ impl ExchangeStore for AllocExchangeTable {
         })
     }
 
-    fn take(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    fn take(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>> {
         let id = self.lookup(key)?;
         let entry = self.entry(id)?;
         let _ = self.release(id);
         Some(entry)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    fn entry(&self, id: SlotId) -> Option<ExchangeEntry<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
@@ -1725,7 +1727,7 @@ impl ExchangeStore for AllocExchangeTable {
     }
 }
 
-impl SlotPool for AllocExchangeTable {
+impl<T: OwnedToken> SlotPool for AllocExchangeTable<T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);
@@ -1793,12 +1795,12 @@ impl SlotPool for AllocDedupTable {
     }
 }
 
-struct AllocObserveTable {
-    entries: Vec<Option<ObserveInterest>>,
+struct AllocObserveTable<T: OwnedToken = Token> {
+    entries: Vec<Option<ObserveInterest<T>>>,
     occ: HeapOccupancy,
 }
 
-impl AllocObserveTable {
+impl<T: OwnedToken> AllocObserveTable<T> {
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
@@ -1813,8 +1815,8 @@ impl AllocObserveTable {
     }
 }
 
-impl ObserveStore for AllocObserveTable {
-    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+impl<T: OwnedToken> ObserveStore<T> for AllocObserveTable<T> {
+    fn insert(&mut self, interest: ObserveInterest<T>) -> Option<SlotId> {
         if let Some(id) = self.lookup(interest.key()) {
             return Some(id);
         }
@@ -1823,7 +1825,7 @@ impl ObserveStore for AllocObserveTable {
         Some(id)
     }
 
-    fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+    fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.entry(id) {
@@ -1833,28 +1835,28 @@ impl ObserveStore for AllocObserveTable {
         })
     }
 
-    fn remove(&mut self, key: ObserveKey) -> bool {
+    fn remove(&mut self, key: ObserveKey<T>) -> bool {
         match self.lookup(key) {
             Some(id) => self.release(id).is_ok(),
             None => false,
         }
     }
 
-    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>> {
         let id = self.lookup(key)?;
         let interest = self.entry(id)?;
         let _ = self.release(id);
         Some(interest)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
         self.entries.get(id.index()).copied().flatten()
     }
 
-    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < self.occ.slot_count() {
                 SlotError::NotOccupied
@@ -1867,7 +1869,7 @@ impl ObserveStore for AllocObserveTable {
     }
 }
 
-impl SlotPool for AllocObserveTable {
+impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);

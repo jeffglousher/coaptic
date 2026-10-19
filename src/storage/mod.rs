@@ -138,6 +138,8 @@ pub trait SlotPool {
 /// only when block-wise is enabled; [`Self::rx_body`] / [`Self::tx_body`] then
 /// return `None`.
 pub trait Storage {
+    /// Owned token capacity retained by all protocol state in this backend.
+    type Token: crate::message::OwnedToken;
     /// Configured sizes, including absent body fields when pools are omitted.
     fn capacities(&self) -> Capacities;
 
@@ -283,7 +285,7 @@ pub trait DedupSlots {
 /// the 24-bit sequence, optional Max-Age / CON-wait lifetime, and RFC 7641
 /// §4.5 / §4.5.1 confirm / NSTART hold stay on the row; bodies are not
 /// stored here.
-pub trait ObserveSlots {
+pub trait ObserveSlots: Storage {
     /// Atomically replace one exact pending CON and its exact Observe row.
     ///
     /// Any failure must leave both unchanged. Implementations must validate the
@@ -293,8 +295,8 @@ pub trait ObserveSlots {
     fn replace_observe_con(
         &mut self,
         _pending: PendingCon,
-        _original: ObserveInterest,
-        _replacement: ObserveInterest,
+        _original: ObserveInterest<Self::Token>,
+        _replacement: ObserveInterest<Self::Token>,
         _bytes: &[u8],
     ) -> Result<(), PendingReplaceError>
     where
@@ -306,31 +308,34 @@ pub trait ObserveSlots {
     /// Insert `interest`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
-    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId>;
+    fn insert_observe(&mut self, interest: ObserveInterest<Self::Token>) -> Option<SlotId>;
 
     /// Occupied slot matching `key`, if any.
-    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId>;
+    fn lookup_observe(&self, key: ObserveKey<Self::Token>) -> Option<SlotId>;
 
     /// Release the slot matching `key`, if occupied.
-    fn remove_observe(&mut self, key: ObserveKey) -> bool;
+    fn remove_observe(&mut self, key: ObserveKey<Self::Token>) -> bool;
 
     /// Remove and return the occupied payload matching `key`, if any.
-    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest>;
+    fn take_observe(
+        &mut self,
+        key: ObserveKey<Self::Token>,
+    ) -> Option<ObserveInterest<Self::Token>>;
 
     /// Occupied payload at `id`.
-    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest>;
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<Self::Token>>;
 
     /// Write payload into an already-occupied Observe slot.
     fn set_observe_interest(
         &mut self,
         id: SlotId,
-        interest: ObserveInterest,
+        interest: ObserveInterest<Self::Token>,
     ) -> Result<(), SlotError>;
 
     /// Mark the interest matching `key` as due for one notification.
     ///
     /// Coalesces until progress surfaces the row. `None` when no row matches.
-    fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
+    fn signal_observe(&mut self, key: ObserveKey<Self::Token>) -> Option<SlotId> {
         let id = self.lookup_observe(key)?;
         let mut interest = self.observe_interest(id)?;
         interest.mark_due();
@@ -346,7 +351,7 @@ pub trait ObserveSlots {
 /// [`crate::error::BlockTransferError::NoBodyPools`]. Incoming Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Incoming Body Pool; outgoing Block1 / Block2 /
 /// Q-Block1 / Q-Block2 use the Outgoing Body Pool.
-pub trait BodySlots {
+pub trait BodySlots: Storage {
     /// Atomically replace a pending Observe CON, its row, and its retained body.
     ///
     /// Reuse `previous` when present; otherwise acquire one body slot. On any
@@ -357,11 +362,11 @@ pub trait BodySlots {
     fn replace_observe_body(
         &mut self,
         _pending: PendingCon,
-        _original: ObserveInterest,
-        _replacement: ObserveInterest,
+        _original: ObserveInterest<Self::Token>,
+        _replacement: ObserveInterest<Self::Token>,
         _bytes: &[u8],
         _previous: Option<SlotId>,
-        _transfer: BlockTransfer,
+        _transfer: BlockTransfer<Self::Token>,
         _payload: &[u8],
     ) -> Result<(), PendingReplaceError>
     where
@@ -377,38 +382,38 @@ pub trait BodySlots {
     fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
 
     /// Incoming Block1 / Block2 sidecar, if `id` holds a transfer.
-    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<Self::Token>>;
 
     /// Write the sidecar into an already-occupied incoming body slot.
     fn set_rx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<Self::Token>,
     ) -> Result<(), SlotError>;
 
     /// Outgoing Block1 / Block2 sidecar, if `id` holds a transfer.
-    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer>;
+    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<Self::Token>>;
 
     /// Write the sidecar into an already-occupied outgoing body slot.
     fn set_tx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<Self::Token>,
     ) -> Result<(), SlotError> {
         let _ = (id, transfer);
         Err(SlotError::InvalidSlot)
     }
 
     /// Incoming body slot matching `key`, if any. O(n) in RX body occupancy.
-    fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId>;
+    fn lookup_rx_body(&self, key: BlockKey<Self::Token>) -> Option<SlotId>;
 
     /// Outgoing body slot matching `key`, if any. O(n) in TX body occupancy.
-    fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId>;
+    fn lookup_tx_body(&self, key: BlockKey<Self::Token>) -> Option<SlotId>;
 
     /// Admit a new incoming Block1 body (first block, typically NUM 0).
     fn admit_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -425,7 +430,7 @@ pub trait BodySlots {
     /// Admit or continue incoming Block1 for `key`.
     fn apply_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -434,7 +439,7 @@ pub trait BodySlots {
     /// Admit a new incoming Block2 body (first block, typically NUM 0).
     fn admit_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -451,7 +456,7 @@ pub trait BodySlots {
     /// Admit or continue incoming Block2 for `key`.
     fn apply_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -460,7 +465,7 @@ pub trait BodySlots {
     /// Admit a new incoming Q-Block1 body (first block in window 0).
     fn admit_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -477,7 +482,7 @@ pub trait BodySlots {
     /// Admit or continue incoming Q-Block1 for `key`.
     fn apply_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -486,7 +491,7 @@ pub trait BodySlots {
     /// Admit a new incoming Q-Block2 body (first block in window 0).
     fn admit_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -503,7 +508,7 @@ pub trait BodySlots {
     /// Admit or continue incoming Q-Block2 for `key`.
     fn apply_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         block: crate::message::BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -512,7 +517,7 @@ pub trait BodySlots {
     /// Admit an outgoing Block1 body (complete body copied into a TX slot).
     fn start_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
@@ -540,7 +545,7 @@ pub trait BodySlots {
     /// Admit an outgoing Block2 body (complete body copied into a TX slot).
     fn start_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
@@ -561,7 +566,7 @@ pub trait BodySlots {
     /// Admit an outgoing Q-Block1 body (complete body copied into a TX slot).
     fn start_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
@@ -588,7 +593,7 @@ pub trait BodySlots {
     /// Admit an outgoing Q-Block2 body (complete body copied into a TX slot).
     fn start_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<Self::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
@@ -614,3 +619,6 @@ pub trait BodySlots {
     /// Write access to an occupied outgoing body buffer. Pins `id` until dropped.
     fn access_tx_body_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
+
+#[cfg(test)]
+mod token_capacity_tests;

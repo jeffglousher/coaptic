@@ -173,7 +173,7 @@ fn assert_request(events: &Events, request: &Request<'_>, sequence: u64, mid: u1
     events.effects.set(events.effects.get() + 1);
 }
 
-fn exercise_commit_ordering<S: AppStorage>(
+fn exercise_commit_ordering<S: AppStorage<Token = Token>>(
     mut server: App<profiles::Default, DurableIo<'_>, DEFAULT_ROUTES, false, S>,
     events: &Events,
 ) {

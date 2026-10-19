@@ -120,7 +120,11 @@ fn wire(mid: u16) -> Frame {
     .unwrap();
     frame
 }
-fn deliver<const N: usize, S: AppStorage>(app: &mut Server<N, S>, frame: Frame, now: u64) -> Frame {
+fn deliver<const N: usize, S: AppStorage<Token = coaptic::message::Token>>(
+    app: &mut Server<N, S>,
+    frame: Frame,
+    now: u64,
+) -> Frame {
     let sends = app.transport().sends;
     app.transport_mut().incoming = Some(frame);
     app.poll(now).unwrap();
@@ -130,7 +134,10 @@ fn deliver<const N: usize, S: AppStorage>(app: &mut Server<N, S>, frame: Frame, 
 fn key(mid: u16) -> DedupKey {
     DedupKey::new(MessageId::new(mid), PEER)
 }
-fn lifecycle<const N: usize, S: AppStorage>(mut app: Server<N, S>, count: usize) {
+fn lifecycle<const N: usize, S: AppStorage<Token = coaptic::message::Token>>(
+    mut app: Server<N, S>,
+    count: usize,
+) {
     EFFECTS.with(|c| c.set(0));
     without_allocating(|| {
         assert_eq!(app.engine().capacities().dedup_entries, count);
@@ -320,7 +327,10 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 #[cfg(feature = "oscore")]
-fn protected<const N: usize, S: AppStorage>(mut server: Server<N, S>, count: usize) {
+fn protected<const N: usize, S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<N, S>,
+    count: usize,
+) {
     EFFECTS.with(|c| c.set(0));
     let mut client = App::with_resources(Resources::<Pools>::new())
         .oscore(context(&[1], &[2]))
@@ -458,7 +468,7 @@ fn large_effect(_: coaptic::Request<'_>) -> Response<'static> {
     EFFECTS.with(|c| c.set(c.get() + 1));
     Response::changed().payload_copy_full(&[0x5a; DedupEntry::REPLAY_MAX + 16])
 }
-fn tx_pressure<S: AppStorage>(mut server: Server<12, S>) {
+fn tx_pressure<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<12, S>) {
     EFFECTS.with(|c| c.set(0));
     without_allocating(|| {
         for mid in 1..=12 {

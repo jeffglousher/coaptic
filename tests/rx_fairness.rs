@@ -129,7 +129,7 @@ fn fixed() -> Service<AppStore<profiles::Default, false>> {
         .bind(Io::default())
         .unwrap()
 }
-fn queued<S: AppStorage>(mut app: Service<S>) {
+fn queued<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {
@@ -161,7 +161,7 @@ fn fixed_queued_owner_progresses() {
     queued(fixed());
 }
 
-fn held_and_pinned<S: AppStorage>(mut app: Service<S>) {
+fn held_and_pinned<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {
@@ -293,7 +293,7 @@ fn allocated_held_response_and_pinned_slot_do_not_hide_queued_owner() {
     held_and_pinned(allocated());
 }
 
-fn duplicate<S: AppStorage>(mut app: Service<S>) {
+fn duplicate<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     no_alloc(|| {
         let tx = app.engine_mut().acquire_tx().unwrap();
@@ -350,7 +350,7 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 #[cfg(feature = "oscore")]
-fn protected<S: AppStorage>(mut app: Service<S>) {
+fn protected<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     app.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
@@ -422,7 +422,7 @@ fn allocated_protected_queued_response_is_complete() {
     protected(allocated());
 }
 
-fn saturated<S: AppStorage>(mut app: Service<S>) {
+fn saturated<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {

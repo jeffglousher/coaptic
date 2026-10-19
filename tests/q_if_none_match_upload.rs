@@ -185,7 +185,10 @@ fn reset(exists: bool) {
     DISPATCHES.with(|v| v.set(0));
 }
 
-fn complete<C: AppStorage, S: AppStorage>(
+fn complete<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Client<C>,
     server: &mut Client<S>,
     now: u64,
@@ -246,7 +249,10 @@ fn complete<C: AppStorage, S: AppStorage>(
     client.poll(done).unwrap();
     client.take_response(call).unwrap().unwrap().code()
 }
-fn exercise<C: AppStorage, S: AppStorage>(
+fn exercise<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Client<C>,
     mut server: Client<S>,
     protected: bool,
@@ -603,7 +609,10 @@ fn q_if_none_match_plain_missing_num0_reissue_retains_condition() {
         assert_eq!(EFFECTS.with(Cell::get), 1);
     });
 }
-fn reclaim<C: AppStorage, S: AppStorage>(
+fn reclaim<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Client<C>,
     server: &mut Client<S>,
     protected: bool,
