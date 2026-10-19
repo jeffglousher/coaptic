@@ -16,7 +16,7 @@ pub enum ExporterError {
 /// Obtain this through [`super::Session`], after the mandatory message-4
 /// transition. No raw exporter secret is exposed. Storage is fixed and the
 /// exporter is neither `Clone` nor `Copy`; its retained secret is zeroized on
-/// drop. This does not erase copies made inside the handshake implementation.
+/// drop. Handshake-owned copies are erased when their owning state ends.
 ///
 /// Retain it only for the lifetime of the authenticated authorization binding.
 /// The caller must drop it when that binding is revoked or replaced, together
