@@ -645,6 +645,27 @@ where
             && !matches!(self.validity, PolicyValidity::OnlineUntil { deadline_ms, .. } if self.last_now >= deadline_ms)
     }
 
+    /// Opaque generation of the currently authorized authenticated session.
+    ///
+    /// Compare values only within this connection owner. A changed value marks
+    /// an authenticated session installation; starting or rejecting a candidate
+    /// leaves the retained session's value unchanged. This lets a caller resume
+    /// local work after quiescing it for peer recovery. It is not a peer identity,
+    /// a durable sequence or proof that the peer remains reachable.
+    ///
+    /// Returns `None` whenever [`Self::is_connected`] is false. Sampling does not
+    /// advance time, refresh authority, perform I/O or allocate storage.
+    #[must_use]
+    pub fn session_generation(&self) -> Option<u64> {
+        if !self.is_connected() {
+            return None;
+        }
+        match &self.state {
+            Some(State::Established(app)) => Some(app.transport().epoch),
+            _ => None,
+        }
+    }
+
     /// Copy diagnostics from the retained authenticated App, if one exists.
     ///
     /// Sampling performs no I/O, allocation, clock advancement or policy change.

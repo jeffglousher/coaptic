@@ -16,6 +16,7 @@ mod owner_recovery_cli;
 mod serial_cli;
 
 mod guided;
+mod help;
 mod inspect;
 
 fn main() {
@@ -59,11 +60,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    if let [command, flag] = supplied.as_slice()
+        && (flag == "--help" || flag == "-h")
+        && let Some(usage) = help::command(command)
+    {
+        println!("{usage}");
+        return Ok(());
+    }
     let mut args = supplied.into_iter();
     let command = args
         .next()
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
-    if command == "--help" {
+    if command == "--help" || command == "-h" {
+        if args.next().is_some() {
+            return Err("unexpected arguments after help".into());
+        }
         println!(
             "Coaptic commissioning - run without arguments for the guided menu.
 \
