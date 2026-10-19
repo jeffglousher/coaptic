@@ -3,18 +3,18 @@
 use crate::error::EncodeError;
 
 use super::option::Opt;
-use super::{Code, MessageId, Token, Type};
+use super::{Code, MessageId, OwnedToken, Token, Type};
 
 /// Maximum option delta or length that fits in a 14-extended field.
 const MAX_EXTENDED: u32 = 269 + 65535;
 
 /// Message to encode: header fields plus borrowed options and payload.
 #[derive(Clone, Copy, Debug)]
-pub struct Message<'a> {
+pub struct Message<'a, T: OwnedToken = Token> {
     ty: Type,
     code: Code,
     id: MessageId,
-    token: Token,
+    token: T,
     options: &'a [Opt<'a>],
     payload: &'a [u8],
 }
@@ -53,7 +53,7 @@ impl<'a> Message<'a> {
     ///
     /// Does not require [`crate::storage::Engine`]. Pair with [`super::Ids`] to mint `id`.
     #[must_use]
-    pub const fn con(code: Code, id: MessageId, token: Token) -> Self {
+    pub const fn con<T: OwnedToken>(code: Code, id: MessageId, token: T) -> Message<'a, T> {
         Self::new(Type::Confirmable, code, id).with_token(token)
     }
 
@@ -61,15 +61,23 @@ impl<'a> Message<'a> {
     ///
     /// Does not require [`crate::storage::Engine`]. Pair with [`super::Ids`] to mint `id`.
     #[must_use]
-    pub const fn non(code: Code, id: MessageId, token: Token) -> Self {
+    pub const fn non<T: OwnedToken>(code: Code, id: MessageId, token: T) -> Message<'a, T> {
         Self::new(Type::NonConfirmable, code, id).with_token(token)
     }
+}
 
+impl<'a, T: OwnedToken> Message<'a, T> {
     /// Set the token.
     #[must_use]
-    pub const fn with_token(mut self, token: Token) -> Self {
-        self.token = token;
-        self
+    pub const fn with_token<U: OwnedToken>(self, token: U) -> Message<'a, U> {
+        Message {
+            ty: self.ty,
+            code: self.code,
+            id: self.id,
+            token,
+            options: self.options,
+            payload: self.payload,
+        }
     }
 
     /// Set options. Numbers must be non-decreasing.
@@ -106,7 +114,7 @@ impl<'a> Message<'a> {
 
     /// Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -129,7 +137,7 @@ impl<'a> Message<'a> {
 }
 
 /// Encode `msg` into `buf`. Does not require [`crate::storage::Engine`].
-pub fn encode(msg: &Message<'_>, buf: &mut [u8]) -> Result<usize, EncodeError> {
+pub fn encode<T: OwnedToken>(msg: &Message<'_, T>, buf: &mut [u8]) -> Result<usize, EncodeError> {
     if msg.code.is_empty()
         && (!msg.token.is_empty() || !msg.options.is_empty() || !msg.payload.is_empty())
     {
@@ -146,12 +154,12 @@ pub fn encode(msg: &Message<'_>, buf: &mut [u8]) -> Result<usize, EncodeError> {
     )
 }
 
-pub(crate) fn encode_iter<'a>(
+pub(crate) fn encode_iter<'a, T: OwnedToken>(
     buf: &mut [u8],
     ty: Type,
     code: Code,
     id: MessageId,
-    token: Token,
+    token: T,
     options: impl IntoIterator<Item = Opt<'a>>,
     payload: &[u8],
 ) -> Result<usize, EncodeError> {

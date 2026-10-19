@@ -187,3 +187,49 @@ fn owned_tokens_compare_all_bytes_and_compact_default_is_unchanged() {
         Err(ParseError::BadTokenLength)
     );
 }
+
+#[test]
+fn selected_owned_representation_uses_normal_message_and_option_api() {
+    let token = Token::<32>::new(&[0x77; 32]).unwrap();
+    let options = [Opt::new(OptionNumber::new(11), b"resource")];
+    let original = message::Message::con(Code::GET, MessageId::new(23), token)
+        .with_options(&options)
+        .with_payload(b"body");
+    let mut wire = [0; 80];
+    let len = original.encode(&mut wire).unwrap();
+    let parsed = message::decode_with_token::<Token<32>>(&wire[..len]).unwrap();
+    assert_eq!(parsed.token(), token);
+    assert_eq!(parsed.uri_path().next().unwrap().unwrap(), "resource");
+    assert_eq!(parsed.payload(), b"body");
+    assert_eq!(parsed.check_rfc7252_formats(), Ok(()));
+    assert_eq!(parsed.check_rfc7252_options(), Ok(()));
+    let mut copy = [0; 80];
+    assert_eq!(parsed.encode(&mut copy), Ok(len));
+    assert_eq!(&copy[..len], &wire[..len]);
+    let refused = message::decode_with_token::<message::Token>(&wire[..len]);
+    assert_eq!(
+        refused,
+        Err(message::TokenDecodeError::Capacity(CapacityError {
+            required: 32,
+            available: 8,
+        }))
+    );
+    assert_eq!(
+        message::decode_with_token::<Token<32>>(&[0x4f, 1, 0, 0]),
+        Err(message::TokenDecodeError::Malformed(
+            ParseError::BadTokenLength
+        ))
+    );
+}
+
+#[test]
+fn changing_owned_token_representation_preserves_other_message_fields() {
+    let base = message::Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(7))
+        .with_payload(b"answer");
+    let extended = base.with_token(Token::<64>::new(&[3; 64]).unwrap());
+    assert_eq!(extended.payload(), b"answer");
+    assert_eq!(extended.message_id(), MessageId::new(7));
+    let compact = extended.with_token(message::Token::new(&[9]).unwrap());
+    assert_eq!(compact.token().as_bytes(), &[9]);
+    assert_eq!(compact.payload(), b"answer");
+}

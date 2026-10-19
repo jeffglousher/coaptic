@@ -3,20 +3,20 @@
 use crate::error::ParseError;
 
 use super::option::{OptionNumber, Options, read_option};
-use super::{Code, Header, MessageId, Token, Type};
+use super::{Code, Header, MessageId, OwnedToken, Token, Type};
 
 /// Zero-copy view of a decoded CoAP datagram.
 ///
 /// Options and payload borrow `buf` from [`decode`]. No allocator is used.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParsedMessage<'a> {
+pub struct ParsedMessage<'a, T: OwnedToken = Token> {
     header: Header,
-    token: Token,
+    token: T,
     options: &'a [u8],
     payload: &'a [u8],
 }
 
-impl<'a> ParsedMessage<'a> {
+impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
     /// Parsed header.
     #[must_use]
     pub const fn header(self) -> Header {
@@ -43,7 +43,7 @@ impl<'a> ParsedMessage<'a> {
 
     /// Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -147,6 +147,33 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     Ok(ParsedMessage {
         header: parts.header,
         token: Token::from_checked(parts.token),
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
+/// Syntax errors and valid tokens exceeding selected retained capacity are
+/// separate outcomes. Capacity refusal must not be treated as a malformed UDP
+/// request when extended-token support is enabled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TokenDecodeError {
+    /// Invalid/truncated wire syntax.
+    Malformed(ParseError),
+    /// Valid datagram, but the selected representation cannot retain its token.
+    Capacity(super::extended::CapacityError),
+}
+
+/// Decode RFC 8974 syntax and retain the token in caller-selected owned storage.
+/// On [`TokenDecodeError::Capacity`], [`super::extended::decode`] can still borrow
+/// the full token from the same input to construct a refusal response.
+pub fn decode_with_token<T: OwnedToken>(
+    buf: &[u8],
+) -> Result<ParsedMessage<'_, T>, TokenDecodeError> {
+    let parts = decode_parts(buf, true).map_err(TokenDecodeError::Malformed)?;
+    let token = T::try_from_bytes(parts.token).map_err(TokenDecodeError::Capacity)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token,
         options: parts.options,
         payload: parts.payload,
     })
