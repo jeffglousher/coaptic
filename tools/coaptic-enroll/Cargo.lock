@@ -43,6 +43,7 @@ dependencies = [
  "cipher 0.5.2",
  "cpubits",
  "cpufeatures 0.3.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -520,6 +521,7 @@ dependencies = [
  "ciborium",
  "coaptic",
  "coaptic-console-core",
+ "coaptic-receipts",
  "getrandom 0.3.4",
  "keyring",
  "openssl",
@@ -545,6 +547,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "coaptic-receipts"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "coaptic",
 ]
 
 [[package]]

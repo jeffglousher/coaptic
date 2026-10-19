@@ -222,6 +222,31 @@ impl<const REQUESTS: usize, T: OwnedToken> core::fmt::Debug
 }
 
 impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
+    /// Move a newly established context into the selected token table.
+    /// Existing request bindings must be retired explicitly before conversion.
+    #[cfg(feature = "edhoc")]
+    pub(crate) fn into_token_storage<K: OwnedToken>(
+        self,
+    ) -> Result<BoundedSecurityContext<REQUESTS, K>, Error> {
+        if self.live.iter().any(Option::is_some) {
+            return Err(Error::Context);
+        }
+        Ok(BoundedSecurityContext {
+            sender_id: self.sender_id,
+            recipient_id: self.recipient_id,
+            id_context: self.id_context,
+            id_context_len: self.id_context_len,
+            sender_key: self.sender_key,
+            recipient_key: self.recipient_key,
+            common_iv: self.common_iv,
+            sender_seq: self.sender_seq,
+            sender_reserved_end: self.sender_reserved_end,
+            replay_left: self.replay_left,
+            replay_bits: self.replay_bits,
+            live: [None; REQUESTS],
+        })
+    }
+
     /// Maximum distinct live request Tokens, including retained Observe registrations.
     #[must_use]
     pub const fn request_capacity(&self) -> usize {

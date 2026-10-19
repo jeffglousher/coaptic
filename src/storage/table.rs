@@ -862,8 +862,8 @@ impl<T: OwnedToken> From<ObserveKey<T>> for ObserveInterest<T> {
 pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
     storage: &S,
     pending: super::PendingCon,
-    original: ObserveInterest,
-    replacement: ObserveInterest,
+    original: ObserveInterest<S::Token>,
+    replacement: ObserveInterest<S::Token>,
     bytes: &[u8],
 ) -> Result<SlotId, super::PendingReplaceError> {
     use super::PendingReplaceError;
@@ -877,7 +877,8 @@ pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
     {
         return Err(PendingReplaceError::Stale);
     }
-    let parsed = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    let parsed = crate::message::decode_with_token::<S::Token>(bytes)
+        .map_err(|_| PendingReplaceError::InvalidMessage)?;
     if replacement.notify_hold().and_then(|h| h.con_mid()) != Some(parsed.message_id())
         || parsed.token() != original.token()
     {
@@ -1210,11 +1211,11 @@ impl<const ENTRIES: usize, T: OwnedToken> SlotPool for ObserveTable<ENTRIES, T> 
 pub(crate) fn replace_owned_observe_body<S>(
     storage: &mut S,
     pending: super::PendingCon,
-    original: ObserveInterest,
-    replacement: ObserveInterest,
+    original: ObserveInterest<S::Token>,
+    replacement: ObserveInterest<S::Token>,
     bytes: &[u8],
     previous: Option<SlotId>,
-    transfer: super::BlockTransfer,
+    transfer: super::BlockTransfer<S::Token>,
     payload: &[u8],
 ) -> Result<(), super::PendingReplaceError>
 where

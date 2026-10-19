@@ -17,7 +17,7 @@ use super::Retransmit;
 use super::SlotId;
 use super::Storage;
 use super::engine::endpoint_notify_held;
-use crate::message::Transmission;
+use crate::message::{OwnedToken, Token, Transmission};
 
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
@@ -25,15 +25,15 @@ use crate::message::Transmission;
 /// one [`QBlockRecover`] from a rotating Incoming Body Pool step. Observe
 /// lifetime expiry is at most one [`ObserveExpiry`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Progress {
+pub struct Progress<T: OwnedToken = Token> {
     retransmit: Option<Retransmit>,
     rx_ready: Option<SlotId>,
     observe_notify: Option<SlotId>,
     observe_expired: Option<ObserveExpiry>,
-    qblock_recover: Option<QBlockRecover>,
+    qblock_recover: Option<QBlockRecover<T>>,
 }
 
-impl Progress {
+impl<T: OwnedToken> Progress<T> {
     /// No retransmit, no RX slot, and no later-domain work.
     #[must_use]
     pub const fn idle() -> Self {
@@ -117,7 +117,7 @@ impl Progress {
     /// body and returns `None`. `.block_wise(false)` stays `None`. See
     /// `knowledge/rfcs/rfc9177.txt` §7.2.
     #[must_use]
-    pub const fn qblock_recover(self) -> Option<QBlockRecover> {
+    pub const fn qblock_recover(self) -> Option<QBlockRecover<T>> {
         self.qblock_recover
     }
 }
@@ -147,7 +147,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     /// `NON_MAX_RETRANSMIT`). Does not invent 4.02 / RST / 2.31 / 4.08 policy.
     /// Empty tables are skipped in O(1) via [`super::SlotPool::occupied_count`]
     /// (CON / Observe / Q-Block scans run only while that area is occupied).
-    pub fn progress(&mut self, now_ms: u64) -> Progress {
+    pub fn progress(&mut self, now_ms: u64) -> Progress<S::Token> {
         self.progress_inner(now_ms, true, true, |_| true)
     }
 
@@ -161,7 +161,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         &mut self,
         now_ms: u64,
         eligible_rx: impl FnMut(SlotId) -> bool,
-    ) -> Progress {
+    ) -> Progress<S::Token> {
         self.progress_inner(now_ms, false, true, eligible_rx)
     }
 
@@ -171,7 +171,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         &mut self,
         now_ms: u64,
         eligible_rx: impl FnMut(SlotId) -> bool,
-    ) -> Progress {
+    ) -> Progress<S::Token> {
         self.progress_inner(now_ms, false, false, eligible_rx)
     }
 
@@ -189,19 +189,27 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         Some(id)
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn next_qblock_recovery(
         &mut self,
         now_ms: u64,
-    ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
+    ) -> (
+        Option<QBlockRecover<S::Token>>,
+        Option<super::ExchangeKey<S::Token>>,
+    ) {
         let mut expired = None;
         let recover = progress_qblock(self, now_ms, &mut expired, true);
         (recover, expired)
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn next_qblock_recovery_async(
         &mut self,
         now_ms: u64,
-    ) -> (Option<QBlockRecover>, Option<super::ExchangeKey>) {
+    ) -> (
+        Option<QBlockRecover<S::Token>>,
+        Option<super::ExchangeKey<S::Token>>,
+    ) {
         let mut expired = None;
         let recover = progress_qblock(self, now_ms, &mut expired, false);
         (recover, expired)
@@ -211,7 +219,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
     // small timer snapshot and range identity; never keep a whole body sidecar.
     pub(crate) fn commit_qblock_recovery(
         &mut self,
-        recover: QBlockRecover,
+        recover: QBlockRecover<S::Token>,
         expected: super::QBlockReceiveWait,
         now_ms: u64,
     ) -> bool {
@@ -250,7 +258,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         immediate_later_work: bool,
         consume_retransmit: bool,
         eligible_rx: impl FnMut(SlotId) -> bool,
-    ) -> Progress {
+    ) -> Progress<S::Token> {
         Metrics::inc(&mut self.metrics_mut().progress);
         let rx_busy = !self.storage_mut().rx_datagram().is_empty();
         let tx_busy = !self.storage_mut().tx_datagram().is_empty();
@@ -375,9 +383,9 @@ fn progress_observe<S: Storage + ObserveSlots>(
 fn progress_qblock<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     now_ms: u64,
-    client_expired: &mut Option<super::ExchangeKey>,
+    client_expired: &mut Option<super::ExchangeKey<S::Token>>,
     consume: bool,
-) -> Option<QBlockRecover> {
+) -> Option<QBlockRecover<S::Token>> {
     if engine
         .storage_mut()
         .rx_body()

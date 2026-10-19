@@ -219,7 +219,7 @@ impl DatagramIo for Idle {
 
 coaptic::memory_profile! {
     Custom {
-        rx_datagram: (1, 512), tx_datagram: (3, 512),
+        rx_datagram: (2, 512), tx_datagram: (3, 512),
         rx_body: (1, 2048), tx_body: (1, 2048),
         dedup: 2, observe: 1,
     }
@@ -311,7 +311,7 @@ fn calls_are_customized_before_binding_and_recover_after_expiry() {
 #[test]
 fn custom_macro_carries_named_dimensions() {
     let c = Capacities::from_profile::<Custom>();
-    assert_eq!((c.rx_datagram_slots, c.rx_datagram_bytes), (1, 512));
+    assert_eq!((c.rx_datagram_slots, c.rx_datagram_bytes), (2, 512));
     assert_eq!((c.tx_datagram_slots, c.tx_datagram_bytes), (3, 512));
     assert_eq!((c.dedup_entries, c.observe_entries), (2, 1));
 }

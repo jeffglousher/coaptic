@@ -13,8 +13,9 @@
 //! old exchanges, replay state, cached replies or Observe registrations. Reusing a session key instead
 //! requires the durable sequence and replay contracts in [`crate::oscore`].
 //!
-//! Handshake state and keys have redacted Debug output. Lakers internally
-//! copies key material; this interface does not promise erasure of all copies.
+//! Handshake state and keys have redacted Debug output. Retained handshake
+//! secrets and derivation scratch are erased on completion, failure and drop.
+//! This does not promise erasure of compiler-created copies or registers.
 //! All storage is fixed; EAD fields are bounded by [`Ead::CAPACITY`]. Larger
 //! profiles and credential discovery are refused. Transport integration owns
 //! retries and must retransmit the exact

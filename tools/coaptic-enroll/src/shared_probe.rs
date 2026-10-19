@@ -28,7 +28,8 @@ pub fn run(
         .policy()
         .ok_or("missing policy")?
         .resource_policy();
-    let write = *permissions == coaptic_enroll::pairing::permissions(true);
+    let write = *permissions == coaptic_enroll::pairing::permissions(true)
+        || *permissions == coaptic_enroll::pairing::echo_permissions();
     if !write && *permissions != coaptic_enroll::pairing::permissions(false) {
         return Err("unknown application permissions".into());
     }

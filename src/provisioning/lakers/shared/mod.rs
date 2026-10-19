@@ -501,6 +501,36 @@ pub struct Completed {
     pub prk_exporter: BytesHashLen,
 }
 
+// State ownership ends on success, authentication failure, or cancellation.
+// Erase retained secrets before their storage can be reused; add no storage.
+macro_rules! erase_state {
+    ($state:ty; $($field:ident $(.$part:ident)?),+ $(,)?) => {
+        impl p256::elliptic_curve::zeroize::Zeroize for $state {
+            fn zeroize(&mut self) {
+                $(p256::elliptic_curve::zeroize::Zeroize::zeroize(&mut self.$field $(.$part)?);)+
+            }
+        }
+        impl Drop for $state {
+            fn drop(&mut self) {
+                p256::elliptic_curve::zeroize::Zeroize::zeroize(self);
+            }
+        }
+        impl p256::elliptic_curve::zeroize::ZeroizeOnDrop for $state {}
+    };
+}
+erase_state!(InitiatorStart; x);
+erase_state!(ResponderStart; y);
+erase_state!(ProcessingM1; y);
+erase_state!(WaitM2; x);
+erase_state!(WaitM3; y, prk_3e2m);
+erase_state!(ProcessingM2; x, prk_2e, mac_2, plaintext_2.content);
+erase_state!(ProcessedM2; prk_3e2m, prk_4e3m);
+erase_state!(ProcessingM3; y, prk_3e2m, mac_3, plaintext_3.content);
+erase_state!(PreparingM3; prk_3e2m, prk_4e3m, mac_3);
+erase_state!(ProcessedM3; prk_4e3m, prk_out, prk_exporter);
+erase_state!(WaitM4; prk_4e3m, prk_out, prk_exporter);
+erase_state!(Completed; prk_out, prk_exporter);
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C)]
 pub enum CredentialTransfer {
@@ -1182,6 +1212,142 @@ mod cbor_decoder {
             } else {
                 Err(CBORError::DecodingError)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod secret_erasure_tests {
+    use super::*;
+    use p256::elliptic_curve::zeroize::{Zeroize, ZeroizeOnDrop};
+
+    // Test the same routine Drop invokes, while the object is still live.
+    // No reading freed memory or assumptions about compiler-created copies.
+    #[test]
+    fn all_handshake_states_erase_owned_secrets() {
+        fn guarded<T: ZeroizeOnDrop>(_: &T) {}
+        {
+            let mut state = InitiatorStart {
+                suites_i: EdhocBuffer::default(),
+                method: 3,
+                x: [0; 32],
+                g_x: [0; 32],
+            };
+            guarded(&state);
+            state.x.fill(0xa5);
+            state.zeroize();
+            assert!(state.x.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ResponderStart {
+                method: 3,
+                y: [0; 32],
+                g_y: [0; 32],
+            };
+            guarded(&state);
+            state.y.fill(0xa5);
+            state.zeroize();
+            assert!(state.y.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ProcessingM1::default();
+            guarded(&state);
+            state.y.fill(0xa5);
+            state.zeroize();
+            assert!(state.y.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = WaitM2::default();
+            guarded(&state);
+            state.x.fill(0xa5);
+            state.zeroize();
+            assert!(state.x.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = WaitM3::default();
+            guarded(&state);
+            state.y.fill(0xa5);
+            state.prk_3e2m.fill(0xa5);
+            state.zeroize();
+            assert!(state.y.iter().all(|byte| *byte == 0));
+            assert!(state.prk_3e2m.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ProcessingM2::default();
+            guarded(&state);
+            state.x.fill(0xa5);
+            state.prk_2e.fill(0xa5);
+            state.mac_2.fill(0xa5);
+            state.plaintext_2.content.fill(0xa5);
+            state.zeroize();
+            assert!(state.x.iter().all(|byte| *byte == 0));
+            assert!(state.prk_2e.iter().all(|byte| *byte == 0));
+            assert!(state.mac_2.iter().all(|byte| *byte == 0));
+            assert!(state.plaintext_2.content.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ProcessedM2::default();
+            guarded(&state);
+            state.prk_3e2m.fill(0xa5);
+            state.prk_4e3m.fill(0xa5);
+            state.zeroize();
+            assert!(state.prk_3e2m.iter().all(|byte| *byte == 0));
+            assert!(state.prk_4e3m.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ProcessingM3::default();
+            guarded(&state);
+            state.y.fill(0xa5);
+            state.prk_3e2m.fill(0xa5);
+            state.mac_3.fill(0xa5);
+            state.plaintext_3.content.fill(0xa5);
+            state.zeroize();
+            assert!(state.y.iter().all(|byte| *byte == 0));
+            assert!(state.prk_3e2m.iter().all(|byte| *byte == 0));
+            assert!(state.mac_3.iter().all(|byte| *byte == 0));
+            assert!(state.plaintext_3.content.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = PreparingM3::default();
+            guarded(&state);
+            state.prk_3e2m.fill(0xa5);
+            state.prk_4e3m.fill(0xa5);
+            state.mac_3.fill(0xa5);
+            state.zeroize();
+            assert!(state.prk_3e2m.iter().all(|byte| *byte == 0));
+            assert!(state.prk_4e3m.iter().all(|byte| *byte == 0));
+            assert!(state.mac_3.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = ProcessedM3::default();
+            guarded(&state);
+            state.prk_4e3m.fill(0xa5);
+            state.prk_out.fill(0xa5);
+            state.prk_exporter.fill(0xa5);
+            state.zeroize();
+            assert!(state.prk_4e3m.iter().all(|byte| *byte == 0));
+            assert!(state.prk_out.iter().all(|byte| *byte == 0));
+            assert!(state.prk_exporter.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = WaitM4::default();
+            guarded(&state);
+            state.prk_4e3m.fill(0xa5);
+            state.prk_out.fill(0xa5);
+            state.prk_exporter.fill(0xa5);
+            state.zeroize();
+            assert!(state.prk_4e3m.iter().all(|byte| *byte == 0));
+            assert!(state.prk_out.iter().all(|byte| *byte == 0));
+            assert!(state.prk_exporter.iter().all(|byte| *byte == 0));
+        }
+        {
+            let mut state = Completed::default();
+            guarded(&state);
+            state.prk_out.fill(0xa5);
+            state.prk_exporter.fill(0xa5);
+            state.zeroize();
+            assert!(state.prk_out.iter().all(|byte| *byte == 0));
+            assert!(state.prk_exporter.iter().all(|byte| *byte == 0));
         }
     }
 }

@@ -51,7 +51,7 @@ impl PairingFile {
 }
 
 fn seal(record: &PairingRecord) -> Result<SealedRecord, Error> {
-    let mut bytes = [0; 224];
+    let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
     let len = record.encode(&mut bytes).map_err(|_| Error::Input)?;
     Ok(SealedRecord {
         version: 1,
@@ -105,6 +105,8 @@ pub fn apply(
                 commit,
             )
             .map_err(|_| Error::Persistence),
+        // Recovery requires two independent approvals through its dedicated sink.
+        _ => Err(Error::Input),
     }
 }
 
@@ -113,11 +115,60 @@ pub fn permissions(write: bool) -> [u8; 32] {
     blake3::derive_key(
         "coaptic local service permissions v1",
         if write {
-            b"GET /identity;POST /echo".as_slice()
+            b"GET /identity;POST /echo;POST /telemetry".as_slice()
         } else {
             b"GET /identity".as_slice()
         },
     )
+}
+
+/// Previously approved echo-only permission; never grants durable telemetry.
+pub fn echo_permissions() -> [u8; 32] {
+    blake3::derive_key(
+        "coaptic local service permissions v1",
+        b"GET /identity;POST /echo",
+    )
+}
+
+pub fn telemetry_resource() -> [u8; 32] {
+    blake3::derive_key("coaptic local service resource v1", b"POST /telemetry")
+}
+
+/// Explicit first initialization, never a missing-journal recovery fallback.
+pub fn initialize_receipts(directory: &Path, identity: &Identity) -> Result<(), Error> {
+    use coaptic::provisioning::TrustAnchor;
+    use coaptic_receipts::{Authority, Journal, MAX_ROWS, Policy};
+    let authority = Authority::new(Policy {
+        anchor: TrustAnchor::genesis(*identity.peer().principal().fingerprint())
+            .map_err(|_| Error::Input)?,
+        principal: identity.peer().principal(),
+        resource: telemetry_resource(),
+        enabled: false,
+    });
+    Journal::create(&directory.join("receipts.bin"), authority, MAX_ROWS)
+        .map_err(|_| Error::Persistence)?;
+    Ok(())
+}
+
+/// Confirm an existing journal is recoverable before activating telemetry.
+/// Holds its exclusive ownership until dropped; never creates or resets it.
+pub fn preflight_receipts(
+    directory: &Path,
+    identity: &Identity,
+) -> Result<coaptic_receipts::Journal, Error> {
+    use coaptic::provisioning::TrustAnchor;
+    use coaptic_receipts::{Authority, Journal, Policy};
+    Journal::open(
+        &directory.join("receipts.bin"),
+        Authority::new(Policy {
+            anchor: TrustAnchor::genesis(*identity.peer().principal().fingerprint())
+                .map_err(|_| Error::Input)?,
+            principal: identity.peer().principal(),
+            resource: telemetry_resource(),
+            enabled: false,
+        }),
+    )
+    .map_err(|_| Error::Persistence)
 }
 
 #[cfg(all(test, windows))]

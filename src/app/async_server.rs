@@ -225,7 +225,7 @@ impl<'a, S: Storage + BodySlots> BodyOwner<'a, S> {
 
 struct NotifyOwner<'a, S: Storage + ObserveSlots> {
     engine: &'a mut Engine<S>,
-    key: ObserveKey,
+    key: ObserveKey<S::Token>,
     seq: u32,
     armed: bool,
 }
@@ -248,7 +248,7 @@ impl<S: Storage + ObserveSlots> Drop for NotifyOwner<'_, S> {
 
 struct DeferredObserveOwner<'a, S: AppStorage> {
     engine: &'a mut Engine<S>,
-    row: &'a mut DeferredRow,
+    row: &'a mut DeferredRow<S::Token>,
     armed: bool,
 }
 
@@ -348,9 +348,9 @@ pub(super) async fn send_retransmit_packet_async<
 >(
     engine: &mut Engine<S>,
     io: &mut T,
-    inbox: &mut client::ClientInbox<C>,
-    lives: &mut client::ClientLives<C>,
-    oscore: &mut oscore::Field<R>,
+    inbox: &mut client::ClientInbox<C, S::Token>,
+    lives: &mut client::ClientLives<C, S::Token>,
+    oscore: &mut oscore::Field<R, S::Token>,
     tx: SlotId,
 ) -> Result<(), Error<T::Error>> {
     let expected = engine.pending_con(tx).ok_or(Error::Saturated)?;
@@ -399,7 +399,7 @@ impl<
     T: AsyncDatagramIo,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -436,7 +436,10 @@ where
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<AsyncIoError<T::Error, C>>> {
         self.progress_protocol_async(
             now_ms,
@@ -483,7 +486,10 @@ where
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
         mut checkpoint: impl FnMut(Option<Association>, crate::oscore::ReplayCheckpoint) -> bool,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<AsyncIoError<T::Error, C>>> {
         self.oscore_checkpoint.require();
         self.progress_protocol_async(
@@ -509,7 +515,10 @@ where
         deadline_ms: u64,
         mut ingress: impl FnMut(&[u8], Endpoint) -> bool,
         mut checkpoint: impl FnMut(Option<Association>, crate::oscore::ReplayCheckpoint) -> bool,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<AsyncIoError<T::Error, C>>> {
         self.oscore_checkpoint.require();
         self.progress_protocol_async(
@@ -529,7 +538,7 @@ where
     pub async fn complete_async<C>(
         &mut self,
         handle: DeferredReply,
-        response: Response<'_>,
+        response: Response<'_, S::Token>,
         now_ms: u64,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
@@ -563,7 +572,7 @@ where
         &mut self,
         now_ms: u64,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, S::Token>,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
@@ -597,7 +606,7 @@ where
         &mut self,
         now_ms: u64,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, S::Token>,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
@@ -633,7 +642,7 @@ where
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
         checkpoint: Option<&mut oscore::CheckpointCommit<'_>>,
-        dispatch: Option<&mut AppDispatch<'_>>,
+        dispatch: Option<&mut AppDispatch<'_, S::Token>>,
         ingress: Option<&mut AppIngress<'_>>,
     ) -> Result<(), Error<AsyncIoError<T::Error, C>>> {
         let deadline_ms = self.async_send_deadline(now_ms, deadline_ms);
@@ -678,19 +687,19 @@ pub(super) async fn dispatch_rx_async<
 >(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    site: &Site<N>,
-    inbox: &mut client::ClientInbox<CALLS>,
-    lives: &mut client::ClientLives<CALLS>,
+    site: &Site<N, Mem::Token>,
+    inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
+    lives: &mut client::ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, Mem::Token>,
     oscore_checkpoint: &mut oscore::CheckpointState,
     checkpoint_commit: &mut Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
-    deferred: &mut DeferredTable<DEFERRED>,
+    deferred: &mut DeferredTable<DEFERRED, Mem::Token>,
     deferred_lifetime_ms: u64,
-    dispatch: Option<&mut AppDispatch<'_>>,
+    dispatch: Option<&mut AppDispatch<'_, Mem::Token>>,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -733,10 +742,10 @@ pub(super) async fn send_notification_async<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    interest: ObserveInterest,
-    response: &Response<'_>,
+    interest: ObserveInterest<S::Token>,
+    response: &Response<'_, S::Token>,
     seq: u32,
 ) -> Result<bool, Error<T::Error>>
 where
@@ -781,10 +790,10 @@ pub(super) async fn complete_deferred_observe_async<
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    row: &mut DeferredRow,
-    response: &Response<'_>,
+    row: &mut DeferredRow<S::Token>,
+    response: &Response<'_, S::Token>,
 ) -> Result<(), Error<T::Error>> {
     let mut owner = DeferredObserveOwner {
         engine,
@@ -852,12 +861,12 @@ where
 pub(super) async fn send_qblock_recover_async<S, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    inbox: &mut client::ClientInbox<CALLS>,
-    lives: &mut client::ClientLives<CALLS>,
+    inbox: &mut client::ClientInbox<CALLS, S::Token>,
+    lives: &mut client::ClientLives<CALLS, S::Token>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    recover: QBlockRecover,
+    recover: QBlockRecover<S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where

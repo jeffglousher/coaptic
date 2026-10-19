@@ -2244,14 +2244,23 @@ fn replacing_route_changes_handler() {
 
 #[test]
 fn response_builders() {
-    assert_eq!(Response::changed().code(), Code::CHANGED);
-    assert_eq!(Response::not_found().code(), Code::NOT_FOUND);
     assert_eq!(
-        Response::method_not_allowed().code(),
+        Response::<crate::message::Token>::changed().code(),
+        Code::CHANGED
+    );
+    assert_eq!(
+        Response::<crate::message::Token>::not_found().code(),
+        Code::NOT_FOUND
+    );
+    assert_eq!(
+        Response::<crate::message::Token>::method_not_allowed().code(),
         Code::METHOD_NOT_ALLOWED
     );
-    assert_eq!(Response::content(b"x").payload(), b"x");
-    let cf = Response::content(b"x")
+    assert_eq!(
+        Response::<crate::message::Token>::content(b"x").payload(),
+        b"x"
+    );
+    let cf = Response::<crate::message::Token>::content(b"x")
         .content_format(ContentFormat::LINK_FORMAT)
         .max_age(60)
         .observe(3)
@@ -2260,7 +2269,7 @@ fn response_builders() {
     assert_eq!(cf.max_age_secs(), Some(60));
     assert_eq!(cf.observe_seq(), Some(3));
     assert_eq!(cf.etag_bytes(), Some(&b"ab"[..]));
-    let created = Response::created()
+    let created = Response::<crate::message::Token>::created()
         .location_path("location1")
         .location_path("location2")
         .location_query("first=1")
@@ -2268,15 +2277,21 @@ fn response_builders() {
     assert_eq!(created.code(), Code::CREATED);
     assert_eq!(created.location_paths(), &["location1", "location2"]);
     assert_eq!(created.location_queries(), &["first=1", "second=2"]);
-    assert!(Response::content(b"later").separate().is_separate());
-    assert!(!Response::content(b"now").is_separate());
+    assert!(
+        Response::<crate::message::Token>::content(b"later")
+            .separate()
+            .is_separate()
+    );
+    assert!(!Response::<crate::message::Token>::content(b"now").is_separate());
     let echo = EchoOpt::mint(9, &[]).expect("mint");
     assert_eq!(
-        Response::unauthorized().echo(echo).echo_option(),
+        Response::<crate::message::Token>::unauthorized()
+            .echo(echo)
+            .echo_option(),
         Some(echo)
     );
 
-    let problem = Response::problem(Code::BAD_REQUEST)
+    let problem = Response::<crate::message::Token>::problem(Code::BAD_REQUEST)
         .title("Bad Request")
         .detail("Uri-Path is not UTF-8");
     assert_eq!(problem.code(), Code::BAD_REQUEST);
@@ -2285,7 +2300,11 @@ fn response_builders() {
     assert_eq!(details.response_code(), Some(Code::BAD_REQUEST));
     assert_eq!(details.title_text(), Some("Bad Request"));
     assert_eq!(details.detail_text(), Some("Uri-Path is not UTF-8"));
-    assert!(Response::not_found().problem_details().is_none());
+    assert!(
+        Response::<crate::message::Token>::not_found()
+            .problem_details()
+            .is_none()
+    );
 }
 
 #[test]
@@ -6488,35 +6507,43 @@ fn response_option_bounds_are_typed_sticky_and_preserve_exact_values() {
     let long = core::str::from_utf8(&LONG).unwrap();
     for n in [0, 9] {
         assert_eq!(
-            Response::content(b"ok").etag(&[1; 9][..n]).validate(),
+            Response::<crate::message::Token>::content(b"ok")
+                .etag(&[1; 9][..n])
+                .validate(),
             Err(ResponseError::EtagLength)
         );
     }
     for n in [1, 8] {
-        let response = Response::content(b"ok").etag(&[1; 8][..n]);
+        let response = Response::<crate::message::Token>::content(b"ok").etag(&[1; 8][..n]);
         assert_eq!(response.validate(), Ok(()));
         assert_eq!(response.etag_bytes(), Some(&[1; 8][..n]));
     }
-    let invalid = Response::content(b"ok")
+    let invalid = Response::<crate::message::Token>::content(b"ok")
         .etag(&[1; 9])
         .etag(b"good")
         .location_path(".");
     assert_eq!(invalid.validate(), Err(ResponseError::EtagLength));
     for segment in [".", ".."] {
         assert_eq!(
-            Response::created().location_path(segment).validate(),
+            Response::<crate::message::Token>::created()
+                .location_path(segment)
+                .validate(),
             Err(ResponseError::LocationDotSegment)
         );
     }
     assert_eq!(
-        Response::created().location_path(long).validate(),
+        Response::<crate::message::Token>::created()
+            .location_path(long)
+            .validate(),
         Err(ResponseError::LocationPathBounds)
     );
     assert_eq!(
-        Response::created().location_query(long).validate(),
+        Response::<crate::message::Token>::created()
+            .location_query(long)
+            .validate(),
         Err(ResponseError::LocationQueryBounds)
     );
-    let mut response = Response::created()
+    let mut response = Response::<crate::message::Token>::created()
         .location_path(&long[..255])
         .location_query(&long[..255]);
     for _ in 1..super::LOCATION_MAX {
@@ -10315,6 +10342,7 @@ fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
 fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
     struct LargeUpload;
     impl MemoryProfile for LargeUpload {
+        type Token = crate::message::Token;
         const RX_DATAGRAM_SLOTS: usize = 4;
         const RX_DATAGRAM_BYTES: usize = WIRE;
         const TX_DATAGRAM_SLOTS: usize = 4;
@@ -11262,6 +11290,7 @@ fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
 // A larger Engine pool must not turn App's fixed hold into silent truncation.
 struct LargeDownload;
 impl MemoryProfile for LargeDownload {
+    type Token = crate::message::Token;
     const RX_DATAGRAM_SLOTS: usize = 4;
     const RX_DATAGRAM_BYTES: usize = WIRE;
     const TX_DATAGRAM_SLOTS: usize = 4;
@@ -11286,11 +11315,11 @@ impl MemoryProfile for LargeDownload {
 #[test]
 fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
     fn exercise<
-        P: MemoryProfile
+        P: MemoryProfile<Token = Token>
             + MemoryLayout<true, Store = crate::storage::Memory<P, crate::storage::WithBodies<P>>>,
     >()
     where
-        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage,
+        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage<Token = Token>,
     {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
@@ -12430,7 +12459,7 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
 #[test]
 fn response_unprocessed_options_preserves_fields_and_refuses_overflow() {
     use crate::message::ProblemError;
-    let original = Response::problem(Code::BAD_OPTION)
+    let original = Response::<crate::message::Token>::problem(Code::BAD_OPTION)
         .title("Bad Option")
         .detail("unsupported");
     let response = original.unprocessed_options(&[23, 60]).unwrap();
@@ -12447,12 +12476,13 @@ fn response_unprocessed_options_preserves_fields_and_refuses_overflow() {
         original.unprocessed_options(&[u64::MAX; 32]),
         Err(ProblemError::BufferTooSmall)
     ));
-    let malformed = Response::content(b"not cbor").content_format(ContentFormat::PROBLEM_DETAILS);
+    let malformed = Response::<crate::message::Token>::content(b"not cbor")
+        .content_format(ContentFormat::PROBLEM_DETAILS);
     assert!(matches!(
         malformed.unprocessed_options(&[1]),
         Err(ProblemError::Invalid)
     ));
-    let plain = Response::new(Code::BAD_OPTION)
+    let plain = Response::<crate::message::Token>::new(Code::BAD_OPTION)
         .unprocessed_options(&[23])
         .unwrap();
     assert_eq!(plain.payload(), &[0xa2, 0x23, 0x18, 0x82, 0x27, 0x17]);
@@ -12495,10 +12525,11 @@ fn replay_cache_admission_distinguishes_eviction_from_real_saturation() {
                 "old request remains ACKed without re-execution"
             );
             app.engine.release_tx(acquired.unwrap()).unwrap();
-            assert_eq!(app.engine.tx_occupied(), capacity - 1);
+            assert_eq!(app.engine.tx_occupied(), capacity - 2);
         } else {
             assert!(acquired.is_none());
-            assert_eq!(app.metrics().saturated, before + 1);
+            assert_eq!(app.metrics().saturated, before);
+            assert_eq!(app.metrics().admission_tx_refused, 1);
             assert_eq!(app.engine.tx_occupied(), capacity);
         }
     }
@@ -13055,7 +13086,7 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
     assert!(app.take_response_into(call, &mut output).unwrap().is_none());
 }
 
-fn exercise_client_without_block_storage<S: super::AppStorage>(
+fn exercise_client_without_block_storage<S: super::AppStorage<Token = Token>>(
     mut app: App<profiles::Default, WideLoopback, DEFAULT_ROUTES, false, S>,
     protected: bool,
 ) {
@@ -13392,7 +13423,7 @@ fn deferred_capacity_expiry_and_stale_handles_are_explicit() {
 #[test]
 fn borrowed_response_tracks_exact_large_payload_length() {
     let body = [7; 70_000];
-    let response = Response::new(Code::CONTENT).payload_borrowed(&body);
+    let response = Response::<crate::message::Token>::new(Code::CONTENT).payload_borrowed(&body);
     assert_eq!(response.payload_src_len(), body.len());
     assert_eq!(response.payload(), body);
     assert!(!response.payload_truncated());
@@ -14710,7 +14741,7 @@ fn associations_revoke_pending_calls_and_refuse_stale_slot_handles() {
     let a = Endpoint::v4([192, 0, 2, 1], 5683);
     let b = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::with_resources(
-        super::resources::SmallDevice::new()
+        super::resources::Resources::<AdmissionTwoConCalls, 4>::new()
             .associations::<2>()
             .client_calls::<2>(),
     )
@@ -14899,7 +14930,7 @@ fn associations_share_endpoint_nstart_and_pinned_revocation_stops_old_sends() {
     };
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = App::with_resources(
-        super::resources::SmallDevice::new()
+        super::resources::Resources::<AdmissionTwoConCalls, 4>::new()
             .associations::<2>()
             .client_calls::<2>(),
     )
@@ -15223,4 +15254,285 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
     assert!(super::response_body_for(&app.engine, block_key).is_none());
     let terminal = app.engine.pending_con(slot).unwrap();
     assert_eq!(terminal.rto(), original.rto().next_attempt(due).unwrap());
+}
+
+#[test]
+fn admission_reserve_refuses_before_handler_and_recovers() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn handle(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"ok")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["work"], get(handle))
+        .allow_unprotected()
+        .bind(RecordIo::default())
+        .unwrap();
+    let ordinary = super::admission::ordinary_tx(app.engine_mut()).unwrap();
+    assert!(super::admission::ordinary_tx(app.engine_mut()).is_none());
+    for (index, ty) in [Type::Confirmable, Type::NonConfirmable]
+        .into_iter()
+        .enumerate()
+    {
+        let (wire, n) = encode_req_ty(ty, Code::GET, &["work"], &[], None);
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(index as u64).unwrap();
+        let (_, bytes, n) = app.transport().sent[index].unwrap();
+        let parsed = decode(&bytes[..n]).unwrap();
+        assert_eq!(parsed.code(), Code::SERVICE_UNAVAILABLE);
+        assert_eq!(parsed.max_age(), Some(Ok(1)));
+        if ty == Type::NonConfirmable {
+            assert_ne!(parsed.message_id(), MessageId::new(0x1001));
+        } else {
+            assert_eq!(parsed.message_id(), MessageId::new(0x1001));
+        }
+        assert_eq!(app.engine_mut().tx_occupied(), 1);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+    }
+    assert_eq!(HITS.load(Ordering::SeqCst), 0);
+    assert_eq!(app.engine_mut().metrics().admission_refusal_sent, 2);
+    app.engine_mut().release_tx(ordinary).unwrap();
+    let (wire, n) = encode_req_mid(Code::GET, &["work"], &[], 0x1002);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(3).unwrap();
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    let (_, bytes, n) = app.transport().sent[2].unwrap();
+    assert_eq!(decode(&bytes[..n]).unwrap().code(), Code::CONTENT);
+}
+
+#[test]
+fn admission_control_send_failure_returns_reserve_and_counts() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req(Code::GET, &["work"], &[]);
+    let mut io = RecordIo::default();
+    io.sent_n = io.sent.len();
+    io.inbox = Some((peer, wire, n));
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["work"], get(get_temp))
+        .allow_unprotected()
+        .bind(io)
+        .unwrap();
+    let held = super::admission::ordinary_tx(app.engine_mut()).unwrap();
+    assert!(app.poll(0).is_err());
+    assert_eq!(app.engine_mut().tx_occupied(), 1);
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().metrics().admission_refusal_unsent, 1);
+    app.engine_mut().release_tx(held).unwrap();
+}
+
+#[test]
+fn admission_full_response_credit_lasts_until_collection() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let other = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .full_responses()
+        .allow_unprotected()
+        .bind(RecordIo::default())
+        .unwrap();
+    let call = app.get("value").to(peer).send(0).unwrap();
+    let (_, bytes, n) = app.transport().sent[0].unwrap();
+    let request = decode(&bytes[..n]).unwrap();
+    let mut wire = [0; 256];
+    let response = Message::new(Type::Acknowledgement, Code::CONTENT, request.message_id())
+        .with_token(request.token())
+        .with_payload(b"value");
+    let n = encode(&response, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.engine_mut().rx_occupied(), 1);
+    assert!(matches!(
+        app.get("other").to(other).send(2),
+        Err(Error::Saturated)
+    ));
+    assert_eq!(app.engine_mut().metrics().admission_rx_refused, 1);
+    let mut output = [0; 16];
+    assert_eq!(
+        app.take_response_into(call, &mut output)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"value"
+    );
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert!(app.get("other").to(other).send(3).is_ok());
+}
+
+crate::memory_profile! {
+    AdmissionOnePacket {
+        rx_datagram: (1, 256), tx_datagram: (1, 256),
+        rx_body: (0, 0), tx_body: (0, 0), dedup: 1, observe: 1,
+    }
+}
+
+#[test]
+fn admission_app_requires_headroom_raw_engine_keeps_physical_capacity() {
+    assert!(matches!(
+        App::profile::<AdmissionOnePacket>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .allow_unprotected()
+            .bind(RecordIo::default()),
+        Err(crate::BuildError::PacketHeadroom)
+    ));
+    let mut engine = crate::storage::EngineBuilder::new()
+        .profile::<AdmissionOnePacket>()
+        .block_wise(false)
+        .build(crate::storage::Memory::<AdmissionOnePacket>::new())
+        .unwrap();
+    let rx = engine.acquire_rx().unwrap();
+    assert!(engine.acquire_rx().is_none());
+    let tx = engine.acquire_tx().unwrap();
+    assert!(engine.acquire_tx().is_none());
+    assert_eq!(engine.metrics().hard_rx_exhausted, 1);
+    assert_eq!(engine.metrics().hard_tx_exhausted, 1);
+    engine.release_rx(rx).unwrap();
+    engine.release_tx(tx).unwrap();
+}
+
+#[test]
+fn admission_upload_identity_accepts_changed_token_not_changed_request() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut engine = crate::storage::EngineBuilder::new()
+        .profile::<profiles::Constrained>()
+        .block_wise(true)
+        .build(crate::storage::Memory::<profiles::Constrained>::with_block_wise())
+        .unwrap();
+    let b0 = BlockValue::new(0, true, 0).unwrap().encode();
+    let b1 = BlockValue::new(1, false, 0).unwrap().encode();
+    let size = encode_uint(32);
+    let first = [
+        Opt::uri_path("upload"),
+        Opt::q_block1(&b0),
+        Opt::size1(&size),
+        Opt::request_tag(b"tag"),
+    ];
+    let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1))
+        .with_token(Token::new(&[1]).unwrap())
+        .with_options(&first)
+        .with_payload(&[0; 16]);
+    let rx = engine.acquire_rx().unwrap();
+    engine.encode_rx(rx, &msg).unwrap();
+    engine.set_rx_endpoint(rx, peer).unwrap();
+    engine.apply_q_block1_rx(rx).unwrap();
+    engine.release_rx(rx).unwrap();
+    for (path, tag, condition, expected) in [
+        ("upload", &b"tag"[..], false, true),
+        ("other", &b"tag"[..], false, false),
+        ("upload", &b"bad"[..], false, false),
+        ("upload", &b"tag"[..], true, false),
+    ] {
+        let mut opts = OptionsBuilder::<8>::new();
+        if condition {
+            opts.push(Opt::if_none_match()).unwrap();
+        }
+        opts.push(Opt::uri_path(path)).unwrap();
+        opts.push(Opt::q_block1(if condition { &b0 } else { &b1 }))
+            .unwrap();
+        opts.push(Opt::size1(&size)).unwrap();
+        opts.push(Opt::request_tag(tag)).unwrap();
+        let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(2))
+            .with_token(Token::new(&[2]).unwrap())
+            .with_options(opts.as_slice())
+            .with_payload(&[0; 16]);
+        let mut bytes = [0; 256];
+        let n = encode(&msg, &mut bytes).unwrap();
+        assert_eq!(
+            engine.admitted_upload(&decode(&bytes[..n]).unwrap(), peer),
+            expected
+        );
+    }
+}
+
+#[test]
+fn admission_observe_cancellation_releases_relation_without_handler() {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    fn observe(_: Request<'_>) -> Response<'static> {
+        HITS.fetch_add(1, Ordering::SeqCst);
+        Response::content(b"value").observe(0)
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route(&["value"], get(observe))
+        .allow_unprotected()
+        .bind(RecordIo::default())
+        .unwrap();
+    let (wire, n) = encode_req_extra(Code::GET, &["value"], &[Opt::observe_register()], &[]);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    let key = ObserveKey::new(Token::new(&[0xa1]).unwrap(), peer);
+    assert!(app.engine.lookup_observe(key).is_some());
+    let held = super::admission::ordinary_tx(&mut app.engine).unwrap();
+    let options = [Opt::observe_deregister(), Opt::uri_path("value")];
+    let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1002))
+        .with_token(key.token())
+        .with_options(&options);
+    let mut wire = [0; 256];
+    let n = encode(&msg, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert!(app.engine.lookup_observe(key).is_none());
+    assert_eq!(HITS.load(Ordering::SeqCst), 1);
+    let (_, bytes, n) = app.transport().sent[1].unwrap();
+    assert_eq!(
+        decode(&bytes[..n]).unwrap().code(),
+        Code::SERVICE_UNAVAILABLE
+    );
+    app.engine.release_tx(held).unwrap();
+}
+
+// Two concurrent full-response Calls need two RX credits plus ingress headroom.
+crate::memory_profile! {
+    pub(super) AdmissionTwoRxCalls {
+        rx_datagram: (3, 1152), tx_datagram: (2, 1152),
+        rx_body: (1, 4096), tx_body: (1, 4096), dedup: 4, observe: 2,
+    }
+}
+// The association tests retain two independent CON owners (including pinned
+// revocation), so their TX dimension also needs two ordinary slots plus control.
+#[cfg(feature = "oscore")]
+crate::memory_profile! {
+    AdmissionTwoConCalls {
+        rx_datagram: (3, 1152), tx_datagram: (3, 1152),
+        rx_body: (1, 4096), tx_body: (1, 4096), dedup: 4, observe: 2,
+    }
+}
+
+#[test]
+fn admission_failed_completion_releases_rx_credit_before_collection() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .full_responses()
+        .allow_unprotected()
+        .bind(RecordIo::default())
+        .unwrap();
+    let failed = app.get("first").to(peer).non().deadline(1).send(0).unwrap();
+    app.poll(2).unwrap();
+    assert_eq!(app.resource_usage().completed_replies, 1);
+    let next = app.get("next").to(peer).non().send(3).unwrap();
+    let usage = app.resource_usage();
+    assert_eq!(
+        usage.client_requests.occupied, 2,
+        "failed completion retains its Call row alongside the newly admitted Call"
+    );
+    assert_eq!(
+        usage.client_replies.occupied, 1,
+        "only the failure has completed; the new Call has no reply yet"
+    );
+    assert_eq!(usage.completed_replies, 1);
+    assert!(app.take_response(next).is_none());
+    assert!(app.take_response(failed).unwrap().is_err());
+    assert!(app.cancel(next));
 }

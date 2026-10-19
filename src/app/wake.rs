@@ -22,7 +22,7 @@ impl<
     T: AsyncDatagramIo,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
