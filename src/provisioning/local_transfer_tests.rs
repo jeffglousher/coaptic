@@ -32,6 +32,110 @@ fn paired() -> (Identity, LocalPairing) {
 }
 
 #[test]
+fn recovery_is_pre_authorized_one_use_and_preserves_identity_after_revocation() {
+    let (device, mut state) = paired();
+    let original = state.checkpoint().clone();
+    let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+    let len = original.encode(&mut bytes).unwrap();
+    assert_eq!(bytes[0], 0x89);
+    assert_eq!(
+        PairingRecord::decode(&bytes[..len]).unwrap().commitment(),
+        original.commitment()
+    );
+    let challenge = state.begin(&device, 2, entropy).unwrap();
+    let config = PairingUpdate::set_recovery(challenge, policy(2, 4), Some([8; 32])).unwrap();
+    let mut wire = [0; 384];
+    let len = config.encode(&mut wire).unwrap();
+    PairingUpdate::decode(&wire[..len])
+        .unwrap()
+        .apply(&mut state, 3, commit)
+        .unwrap();
+    assert_eq!(state.checkpoint().recovery_owner(), Some(&[8; 32]));
+    assert!(state.permits(&identity(2).peer().principal()));
+    let challenge = state.begin(&device, 4, entropy).unwrap();
+    state.revoke(&challenge, &[4; 32], 5, commit).unwrap();
+    let len = state.checkpoint().encode(&mut bytes).unwrap();
+    assert_eq!(bytes[0], 0x8a);
+    let mut state =
+        LocalPairing::restore(&device, PairingRecord::decode(&bytes[..len]).unwrap()).unwrap();
+    let challenge = state.begin(&device, 6, entropy).unwrap();
+    let recovery = PairingUpdate::recover(challenge, [8; 32], policy(3, 5)).unwrap();
+    let len = recovery.encode(&mut wire).unwrap();
+    PairingUpdate::decode(&wire[..len])
+        .unwrap()
+        .apply(&mut state, 7, commit)
+        .unwrap();
+    assert_eq!(
+        state.checkpoint().local_principal(),
+        original.local_principal()
+    );
+    assert_eq!(state.checkpoint().store(), original.store());
+    assert_eq!(state.checkpoint().recovery_owner(), None);
+    assert!(!state.permits(&identity(2).peer().principal()));
+    assert!(state.permits(&identity(3).peer().principal()));
+    let challenge = state.begin(&device, 8, entropy).unwrap();
+    assert!(
+        state
+            .recover(&challenge, &[8; 32], policy(2, 6), 9, commit)
+            .is_err()
+    );
+}
+
+#[test]
+fn recovery_refuses_wrong_authority_policy_replay_and_uncertain_storage() {
+    let (device, mut state) = paired();
+    let challenge = state.begin(&device, 2, entropy).unwrap();
+    assert!(
+        state
+            .set_recovery(&challenge, &policy(3, 4), Some([8; 32]), 3, commit)
+            .is_err()
+    );
+    assert!(
+        state
+            .set_recovery(&challenge, &policy(2, 4), Some([8; 32]), 4, commit)
+            .is_err()
+    );
+    let challenge = state.begin(&device, 5, entropy).unwrap();
+    state
+        .set_recovery(&challenge, &policy(2, 4), Some([8; 32]), 6, commit)
+        .unwrap();
+    let challenge = state.begin(&device, 7, entropy).unwrap();
+    assert!(
+        state
+            .recover(&challenge, &[7; 32], policy(3, 5), 8, commit)
+            .is_err()
+    );
+    let challenge = state.begin(&device, 9, entropy).unwrap();
+    let before = state.checkpoint().commitment();
+    assert!(
+        state
+            .recover(&challenge, &[8; 32], policy(3, 5), 10, |_, _| Err(1u8))
+            .is_err()
+    );
+    assert_eq!(state.checkpoint().commitment(), before);
+    assert!(state.peer().is_err());
+    assert!(state.begin(&device, 11, entropy).is_err());
+}
+
+#[test]
+fn recovery_record_exact_bound_and_whole_owner_ceiling() {
+    let (device, mut state) = paired();
+    state.record.revision = u64::MAX - 1;
+    state.record.policy = Some(policy(255, 4));
+    let challenge = state.begin(&device, 2, entropy).unwrap();
+    state
+        .set_recovery(&challenge, &policy(255, 4), Some([8; 32]), 3, commit)
+        .unwrap();
+    let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+    let len = state.checkpoint().encode(&mut bytes).unwrap();
+    assert_eq!(len, PairingRecord::MAX_ENCODED_LEN);
+    assert!(state.checkpoint().encode(&mut bytes[..len - 1]).is_err());
+    assert!(PairingRecord::decode(&bytes).is_ok());
+    assert!(core::mem::size_of::<PairingRecord>() <= 512);
+    assert!(core::mem::size_of::<LocalPairing>() <= 576);
+}
+
+#[test]
 fn local_transfer_is_explicit_current_owner_bound_and_survives_restart() {
     for revoked in [false, true] {
         let (device, mut state) = paired();
@@ -204,7 +308,7 @@ fn local_transfer_cbor_is_bounded_and_rejects_ambiguous_actions_or_truncation() 
     }
     bytes[len] = 0;
     assert!(PairingUpdate::decode(&bytes[..len + 1]).is_err());
-    for (array, action) in [(0x87, 2), (0x88, 0), (0x88, 1), (0x88, 3)] {
+    for (array, action) in [(0x87, 2), (0x88, 0), (0x88, 1), (0x88, 5)] {
         bytes[0] = array;
         bytes[2] = action;
         assert!(PairingUpdate::decode(&bytes[..len]).is_err());

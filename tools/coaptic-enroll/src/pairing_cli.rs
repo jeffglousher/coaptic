@@ -187,6 +187,41 @@ pub fn run(
     Ok(())
 }
 
+/// Read a registered credential's commitment without signing or changing its state.
+pub(super) fn approval_owner(directory: &Path, approval: ApprovalMode) -> Result<[u8; 32], Error> {
+    if approval != ApprovalMode::WebAuthn {
+        #[cfg(feature = "development-piv")]
+        {
+            use coaptic_enroll::{development_piv::DevelopmentOperator, store::RecordStore};
+            let touch = approval == ApprovalMode::PivTouch;
+            let store = RecordStore::<DevelopmentOperator>::open_named(
+                directory,
+                if touch {
+                    "piv-touch"
+                } else {
+                    "piv-development"
+                },
+            )?;
+            let operator = store.load()?;
+            if operator.requires_touch() != touch {
+                return Err(Error::Authentication);
+            }
+            return operator.owner();
+        }
+        #[cfg(not(feature = "development-piv"))]
+        return Err(Error::Authentication);
+    }
+    #[cfg(all(windows, feature = "webauthn"))]
+    {
+        Ok(*OperatorStore::open(directory)?.load()?.owner())
+    }
+    #[cfg(not(all(windows, feature = "webauthn")))]
+    {
+        let _ = directory;
+        Err(Error::Authentication)
+    }
+}
+
 pub fn approve<T>(
     directory: &Path,
     approval: ApprovalMode,
@@ -262,6 +297,18 @@ fn review(request: &Request, approval: ApprovalMode) -> Result<(), Error> {
     if request.action == Action::Transfer {
         println!(
             "Transfer to owner {}. Verify this owner and the destination peer before approval.",
+            super::hex(&request.next_owner)
+        );
+    }
+    if matches!(
+        request.action,
+        Action::ConfigureRecovery
+            | Action::ConfirmRecoveryCredential
+            | Action::RecoverOwner
+            | Action::AcceptRecoveredOwnership
+    ) {
+        println!(
+            "Recovery co-signer {} (zero removes backup authorization).",
             super::hex(&request.next_owner)
         );
     }

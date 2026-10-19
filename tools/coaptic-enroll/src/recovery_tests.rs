@@ -22,6 +22,61 @@ fn unpaired(identity: &Identity, store: u8) -> LocalPairing {
     .unwrap()
 }
 
+#[test]
+fn host_transition_expires_before_device_mutation_and_prepared_commit_has_no_reply_deadline() {
+    let host = identity(4);
+    let mut local = unpaired(&host, 6);
+    let prior = local.checkpoint().clone();
+    let challenge = local.begin(&host, 0, entropy).unwrap();
+    let policy = EnrollmentPolicy::new(identity(1).peer(), NEW, [9; 32]).unwrap();
+    let mut device_mutated = false;
+    if PreparedHostPairing::prepare(&mut local, &challenge, policy.clone(), 60_001).is_ok() {
+        device_mutated = true;
+    }
+    assert!(!device_mutated);
+    assert_eq!(local.checkpoint().commitment(), prior.commitment());
+    let challenge = local.begin(&host, 60_002, entropy).unwrap();
+    let prepared = PreparedHostPairing::prepare(&mut local, &challenge, policy, 60_003).unwrap();
+    // No persistent callback ran during prepare. A delayed but exact device
+    // confirmation now commits this already-authorized transition by CAS.
+    let mut stored = prior.clone();
+    prepared
+        .commit(|old, next| {
+            assert_eq!(old.commitment(), stored.commitment());
+            stored = next.clone();
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(stored.policy().unwrap().owner(), &NEW);
+}
+
+#[test]
+fn telemetry_recovery_preflight_never_creates_or_repairs_a_journal() {
+    let directory = std::env::temp_dir().join(format!(
+        "coaptic-recovery-journal-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let identity = identity(4);
+    assert!(crate::pairing::preflight_receipts(&directory, &identity).is_err());
+    assert!(!directory.join("receipts.bin").exists());
+    crate::pairing::initialize_receipts(&directory, &identity).unwrap();
+    let journal = crate::pairing::preflight_receipts(&directory, &identity).unwrap();
+    assert!(crate::pairing::preflight_receipts(&directory, &identity).is_err());
+    drop(journal);
+    std::fs::write(directory.join("receipts.bin"), b"corrupt").unwrap();
+    assert!(crate::pairing::preflight_receipts(&directory, &identity).is_err());
+    assert_eq!(
+        std::fs::read(directory.join("receipts.bin")).unwrap(),
+        b"corrupt"
+    );
+    std::fs::remove_file(directory.join("receipts.bin")).unwrap();
+    std::fs::remove_dir(directory).unwrap();
+}
+
 fn transferred() -> (Identity, Identity, LocalPairing, LocalPairing) {
     let device = identity(1);
     let host = identity(4);

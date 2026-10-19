@@ -39,7 +39,7 @@ fn available(id: &str, capabilities: Capabilities) -> bool {
     match id {
         "13" => capabilities.webauthn,
         "9" | "10" | "14" | "15" => capabilities.piv,
-        "2" | "3" | "4" | "5" => capabilities.piv || capabilities.webauthn,
+        "2" | "3" | "4" | "5" | "18" | "19" | "20" => capabilities.piv || capabilities.webauthn,
         _ => true,
     }
 }
