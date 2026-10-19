@@ -141,7 +141,7 @@ fn exchange<
 ) -> Result<(), host_error::Error>
 where
     P: MemoryLayout<B> + AppAssembled<B>,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
 {
     let epoch = Instant::now();
     let mut clock = CheckedClock::new(|| u64::try_from(epoch.elapsed().as_millis()));

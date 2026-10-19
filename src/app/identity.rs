@@ -1,6 +1,8 @@
 //! Bounded App identity allocation and retransmission jitter.
 use crate::error::BuildError;
-use crate::message::{MessageId, Token, Transmission};
+use crate::message::{MessageId, OwnedToken, Token, Transmission};
+
+const _: () = assert!(Transmission::ACK_RANDOM_SPAN_MS <= u16::MAX as u32);
 
 /// Fill every requested byte from a cryptographically secure source.
 /// Return false on failure; App never substitutes predictable bytes.
@@ -42,11 +44,15 @@ pub(super) struct AppIds {
     next_mid: u16,
     issued: u32,
     last_mid_ms: u64,
-    jitter: u32,
+    jitter: u16,
     test_token: u32,
+    token_length: u32,
 }
 impl AppIds {
-    pub(super) fn new(source: Option<Source>) -> Result<Self, BuildError> {
+    pub(super) fn new(
+        source: Option<Source>,
+        token_length: Option<usize>,
+    ) -> Result<Self, BuildError> {
         let source = source.ok_or(BuildError::RandomnessRequired)?;
         let next_mid = match source {
             Source::Test => 1,
@@ -66,29 +72,58 @@ impl AppIds {
             last_mid_ms: 0,
             jitter: 0,
             test_token: 0,
+            token_length: token_length
+                .unwrap_or(if matches!(source, Source::Test) { 4 } else { 8 })
+                .try_into()
+                .map_err(|_| BuildError::TokenLength)?,
         })
     }
 
-    pub(super) fn token(
+    pub(super) fn token<K: OwnedToken>(
+        &mut self,
+        io_random: &mut impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<K, IdentityError> {
+        self.token_with_length(self.token_length as usize, io_random)
+    }
+
+    pub(super) fn nonce(
         &mut self,
         io_random: &mut impl FnMut(&mut [u8]) -> bool,
     ) -> Result<Token, IdentityError> {
+        self.token_with_length(
+            if matches!(self.source, Source::Test) {
+                4
+            } else {
+                8
+            },
+            io_random,
+        )
+    }
+
+    fn token_with_length<K: OwnedToken>(
+        &mut self,
+        len: usize,
+        io_random: &mut impl FnMut(&mut [u8]) -> bool,
+    ) -> Result<K, IdentityError> {
+        let mut token = K::try_zeroed(len).map_err(|_| IdentityError::TokenExhausted)?;
         match self.source {
             Source::Test => {
+                if len < 4 {
+                    return Err(IdentityError::TokenExhausted);
+                }
                 self.test_token = self
                     .test_token
                     .checked_add(1)
                     .ok_or(IdentityError::TokenExhausted)?;
-                Ok(Token::from_checked(&self.test_token.to_be_bytes()))
+                token.as_bytes_mut()[len - 4..].copy_from_slice(&self.test_token.to_be_bytes());
             }
             Source::Random(_) | Source::Io { .. } => {
-                let mut bytes = [0; 8];
-                if !self.fill(&mut bytes, io_random) {
+                if !self.fill(token.as_bytes_mut(), io_random) {
                     return Err(IdentityError::RandomnessUnavailable);
                 }
-                Ok(Token::from_checked(&bytes))
             }
         }
+        Ok(token)
     }
 
     pub(super) fn next_for<E, S, T: crate::storage::DatagramTransport>(
@@ -133,12 +168,13 @@ impl AppIds {
         self.next_mid = self.next_mid.wrapping_add(1);
         self.issued += 1;
         self.last_mid_ms = self.last_mid_ms.max(now_ms);
-        self.jitter = jitter;
+        // The protocol's jitter interval is at most 1000 milliseconds.
+        self.jitter = jitter as u16;
         Ok(mid)
     }
 
     pub(super) const fn jitter(&self) -> u32 {
-        self.jitter
+        self.jitter as u32
     }
 
     fn fill(&self, bytes: &mut [u8], io_random: &mut impl FnMut(&mut [u8]) -> bool) -> bool {
@@ -190,7 +226,7 @@ mod tests {
             }
             true
         }
-        let mut ids = AppIds::new(Some(Source::Random(fill))).unwrap();
+        let mut ids = AppIds::new(Some(Source::Random(fill)), None).unwrap();
         for value in 0..=1000 {
             VALUE.store(value, Ordering::SeqCst);
             ids.next::<()>(0, &mut |_| false).unwrap();
@@ -212,7 +248,7 @@ mod tests {
 
     #[test]
     fn mid_wrap_waits_from_last_issue_and_clock_rollback_cannot_shorten_wait() {
-        let mut ids = AppIds::new(Some(Source::Test)).unwrap();
+        let mut ids = AppIds::new(Some(Source::Test), None).unwrap();
         let mut seen = [false; 65536];
         for i in 0..65536 {
             let now = if i == 65534 { 5000 } else { 1000 };

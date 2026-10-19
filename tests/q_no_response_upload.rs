@@ -159,7 +159,10 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     })
     .unwrap()
 }
-fn exercise<C: AppStorage, S: AppStorage>(
+fn exercise<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Peer<C>,
     mut server: Peer<S>,
     protected: bool,
@@ -444,7 +447,7 @@ fn q_server_error_no_response_optional_returned_5xx_is_observable() {
         });
     }
 }
-fn refuse_and_reclaim<S: AppStorage>(client: &mut Peer<S>) {
+fn refuse_and_reclaim<S: AppStorage<Token = coaptic::message::Token>>(client: &mut Peer<S>) {
     use coaptic::app::{CallFailure, Error};
     use coaptic::message::NoResponse;
     for now in 0..16 {

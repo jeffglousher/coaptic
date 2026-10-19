@@ -203,7 +203,10 @@ enum Schedule {
     MissingFirst,
     Reverse,
 }
-fn transfer<C: AppStorage, S: AppStorage>(
+fn transfer<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Peer<C>,
     server: &mut Peer<S>,
     now: u64,
@@ -333,7 +336,10 @@ fn transfer<C: AppStorage, S: AppStorage>(
     }
     panic!("finite transfer did not finish");
 }
-fn exercise<C: AppStorage, S: AppStorage>(
+fn exercise<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Peer<C>,
     mut server: Peer<S>,
     protected: bool,

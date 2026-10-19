@@ -3,7 +3,7 @@
 //! yields for a completed client [`Call`](super::Call).
 
 use crate::message::{
-    Code, ContentFormat, Echo, MessageId, MissingBlocks, ProblemDetails, Token, Type,
+    Code, ContentFormat, Echo, MessageId, MissingBlocks, OwnedToken, ProblemDetails, Token, Type,
 };
 use crate::storage::{Endpoint, MemoryProfile};
 
@@ -85,13 +85,13 @@ enum Payload<'a> {
 ///
 /// Stored handlers are [`fn(Request<'_>) -> Response`](super::HandlerFn).
 /// Implement this if a wrapper type should become a response.
-pub trait IntoResponse {
+pub trait IntoResponse<T: OwnedToken = Token> {
     /// Build the response.
-    fn into_response(self) -> Response<'static>;
+    fn into_response(self) -> Response<'static, T>;
 }
 
-impl IntoResponse for Response<'static> {
-    fn into_response(self) -> Response<'static> {
+impl<T: OwnedToken> IntoResponse<T> for Response<'static, T> {
+    fn into_response(self) -> Response<'static, T> {
         self
     }
 }
@@ -134,15 +134,17 @@ impl IntoResponse for Response<'static> {
 /// ```
 /// use coaptic::{ContentFormat, Response};
 ///
-/// let response = Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN);
+/// let response: Response<'_> = Response::content(b"21.5").content_format(ContentFormat::TEXT_PLAIN);
 /// assert_eq!(response.code(), coaptic::Code::CONTENT);
 /// assert_eq!(response.payload(), b"21.5");
 /// assert!(!response.payload_truncated());
 /// ```
+/// `T` matches the request/connection token storage. The default is the compact
+/// eight-byte token; larger token storage does not change payload capacities.
 #[derive(Clone, Copy, Debug)]
-pub struct Response<'a> {
+pub struct Response<'a, T: OwnedToken = Token> {
     invalid: Option<ResponseError>,
-    received_header: Option<crate::message::ParsedMessage<'a>>,
+    received_header: Option<crate::message::ParsedMessage<'a, T>>,
     received_at_ms: Option<u64>,
     code: Code,
     payload: Payload<'a>,
@@ -152,7 +154,7 @@ pub struct Response<'a> {
     max_age: Option<u32>,
     observe: Option<u32>,
     ty: Option<Type>,
-    token: Option<Token>,
+    token: Option<T>,
     mid: Option<MessageId>,
     peer: Option<Endpoint>,
     assembled: Option<&'a [u8]>,
@@ -169,7 +171,7 @@ pub struct Response<'a> {
     payload_src_len: usize,
 }
 
-impl<'a> Response<'a> {
+impl<'a, T: OwnedToken> Response<'a, T> {
     /// Response with `code` and no payload.
     #[must_use]
     pub const fn new(code: Code) -> Self {
@@ -223,7 +225,7 @@ impl<'a> Response<'a> {
 
     pub(crate) fn with_received_header(
         mut self,
-        header: crate::message::ParsedMessage<'a>,
+        header: crate::message::ParsedMessage<'a, T>,
         received_at_ms: u64,
     ) -> Self {
         self.received_header = Some(header);
@@ -402,7 +404,7 @@ impl<'a> Response<'a> {
     /// ```
     /// use coaptic::{Code, ContentFormat, ProblemDetails, Response};
     ///
-    /// let response = Response::problem(Code::NOT_FOUND).title("Not Found");
+    /// let response: Response<'_> = Response::problem(Code::NOT_FOUND).title("Not Found");
     /// assert_eq!(response.code(), Code::NOT_FOUND);
     /// assert_eq!(response.format(), Some(ContentFormat::PROBLEM_DETAILS));
     /// let details = ProblemDetails::decode(response.payload()).expect("cbor");
@@ -450,7 +452,7 @@ impl<'a> Response<'a> {
     /// ```
     /// use coaptic::{Code, ContentFormat, Response};
     ///
-    /// let response = Response::missing_blocks([1, 9]);
+    /// let response: Response<'_> = Response::missing_blocks([1, 9]);
     /// assert_eq!(response.code(), Code::REQUEST_ENTITY_INCOMPLETE);
     /// assert_eq!(response.format(), Some(ContentFormat::MISSING_BLOCKS));
     /// let mut nums = [0u32; 4];
@@ -589,7 +591,7 @@ impl<'a> Response<'a> {
     /// ```
     /// use coaptic::Response;
     ///
-    /// let response = Response::created()
+    /// let response: Response<'_> = Response::created()
     ///     .location_path("location1")
     ///     .location_path("location2");
     /// assert_eq!(response.location_paths(), &["location1", "location2"]);
@@ -619,7 +621,7 @@ impl<'a> Response<'a> {
     /// ```
     /// use coaptic::Response;
     ///
-    /// let response = Response::created()
+    /// let response: Response<'_> = Response::created()
     ///     .location_query("first=1")
     ///     .location_query("second=2");
     /// assert_eq!(response.location_queries(), &["first=1", "second=2"]);
@@ -681,7 +683,7 @@ impl<'a> Response<'a> {
     /// ```
     /// use coaptic::Response;
     ///
-    /// let response = Response::content(b"later").separate();
+    /// let response: Response<'_> = Response::content(b"later").separate();
     /// assert!(response.is_separate());
     /// ```
     #[must_use]
@@ -829,7 +831,7 @@ impl<'a> Response<'a> {
     /// use coaptic::app::INLINE_PAYLOAD;
     ///
     /// let body = [b'x'; 200];
-    /// let response = Response::content_copy(&body);
+    /// let response: Response<'_> = Response::content_copy(&body);
     /// assert_eq!(response.payload().len(), INLINE_PAYLOAD);
     /// assert!(response.payload_truncated());
     /// assert_eq!(response.payload_src_len(), 200);
@@ -902,7 +904,7 @@ impl<'a> Response<'a> {
 
     /// Token on a client snapshot, if populated (same as [`Call::token`](super::Call::token)).
     #[must_use]
-    pub const fn token(&self) -> Option<Token> {
+    pub const fn token(&self) -> Option<T> {
         self.token
     }
 
@@ -941,7 +943,7 @@ impl<'a> Response<'a> {
     pub(crate) fn from_client(
         code: Code,
         ty: Type,
-        token: Token,
+        token: T,
         mid: MessageId,
         peer: Endpoint,
         payload: &[u8],
@@ -1178,32 +1180,37 @@ mod assembled_hold_tests {
     fn checked_copy_preserves_complete_payload_and_refuses_overflow() {
         for len in [0, 1, INLINE_PAYLOAD] {
             let bytes = [b'x'; INLINE_PAYLOAD];
-            let response = Response::try_content_copy(&bytes[..len]).unwrap();
+            let response =
+                Response::<crate::message::Token>::try_content_copy(&bytes[..len]).unwrap();
             assert_eq!(response.code(), Code::CONTENT);
             assert_eq!(response.payload(), &bytes[..len]);
             assert_eq!(response.validate(), Ok(()));
         }
         let oversized = [0; INLINE_PAYLOAD + 1];
         assert_eq!(
-            Response::try_content_copy(&oversized).unwrap_err(),
+            Response::<crate::message::Token>::try_content_copy(&oversized).unwrap_err(),
             ResponseError::PayloadTruncated
         );
         assert_eq!(
-            Response::changed()
+            Response::<crate::message::Token>::changed()
                 .try_payload_copy(&oversized)
                 .unwrap_err(),
             ResponseError::PayloadTruncated
         );
-        let truncated = Response::content_copy(&oversized);
+        let truncated = Response::<crate::message::Token>::content_copy(&oversized);
         assert_eq!(truncated.validate(), Err(ResponseError::PayloadTruncated));
         assert_eq!(truncated.with_static(b"complete").validate(), Ok(()));
         let body = [0; RESPONSE_BODY + 1];
         assert_eq!(
-            Response::changed().payload_copy_full(&body).validate(),
+            Response::<crate::message::Token>::changed()
+                .payload_copy_full(&body)
+                .validate(),
             Err(ResponseError::PayloadTruncated)
         );
         assert_eq!(
-            Response::changed().payload_borrowed(&body).validate(),
+            Response::<crate::message::Token>::changed()
+                .payload_borrowed(&body)
+                .validate(),
             Ok(())
         );
     }
@@ -1211,21 +1218,21 @@ mod assembled_hold_tests {
     #[test]
     fn content_copy_truncates_at_inline_payload() {
         let src = [b'y'; 200];
-        let response = Response::content_copy(&src);
+        let response = Response::<crate::message::Token>::content_copy(&src);
         assert_eq!(response.payload().len(), INLINE_PAYLOAD);
         assert_eq!(response.payload(), &src[..INLINE_PAYLOAD]);
         assert!(response.payload_truncated());
         assert_eq!(response.payload_src_len(), 200);
         assert!(response.body().is_none());
         let exact = [b'z'; INLINE_PAYLOAD];
-        let fits = Response::content_copy(&exact);
+        let fits = Response::<crate::message::Token>::content_copy(&exact);
         assert!(!fits.payload_truncated());
         assert_eq!(fits.payload_src_len(), INLINE_PAYLOAD);
-        let small = Response::content(b"21.5");
+        let small = Response::<crate::message::Token>::content(b"21.5");
         assert!(!small.payload_truncated());
         assert_eq!(small.payload_src_len(), 4);
         const BORROWED: [u8; 200] = [b'w'; 200];
-        let full = Response::changed().payload_copy_full(&BORROWED);
+        let full = Response::<crate::message::Token>::changed().payload_copy_full(&BORROWED);
         assert_eq!(full.payload(), &BORROWED);
         assert!(!full.payload_truncated());
         assert_eq!(full.payload_src_len(), 200);

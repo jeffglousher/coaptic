@@ -31,6 +31,7 @@ pub const BLOCK_COUNTS: core::ops::RangeInclusive<u32> = 1..=25;
 pub struct SweepProfile;
 
 impl MemoryProfile for SweepProfile {
+    type Token = Token;
     const RX_DATAGRAM_SLOTS: usize = SWEEP_DGRAM_SLOTS;
     const RX_DATAGRAM_BYTES: usize = SWEEP_DGRAM_BYTES;
     const TX_DATAGRAM_SLOTS: usize = SWEEP_DGRAM_SLOTS;

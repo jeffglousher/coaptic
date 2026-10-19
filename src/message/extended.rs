@@ -86,6 +86,20 @@ impl<const N: usize> core::fmt::Debug for Token<N> {
 impl<const N: usize> super::OwnedToken for Token<N> {
     const EMPTY: Self = Self::EMPTY;
     const MAX_LEN: usize = if N < MAX_TOKEN_LEN { N } else { MAX_TOKEN_LEN };
+    fn try_zeroed(len: usize) -> Result<Self, CapacityError> {
+        if len > Self::MAX_LEN {
+            return Err(CapacityError {
+                required: len,
+                available: Self::MAX_LEN,
+            });
+        }
+        let mut token = Self::EMPTY;
+        token.len = len;
+        Ok(token)
+    }
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes[..self.len]
+    }
     fn try_from_bytes(bytes: &[u8]) -> Result<Self, CapacityError> {
         Self::new(bytes)
     }
@@ -136,6 +150,11 @@ impl<'a> Datagram<'a> {
     /// discard this datagram or prevent echoing its borrowed token.
     pub fn copy_token<const N: usize>(self) -> Result<Token<N>, CapacityError> {
         Token::new(self.token)
+    }
+    /// Replace the borrowed token while retaining options and payload.
+    /// Encoding validates the new token length and writes its matching header.
+    pub fn with_token(self, token: &'a [u8]) -> Self {
+        Self { token, ..self }
     }
     /// Re-encode using the shared canonical option and token encoder.
     pub fn encode(self, output: &mut [u8]) -> Result<usize, EncodeError> {

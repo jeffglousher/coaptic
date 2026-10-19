@@ -1,4 +1,5 @@
 use super::shared::{Crypto as CryptoTrait, *};
+use p256::elliptic_curve::zeroize::Zeroizing;
 use subtle::ConstantTimeEq;
 
 pub fn edhoc_exporter(
@@ -9,7 +10,7 @@ pub fn edhoc_exporter(
     context_len: usize,
     length: usize,
 ) -> BytesMaxBuffer {
-    edhoc_kdf(
+    *edhoc_kdf(
         crypto,
         &state.prk_exporter,
         label,
@@ -102,9 +103,9 @@ pub fn r_prepare_message_2(
     let th_2 = compute_th_2(crypto, &state.g_y, &state.h_message_1);
 
     // compute prk_3e2m
-    let prk_2e = compute_prk_2e(crypto, &state.y, &state.g_x, &th_2);
-    let salt_3e2m = compute_salt_3e2m(crypto, &prk_2e, &th_2);
-    let prk_3e2m = compute_prk_3e2m(crypto, &salt_3e2m, r, &state.g_x);
+    let prk_2e = Zeroizing::new(compute_prk_2e(crypto, &state.y, &state.g_x, &th_2));
+    let salt_3e2m = Zeroizing::new(compute_salt_3e2m(crypto, &prk_2e, &th_2));
+    let prk_3e2m = Zeroizing::new(compute_prk_3e2m(crypto, &salt_3e2m, r, &state.g_x));
 
     let id_cred_r = match cred_transfer {
         CredentialTransfer::ByValue => cred_r.by_value()?,
@@ -146,7 +147,7 @@ pub fn r_prepare_message_2(
     Ok((
         WaitM3 {
             y: state.y,
-            prk_3e2m: prk_3e2m,
+            prk_3e2m: *prk_3e2m,
             th_3: th_3,
         },
         message_2,
@@ -190,16 +191,16 @@ pub fn r_verify_message_3(
     state: &mut ProcessingM3,
     crypto: &mut impl CryptoTrait,
     valid_cred_i: Credential,
-) -> Result<(ProcessedM3, BytesHashLen), EDHOCError> {
+) -> Result<(ProcessedM3, Zeroizing<BytesHashLen>), EDHOCError> {
     // compute salt_4e3m
-    let salt_4e3m = compute_salt_4e3m(crypto, &state.prk_3e2m, &state.th_3);
+    let salt_4e3m = Zeroizing::new(compute_salt_4e3m(crypto, &state.prk_3e2m, &state.th_3));
 
-    let prk_4e3m = match valid_cred_i.key {
+    let prk_4e3m = Zeroizing::new(match valid_cred_i.key {
         CredentialKey::EC2Compact(public_key) => {
             compute_prk_4e3m(crypto, &salt_4e3m, &state.y, &public_key)
         }
         CredentialKey::Symmetric(_psk) => todo!("PSK not implemented"),
-    };
+    });
 
     // compute mac_3
     let expected_mac_3 = compute_mac_3(
@@ -232,7 +233,7 @@ pub fn r_verify_message_3(
             th_4.len(),
             SHA256_DIGEST_LEN,
         );
-        let mut prk_out: BytesHashLen = Default::default();
+        let mut prk_out: Zeroizing<BytesHashLen> = Zeroizing::new(Default::default());
         prk_out[..SHA256_DIGEST_LEN].copy_from_slice(&prk_out_buf[..SHA256_DIGEST_LEN]);
 
         // compute prk_exporter from prk_out
@@ -245,15 +246,15 @@ pub fn r_verify_message_3(
             0,
             SHA256_DIGEST_LEN,
         );
-        let mut prk_exporter = BytesHashLen::default();
+        let mut prk_exporter = Zeroizing::new(BytesHashLen::default());
         prk_exporter[..SHA256_DIGEST_LEN].copy_from_slice(&prk_exporter_buf[..SHA256_DIGEST_LEN]);
 
         Ok((
             ProcessedM3 {
-                prk_4e3m: prk_4e3m,
+                prk_4e3m: *prk_4e3m,
                 th_4: th_4,
-                prk_out: prk_out,
-                prk_exporter: prk_exporter,
+                prk_out: *prk_out,
+                prk_exporter: *prk_exporter,
             },
             prk_out,
         ))
@@ -322,7 +323,7 @@ pub fn i_parse_message_2<'a>(
         let th_2 = compute_th_2(crypto, &g_y, &state.h_message_1);
 
         // compute prk_2e
-        let prk_2e = compute_prk_2e(crypto, &state.x, &g_y, &th_2);
+        let prk_2e = Zeroizing::new(compute_prk_2e(crypto, &state.x, &g_y, &th_2));
 
         let plaintext_2 = encrypt_decrypt_ciphertext_2(crypto, &prk_2e, &th_2, &ciphertext_2);
 
@@ -332,7 +333,7 @@ pub fn i_parse_message_2<'a>(
         if let Ok((c_r_2, id_cred_r, mac_2, ead_2)) = plaintext_2_decoded {
             let state = ProcessingM2 {
                 mac_2,
-                prk_2e,
+                prk_2e: *prk_2e,
                 th_2,
                 x: state.x,
                 g_y,
@@ -358,14 +359,14 @@ pub fn i_verify_message_2(
     i: &BytesP256ElemLen, // I's static private DH key
 ) -> Result<ProcessedM2, EDHOCError> {
     // verify mac_2
-    let salt_3e2m = compute_salt_3e2m(crypto, &state.prk_2e, &state.th_2);
+    let salt_3e2m = Zeroizing::new(compute_salt_3e2m(crypto, &state.prk_2e, &state.th_2));
 
-    let prk_3e2m = match valid_cred_r.key {
+    let prk_3e2m = Zeroizing::new(match valid_cred_r.key {
         CredentialKey::EC2Compact(public_key) => {
             compute_prk_3e2m(crypto, &salt_3e2m, &state.x, &public_key)
         }
         CredentialKey::Symmetric(_psk) => todo!("PSK not implemented"),
-    };
+    });
 
     let expected_mac_2 = compute_mac_2(
         crypto,
@@ -388,13 +389,13 @@ pub fn i_verify_message_2(
         );
         // message 3 processing
 
-        let salt_4e3m = compute_salt_4e3m(crypto, &prk_3e2m, &th_3);
+        let salt_4e3m = Zeroizing::new(compute_salt_4e3m(crypto, &prk_3e2m, &th_3));
 
-        let prk_4e3m = compute_prk_4e3m(crypto, &salt_4e3m, i, &state.g_y);
+        let prk_4e3m = Zeroizing::new(compute_prk_4e3m(crypto, &salt_4e3m, i, &state.g_y));
 
         let state = ProcessedM2 {
-            prk_3e2m: prk_3e2m,
-            prk_4e3m: prk_4e3m,
+            prk_3e2m: *prk_3e2m,
+            prk_4e3m: *prk_4e3m,
             th_3: th_3,
         };
 
@@ -410,7 +411,7 @@ pub fn i_prepare_message_3(
     cred_i: Credential,
     cred_transfer: CredentialTransfer,
     ead_3: &Option<EADItem>,
-) -> Result<(WaitM4, BufferMessage3, BytesHashLen), EDHOCError> {
+) -> Result<(WaitM4, BufferMessage3, Zeroizing<BytesHashLen>), EDHOCError> {
     let id_cred_i = match cred_transfer {
         CredentialTransfer::ByValue => cred_i.by_value()?,
         CredentialTransfer::ByReference => cred_i.by_kid()?,
@@ -447,7 +448,7 @@ pub fn i_prepare_message_3(
         th_4.len(),
         SHA256_DIGEST_LEN,
     );
-    let mut prk_out: BytesHashLen = Default::default();
+    let mut prk_out: Zeroizing<BytesHashLen> = Zeroizing::new(Default::default());
     prk_out[..SHA256_DIGEST_LEN].copy_from_slice(&prk_out_buf[..SHA256_DIGEST_LEN]);
 
     // compute prk_exporter from prk_out
@@ -460,15 +461,15 @@ pub fn i_prepare_message_3(
         0,
         SHA256_DIGEST_LEN,
     );
-    let mut prk_exporter: BytesHashLen = Default::default();
+    let mut prk_exporter: Zeroizing<BytesHashLen> = Zeroizing::new(Default::default());
     prk_exporter[..SHA256_DIGEST_LEN].copy_from_slice(&prk_exporter_buf[..SHA256_DIGEST_LEN]);
 
     Ok((
         WaitM4 {
             prk_4e3m: state.prk_4e3m,
             th_4: th_4,
-            prk_out: prk_out,
-            prk_exporter: prk_exporter,
+            prk_out: *prk_out,
+            prk_exporter: *prk_exporter,
         },
         message_3,
         prk_out,
@@ -644,10 +645,10 @@ fn edhoc_kdf(
     context: &BytesMaxContextBuffer,
     context_len: usize,
     length: usize,
-) -> BytesMaxBuffer {
+) -> Zeroizing<BytesMaxBuffer> {
     let (info, info_len) = encode_info(label, context, context_len, length);
 
-    crypto.hkdf_expand(prk, &info, info_len, length)
+    Zeroizing::new(crypto.hkdf_expand(prk, &info, info_len, length))
 }
 
 fn encode_plaintext_3(
@@ -725,9 +726,9 @@ fn compute_k_3_iv_3(
     crypto: &mut impl CryptoTrait,
     prk_3e2m: &BytesHashLen,
     th_3: &BytesHashLen,
-) -> (BytesCcmKeyLen, BytesCcmIvLen) {
+) -> (Zeroizing<BytesCcmKeyLen>, Zeroizing<BytesCcmIvLen>) {
     // K_3 = EDHOC-KDF( PRK_3e2m, 3, TH_3,      key_length )
-    let mut k_3: BytesCcmKeyLen = [0x00; AES_CCM_KEY_LEN];
+    let mut k_3: Zeroizing<BytesCcmKeyLen> = Zeroizing::new([0x00; AES_CCM_KEY_LEN]);
     let mut th_3_buf: BytesMaxContextBuffer = [0x00; MAX_KDF_CONTEXT_LEN];
     th_3_buf[..th_3.len()].copy_from_slice(&th_3[..]);
     let k_3_buf = edhoc_kdf(
@@ -741,7 +742,7 @@ fn compute_k_3_iv_3(
     k_3[..].copy_from_slice(&k_3_buf[..AES_CCM_KEY_LEN]);
 
     // IV_3 = EDHOC-KDF( PRK_3e2m, 4, TH_3,      iv_length )
-    let mut iv_3: BytesCcmIvLen = [0x00; AES_CCM_IV_LEN];
+    let mut iv_3: Zeroizing<BytesCcmIvLen> = Zeroizing::new([0x00; AES_CCM_IV_LEN]);
     let iv_3_buf = edhoc_kdf(crypto, prk_3e2m, 4u8, &th_3_buf, th_3.len(), AES_CCM_IV_LEN);
     iv_3[..].copy_from_slice(&iv_3_buf[..AES_CCM_IV_LEN]);
 
@@ -752,9 +753,9 @@ fn compute_k_4_iv_4(
     crypto: &mut impl CryptoTrait,
     prk_4e3m: &BytesHashLen,
     th_4: &BytesHashLen,
-) -> (BytesCcmKeyLen, BytesCcmIvLen) {
+) -> (Zeroizing<BytesCcmKeyLen>, Zeroizing<BytesCcmIvLen>) {
     // K_4 = EDHOC-KDF( PRK_4e3m, ?? , TH_4,      key_length )
-    let mut k_4: BytesCcmKeyLen = [0x00; AES_CCM_KEY_LEN];
+    let mut k_4: Zeroizing<BytesCcmKeyLen> = Zeroizing::new([0x00; AES_CCM_KEY_LEN]);
     let mut th_4_buf: BytesMaxContextBuffer = [0x00; MAX_KDF_CONTEXT_LEN];
     th_4_buf[..th_4.len()].copy_from_slice(&th_4[..]);
     let k_4_buf = edhoc_kdf(
@@ -768,7 +769,7 @@ fn compute_k_4_iv_4(
     k_4[..].copy_from_slice(&k_4_buf[..AES_CCM_KEY_LEN]);
 
     // IV_3 = EDHOC-KDF( PRK_4e3m, ?? , TH_4,      iv_length )
-    let mut iv_4: BytesCcmIvLen = [0x00; AES_CCM_IV_LEN];
+    let mut iv_4: Zeroizing<BytesCcmIvLen> = Zeroizing::new([0x00; AES_CCM_IV_LEN]);
     let iv_4_buf = edhoc_kdf(crypto, prk_4e3m, 9u8, &th_4_buf, th_4.len(), AES_CCM_IV_LEN);
     iv_4[..].copy_from_slice(&iv_4_buf[..AES_CCM_IV_LEN]);
 
@@ -1068,10 +1069,10 @@ fn compute_salt_4e3m(
         th_3.len(),
         SHA256_DIGEST_LEN,
     );
-    let mut salt_4e3m: BytesHashLen = [0x00; SHA256_DIGEST_LEN];
+    let mut salt_4e3m: Zeroizing<BytesHashLen> = Zeroizing::new([0x00; SHA256_DIGEST_LEN]);
     salt_4e3m[..].copy_from_slice(&salt_4e3m_buf[..SHA256_DIGEST_LEN]);
 
-    salt_4e3m
+    *salt_4e3m
 }
 
 fn compute_prk_4e3m(
@@ -1081,7 +1082,7 @@ fn compute_prk_4e3m(
     g_y: &BytesP256ElemLen,
 ) -> BytesHashLen {
     // compute g_rx from static R's public key and private ephemeral key
-    let g_iy = crypto.p256_ecdh(i, g_y);
+    let g_iy = Zeroizing::new(crypto.p256_ecdh(i, g_y));
 
     crypto.hkdf_extract(salt_4e3m, &g_iy)
 }
@@ -1103,10 +1104,10 @@ fn compute_salt_3e2m(
         SHA256_DIGEST_LEN,
     );
 
-    let mut salt_3e2m: BytesHashLen = [0x00; SHA256_DIGEST_LEN];
+    let mut salt_3e2m: Zeroizing<BytesHashLen> = Zeroizing::new([0x00; SHA256_DIGEST_LEN]);
     salt_3e2m[..].copy_from_slice(&salt_3e2m_buf[..SHA256_DIGEST_LEN]);
 
-    salt_3e2m
+    *salt_3e2m
 }
 
 fn compute_prk_3e2m(
@@ -1116,7 +1117,7 @@ fn compute_prk_3e2m(
     g_r: &BytesP256ElemLen,
 ) -> BytesHashLen {
     // compute g_rx from static R's public key and private ephemeral key
-    let g_rx = crypto.p256_ecdh(x, g_r);
+    let g_rx = Zeroizing::new(crypto.p256_ecdh(x, g_r));
 
     crypto.hkdf_extract(salt_3e2m, &g_rx)
 }
@@ -1128,7 +1129,7 @@ fn compute_prk_2e(
     th_2: &BytesHashLen,
 ) -> BytesHashLen {
     // compute the shared secret
-    let g_xy = crypto.p256_ecdh(x, g_y);
+    let g_xy = Zeroizing::new(crypto.p256_ecdh(x, g_y));
     // compute prk_2e as PRK_2e = HMAC-SHA-256( salt, G_XY )
 
     crypto.hkdf_extract(th_2, &g_xy)

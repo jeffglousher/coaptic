@@ -117,7 +117,7 @@ fn key(id: u8) -> ObserveKey {
 }
 type Server<const N: usize, S> =
     App<coaptic::profiles::WithObserve<Pools, N>, Io, 8, false, S, 0, 0>;
-fn request<const N: usize, S: AppStorage>(
+fn request<const N: usize, S: AppStorage<Token = coaptic::message::Token>>(
     app: &mut Server<N, S>,
     id: u8,
     mid: u16,
@@ -155,7 +155,10 @@ fn request<const N: usize, S: AppStorage>(
 fn admitted(f: Frame) -> bool {
     decode(&f.bytes[..f.len]).unwrap().observe().is_some()
 }
-fn lifecycle<const N: usize, S: AppStorage>(mut app: Server<N, S>, count: usize) {
+fn lifecycle<const N: usize, S: AppStorage<Token = coaptic::message::Token>>(
+    mut app: Server<N, S>,
+    count: usize,
+) {
     no_alloc(|| {
         assert_eq!(app.client_capacity(), 0);
         assert_eq!(app.engine().capacities().observe_entries, count);

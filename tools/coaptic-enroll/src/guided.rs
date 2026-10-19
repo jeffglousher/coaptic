@@ -39,7 +39,7 @@ fn available(id: &str, capabilities: Capabilities) -> bool {
     match id {
         "13" => capabilities.webauthn,
         "9" | "10" | "14" | "15" => capabilities.piv,
-        "2" | "3" | "4" | "5" => capabilities.piv || capabilities.webauthn,
+        "2" | "3" | "4" | "5" | "18" | "19" | "20" => capabilities.piv || capabilities.webauthn,
         _ => true,
     }
 }
@@ -159,7 +159,12 @@ fn collect_operation(
     }
     if operation.permissions {
         loop {
-            let choice = answer!(input, output, "Access: 1 Read-only, 2 Read/write", false);
+            let choice = answer!(
+                input,
+                output,
+                "Access: 1 Read-only, 2 Read/write (echo and durable telemetry)",
+                false
+            );
             let label = match choice.as_str() {
                 "1" => {
                     args.push("--read-only".into());
