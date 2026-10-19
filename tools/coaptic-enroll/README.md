@@ -21,6 +21,10 @@ The default cross-platform PIV build uses RustCrypto for signatures, hashes,
 attestation verification and sealed records, with no OpenSSL dependency. It
 still uses native PC/SC and OS credential storage. This tool has no TLS transport;
 rustls is not needed for its USB and EDHOC/OSCORE communication.
+Linux Secret Service uses the Rust zbus client rather than libdbus. BLAKE3 keeps
+the official Rust crate's normal optimized backend selection, including supported
+assembly/C implementations. Rust ownership does not require disabling maintained
+platform acceleration. The core still disables BLAKE3's `std` feature.
 Optional `--features webauthn` enables Windows WebAuthn and retains OpenSSL
 through the upstream WebAuthn verifier. `--all-features` also enables its
 software-authenticator test fixtures. Existing credentials and encrypted records
@@ -54,6 +58,15 @@ Linux uses Secret Service; macOS uses Keychain. Linux needs PC/SC and a running,
 unlocked Secret Service. macOS and Linux use the PIV approval paths. Unavailable
 credential storage fails closed without an unencrypted-file fallback. Keep the
 OS credential store together with enrollment records for recovery.
+
+Supported desktop targets are Windows, Linux and macOS. On Debian/Ubuntu, building
+the default PIV tool requires `libpcsclite-dev` and `pkg-config`; running it needs
+PC/SC (`pcscd`) and an unlocked Secret Service such as GNOME Keyring. Windows and
+macOS use their system smart-card APIs. Installing a Rust crate does not replace
+these device drivers or credential services. Optional WebAuthn's vendored OpenSSL
+also needs its native build prerequisites. The workflow tests all three OSes,
+including native Linux/macOS custody and async UDP loopback. USB drivers, token
+availability and desktop credential-service policy remain deployment prerequisites.
 
 The communication library remains allocation-free with `no_std` support. Shared
 input and operation definitions live in `coaptic-console-core` and also use neither

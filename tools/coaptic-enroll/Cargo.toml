@@ -26,6 +26,8 @@ webauthn-rs = { version = "=0.5.5", optional = true, default-features = false, f
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
 webauthn-authenticator-rs = { version = "=0.5.5", optional = true, default-features = false }
 aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+# aes-gcm's zeroize feature does not propagate to its AES key schedule.
+aes = { version = "=0.8.4", features = ["zeroize"] }
 p256 = { version = "=0.13.2", optional = true, features = ["ecdsa", "pem"] }
 p384 = { version = "=0.13.1", optional = true, features = ["ecdsa"] }
 rsa = { version = "=0.9.10", optional = true }
@@ -44,11 +46,12 @@ x509-cert = { version = "=0.2.5", optional = true }
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+# Rust D-Bus transport; keyring retains its blocking API and existing item attributes.
+keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
 webauthn-authenticator-rs = { version = "=0.5.5", optional = true, default-features = false, features = ["win10"] }
-windows = { version = "=0.41.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Memory"] }
+windows = { version = "=0.41.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Threading"] }
 
 [dev-dependencies]
 keyring = { version = "=3.6.3", default-features = false }
