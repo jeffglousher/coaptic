@@ -224,6 +224,12 @@ impl CryptoTrait for Crypto {
 mod tests {
     use super::*;
 
+    #[test]
+    fn aes_expanded_key_state_is_erased_on_drop() {
+        fn erased<T: p256::elliptic_curve::zeroize::ZeroizeOnDrop>() {}
+        erased::<aes::Aes128>();
+    }
+
     fn scalar(value: u8) -> [u8; 32] {
         let mut scalar = [0u8; 32];
         scalar[31] = value;
