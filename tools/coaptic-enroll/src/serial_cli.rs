@@ -190,6 +190,23 @@ pub fn run(
     if device_pin.principal() == host.peer().principal() {
         return Err("device and host identities must differ".into());
     }
+    // Hold the existing journal's exclusive lock before approving telemetry.
+    // Missing state is never initialized as a side effect of changing a grant.
+    let telemetry = if command == "serial-recover" {
+        record.enabled()
+            && record
+                .policy()
+                .is_some_and(|policy| *policy.resource_policy() == pairing::permissions(true))
+    } else {
+        write && (command == "serial-pair" || command == "serial-transfer")
+    };
+    let _receipts = if telemetry {
+        Some(pairing::preflight_receipts(&host_directory, &host).map_err(|_| {
+            "host receipt journal is missing, invalid or in use; inspect its history and explicitly initialize only its first journal before approving telemetry"
+        })?)
+    } else {
+        None
+    };
     let started = Instant::now();
     let recovery = if command == "serial-recover" {
         Some(coaptic_enroll::recovery::PeerRecovery::new(
@@ -285,61 +302,70 @@ pub fn run(
         };
         Request::for_pairing(&challenge, &policy, action)
     };
-    super::pairing_cli::approve(&approval_directory, approval, make_request, |request| {
-        request.matches_pairing(&challenge)?;
-        let policy = request.pairing_policy()?;
-        let update = if action == Action::Transfer {
-            PairingUpdate::transfer(challenge.clone(), request.owner, policy.clone())
-                .map_err(|_| Error::Input)?
-        } else {
-            PairingUpdate::new(challenge.clone(), policy.clone(), action == Action::Revoke)
-        };
-        // Revocation retains the existing routing hint. The destination itself
-        // is not an identity; this value is unused once access is disabled.
-        let destination = endpoint.unwrap_or(Endpoint::v4([127, 0, 0, 1], 1));
-        let response = usb
-            .request(&CommissioningRequest::Update {
-                update,
-                endpoint: destination,
-            })
-            .map_err(commissioning_error)?;
-        let CommissioningReply::Committed(committed) = response else {
-            return Err(Error::Persistence);
-        };
-        let approved = committed.policy().ok_or(Error::Persistence)?;
-        if committed.store() != record.store()
-            || record.revision().checked_add(1) != Some(committed.revision())
-            || committed.local_principal() != device_pin.principal().fingerprint()
-            || committed.enabled() != (action != Action::Revoke)
-            || approved.peer().principal() != policy.peer().principal()
-            || approved.owner() != policy.owner()
-            || approved.resource_policy() != policy.resource_policy()
-        {
-            return Err(Error::Persistence);
-        }
-        let now = started
-            .elapsed()
-            .as_millis()
-            .try_into()
-            .map_err(|_| Error::Expired)?;
-        if action != Action::Revoke {
-            let reciprocal =
-                EnrollmentPolicy::new(device_pin.clone(), *policy.owner(), request.permissions)
-                    .map_err(|_| Error::Input)?;
-            local
-                .pair(&local_challenge, reciprocal, now, |old, next| {
-                    store.commit(old, next)
+    let mut device_update_attempted = false;
+    let outcome =
+        super::pairing_cli::approve(&approval_directory, approval, make_request, |request| {
+            request.matches_pairing(&challenge)?;
+            let policy = request.pairing_policy()?;
+            let update = if action == Action::Transfer {
+                PairingUpdate::transfer(challenge.clone(), request.owner, policy.clone())
+                    .map_err(|_| Error::Input)?
+            } else {
+                PairingUpdate::new(challenge.clone(), policy.clone(), action == Action::Revoke)
+            };
+            // Revocation retains the existing routing hint. The destination itself
+            // is not an identity; this value is unused once access is disabled.
+            let destination = endpoint.unwrap_or(Endpoint::v4([127, 0, 0, 1], 1));
+            let reciprocal = EnrollmentPolicy::new(
+                device_pin.clone(),
+                *policy.owner(),
+                *policy.resource_policy(),
+            )
+            .map_err(|_| Error::Input)?;
+            let now = started
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .map_err(|_| Error::Expired)?;
+            let prepared = coaptic_enroll::recovery::PreparedHostPairing::prepare_update(
+                &mut local,
+                &local_challenge,
+                reciprocal,
+                action == Action::Revoke,
+                now,
+            )?;
+            device_update_attempted = true;
+            let response = usb
+                .request(&CommissioningRequest::Update {
+                    update,
+                    endpoint: destination,
                 })
-                .map_err(|_| Error::Persistence)?;
-        } else {
-            local
-                .revoke(&local_challenge, &request.owner, now, |old, next| {
-                    store.commit(old, next)
-                })
-                .map_err(|_| Error::Persistence)?;
+                .map_err(commissioning_error)?;
+            let CommissioningReply::Committed(committed) = response else {
+                return Err(Error::Persistence);
+            };
+            let approved = committed.policy().ok_or(Error::Persistence)?;
+            if committed.store() != record.store()
+                || record.revision().checked_add(1) != Some(committed.revision())
+                || committed.local_principal() != device_pin.principal().fingerprint()
+                || committed.enabled() != (action != Action::Revoke)
+                || approved.peer().principal() != policy.peer().principal()
+                || approved.owner() != policy.owner()
+                || approved.resource_policy() != policy.resource_policy()
+            {
+                return Err(Error::Persistence);
+            }
+            prepared.commit(|old, next| store.commit(old, next))?;
+            Ok(())
+        });
+    if let Err(error) = outcome {
+        if device_update_attempted {
+            eprintln!(
+                "Device update may have committed. Inspect device and host policy before any retry; do not repeat the device update blindly. Use serial-recover only when its exact current-owner/destination checks accept the inspected state."
+            );
         }
-        Ok(())
-    })?;
+        return Err(error);
+    }
     println!(
         "Device and host pairing committed. Peer {}.",
         super::hex(device_pin.principal().fingerprint())
