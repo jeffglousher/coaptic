@@ -1,6 +1,6 @@
 //! Caller-owned pairwise security context.
 
-use crate::message::Token;
+use crate::message::{OwnedToken, Token};
 
 use super::aead;
 use super::header::PartialIv;
@@ -170,6 +170,8 @@ pub type SecurityContext = BoundedSecurityContext<{ super::LIVE_REQUESTS }>;
 /// One pairwise context with a caller-selected inline request-binding table.
 ///
 /// `REQUESTS` bounds distinct live outbound Tokens, independently of App Calls.
+/// `T` selects each retained token's byte capacity; the default keeps the compact
+/// eight-byte token. All matching compares the complete selected token value.
 /// Zero retains authentication and server response support but refuses outbound
 /// requests. No table growth or allocation occurs; operations scan at most
 /// `REQUESTS` entries. Keys, replay and sender state have the same ownership
@@ -180,7 +182,7 @@ pub type SecurityContext = BoundedSecurityContext<{ super::LIVE_REQUESTS }>;
 /// use coaptic::oscore::BoundedSecurityContext;
 /// const TOO_LARGE: usize = core::mem::size_of::<BoundedSecurityContext<{ usize::MAX }>>();
 /// ```
-pub struct BoundedSecurityContext<const REQUESTS: usize> {
+pub struct BoundedSecurityContext<const REQUESTS: usize, T: OwnedToken = Token> {
     sender_id: Id,
     recipient_id: Id,
     id_context: [u8; MAX_ID_CONTEXT_LEN],
@@ -192,14 +194,14 @@ pub struct BoundedSecurityContext<const REQUESTS: usize> {
     sender_reserved_end: u64,
     replay_left: u64,
     replay_bits: u32,
-    live: [Option<LiveRequest>; REQUESTS],
+    live: [Option<LiveRequest<T>>; REQUESTS],
 }
 
 /// Token→[`RequestRef`] row. Observe registrations keep the row so
 /// notifications can reuse `request_piv` (RFC 8613 §4.1.3.5 / §7.4.1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct LiveRequest {
-    token: Token,
+struct LiveRequest<T: OwnedToken> {
+    token: T,
     request: RequestRef,
     observe: bool,
     observe_request: Option<RequestRef>,
@@ -208,7 +210,9 @@ struct LiveRequest {
     notify_number: Option<u64>,
 }
 
-impl<const REQUESTS: usize> core::fmt::Debug for BoundedSecurityContext<REQUESTS> {
+impl<const REQUESTS: usize, T: OwnedToken> core::fmt::Debug
+    for BoundedSecurityContext<REQUESTS, T>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SecurityContext")
             .field("key_material", &"[REDACTED]")
@@ -217,7 +221,7 @@ impl<const REQUESTS: usize> core::fmt::Debug for BoundedSecurityContext<REQUESTS
     }
 }
 
-impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     /// Maximum distinct live request Tokens, including retained Observe registrations.
     #[must_use]
     pub const fn request_capacity(&self) -> usize {
@@ -228,7 +232,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// state, other App fields, temporary stack, and caller-owned platform memory.
     #[must_use]
     pub const fn request_metadata_bytes(&self) -> usize {
-        core::mem::size_of::<[Option<LiveRequest>; REQUESTS]>()
+        core::mem::size_of::<[Option<LiveRequest<T>>; REQUESTS]>()
     }
 
     /// Derive Sender Key, Recipient Key, and Common IV.
@@ -469,13 +473,13 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Replaces an existing row for `token`. The table holds
     /// `REQUESTS` bindings, independently of the configured App client capacity.
     /// Another distinct Token returns [`Error::Saturated`] without eviction.
-    pub fn remember(&mut self, token: Token, request: RequestRef) -> Result<(), Error> {
+    pub fn remember(&mut self, token: T, request: RequestRef) -> Result<(), Error> {
         self.remember_live(token, request, false)
     }
 
     pub(crate) fn remember_live(
         &mut self,
-        token: Token,
+        token: T,
         request: RequestRef,
         observe: bool,
     ) -> Result<(), Error> {
@@ -505,11 +509,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
 
     // A body request replaces only the latest response binding. Its parent
     // Observe registration and notification replay history remain authoritative.
-    pub(crate) fn remember_download(
-        &mut self,
-        token: Token,
-        request: RequestRef,
-    ) -> Result<(), Error> {
+    pub(crate) fn remember_download(&mut self, token: T, request: RequestRef) -> Result<(), Error> {
         if let Some(row) = self
             .live
             .iter_mut()
@@ -523,7 +523,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
         self.remember(token, request)
     }
 
-    pub(crate) fn observe_request(&self, token: Token) -> Option<RequestRef> {
+    pub(crate) fn observe_request(&self, token: T) -> Option<RequestRef> {
         self.live
             .iter()
             .flatten()
@@ -531,7 +531,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
             .and_then(|row| row.observe_request)
     }
 
-    pub(crate) fn response_without_piv_fresh(&self, token: Token) -> Result<(), Error> {
+    pub(crate) fn response_without_piv_fresh(&self, token: T) -> Result<(), Error> {
         let row = self
             .live
             .iter()
@@ -545,7 +545,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
         }
     }
 
-    pub(crate) fn accept_response_without_piv(&mut self, token: Token) -> Result<(), Error> {
+    pub(crate) fn accept_response_without_piv(&mut self, token: T) -> Result<(), Error> {
         self.response_without_piv_fresh(token)?;
         self.live
             .iter_mut()
@@ -559,7 +559,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Look up the latest request binding by Token.
     /// Observe download follow-ups retain the original registration separately.
     #[must_use]
-    pub fn lookup(&self, token: Token) -> Option<RequestRef> {
+    pub fn lookup(&self, token: T) -> Option<RequestRef> {
         self.live
             .iter()
             .find_map(|row| row.and_then(|r| (r.token == token).then_some(r.request)))
@@ -567,14 +567,14 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
 
     /// Whether this Token retains an Observe registration, including during body downloads.
     #[must_use]
-    pub fn is_observe(&self, token: Token) -> bool {
+    pub fn is_observe(&self, token: T) -> bool {
         self.live
             .iter()
             .any(|row| row.is_some_and(|r| r.token == token && r.observe))
     }
 
     /// Remove and return a request binding.
-    pub fn take(&mut self, token: Token) -> Option<RequestRef> {
+    pub fn take(&mut self, token: T) -> Option<RequestRef> {
         for row in &mut self.live {
             if row.as_ref().is_some_and(|r| r.token == token) {
                 return row.take().map(|r| r.request);
@@ -584,11 +584,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     }
 
     /// Read-only admission check; App commits only after response ACK succeeds.
-    pub(crate) fn notification_fresh(
-        &self,
-        token: Token,
-        piv: Option<PartialIv>,
-    ) -> Result<(), Error> {
+    pub(crate) fn notification_fresh(&self, token: T, piv: Option<PartialIv>) -> Result<(), Error> {
         let row = self
             .live
             .iter()
@@ -611,11 +607,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// The piggybacked register ACK (`protect_response` without Partial
     /// IV) is not a notification for this budget — App does not call this
     /// with `None` for that ACK.
-    pub fn accept_notification(
-        &mut self,
-        token: Token,
-        piv: Option<PartialIv>,
-    ) -> Result<(), Error> {
+    pub fn accept_notification(&mut self, token: T, piv: Option<PartialIv>) -> Result<(), Error> {
         self.notification_fresh(token, piv)?;
         let row = self
             .live
