@@ -85,6 +85,7 @@ pub fn run(
     let mut output = [0; 128];
     let mut retry_at = 30_000;
     let mut subscription_received = 0;
+    let mut observation_reported = false;
     loop {
         let now = started.elapsed().as_millis().try_into()?;
         let result = connection.poll_with(now, |principal, request, _| {
@@ -239,6 +240,10 @@ pub fn run(
                     if response.code() == Code::CONTENT
                         && response.payload() == peer.principal().fingerprint() =>
                 {
+                    if response.observe_seq().is_some() && !observation_reported {
+                        println!("Protected identity observation confirmed.");
+                        observation_reported = true;
+                    }
                     subscription_received = now;
                     retry_at = u64::MAX;
                 }
