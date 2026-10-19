@@ -117,12 +117,12 @@ jobs:
             echo "::error::published crate must not include knowledge/, crates/, tools/, .github/, or .agents/"
             exit 1
           fi
-      - run: cargo package -p coaptic --locked
+      - run: cargo package --workspace --locked
 
   validation:
     name: Companion validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@05bcd1132fe7a3f20d9aa034449935d27e5939bc
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@a4562809f731ecb4d4c1e4fa72da15f385d36974
     with:
-      suite_revision: 05bcd1132fe7a3f20d9aa034449935d27e5939bc
+      suite_revision: a4562809f731ecb4d4c1e4fa72da15f385d36974
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
