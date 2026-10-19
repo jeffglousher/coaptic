@@ -68,6 +68,10 @@ const RETAINED_CONDITIONS_BUDGET: usize = 4 * 24;
 // Four three-state Observe format values, including potential alignment.
 const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 
+// Each route borrows one static discovery descriptor; descriptor contents stay
+// caller-owned. Independent whole-App ceilings above remain unchanged.
+const DISCOVERY_METADATA_BUDGET: usize = DEFAULT_ROUTES * size_of::<usize>();
+
 // Complete-response retention adds one optional RX slot identity per Call.
 // App also retains the deferred generation/deadline, retention flag and padding;
 // zero deferred slots reserve no request/response header arrays.
@@ -104,6 +108,7 @@ fn assert_datagram_omits_assembled(
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET
                 + OBSERVE_FORMAT_BUDGET
+                + DISCOVERY_METADATA_BUDGET
                 + FULL_RESPONSE_STATE_BUDGET
                 + SECURITY_CONTEXT_BUDGET,
         "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"

@@ -208,7 +208,7 @@ impl AdmittedSession {
     ) -> Result<crate::app::Association, AppInstallError>
     where
         P: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
-        S: crate::app::AppStorage,
+        S: crate::app::AppStorage<Token = P::Token>,
     {
         let staged = candidate.as_ref().ok_or(AppInstallError::Missing)?;
         let metadata = staged.association;
@@ -230,6 +230,9 @@ impl AdmittedSession {
         .map_err(AppInstallError::App)?;
         let staged = candidate.take().expect("checked staged session");
         let (context, principal) = staged.session.into_parts();
+        let context = context
+            .into_token_storage::<P::Token>()
+            .expect("fresh EDHOC context has no request bindings");
         let installed = app
             .install_association(
                 metadata.endpoint,
@@ -923,13 +926,13 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
         mut entropy: impl FnMut(&mut [u8]) -> bool,
         checkpoint: impl FnMut(Option<crate::app::Association>, crate::oscore::ReplayCheckpoint) -> bool,
         dispatch: impl FnMut(
-            crate::Request<'_>,
+            crate::Request<'_, MP::Token>,
             Option<crate::app::DeferredReply>,
-        ) -> crate::Response<'static>,
+        ) -> crate::Response<'static, MP::Token>,
     ) -> Result<Status, SharedAppError<T::Error>>
     where
         MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
-        ST: crate::app::AppStorage,
+        ST: crate::app::AppStorage<Token = MP::Token>,
         T: DatagramIo,
     {
         let maintenance = self.maintain(now_ms, registry);
@@ -986,7 +989,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     ) -> usize
     where
         MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
-        ST: crate::app::AppStorage,
+        ST: crate::app::AppStorage<Token = MP::Token>,
     {
         let mut removed = 0;
         for index in 0..app.association_capacity() {
@@ -1043,7 +1046,7 @@ impl<'a, const A: usize, const P: usize, const C: usize, const S: usize>
     ) -> O
     where
         MP: crate::storage::MemoryLayout<B> + crate::app::AppAssembled<B>,
-        ST: crate::app::AppStorage,
+        ST: crate::app::AppStorage<Token = MP::Token>,
     {
         self.reconcile_app(app, registry);
         action(app)

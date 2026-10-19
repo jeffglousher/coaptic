@@ -4,7 +4,7 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, ObserveTransmission, Token};
+use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, ObserveTransmission, OwnedToken, Token};
 
 /// Lookup identity for one Dedup Table row.
 ///
@@ -189,16 +189,16 @@ pub(crate) trait DedupStore {
 /// [`ObserveResource`] is an optional sidecar on the same row so App can
 /// notify by Uri-Path without a second table.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ObserveKey {
-    token: Token,
+pub struct ObserveKey<T: OwnedToken = Token> {
+    token: T,
     endpoint: Endpoint,
     client: bool,
 }
 
-impl ObserveKey {
+impl<T: OwnedToken> ObserveKey<T> {
     /// Server-side observer identity for one Token at client `endpoint`.
     #[must_use]
-    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new(token: T, endpoint: Endpoint) -> Self {
         Self {
             token,
             endpoint,
@@ -209,7 +209,7 @@ impl ObserveKey {
     /// Client-side subscription identity at server `endpoint`.
     /// The opposite direction may independently use the same Token/endpoint.
     #[must_use]
-    pub const fn new_client(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new_client(token: T, endpoint: Endpoint) -> Self {
         Self {
             token,
             endpoint,
@@ -225,7 +225,7 @@ impl ObserveKey {
 
     /// Client Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -467,12 +467,13 @@ pub(crate) struct ObserveSelection {
 /// an optional [`ObserveResource`] path key and bounded request selection. Notification bodies are not
 /// stored here. See `knowledge/rfcs/rfc7641.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ObserveInterest {
+pub struct ObserveInterest<T: OwnedToken = Token> {
     selection: Option<ObserveSelection>,
-    key: ObserveKey,
+    key: ObserveKey<T>,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
-    // SZX in bits 0..2, presence in bit 7; No-Response error bits in 3..4.
+    // SZX in bits 0..2, presence in bit 7, Q mode in bit 6;
+    // No-Response error bits in 3..4.
     response_policy: u8,
     seq: u32,
     pending: bool,
@@ -486,7 +487,7 @@ pub struct ObserveInterest {
     oscore: Option<crate::oscore::RequestRef>,
 }
 
-impl ObserveInterest {
+impl<T: OwnedToken> ObserveInterest<T> {
     pub(crate) fn with_selection(mut self, selection: Option<ObserveSelection>) -> Self {
         self.selection = selection;
         self
@@ -500,7 +501,7 @@ impl ObserveInterest {
     ///
     /// Sequence starts at 0, is not pending, and has no lifetime or hold.
     #[must_use]
-    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new(token: T, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new(token, endpoint),
             selection: None,
@@ -522,7 +523,7 @@ impl ObserveInterest {
 
     /// Client-side subscription. It is never a server notification target.
     #[must_use]
-    pub const fn new_client(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new_client(token: T, endpoint: Endpoint) -> Self {
         Self {
             key: ObserveKey::new_client(token, endpoint),
             ..Self::new(token, endpoint)
@@ -531,13 +532,13 @@ impl ObserveInterest {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> ObserveKey {
+    pub const fn key(self) -> ObserveKey<T> {
         self.key
     }
 
     /// Client Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.key.token()
     }
 
@@ -593,6 +594,15 @@ impl ObserveInterest {
                 None => 0,
             };
         self
+    }
+
+    pub(crate) const fn with_q_block2(mut self, enabled: bool) -> Self {
+        self.response_policy = (self.response_policy & !0x40) | if enabled { 0x40 } else { 0 };
+        self
+    }
+
+    pub(crate) const fn q_block2(self) -> bool {
+        self.response_policy & 0x40 != 0
     }
 
     pub(crate) const fn with_no_response(mut self, mask: crate::message::NoResponse) -> Self {
@@ -840,8 +850,8 @@ impl ObserveInterest {
     }
 }
 
-impl From<ObserveKey> for ObserveInterest {
-    fn from(key: ObserveKey) -> Self {
+impl<T: OwnedToken> From<ObserveKey<T>> for ObserveInterest<T> {
+    fn from(key: ObserveKey<T>) -> Self {
         Self {
             key,
             ..Self::new(key.token(), key.endpoint())
@@ -852,8 +862,8 @@ impl From<ObserveKey> for ObserveInterest {
 pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
     storage: &S,
     pending: super::PendingCon,
-    original: ObserveInterest,
-    replacement: ObserveInterest,
+    original: ObserveInterest<S::Token>,
+    replacement: ObserveInterest<S::Token>,
     bytes: &[u8],
 ) -> Result<SlotId, super::PendingReplaceError> {
     use super::PendingReplaceError;
@@ -867,7 +877,8 @@ pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
     {
         return Err(PendingReplaceError::Stale);
     }
-    let parsed = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    let parsed = crate::message::decode_with_token::<S::Token>(bytes)
+        .map_err(|_| PendingReplaceError::InvalidMessage)?;
     if replacement.notify_hold().and_then(|h| h.con_mid()) != Some(parsed.message_id())
         || parsed.token() != original.token()
     {
@@ -879,13 +890,13 @@ pub(crate) fn validate_observe_replacement<S: super::ObserveSlots>(
 /// Typed insert / lookup / remove / take on an Observe Interest Table.
 ///
 /// Each operation scans the configured entry count (O(n) in capacity).
-pub(crate) trait ObserveStore {
-    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId>;
-    fn lookup(&self, key: ObserveKey) -> Option<SlotId>;
-    fn remove(&mut self, key: ObserveKey) -> bool;
-    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest>;
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest>;
-    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError>;
+pub(crate) trait ObserveStore<T: OwnedToken = Token> {
+    fn insert(&mut self, interest: ObserveInterest<T>) -> Option<SlotId>;
+    fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId>;
+    fn remove(&mut self, key: ObserveKey<T>) -> bool;
+    fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>>;
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>>;
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError>;
 }
 
 /// Dedup table: compact duplicate history slots.
@@ -1037,12 +1048,12 @@ impl<const ENTRIES: usize> SlotPool for DedupTable<ENTRIES> {
 /// Insert, lookup, remove, and take scan every configured entry (O(n) in
 /// capacity). Saturation returns `None` from insert; this type does not evict.
 /// [`Self::rotate`] still advances the occupancy cursor used by acquire.
-pub struct ObserveTable<const ENTRIES: usize> {
-    entries: [Option<ObserveInterest>; ENTRIES],
+pub struct ObserveTable<const ENTRIES: usize, T: OwnedToken = Token> {
+    entries: [Option<ObserveInterest<T>>; ENTRIES],
     occ: Occupancy<ENTRIES>,
 }
 
-impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> ObserveTable<ENTRIES, T> {
     /// Empty table. Cursor starts at zero.
     #[must_use]
     pub const fn new() -> Self {
@@ -1056,7 +1067,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     ///
     /// Returns `None` when the table is full and the key is not already stored.
     /// Scans the configured capacity (O(n)).
-    pub fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+    pub fn insert(&mut self, interest: ObserveInterest<T>) -> Option<SlotId> {
         if let Some(id) = self.lookup(interest.key()) {
             return Some(id);
         }
@@ -1069,7 +1080,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     ///
     /// Scans the configured capacity (O(n)).
     #[must_use]
-    pub fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+    pub fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId> {
         (0..ENTRIES).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.entry(id) {
@@ -1082,7 +1093,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     /// Release the slot matching `key`, if occupied.
     ///
     /// Scans the configured capacity (O(n)).
-    pub fn remove(&mut self, key: ObserveKey) -> bool {
+    pub fn remove(&mut self, key: ObserveKey<T>) -> bool {
         match self.lookup(key) {
             Some(id) => self.release(id).is_ok(),
             None => false,
@@ -1092,7 +1103,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     /// Remove and return the occupied payload matching `key`, if any.
     ///
     /// Scans the configured capacity (O(n)).
-    pub fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    pub fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>> {
         let id = self.lookup(key)?;
         let interest = self.entry(id)?;
         let _ = self.release(id);
@@ -1101,7 +1112,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
 
     /// Occupied payload at `id`.
     #[must_use]
-    pub fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+    pub fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
@@ -1109,7 +1120,7 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     }
 
     /// Write payload into an already-acquired slot.
-    pub fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+    pub fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < ENTRIES {
                 SlotError::NotOccupied
@@ -1128,39 +1139,39 @@ impl<const ENTRIES: usize> ObserveTable<ENTRIES> {
     }
 }
 
-impl<const ENTRIES: usize> Default for ObserveTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> Default for ObserveTable<ENTRIES, T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const ENTRIES: usize> ObserveStore for ObserveTable<ENTRIES> {
-    fn insert(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+impl<const ENTRIES: usize, T: OwnedToken> ObserveStore<T> for ObserveTable<ENTRIES, T> {
+    fn insert(&mut self, interest: ObserveInterest<T>) -> Option<SlotId> {
         ObserveTable::insert(self, interest)
     }
 
-    fn lookup(&self, key: ObserveKey) -> Option<SlotId> {
+    fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId> {
         ObserveTable::lookup(self, key)
     }
 
-    fn remove(&mut self, key: ObserveKey) -> bool {
+    fn remove(&mut self, key: ObserveKey<T>) -> bool {
         ObserveTable::remove(self, key)
     }
 
-    fn take(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>> {
         ObserveTable::take(self, key)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest> {
+    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
         ObserveTable::entry(self, id)
     }
 
-    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest) -> Result<(), SlotError> {
+    fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError> {
         ObserveTable::set_entry(self, id, interest)
     }
 }
 
-impl<const ENTRIES: usize> SlotPool for ObserveTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> SlotPool for ObserveTable<ENTRIES, T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);
@@ -1200,11 +1211,11 @@ impl<const ENTRIES: usize> SlotPool for ObserveTable<ENTRIES> {
 pub(crate) fn replace_owned_observe_body<S>(
     storage: &mut S,
     pending: super::PendingCon,
-    original: ObserveInterest,
-    replacement: ObserveInterest,
+    original: ObserveInterest<S::Token>,
+    replacement: ObserveInterest<S::Token>,
     bytes: &[u8],
     previous: Option<SlotId>,
-    transfer: super::BlockTransfer,
+    transfer: super::BlockTransfer<S::Token>,
     payload: &[u8],
 ) -> Result<(), super::PendingReplaceError>
 where

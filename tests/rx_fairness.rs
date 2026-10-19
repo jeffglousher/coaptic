@@ -129,7 +129,7 @@ fn fixed() -> Service<AppStore<profiles::Default, false>> {
         .bind(Io::default())
         .unwrap()
 }
-fn queued<S: AppStorage>(mut app: Service<S>) {
+fn queued<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {
@@ -161,7 +161,7 @@ fn fixed_queued_owner_progresses() {
     queued(fixed());
 }
 
-fn held_and_pinned<S: AppStorage>(mut app: Service<S>) {
+fn held_and_pinned<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {
@@ -209,10 +209,21 @@ fn held_and_pinned<S: AppStorage>(mut app: Service<S>) {
         for n in 0..4 {
             app.transport_mut().incoming = Some(packet(200 + n, "fresh", FRESH));
             app.poll(2_001 + u64::from(n)).unwrap();
+            let reply = app.transport_mut().last;
+            let parsed = coaptic::message::decode(&reply.bytes[..reply.len]).unwrap();
+            assert_eq!(parsed.code(), coaptic::Code::SERVICE_UNAVAILABLE);
+            if n == 0 {
+                assert_eq!(
+                    parsed.message_id(),
+                    MessageId::new(100),
+                    "queued owner receives its refusal before newer ingress"
+                );
+            }
         }
-        assert_eq!(OLD_CALLS.with(Cell::get), 1);
+        assert_eq!(app.metrics().admission_refusal_sent, 4);
+        assert_eq!(OLD_CALLS.with(Cell::get), 0);
         assert!(app.engine_mut().rx_is_pinned(pinned));
-        assert_eq!(FRESH_CALLS.with(Cell::get), 3);
+        assert_eq!(FRESH_CALLS.with(Cell::get), 0);
         let mut short = [0x33; 255];
         assert!(app.take_response_into(call, &mut short).is_err());
         assert_eq!(short, [0x33; 255]);
@@ -225,7 +236,18 @@ fn held_and_pinned<S: AppStorage>(mut app: Service<S>) {
         assert_eq!(reply.payload(), &[0x5a; 256]);
         assert!(app.take_response_into(call, &mut body).unwrap().is_none());
         app.poll(2_006).unwrap();
-        assert_eq!(FRESH_CALLS.with(Cell::get), 4);
+        assert_eq!(
+            FRESH_CALLS.with(Cell::get),
+            1,
+            "queued fresh work progresses as soon as collection frees headroom"
+        );
+        app.transport_mut().incoming = Some(packet(300, "old", OWNER));
+        app.poll(2_007).unwrap();
+        assert_eq!(
+            OLD_CALLS.with(Cell::get),
+            1,
+            "refused owner can retry with a new exchange after pressure clears"
+        );
         assert_eq!(
             app.engine_mut().rx_occupied(),
             1,
@@ -271,7 +293,7 @@ fn allocated_held_response_and_pinned_slot_do_not_hide_queued_owner() {
     held_and_pinned(allocated());
 }
 
-fn duplicate<S: AppStorage>(mut app: Service<S>) {
+fn duplicate<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     no_alloc(|| {
         let tx = app.engine_mut().acquire_tx().unwrap();
@@ -328,7 +350,7 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 #[cfg(feature = "oscore")]
-fn protected<S: AppStorage>(mut app: Service<S>) {
+fn protected<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     app.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
@@ -400,7 +422,7 @@ fn allocated_protected_queued_response_is_complete() {
     protected(allocated());
 }
 
-fn saturated<S: AppStorage>(mut app: Service<S>) {
+fn saturated<S: AppStorage<Token = coaptic::message::Token>>(mut app: Service<S>) {
     OLD_CALLS.with(|v| v.set(0));
     FRESH_CALLS.with(|v| v.set(0));
     no_alloc(|| {
@@ -418,11 +440,25 @@ fn saturated<S: AppStorage>(mut app: Service<S>) {
             app.transport_mut().incoming.is_some(),
             "saturation must leave transport unread"
         );
-        assert_eq!(OLD_CALLS.with(Cell::get), 1);
+        assert_eq!(OLD_CALLS.with(Cell::get), 0);
+        let reply = app.transport_mut().last;
+        let parsed = coaptic::message::decode(&reply.bytes[..reply.len]).unwrap();
+        assert_eq!(parsed.message_id(), MessageId::new(100));
+        assert_eq!(parsed.code(), coaptic::Code::SERVICE_UNAVAILABLE);
         for now in 2..=5 {
             app.poll(now).unwrap();
         }
-        assert_eq!(OLD_CALLS.with(Cell::get), 4);
+        assert_eq!(OLD_CALLS.with(Cell::get), 2);
+        assert_eq!(app.metrics().admission_refusal_sent, 2);
+        for n in 0..2 {
+            app.transport_mut().incoming = Some(packet(300 + n, "old", OWNER));
+            app.poll(6 + u64::from(n)).unwrap();
+        }
+        assert_eq!(
+            OLD_CALLS.with(Cell::get),
+            4,
+            "both refused exchanges recover on retry without duplicate effects"
+        );
         assert_eq!(FRESH_CALLS.with(Cell::get), 1);
         assert_eq!(app.engine_mut().rx_occupied(), 0);
     });

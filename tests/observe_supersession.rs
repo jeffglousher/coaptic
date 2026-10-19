@@ -198,7 +198,10 @@ fn allocated(protected: bool) -> Server<coaptic::storage::AllocMemory> {
     };
     builder.bind(Io::default()).unwrap()
 }
-fn pending<S: AppStorage, const BLOCK: bool>(app: &Server<S, BLOCK>, key: ObserveKey) -> PendingCon
+fn pending<S: AppStorage<Token = coaptic::message::Token>, const BLOCK: bool>(
+    app: &Server<S, BLOCK>,
+    key: ObserveKey,
+) -> PendingCon
 where
     profiles::Default: coaptic::storage::MemoryLayout<BLOCK> + coaptic::app::AppAssembled<BLOCK>,
 {
@@ -210,7 +213,7 @@ where
     let tx = app.engine().lookup_pending_con(mid, OWNER).unwrap();
     app.engine().pending_con(tx).unwrap()
 }
-fn control<S: AppStorage, const BLOCK: bool>(
+fn control<S: AppStorage<Token = coaptic::message::Token>, const BLOCK: bool>(
     app: &mut Server<S, BLOCK>,
     mid: MessageId,
     rst: bool,
@@ -232,7 +235,7 @@ fn control_frame(mid: MessageId, rst: bool, peer: Endpoint) -> Frame {
     frame.bytes[..4].copy_from_slice(&[if rst { 0x70 } else { 0x60 }, 0, (m >> 8) as u8, m as u8]);
     frame
 }
-fn deliver<S: AppStorage, const BLOCK: bool>(
+fn deliver<S: AppStorage<Token = coaptic::message::Token>, const BLOCK: bool>(
     server: &Server<S, BLOCK>,
     client: &mut Client,
     call: coaptic::Call,
@@ -245,7 +248,7 @@ fn deliver<S: AppStorage, const BLOCK: bool>(
     client.poll(now).unwrap();
     assert_eq!(client.take_response(call).unwrap().unwrap().payload(), body);
 }
-fn registered<S: AppStorage, const BLOCK: bool>(
+fn registered<S: AppStorage<Token = coaptic::message::Token>, const BLOCK: bool>(
     server: &mut Server<S, BLOCK>,
     client: &mut Client,
 ) -> (coaptic::Call, ObserveKey)
@@ -263,7 +266,10 @@ where
     );
     (call, key)
 }
-fn lifecycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn lifecycle<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
@@ -439,7 +445,11 @@ fn allocated_protected_supersession() {
     lifecycle(allocated(true), true);
 }
 
-fn refusal<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
+fn refusal<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+    mode: u8,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
@@ -524,7 +534,10 @@ fn allocated_protected_refusal_and_recovery() {
     }
 }
 
-fn finite_chain<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn finite_chain<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (_call, key) = registered(&mut server, &mut client);
@@ -576,7 +589,7 @@ fn allocated_protected_finite_chain() {
 }
 
 #[cfg(feature = "oscore")]
-fn exhausted<S: AppStorage>(mut server: Server<S>) {
+fn exhausted<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<S>) {
     let mut client = client(true);
     no_alloc(|| {
         let (_call, key) = registered(&mut server, &mut client);
@@ -627,9 +640,11 @@ fn allocated_exhausted_sender_retains_authenticated_retry() {
 fn metadata_accounting() {
     let mut c = coaptic::storage::Capacities::from_profile::<profiles::Default>();
     c.observe_entries = 0;
-    let empty = coaptic::storage::AllocMemory::required_heap_bytes(c).unwrap();
+    let empty =
+        coaptic::storage::AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
     c.observe_entries = 4;
-    let full = coaptic::storage::AllocMemory::required_heap_bytes(c).unwrap();
+    let full =
+        coaptic::storage::AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
     assert_eq!(
         full - empty,
         4 * (core::mem::size_of::<Option<coaptic::storage::ObserveInterest>>() + 2)
@@ -641,7 +656,11 @@ fn metadata_accounting() {
     );
 }
 
-fn replace_registration<S: AppStorage>(mut server: Server<S>, protected: bool, cancel: bool) {
+fn replace_registration<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+    cancel: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
@@ -780,7 +799,11 @@ fn allocated_protected_cancel_and_reregister() {
     }
 }
 
-fn refused_staging_ingress<S: AppStorage>(mut server: Server<S>, protected: bool, rst: bool) {
+fn refused_staging_ingress<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+    rst: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (_, key) = registered(&mut server, &mut client);
@@ -831,7 +854,10 @@ fn allocated_protected_staging_refusal_still_dispatches_control() {
     }
 }
 
-fn pinned_retains_row<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn pinned_retains_row<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
@@ -910,7 +936,10 @@ fn allocated_protected_pinned_replacement_and_cancel_refuse_atomically() {
     pinned_retains_row(allocated(true), true);
 }
 
-fn pinned_delayed_reset<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn pinned_delayed_reset<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (_, key) = registered(&mut server, &mut client);
@@ -972,7 +1001,11 @@ fn allocated_protected_pinned_delayed_reset_preserves_chain_and_releases_rx() {
     pinned_delayed_reset(allocated(true), true);
 }
 
-fn terminal_replacement<S: AppStorage>(mut server: Server<S>, protected: bool, mode: u8) {
+fn terminal_replacement<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+    mode: u8,
+) {
     let mut client = client(protected);
     no_alloc(|| {
         let (call, key) = registered(&mut server, &mut client);
@@ -1077,7 +1110,11 @@ fn allocated_blocks(protected: bool) -> Server<coaptic::storage::AllocMemory, tr
     builder.bind(Io::default()).unwrap()
 }
 
-fn replace_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, follow: bool) {
+fn replace_blocks<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S, true>,
+    protected: bool,
+    follow: bool,
+) {
     let mut client = block_client(protected);
     no_alloc(|| {
         let call = client.get("value").observe().to(OWNER).send(0).unwrap();
@@ -1197,7 +1234,10 @@ fn block_client(protected: bool) -> Server<AppStore<profiles::Default, true>, tr
     builder.bind(Io::default()).unwrap()
 }
 
-fn blockwise_refusal<S: AppStorage>(mut server: Server<S, true>, pin_body: bool) {
+fn blockwise_refusal<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S, true>,
+    pin_body: bool,
+) {
     let mut client = client(false);
     no_alloc(|| {
         let (_, key) = registered(&mut server, &mut client);
@@ -1269,7 +1309,7 @@ fn blockwise_replacement_refusal_preserves_body_and_packet_ownership() {
     }
 }
 
-fn suppressed_terminal<S: AppStorage>(
+fn suppressed_terminal<S: AppStorage<Token = coaptic::message::Token>>(
     mut server: Server<S>,
     protected: bool,
     mask: u8,
@@ -1327,7 +1367,11 @@ fn error_only_no_response_preserves_notifications_and_retires_suppressed_termina
     }
 }
 
-fn terminal_blocks<S: AppStorage>(mut server: Server<S, true>, protected: bool, mode: u8) {
+fn terminal_blocks<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S, true>,
+    protected: bool,
+    mode: u8,
+) {
     let mut client = block_client(protected);
     no_alloc(|| {
         let call = client.get("value").observe().to(OWNER).send(0).unwrap();

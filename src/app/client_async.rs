@@ -10,10 +10,10 @@ where
     S: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
     engine: &'a mut Engine<S>,
-    inbox: &'a mut ClientInbox<C>,
-    lives: &'a mut ClientLives<C>,
-    oscore: &'a mut oscore::Field<R>,
-    call: Option<Call>,
+    inbox: &'a mut ClientInbox<C, S::Token>,
+    lives: &'a mut ClientLives<C, S::Token>,
+    oscore: &'a mut oscore::Field<R, S::Token>,
+    call: Option<Call<S::Token>>,
     rx: Option<SlotId>,
     cancel: bool,
 }
@@ -69,15 +69,15 @@ where
 pub(crate) fn complete_client_async<'a, Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &'a mut Engine<Mem>,
     io: &'a mut T,
-    inbox: &'a mut ClientInbox<CALLS>,
-    lives: &'a mut ClientLives<CALLS>,
+    inbox: &'a mut ClientInbox<CALLS, Mem::Token>,
+    lives: &'a mut ClientLives<CALLS, Mem::Token>,
     ids: &'a mut AppIds,
-    oscore: &'a mut oscore::Field<REQUESTS>,
-    response_state: oscore::ResponseState,
+    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
+    response_state: oscore::ResponseState<Mem::Token>,
     full_responses: bool,
     now_ms: u64,
     peer: Endpoint,
-    parsed: &'a ParsedMessage<'_>,
+    parsed: &'a ParsedMessage<'_, Mem::Token>,
     rx: SlotId,
 ) -> impl Future<Output = Result<(), Error<T::Error>>> + 'a
 where
@@ -127,12 +127,12 @@ where
 pub(crate) fn recover_qblock2_async<'a, Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &'a mut Engine<Mem>,
     io: &'a mut T,
-    inbox: &'a mut ClientInbox<CALLS>,
-    lives: &'a mut ClientLives<CALLS>,
+    inbox: &'a mut ClientInbox<CALLS, Mem::Token>,
+    lives: &'a mut ClientLives<CALLS, Mem::Token>,
     ids: &'a mut AppIds,
-    oscore: &'a mut oscore::Field<REQUESTS>,
+    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    recover: crate::storage::QBlockRecover,
+    recover: crate::storage::QBlockRecover<Mem::Token>,
 ) -> impl Future<Output = Result<bool, Error<T::Error>>> + 'a
 where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -169,10 +169,10 @@ where
 pub(crate) fn pace_qblock1_async<'a, Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &'a mut Engine<Mem>,
     io: &'a mut T,
-    inbox: &'a mut ClientInbox<CALLS>,
-    lives: &'a mut ClientLives<CALLS>,
+    inbox: &'a mut ClientInbox<CALLS, Mem::Token>,
+    lives: &'a mut ClientLives<CALLS, Mem::Token>,
     ids: &'a mut AppIds,
-    oscore: &'a mut oscore::Field<REQUESTS>,
+    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
 ) -> impl Future<Output = Result<(), Error<T::Error>>> + 'a
 where
@@ -215,10 +215,10 @@ where
 pub(crate) fn continue_qblock1_ack_async<'a, Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &'a mut Engine<Mem>,
     io: &'a mut T,
-    inbox: &'a mut ClientInbox<CALLS>,
-    lives: &'a mut ClientLives<CALLS>,
+    inbox: &'a mut ClientInbox<CALLS, Mem::Token>,
+    lives: &'a mut ClientLives<CALLS, Mem::Token>,
     ids: &'a mut AppIds,
-    oscore: &'a mut oscore::Field<REQUESTS>,
+    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
     mid: MessageId,
     peer: Endpoint,

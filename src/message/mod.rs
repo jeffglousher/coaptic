@@ -42,6 +42,8 @@ pub mod value;
 mod tests;
 
 pub use builder::OptionsBuilder;
+#[cfg(feature = "oscore")]
+pub(crate) use decode::decode_without_token;
 pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
 pub use echo::{Echo, EchoFreshness};
 #[cfg(feature = "oscore")]
@@ -78,6 +80,10 @@ pub trait OwnedToken: Copy + Default + Eq + core::hash::Hash + fmt::Debug + 'sta
     const MAX_LEN: usize;
     /// Checked, non-truncating copy into this representation.
     fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError>;
+    /// Create an exact-length zeroed token in its own bounded storage.
+    fn try_zeroed(len: usize) -> Result<Self, extended::CapacityError>;
+    /// Mutate actual token bytes without changing its length or capacity.
+    fn as_bytes_mut(&mut self) -> &mut [u8];
     /// Actual bytes, without unused capacity/padding.
     fn as_bytes(&self) -> &[u8];
     /// Actual token length.
@@ -264,6 +270,20 @@ impl fmt::Debug for Token {
 impl OwnedToken for Token {
     const EMPTY: Self = Self::EMPTY;
     const MAX_LEN: usize = Self::MAX_LEN;
+    fn try_zeroed(len: usize) -> Result<Self, extended::CapacityError> {
+        if len > Self::MAX_LEN {
+            return Err(extended::CapacityError {
+                required: len,
+                available: Self::MAX_LEN,
+            });
+        }
+        let mut token = Self::EMPTY;
+        token.len = len as u8;
+        Ok(token)
+    }
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes[..self.len as usize]
+    }
     fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError> {
         Self::new(bytes).ok_or(extended::CapacityError {
             required: bytes.len(),

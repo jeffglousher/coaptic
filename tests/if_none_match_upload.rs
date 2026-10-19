@@ -185,7 +185,10 @@ fn reset(exists: bool) {
     EFFECTS.with(|v| v.set(0));
     DISPATCHES.with(|v| v.set(0));
 }
-fn complete<S: AppStorage, R: AppStorage>(
+fn complete<
+    S: AppStorage<Token = coaptic::message::Token>,
+    R: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Client<S>,
     server: &mut Client<R>,
     now: u64,
@@ -227,7 +230,10 @@ fn complete<S: AppStorage, R: AppStorage>(
     client.poll(now + 2).unwrap();
     client.take_response(call).unwrap().unwrap().code()
 }
-fn exercise<S: AppStorage, R: AppStorage>(
+fn exercise<
+    S: AppStorage<Token = coaptic::message::Token>,
+    R: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Client<S>,
     mut server: Client<R>,
     protected: bool,

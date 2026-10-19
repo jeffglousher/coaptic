@@ -6,7 +6,7 @@
 //! Download follow-ups omit Observe and preserve notification replay history.
 
 use crate::error::{EncodeError, SlotMessageError};
-use crate::message::{Message, ParsedMessage};
+use crate::message::{Message, OwnedToken, ParsedMessage, Token};
 use crate::storage::{DatagramSlots, Endpoint, Engine, SlotId, Storage};
 
 #[cfg(feature = "oscore")]
@@ -14,13 +14,14 @@ use crate::oscore::{Error as OscoreError, RequestRef};
 
 /// [`App`](super::App) field: a caller-owned context, or an empty marker.
 pub(crate) use super::associations::Store;
-pub(crate) type Field<const REQUESTS: usize> = dyn super::associations::ContextStorage<REQUESTS>;
+pub(crate) type Field<const REQUESTS: usize, K = Token> =
+    dyn super::associations::ContextStorage<REQUESTS, K>;
 
 #[cfg(feature = "oscore")]
-fn selected<const R: usize>(
-    ctx: &Field<R>,
+fn selected<const R: usize, K: OwnedToken>(
+    ctx: &Field<R, K>,
     namespace: u32,
-) -> Result<Option<&crate::oscore::BoundedSecurityContext<R>>, OscoreError> {
+) -> Result<Option<&crate::oscore::BoundedSecurityContext<R, K>>, OscoreError> {
     let value = ctx.context(namespace);
     if ctx.is_some() && value.is_none() {
         Err(OscoreError::Context)
@@ -30,10 +31,10 @@ fn selected<const R: usize>(
 }
 
 #[cfg(feature = "oscore")]
-fn selected_mut<const R: usize>(
-    ctx: &mut Field<R>,
+fn selected_mut<const R: usize, K: OwnedToken>(
+    ctx: &mut Field<R, K>,
     namespace: u32,
-) -> Result<Option<&mut crate::oscore::BoundedSecurityContext<R>>, OscoreError> {
+) -> Result<Option<&mut crate::oscore::BoundedSecurityContext<R, K>>, OscoreError> {
     let protected = ctx.is_some();
     let value = ctx.context_mut(namespace);
     if protected && value.is_none() {
@@ -43,8 +44,8 @@ fn selected_mut<const R: usize>(
     }
 }
 
-pub(super) fn resolve<E, const R: usize>(
-    ctx: &Field<R>,
+pub(super) fn resolve<E, const R: usize, K: OwnedToken>(
+    ctx: &Field<R, K>,
     peer: Endpoint,
 ) -> Result<Endpoint, super::Error<E>> {
     #[cfg(feature = "oscore")]
@@ -58,7 +59,10 @@ pub(super) fn resolve<E, const R: usize>(
     }
 }
 
-pub(super) fn route_allowed<const R: usize>(ctx: &Field<R>, peer: Endpoint) -> bool {
+pub(super) fn route_allowed<const R: usize, K: OwnedToken>(
+    ctx: &Field<R, K>,
+    peer: Endpoint,
+) -> bool {
     #[cfg(feature = "oscore")]
     {
         !ctx.is_some() || ctx.context(peer.association()).is_some()
@@ -70,7 +74,9 @@ pub(super) fn route_allowed<const R: usize>(ctx: &Field<R>, peer: Endpoint) -> b
     }
 }
 
-pub(crate) fn has_live_requests<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
+pub(crate) fn has_live_requests<const REQUESTS: usize, K: OwnedToken>(
+    ctx: &Field<REQUESTS, K>,
+) -> bool {
     #[cfg(feature = "oscore")]
     {
         ctx.has_live_requests()
@@ -138,9 +144,9 @@ impl CheckpointState {
         }
     }
 
-    pub(crate) fn flush<E, const REQUESTS: usize>(
+    pub(crate) fn flush<E, const REQUESTS: usize, K: OwnedToken>(
         &mut self,
-        ctx: &Field<REQUESTS>,
+        ctx: &Field<REQUESTS, K>,
         commit: &mut Option<&mut CheckpointCommit<'_>>,
     ) -> Result<(), super::Error<E>> {
         #[cfg(feature = "oscore")]
@@ -171,20 +177,22 @@ pub(crate) struct Request;
 /// Authenticated, checked response state, committed after critical-option
 /// validation and successful CON acknowledgment. No persistent storage barrier.
 #[derive(Clone, Copy)]
-pub(crate) enum ResponseState {
+pub(crate) enum ResponseState<K: OwnedToken = Token> {
+    #[cfg(not(feature = "oscore"))]
+    _Token(core::convert::Infallible, core::marker::PhantomData<K>),
     None,
     #[cfg(feature = "oscore")]
-    Notification(crate::message::Token, Option<crate::oscore::PartialIv>),
+    Notification(K, Option<crate::oscore::PartialIv>),
     #[cfg(feature = "oscore")]
     Replay(u64),
     #[cfg(feature = "oscore")]
-    ResponseWithoutPiv(crate::message::Token),
+    ResponseWithoutPiv(K),
 }
 
-pub(crate) fn commit_response<E, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+pub(crate) fn commit_response<E, const REQUESTS: usize, K: OwnedToken>(
+    ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
-    state: ResponseState,
+    state: ResponseState<K>,
 ) -> Result<(), super::Error<E>> {
     #[cfg(feature = "oscore")]
     if let Some(ctx) = selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)? {
@@ -211,9 +219,9 @@ pub(crate) fn commit_response<E, const REQUESTS: usize>(
 
 /// Opened inner message after unprotect.
 #[cfg(feature = "oscore")]
-pub(crate) type Opened<'a> = (ParsedMessage<'a>, RequestRef, ResponseState);
+pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, RequestRef, ResponseState<K>);
 #[cfg(not(feature = "oscore"))]
-pub(crate) type Opened<'a> = (ParsedMessage<'a>, Request, ResponseState);
+pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, Request, ResponseState<K>);
 
 #[cfg(feature = "oscore")]
 pub(crate) type InboundError = OscoreError;
@@ -231,17 +239,19 @@ pub(crate) const fn no_request() -> Request {
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) const fn empty_field<const REQUESTS: usize>() -> Store<REQUESTS, 1> {
+pub(crate) const fn empty_field<const REQUESTS: usize, K: OwnedToken>() -> Store<REQUESTS, 1, K> {
     Store::new()
 }
 
 #[cfg(feature = "oscore")]
-pub(crate) fn is_active<const REQUESTS: usize>(ctx: &Field<REQUESTS>) -> bool {
+pub(crate) fn is_active<const REQUESTS: usize, K: OwnedToken>(ctx: &Field<REQUESTS, K>) -> bool {
     ctx.is_some()
 }
 
 /// Request binding stored on an Observe interest (notifications).
-pub(crate) fn request_from_interest(interest: crate::storage::ObserveInterest) -> Request {
+pub(crate) fn request_from_interest<K: OwnedToken>(
+    interest: crate::storage::ObserveInterest<K>,
+) -> Request {
     #[cfg(feature = "oscore")]
     {
         interest.oscore()
@@ -254,7 +264,7 @@ pub(crate) fn request_from_interest(interest: crate::storage::ObserveInterest) -
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) fn is_active<const REQUESTS: usize>(_ctx: &Field<REQUESTS>) -> bool {
+pub(crate) fn is_active<const REQUESTS: usize, K: OwnedToken>(_ctx: &Field<REQUESTS, K>) -> bool {
     false
 }
 
@@ -266,12 +276,12 @@ pub(crate) fn is_active<const REQUESTS: usize>(_ctx: &Field<REQUESTS>) -> bool {
 /// application body. A token-matching unprotected 2.xx/4.xx/5.xx must
 /// not complete a [`Call`](super::Call).
 #[cfg(feature = "oscore")]
-pub(crate) fn inbound<'a, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
+    ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, K>,
     scratch: &'a mut [u8],
-) -> Result<Option<Opened<'a>>, InboundError> {
+) -> Result<Option<Opened<'a, K>>, InboundError> {
     let Some(ctx) = selected_mut(ctx, peer.association())? else {
         return Ok(None);
     };
@@ -339,12 +349,12 @@ pub(crate) fn inbound<'a, const REQUESTS: usize>(
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) fn inbound<'a, const REQUESTS: usize>(
-    _ctx: &mut Field<REQUESTS>,
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
+    _ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
-    _parsed: &ParsedMessage<'_>,
+    _parsed: &ParsedMessage<'_, K>,
     _scratch: &'a mut [u8],
-) -> Result<Option<Opened<'a>>, InboundError> {
+) -> Result<Option<Opened<'a, K>>, InboundError> {
     let _ = peer;
     Ok(None)
 }
@@ -355,11 +365,11 @@ pub(crate) fn inbound<'a, const REQUESTS: usize>(
 /// start Inner Block1. Other protect failures (feature `oscore`) are the
 /// App `Oscore` error and must not look like a size miss.
 pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+    ctx: &mut Field<REQUESTS, S::Token>,
     peer: Endpoint,
     engine: &mut Engine<S>,
     tx: SlotId,
-    msg: &Message<'_>,
+    msg: &Message<'_, S::Token>,
 ) -> Result<(), super::Error<E>> {
     let _ = (&ctx, peer);
     #[cfg(feature = "oscore")]
@@ -387,12 +397,12 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// not fall back to unprotected traffic. Size misses stay
 /// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
 pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
-    ctx: &Field<REQUESTS>,
+    ctx: &Field<REQUESTS, S::Token>,
     peer: Endpoint,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
-    msg: &Message<'_>,
+    msg: &Message<'_, S::Token>,
 ) -> Result<(), super::Error<E>> {
     let _ = (ctx, request, peer);
     #[cfg(feature = "oscore")]
@@ -417,12 +427,12 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to unprotected traffic.
 pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+    ctx: &mut Field<REQUESTS, S::Token>,
     peer: Endpoint,
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
-    msg: &Message<'_>,
+    msg: &Message<'_, S::Token>,
 ) -> Result<(), super::Error<E>> {
     #[cfg(not(feature = "oscore"))]
     let _ = (ctx, request, peer);
@@ -438,11 +448,11 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
         .map_err(super::Error::from)
 }
 
-pub(crate) fn stage_notification<E, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+pub(crate) fn stage_notification<E, const REQUESTS: usize, K: OwnedToken>(
+    ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
     request: Request,
-    msg: &Message<'_>,
+    msg: &Message<'_, K>,
     out: &mut [u8],
 ) -> Result<usize, super::Error<E>> {
     #[cfg(not(feature = "oscore"))]
@@ -498,10 +508,10 @@ fn protect_err<E>(err: OscoreError) -> super::Error<E> {
 }
 
 /// Release a terminal client's request binding without resetting crypto state.
-pub(crate) fn cancel<const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS>,
+pub(crate) fn cancel<const REQUESTS: usize, K: OwnedToken>(
+    ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
-    token: crate::message::Token,
+    token: K,
 ) {
     #[cfg(feature = "oscore")]
     if let Some(ctx) = ctx.context_mut(peer.association()) {
@@ -517,9 +527,9 @@ pub(crate) fn send_qblock1_recover<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut super::AppIds,
-    ctx: &mut Field<REQUESTS>,
+    ctx: &mut Field<REQUESTS, S::Token>,
     now_ms: u64,
-    recover: crate::storage::QBlockRecover,
+    recover: crate::storage::QBlockRecover<S::Token>,
 ) -> Result<(), super::Error<T::Error>>
 where
     S: Storage
@@ -544,7 +554,7 @@ where
     };
     let mut nums = [0; 16];
     let n = recover.copy_missing_nums(&mut nums);
-    let response = super::Response::missing_blocks(nums.into_iter().take(n));
+    let response: super::Response<'_> = super::Response::missing_blocks(nums.into_iter().take(n));
     let format = ContentFormat::MISSING_BLOCKS.encode();
     let options = [Opt::content_format(&format)];
     let message = Message::new(
@@ -662,4 +672,132 @@ mod request_capacity_tests {
         );
         engine.release_tx(tx).unwrap();
     }
+}
+
+/// Authenticate a valid over-capacity request without retaining its token.
+#[cfg(feature = "oscore")]
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_token_capacity_refusal_async, bound(crate::app::async_server::ProtocolIo), calls(super::finish_send => super::finish_send_async, super::send_empty_ack => super::send_empty_ack_async, super::replay_con_request => super::replay_con_request_async))]
+pub(crate) fn send_token_capacity_refusal<S, T, const R: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut super::AppIds,
+    now_ms: u64,
+    peer: Endpoint,
+    wire: &[u8],
+    ctx: &mut Field<R, S::Token>,
+    checkpoint: &mut CheckpointState,
+    commit: &mut Option<&mut CheckpointCommit<'_>>,
+    dedup_closed: &mut Option<super::DedupClosed>,
+) -> Result<(), super::Error<T::Error>>
+where
+    S: Storage + DatagramSlots + crate::storage::PendingCons + crate::storage::DedupSlots,
+    T: crate::storage::DatagramIo,
+{
+    use crate::message::{Code, NoResponse, Type};
+    use crate::storage::DedupEntry;
+    let Ok(raw) = crate::message::extended::decode(wire) else {
+        return Ok(());
+    };
+    if !raw.code().is_request() || !matches!(raw.ty(), Type::Confirmable | Type::NonConfirmable) {
+        return Ok(());
+    }
+    let Ok(projected) = crate::message::decode_without_token::<S::Token>(wire) else {
+        return Ok(());
+    };
+    let Ok(peer) = ctx.inbound_route(peer, &projected) else {
+        return Ok(());
+    };
+    if projected.ty() == Type::Confirmable
+        && let super::Replay::Hit(outcome) =
+            super::replay_con_request(engine, io, peer, &projected, now_ms, dedup_closed)
+    {
+        return outcome;
+    }
+    let Some(selected) = ctx.context_mut(peer.association()) else {
+        return Ok(());
+    };
+    let before = selected.replay_checkpoint();
+    let mut inner = S::RxScratch::default();
+    let opened = selected.unprotect_request(&projected, inner.as_mut());
+    if before != selected.replay_checkpoint() {
+        checkpoint.invalidate();
+    }
+    checkpoint.flush(ctx, commit)?;
+    let Ok((plain, request)) = opened else {
+        return Ok(());
+    };
+    crate::storage::Metrics::inc(&mut engine.metrics_mut().token_capacity_refused);
+    let suppress = plain
+        .no_response()
+        .and_then(Result::ok)
+        .unwrap_or(NoResponse::DEFAULT)
+        .suppresses(Code::BAD_REQUEST);
+    if suppress {
+        if raw.ty() == Type::Confirmable {
+            super::remember_empty_ack(
+                engine,
+                peer,
+                raw.message_id(),
+                now_ms,
+                plain.code(),
+                dedup_closed,
+            );
+        }
+        return if raw.ty() == Type::Confirmable {
+            super::send_empty_ack(engine, io, peer, raw.message_id())
+        } else {
+            Ok(())
+        };
+    }
+    let ty = if raw.ty() == Type::Confirmable {
+        Type::Acknowledgement
+    } else {
+        Type::NonConfirmable
+    };
+    let mid = if ty == Type::Acknowledgement {
+        raw.message_id()
+    } else {
+        ids.next_for(engine, io, now_ms)?
+    };
+    let response = Message::new(ty, Code::BAD_REQUEST, mid).with_token(S::Token::EMPTY);
+    let mut protected = S::TxScratch::default();
+    let Some(selected) = ctx.context(peer.association()) else {
+        return Ok(());
+    };
+    let len = selected
+        .protect_response(&response, request, protected.as_mut())
+        .map_err(super::Error::Oscore)?;
+    let encoded = crate::message::extended::decode(&protected.as_ref()[..len])
+        .map_err(|error| super::Error::Message(SlotMessageError::Parse(error)))?;
+    let tx = super::admission::control_tx(engine).ok_or(super::Error::Saturated)?;
+    let result = (|| {
+        let mut access = engine.access_tx_mut(tx)?;
+        let len = encoded
+            .with_token(raw.token())
+            .encode(access.bytes_mut())
+            .map_err(SlotMessageError::Encode)?;
+        access.set_len(len)?;
+        Ok::<_, SlotMessageError>(())
+    })();
+    if let Err(error) = result {
+        let _ = engine.release_tx(tx);
+        return Err(error.into());
+    }
+    if raw.ty() == Type::Confirmable {
+        let entry = engine.access_tx(tx).ok().and_then(|access| {
+            let bytes = access.as_bytes();
+            (bytes.len() <= DedupEntry::REPLAY_MAX).then(|| {
+                DedupEntry::new(mid, peer)
+                    .with_due_ms(super::dedup_due_ms(now_ms))
+                    .with_replay(bytes)
+            })
+        });
+        if let Some(entry) = entry {
+            super::note_dedup_store(engine, entry, plain.code(), dedup_closed);
+        } else {
+            super::remember_empty_ack(engine, peer, mid, now_ms, plain.code(), dedup_closed);
+        }
+    }
+    super::finish_send(engine, io, tx, peer, None)
 }
