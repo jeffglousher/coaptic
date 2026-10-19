@@ -91,7 +91,7 @@ pub enum ParseError {
     TruncatedHeader,
     /// Version field is not 1.
     UnsupportedVersion,
-    /// Token length nibble is 9–15.
+    /// Unsupported/reserved TKL: 9–15 for the compact decoder, 15 for RFC 8974.
     BadTokenLength,
     /// Buffer ends before the token bytes given by TKL.
     TruncatedToken,
@@ -128,7 +128,7 @@ impl core::fmt::Display for ParseError {
         match self {
             Self::TruncatedHeader => f.write_str("truncated CoAP header"),
             Self::UnsupportedVersion => f.write_str("unsupported CoAP version"),
-            Self::BadTokenLength => f.write_str("token length is 9-15"),
+            Self::BadTokenLength => f.write_str("unsupported or reserved token length field"),
             Self::TruncatedToken => f.write_str("truncated token"),
             Self::TruncatedOption => f.write_str("truncated option"),
             Self::ReservedOptionDelta => f.write_str("reserved option delta 15"),
@@ -152,6 +152,8 @@ impl std::error::Error for ParseError {}
 /// Failure to encode a CoAP datagram.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EncodeError {
+    /// Token length exceeds the RFC 8974 wire maximum of 65804 bytes.
+    TokenTooLong,
     /// Output buffer is shorter than the encoded message.
     BufferTooSmall,
     /// Empty message (code 0.00) has a token, options, or payload.
@@ -171,6 +173,7 @@ pub enum EncodeError {
 impl core::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::TokenTooLong => f.write_str("token exceeds the RFC 8974 wire maximum"),
             Self::BufferTooSmall => f.write_str("encode buffer is too small"),
             Self::EmptyMessageNotEmpty => f.write_str("empty message is not empty"),
             Self::OptionsNotAscending => f.write_str("option numbers are not ascending"),

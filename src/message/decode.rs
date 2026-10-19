@@ -143,6 +143,23 @@ impl<'a> ParsedMessage<'a> {
 /// and [`ParsedMessage::check_rfc7252_formats`] (known option, wrong
 /// format).
 pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
+    let parts = decode_parts(buf, false)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token: Token::from_checked(parts.token),
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
+pub(super) struct Parts<'a> {
+    pub header: Header,
+    pub token: &'a [u8],
+    pub options: &'a [u8],
+    pub payload: &'a [u8],
+}
+
+pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, ParseError> {
     if buf.len() < 4 {
         return Err(ParseError::TruncatedHeader);
     }
@@ -159,7 +176,7 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
         _ => Type::Reset,
     };
     let tkl = buf[0] & 0x0f;
-    if tkl > 8 {
+    if !extended && tkl > 8 {
         return Err(ParseError::BadTokenLength);
     }
 
@@ -167,29 +184,33 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     let id = MessageId::new(u16::from_be_bytes([buf[2], buf[3]]));
 
     let rest = &buf[4..];
-    let tkl_usize = usize::from(tkl);
+    let (tkl_usize, prefix) = if extended {
+        super::extended::decode_length(tkl, rest)?
+    } else {
+        (usize::from(tkl), 0)
+    };
+    let rest = &rest[prefix..];
     if rest.len() < tkl_usize {
         return Err(ParseError::TruncatedToken);
     }
     let (token_bytes, after_token) = rest.split_at(tkl_usize);
-    let token = Token::from_checked(token_bytes);
 
     if code.is_empty() {
         if tkl != 0 || !after_token.is_empty() {
             return Err(ParseError::EmptyMessageNotEmpty);
         }
-        return Ok(ParsedMessage {
+        return Ok(Parts {
             header: Header::new(version, ty, tkl, code, id),
-            token,
+            token: token_bytes,
             options: &[],
             payload: &[],
         });
     }
 
     let (options, payload) = split_options_and_payload(after_token)?;
-    Ok(ParsedMessage {
+    Ok(Parts {
         header: Header::new(version, ty, tkl, code, id),
-        token,
+        token: token_bytes,
         options,
         payload,
     })
