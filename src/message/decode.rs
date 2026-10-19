@@ -232,18 +232,20 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
     } else {
         (usize::from(tkl), 0)
     };
-    // Keep the prefix bound check beside the subtraction for the BPF verifier;
-    // LLVM otherwise folds it into an earlier total-length check.
-    #[cfg(target_arch = "bpf")]
-    let prefix = core::hint::black_box(prefix);
-    let rest = rest.get(prefix..).ok_or(ParseError::TruncatedToken)?;
-    if rest.len() < tkl_usize {
-        return Err(ParseError::TruncatedToken);
-    }
-    let (token_bytes, after_token) = rest.split_at(tkl_usize);
+    // Keep every validation cursor relative to the original datagram so a
+    // bounded backend need not reconstruct bounds across nested subslices.
+    let token_start = 4usize
+        .checked_add(prefix)
+        .ok_or(ParseError::TruncatedToken)?;
+    let options_start = token_start
+        .checked_add(tkl_usize)
+        .ok_or(ParseError::TruncatedToken)?;
+    let token_bytes = buf
+        .get(token_start..options_start)
+        .ok_or(ParseError::TruncatedToken)?;
 
     if code.is_empty() {
-        if tkl != 0 || !after_token.is_empty() {
+        if tkl != 0 || options_start != buf.len() {
             return Err(ParseError::EmptyMessageNotEmpty);
         }
         return Ok(Parts {
@@ -254,7 +256,7 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
         });
     }
 
-    let (options, payload) = split_options_and_payload(after_token)?;
+    let (options, payload) = split_options_and_payload(buf, options_start)?;
     Ok(Parts {
         header: Header::new(version, ty, tkl, code, id),
         token: token_bytes,
@@ -263,17 +265,17 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
     })
 }
 
-fn split_options_and_payload(bytes: &[u8]) -> Result<(&[u8], &[u8]), ParseError> {
-    let mut i = 0;
+fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]), ParseError> {
+    let mut i = start;
     let mut prev = 0u32;
     while i < bytes.len() {
         if bytes[i] == 0xFF {
             if i + 1 == bytes.len() {
                 return Err(ParseError::PayloadMarkerWithoutPayload);
             }
-            return Ok((&bytes[..i], &bytes[i + 1..]));
+            return Ok((&bytes[start..i], &bytes[i + 1..]));
         }
         let _ = read_option(bytes, &mut i, &mut prev)?;
     }
-    Ok((bytes, &[]))
+    Ok((&bytes[start..], &[]))
 }
