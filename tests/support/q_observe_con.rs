@@ -116,6 +116,7 @@ fn con_q_observe_crosses_windows_exact_acks_terminal_and_next_epoch() {
 }
 
 thread_local! { static BLOCK_SEND: Cell<bool> = const { Cell::new(false) }; }
+thread_local! { static SEND_BUDGET: Cell<Option<usize>> = const { Cell::new(None) }; }
 impl coaptic::storage::AsyncDatagramIo for Io {
     async fn recv(&mut self, out: &mut [u8]) -> Result<(usize, Endpoint), Self::Error> {
         match DatagramIo::recv(self, out)? {
@@ -124,13 +125,100 @@ impl coaptic::storage::AsyncDatagramIo for Io {
         }
     }
     async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-        if BLOCK_SEND.with(Cell::get) {
+        let exhausted = SEND_BUDGET.with(|budget| match budget.get() {
+            Some(0) => true,
+            Some(remaining) => {
+                budget.set(Some(remaining - 1));
+                false
+            }
+            None => false,
+        });
+        if BLOCK_SEND.with(Cell::get) || exhausted {
             core::future::pending::<()>().await;
         }
         DatagramIo::send(self, peer, bytes)
     }
 }
 struct Timer;
+
+#[test]
+fn cancelled_q_first_content_binds_only_after_a_packet_commits() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for accepted in [0, 1] {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            let q = BlockValue::new(0, true, 1).unwrap().encode();
+            let options = [
+                Opt::etag(b"v0"),
+                Opt::observe_register(),
+                Opt::uri_path("obs"),
+                Opt::q_block2(&q),
+            ];
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(950))
+                        .with_token(key().token())
+                        .with_options(&options),
+                ),
+            );
+            s.poll_with(0, |_, _| Response::new(Code::VALID).etag(b"v0"))
+                .unwrap();
+            assert!(s.transport_mut().take().is_some());
+            let mut clock = || Ok::<u64, ()>(5000);
+            let mut timer = Timer;
+            SEND_BUDGET.with(|budget| budget.set(Some(accepted)));
+            {
+                let mut notify = core::pin::pin!(s.notify_async(
+                    5000,
+                    &["obs"],
+                    large(),
+                    &mut clock,
+                    &mut timer,
+                    6000
+                ));
+                assert!(
+                    notify
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+            }
+            SEND_BUDGET.with(|budget| budget.set(None));
+            if accepted == 1 {
+                let frame = p.open(s.transport_mut().take().expect("first packet escaped"));
+                let packet = decode(&frame.bytes[..frame.len]).unwrap();
+                assert_eq!(packet.code(), Code::CONTENT);
+                assert_eq!(packet.q_block2().next().unwrap().unwrap().num(), 0);
+            }
+            assert!(s.transport_mut().take().is_none());
+            assert!(body(&mut s).is_none(), "cancelled temporary body released");
+            let id = s.engine().lookup_observe(key()).unwrap();
+            assert_eq!(
+                s.engine().observe_interest(id).unwrap().content_format(),
+                (accepted == 1).then_some(ContentFormat::TEXT_PLAIN)
+            );
+            s.notify(
+                6000,
+                &["obs"],
+                response(b"different")
+                    .content_format(ContentFormat::CBOR)
+                    .etag(b"v2"),
+            )
+            .unwrap();
+            let frame = p.open(s.transport_mut().take().unwrap());
+            let packet = decode(&frame.bytes[..frame.len]).unwrap();
+            assert_eq!(
+                packet.code(),
+                if accepted == 1 {
+                    Code::NOT_ACCEPTABLE
+                } else {
+                    Code::CONTENT
+                }
+            );
+        }
+    }
+}
+
 impl coaptic::platform::AsyncTimer for Timer {
     async fn wait_until(&mut self, _: u64) {
         core::future::pending::<()>().await;

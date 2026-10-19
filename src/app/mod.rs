@@ -4596,11 +4596,10 @@ fn initial_observe_format<K: OwnedToken>(
 fn bind_observe_format<S: Storage + ObserveSlots>(
     engine: &mut Engine<S>,
     interest: ObserveInterest<S::Token>,
-    response: &Response<'_, S::Token>,
+    code: Code,
+    format: Option<ContentFormat>,
 ) -> Result<(), crate::storage::SlotError> {
-    if !interest.format_unbound()
-        || !response.code().is_success()
-        || (response.code() == Code::VALID && response.format().is_none())
+    if !interest.format_unbound() || !code.is_success() || (code == Code::VALID && format.is_none())
     {
         return Ok(());
     }
@@ -4612,13 +4611,40 @@ fn bind_observe_format<S: Storage + ObserveSlots>(
         .ok_or(crate::storage::SlotError::NotOccupied)?;
     let result = engine
         .storage_mut()
-        .set_observe_interest(id, current.with_content_format(response.format()));
+        .set_observe_interest(id, current.with_content_format(format));
     if result.is_err() {
         // A possibly visible representation must not leave an unbound relation
         // able to send another format after a failed metadata commit.
         engine.take_observe(interest.key());
     }
     result
+}
+
+// Cancellation can follow a committed Q packet while a later send is pending.
+// Bind before BodyOwner releases the only retained representation metadata.
+type OutgoingVisibility<'a, S> = (&'a mut bool, fn(&mut Engine<S>, SlotId));
+
+fn bind_cancelled_q_format<S: Storage + ObserveSlots + BodySlots>(
+    engine: &mut Engine<S>,
+    body: SlotId,
+) {
+    let Some(transfer) = engine.tx_body_transfer(body) else {
+        return;
+    };
+    if transfer.q_observe_last_mid().is_none() {
+        return;
+    }
+    let Some((code, format, _)) = transfer.notification_metadata() else {
+        return;
+    };
+    let key = ObserveKey::new(transfer.key().token(), transfer.endpoint());
+    let Some(interest) = engine
+        .lookup_observe(key)
+        .and_then(|id| engine.observe_interest(id))
+    else {
+        return;
+    };
+    let _ = bind_observe_format(engine, interest, code, format);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5218,7 +5244,7 @@ where
             oscore,
             &mut None,
             false,
-            Some(&mut visible),
+            Some((&mut visible, bind_cancelled_q_format::<S>)),
         );
         let ambiguous = match &outcome {
             Err(error) => {
@@ -5227,7 +5253,8 @@ where
             Ok(()) => false,
         };
         if outcome.is_ok() || visible || ambiguous {
-            bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
+            bind_observe_format(engine, interest, notify.code(), notify.format())
+                .map_err(|_| Error::CommitAfterSend)?;
         }
         outcome?;
         retain_q_observe_selection(engine, key, interest.selection().copied())?;
@@ -5291,7 +5318,8 @@ where
         Ok(()) => false,
     };
     if outcome.is_ok() || ambiguous {
-        bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
+        bind_observe_format(engine, interest, notify.code(), notify.format())
+            .map_err(|_| Error::CommitAfterSend)?;
     }
     outcome?;
     let now_ms = completion_time(io, now_ms);
@@ -6031,7 +6059,7 @@ fn start_outgoing<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
     allow_borrowed: bool,
-    visible: Option<&mut bool>,
+    visible: Option<OutgoingVisibility<'_, S>>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -6078,7 +6106,8 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
-    let mut body_owner = async_server::BodyOwner::outgoing(engine, id);
+    let mut body_owner = async_server::BodyOwner::outgoing(engine, id)
+        .with_before_release(visible.as_ref().map(|(_, hook)| *hook));
     let engine = &mut *body_owner.engine;
     if meta.q_block2.is_some()
         && (response.observe_seq().is_some() || !response.code().is_success())
@@ -6163,7 +6192,7 @@ where
     };
     // Preserve packet commitment before error cleanup releases its Q body.
     // This caller-owned witness is protocol state, independent of diagnostics.
-    if let Some(visible) = visible {
+    if let Some((visible, _)) = visible {
         *visible |= engine
             .tx_body_transfer(id)
             .is_some_and(|transfer| transfer.q_observe_last_mid().is_some());
