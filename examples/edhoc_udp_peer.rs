@@ -249,11 +249,28 @@ fn run() -> Result<(), String> {
         if origin.elapsed() >= Duration::from_secs(15) {
             return Err("bootstrap fixture deadline".into());
         }
-        controller
-            .poll(&mut BootstrapIo(&mut io), now_ms(origin), entropy, |p| {
+        if let Err(error) =
+            controller.poll(&mut BootstrapIo(&mut io), now_ms(origin), entropy, |p| {
                 *p == expected
             })
-            .map_err(|e| format!("{e:?}"))?;
+        {
+            if let Some(peer_error) = controller.peer_error() {
+                use coaptic::provisioning::PeerErrorCode;
+                let code = match peer_error.code() {
+                    PeerErrorCode::ReservedSuccess => 0,
+                    PeerErrorCode::Unspecified => 1,
+                    PeerErrorCode::WrongCipherSuite => 2,
+                    PeerErrorCode::UnknownCredential => 3,
+                };
+                let diagnostic = peer_error.diagnostic().unwrap_or("");
+                let suites: Vec<_> = peer_error.cipher_suites().collect();
+                println!(
+                    "{{\"peer_error\":{code},\"diagnostic_hex\":\"{}\",\"suites\":{suites:?}}}",
+                    hex(diagnostic.as_bytes())
+                );
+            }
+            return Err(format!("{error:?}"));
+        }
         if let Some(session) = controller.take_session() {
             break session;
         }
