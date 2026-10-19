@@ -23,13 +23,13 @@ use std::{
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-struct Usb {
+pub(super) struct Usb {
     port: Box<dyn serialport::SerialPort>,
     decoder: CommissioningDecoder,
 }
 
 impl Usb {
-    fn open(name: &str) -> Result<Self> {
+    pub(super) fn open(name: &str) -> Result<Self> {
         let port = serialport::new(name, 115200)
             .timeout(Duration::from_millis(200))
             .open()?;
@@ -38,12 +38,12 @@ impl Usb {
             decoder: CommissioningDecoder::new(),
         })
     }
-    fn request(&mut self, request: &CommissioningRequest) -> Result<CommissioningReply> {
+    pub(super) fn request(&mut self, request: &CommissioningRequest) -> Result<CommissioningReply> {
         exchange(&mut *self.port, &mut self.decoder, request)
     }
 }
 
-fn commissioning_error(error: Box<dyn std::error::Error>) -> Error {
+pub(super) fn commissioning_error(error: Box<dyn std::error::Error>) -> Error {
     match error.downcast::<Error>() {
         Ok(error) => *error,
         Err(error) => Error::Commissioning(error.to_string()),
@@ -158,14 +158,19 @@ pub fn run(
     };
     let mut approval = ApprovalMode::WebAuthn;
     let mut approval_selected = false;
+    let mut approval_directory = directory.to_path_buf();
+    let mut directory_selected = false;
     let mut write = true;
-    for option in args {
+    while let Some(option) = args.next() {
         if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
             if approval_selected {
                 return Err("repeated approval mode".into());
             }
             approval = mode;
             approval_selected = true;
+        } else if option == "--approval-directory" && !directory_selected {
+            approval_directory = args.next().ok_or("missing approval directory")?.into();
+            directory_selected = true;
         } else if option == "--read-only"
             && write
             && (command == "serial-pair" || command == "serial-transfer")
@@ -198,7 +203,7 @@ pub fn run(
     let local_challenge = local.begin(&host, 0, |out| getrandom::fill(out).is_ok())?;
     if let Some(recovery) = recovery {
         super::pairing_cli::approve(
-            directory,
+            &approval_directory,
             approval,
             |owner| recovery.request(&local_challenge, owner),
             |request| {
@@ -280,7 +285,7 @@ pub fn run(
         };
         Request::for_pairing(&challenge, &policy, action)
     };
-    super::pairing_cli::approve(directory, approval, make_request, |request| {
+    super::pairing_cli::approve(&approval_directory, approval, make_request, |request| {
         request.matches_pairing(&challenge)?;
         let policy = request.pairing_policy()?;
         let update = if action == Action::Transfer {
@@ -358,6 +363,9 @@ fn show(reply: CommissioningReply) -> Result<()> {
                     super::hex(policy.owner()),
                     super::hex(policy.resource_policy())
                 );
+            }
+            if let Some(owner) = record.recovery_owner() {
+                println!("Preauthorized recovery credential {}", super::hex(owner));
             }
         }
         _ => return Err("unexpected device state response".into()),

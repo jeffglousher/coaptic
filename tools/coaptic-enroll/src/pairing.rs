@@ -51,7 +51,7 @@ impl PairingFile {
 }
 
 fn seal(record: &PairingRecord) -> Result<SealedRecord, Error> {
-    let mut bytes = [0; 224];
+    let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
     let len = record.encode(&mut bytes).map_err(|_| Error::Input)?;
     Ok(SealedRecord {
         version: 1,
@@ -105,6 +105,8 @@ pub fn apply(
                 commit,
             )
             .map_err(|_| Error::Persistence),
+        // Recovery requires two independent approvals through its dedicated sink.
+        _ => Err(Error::Input),
     }
 }
 
@@ -146,6 +148,27 @@ pub fn initialize_receipts(directory: &Path, identity: &Identity) -> Result<(), 
     Journal::create(&directory.join("receipts.bin"), authority, MAX_ROWS)
         .map_err(|_| Error::Persistence)?;
     Ok(())
+}
+
+/// Confirm an existing journal is recoverable before activating telemetry.
+/// Holds its exclusive ownership until dropped; never creates or resets it.
+pub fn preflight_receipts(
+    directory: &Path,
+    identity: &Identity,
+) -> Result<coaptic_receipts::Journal, Error> {
+    use coaptic::provisioning::TrustAnchor;
+    use coaptic_receipts::{Authority, Journal, Policy};
+    Journal::open(
+        &directory.join("receipts.bin"),
+        Authority::new(Policy {
+            anchor: TrustAnchor::genesis(*identity.peer().principal().fingerprint())
+                .map_err(|_| Error::Input)?,
+            principal: identity.peer().principal(),
+            resource: telemetry_resource(),
+            enabled: false,
+        }),
+    )
+    .map_err(|_| Error::Persistence)
 }
 
 #[cfg(all(test, windows))]

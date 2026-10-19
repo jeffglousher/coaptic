@@ -10,6 +10,8 @@
 //! the public checked exporter and its storage are owned by Coaptic.
 //! `ead.patch` retains complete, validated EAD sequences for authenticated
 //! processing; the bounded representation and policy hooks are Coaptic-owned.
+//! `erasure.patch` erases retained handshake secrets and scoped derivation
+//! scratch on completion, failure and cancellation, without growing the states.
 #![allow(dead_code, deprecated, unexpected_cfgs, unused_imports, missing_docs)]
 #![allow(clippy::all, clippy::pedantic)]
 

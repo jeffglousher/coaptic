@@ -106,7 +106,9 @@
         "mod.rs": "4c511129f1465303a604a11dd077acfaa6e9a05363ef5e877db0398e7d1cefc7"
       },
       "hash_encoding": "UTF-8 with LF line endings",
-      "apply_flags": ["--unidiff-zero"]
+      "apply_flags": [
+        "--unidiff-zero"
+      ]
     },
     {
       "path": "ead.patch",
@@ -120,7 +122,24 @@
         "mod.rs": "f0aa3898c3037b495dc98f5ac848588a789126e2aac6de3d4006aaeffe7076a0"
       },
       "hash_encoding": "UTF-8 with LF line endings",
-      "apply_flags": ["--unidiff-zero"]
+      "apply_flags": [
+        "--unidiff-zero"
+      ]
+    },
+    {
+      "path": "erasure.patch",
+      "stage": "after_base_coaptic_revision",
+      "sha256": "22d3b20fc2c5bcc0d3a6bcc67f69837a781980a91b0befa0af3b769869f78343",
+      "base_coaptic_revision": "d8fce570a161067651211744964f173c71ec3953",
+      "description": "Erase retained handshake private keys and derived secrets on all state exits; guard ECDH, KDF, key and IV scratch with zeroization; preserve fixed storage and protocol bytes",
+      "outputs": {
+        "core.rs": "9ba2bdafef26b9a39d5dfab9b4ec362ba7b3ada0692a2a2c51a5fe9f3054aad5",
+        "edhoc.rs": "edd9a3a50d40788046b7c760bbaf8536d042557149bb33d48320099578dbd777",
+        "shared/mod.rs": "48f036d22c23d37b5f0c9ce5e22152312dde3bd97bf5b140c17024504317b5cc",
+        "mod.rs": "907820723b9fd0ee306578d51e921f94ed5c08ab47478ae1e8161be352678833"
+      },
+      "hash_encoding": "UTF-8 with LF line endings",
+      "apply_flags": []
     }
   ]
 }
