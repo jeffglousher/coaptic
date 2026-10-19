@@ -227,7 +227,7 @@ pub(super) fn decode_length(nibble: u8, rest: &[u8]) -> Result<(usize, usize), P
         14 => {
             let bytes = rest.get(..2).ok_or(ParseError::TruncatedToken)?;
             Ok((
-                269 + usize::from(u16::from_be_bytes([bytes[0], bytes[1]])),
+                269 + usize::from(super::decode_u16_be([bytes[0], bytes[1]])),
                 2,
             ))
         }
