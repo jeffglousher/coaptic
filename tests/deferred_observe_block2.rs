@@ -1035,46 +1035,91 @@ fn deferred_observe_block2_exact_con_retry_and_smaller_followup_preserve_body() 
     }
 }
 #[test]
-fn deferred_observe_block2_nonzero_and_q_requests_stay_refused_then_recover() {
+fn nonzero_initial_observe_registers_whole_resource_direct_and_deferred() {
     for protected in [false, cfg!(feature = "oscore")] {
-        let mut s = fixed();
-        let mut p = Peer::new(&mut s, protected);
-        for (i, number) in [
-            coaptic::message::OptionNumber::BLOCK2,
-            coaptic::message::OptionNumber::Q_BLOCK2,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let options = [
-                Opt::new(coaptic::message::OptionNumber::OBSERVE, &[]),
-                Opt::uri_path("obs"),
-                Opt::new(number, &[0x10]),
-            ];
-            s.transport_mut().incoming = Some(
-                p.encode(
-                    &Message::new(Type::Confirmable, Code::GET, MessageId::new(70 + i as u16))
-                        .with_token(Token::new(b"owner").unwrap())
-                        .with_options(&options),
-                ),
-            );
-            s.poll_with(i as u64, |_, h| {
-                assert!(h.is_none());
-                Response::deferred()
-            })
-            .unwrap();
-            let f = p.open(s.transport_mut().take().unwrap());
-            let m = decode(&f.bytes[..f.len]).unwrap();
-            assert_eq!(m.code(), Code::SERVICE_UNAVAILABLE);
-            assert!(m.observe().is_none());
-            assert!(body(&mut s).is_none());
+        for deferred in [false, true] {
+            for q_mode in [false, true] {
+                for more in [false, true] {
+                    let mut s = fixed();
+                    let mut p = Peer::new(&mut s, protected);
+                    let selected = BlockValue::new(1, more, 1).unwrap().encode();
+                    let options = [
+                        Opt::observe_register(),
+                        Opt::uri_path("obs"),
+                        if q_mode {
+                            Opt::q_block2(&selected)
+                        } else {
+                            Opt::block2(&selected)
+                        },
+                    ];
+                    s.transport_mut().incoming = Some(
+                        p.encode(
+                            &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(70))
+                                .with_token(key().token())
+                                .with_options(&options),
+                        ),
+                    );
+                    let mut handle = None;
+                    without_allocating(|| {
+                        s.poll_with(0, |_, candidate| {
+                            if deferred {
+                                handle = candidate;
+                                Response::deferred()
+                            } else {
+                                large()
+                            }
+                        })
+                        .unwrap()
+                    });
+                    if deferred {
+                        without_allocating(|| s.complete(handle.unwrap(), large(), 1).unwrap());
+                    }
+                    let count = if q_mode && more { 9 } else { 1 };
+                    let mut pending = None;
+                    for offset in 0..count {
+                        let frame = p.open(s.transport_mut().take().unwrap());
+                        let message = decode(&frame.bytes[..frame.len]).unwrap();
+                        assert_eq!(message.code(), Code::CONTENT);
+                        assert!(message.observe().is_some());
+                        if message.ty() == Type::Confirmable {
+                            pending = Some(message.message_id());
+                        }
+                        let block = if q_mode {
+                            message.q_block2().next().unwrap().unwrap()
+                        } else {
+                            message.block2().unwrap().unwrap()
+                        };
+                        let num = if q_mode { 1 + offset } else { 0 };
+                        assert_eq!((block.num(), block.szx()), (num, 1));
+                        assert_eq!(
+                            message.payload(),
+                            &LARGE[num as usize * 32..(num as usize + 1) * 32]
+                        );
+                    }
+                    assert!(s.transport_mut().take().is_none());
+                    assert!(s.engine_mut().lookup_observe(key()).is_some());
+                    if let Some(mid) = pending {
+                        s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                        s.poll(2).unwrap();
+                    }
+                    if !q_mode && deferred {
+                        finish(&mut s, &mut p, 1, 10);
+                    }
+                    s.notify(5000, &["obs"], large()).unwrap();
+                    let frame = p.open(s.transport_mut().take().unwrap_or_else(|| panic!("next epoch: protected={protected}, deferred={deferred}, q={q_mode}, more={more}")));
+                    let message = decode(&frame.bytes[..frame.len]).unwrap();
+                    let block = if q_mode {
+                        message.q_block2().next().unwrap().unwrap()
+                    } else {
+                        message.block2().unwrap().unwrap()
+                    };
+                    assert_eq!((block.num(), block.szx()), (0, 1));
+                    assert!(message.observe().is_some());
+                }
+            }
         }
-        let h = begin(&mut s, &mut p, Type::Confirmable, 72, 2);
-        s.complete(h, large(), 3).unwrap();
-        first(&mut s, &p);
     }
 }
-
 #[test]
 fn deferred_observe_block2_unregistered_staged_body_cancel_replace_and_pin() {
     for protected in [false, cfg!(feature = "oscore")] {
@@ -1462,10 +1507,7 @@ fn deferred_observe_requested_block2_invalid_selectors_refuse_then_recover() {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut s = fixed();
         let mut p = Peer::new(&mut s, protected);
-        for (i, value) in [&[0x10][..], &[0x08][..], &[0x07][..], &[0, 0, 0, 0][..]]
-            .into_iter()
-            .enumerate()
-        {
+        for (i, value) in [&[0x07][..], &[0, 0, 0, 0][..]].into_iter().enumerate() {
             s.transport_mut().incoming = Some(
                 p.encode(
                     &Message::new(Type::Confirmable, Code::GET, MessageId::new(200 + i as u16))
@@ -1579,3 +1621,74 @@ fn deferred_error_only_no_response_keeps_observe_and_suppresses_terminal() {
 
 #[path = "support/q_observe_con.rs"]
 mod q_observe_con;
+
+#[test]
+fn initial_valid_observe_retains_classic_and_q_notification_preferences() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for deferred in [false, true] {
+            for q_mode in [false, true] {
+                let mut s = fixed();
+                let mut p = Peer::new(&mut s, protected);
+                let selected = BlockValue::new(1, false, 1).unwrap().encode();
+                let options = [
+                    Opt::etag(b"v1"),
+                    Opt::observe_register(),
+                    Opt::uri_path("obs"),
+                    if q_mode {
+                        Opt::q_block2(&selected)
+                    } else {
+                        Opt::block2(&selected)
+                    },
+                ];
+                s.transport_mut().incoming = Some(
+                    p.encode(
+                        &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(450))
+                            .with_token(key().token())
+                            .with_options(&options),
+                    ),
+                );
+                let valid = || {
+                    Response::new(Code::VALID)
+                        .etag(b"v1")
+                        .content_format(ContentFormat::TEXT_PLAIN)
+                };
+                let mut handle = None;
+                s.poll_with(0, |_, candidate| {
+                    if deferred {
+                        handle = candidate;
+                        Response::deferred()
+                    } else {
+                        valid()
+                    }
+                })
+                .unwrap();
+                if deferred {
+                    s.complete(handle.unwrap(), valid(), 1).unwrap();
+                }
+                let frame = p.open(s.transport_mut().take().expect("Valid notification"));
+                let message = decode(&frame.bytes[..frame.len]).unwrap();
+                assert_eq!(message.code(), Code::VALID);
+                assert!(message.observe().is_some());
+                assert!(message.payload().is_empty());
+                assert!(message.block2().is_none());
+                assert!(message.q_block2().next().is_none());
+                if message.ty() == Type::Confirmable {
+                    s.transport_mut().incoming =
+                        Some(control(message.message_id(), Type::Acknowledgement));
+                    s.poll(2).unwrap();
+                }
+                s.notify(5000, &["obs"], large()).unwrap();
+                let frame = p.open(s.transport_mut().take().expect("changed representation"));
+                let message = decode(&frame.bytes[..frame.len]).unwrap();
+                let block = if q_mode {
+                    message.q_block2().next().unwrap().unwrap()
+                } else {
+                    message.block2().unwrap().unwrap()
+                };
+                assert_eq!((block.num(), block.szx()), (0, 1));
+                assert_eq!(message.code(), Code::CONTENT);
+                assert!(message.observe().is_some());
+            }
+        }
+    }
+}

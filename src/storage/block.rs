@@ -1231,13 +1231,60 @@ impl<T: OwnedToken> BlockTransfer<T> {
     pub(crate) fn set_q_observe_confirmable(&mut self) {
         debug_assert!(self.q_observe_sequence().is_some());
         if let Some(state) = self.q_receive.as_mut() {
-            state.attempts = 1;
+            state.attempts |= 1;
         }
     }
 
     pub(crate) fn q_observe_confirmable(self) -> bool {
         self.q_observe_sequence().is_some()
-            && self.q_receive.is_some_and(|state| state.attempts == 1)
+            && self.q_receive.is_some_and(|state| state.attempts & 1 != 0)
+    }
+
+    pub(crate) fn q_observe_recovery(self) -> bool {
+        self.q_observe_confirmable() && self.q_receive.is_some_and(|state| state.attempts & 2 != 0)
+    }
+
+    // After the original CON stream completes, its existing window bitmap can
+    // retain one recovery set. Bits outside the requested selection are marked
+    // issued; no second cursor or payload storage is allocated.
+    pub(crate) fn select_q_observe_recovery(
+        &mut self,
+        mut selected: impl Iterator<Item = BlockValue>,
+    ) -> Result<(), BlockTransferError> {
+        if !self.q_observe_confirmable() || !self.complete || self.q_observe_pending_mid().is_some()
+        {
+            return Err(BlockTransferError::OutsideWindow);
+        }
+        let first = selected.next().ok_or(BlockTransferError::Gap)?;
+        let width = u32::from(BlockTransfer::MAX_PAYLOADS);
+        let base = first.num() / width * width;
+        let mut mask = (1u16 << BlockTransfer::MAX_PAYLOADS) - 1;
+        for value in core::iter::once(first).chain(selected) {
+            if value.num() < base || value.num() >= base + width {
+                return Err(BlockTransferError::OutsideWindow);
+            }
+            let count = if value.more() {
+                width - value.num() % width
+            } else {
+                1
+            };
+            for num in value.num()..value.num() + count {
+                let (block, _, _) = self.outgoing_range(num)?;
+                mask &= !(1u16 << (num - base));
+                if !block.more() {
+                    break;
+                }
+            }
+        }
+        let window = self
+            .q
+            .as_mut()
+            .ok_or(BlockTransferError::IdentityMismatch)?;
+        window.base = base;
+        window.mask = mask;
+        self.complete = false;
+        self.q_receive.as_mut().expect("Q Observe").attempts |= 2;
+        Ok(())
     }
 
     // Outgoing Q bodies do not use the incoming Continue-response cache.
@@ -1909,7 +1956,11 @@ impl<T: OwnedToken> BlockTransfer<T> {
         self.num = num;
         self.more = block.more();
         self.next_num = num.checked_add(1).ok_or(BlockTransferError::Overflow)?;
-        self.complete = !block.more();
+        self.complete = !block.more()
+            || (self.q_observe_recovery()
+                && self
+                    .q
+                    .is_some_and(|q| q.mask == (1u16 << BlockTransfer::MAX_PAYLOADS) - 1));
         Ok((block, offset, len))
     }
 }

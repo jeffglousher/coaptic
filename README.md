@@ -106,8 +106,9 @@ fresh session keys; they do not need another operator approval.
 If retaining an OSCORE key across restart instead, recover durable sender-sequence
 reservations and replay checkpoints before using it. Durable application effects
 also need an application receipt; a CoAP acknowledgement alone is not a commit.
-See [SECURITY.md](SECURITY.md) for the boundary and
-[#365](https://github.com/jeffglousher/coaptic/issues/365) for unfinished deployment work.
+See [SECURITY.md](SECURITY.md) for the boundary and the
+[qualification plan](architecture/requirements/VALIDATION-PLAN.md) for remaining
+independent and installed-device proof.
 
 ## Unprotected mode
 
@@ -132,7 +133,7 @@ cargo doc --all-features --open
 
 - [Development and validation](DEVELOPMENT.md)
 - [Accepted protocol scope](architecture/IETF-RFC-PLAN.md)
-- [Remaining implementation](https://github.com/jeffglousher/coaptic/issues/130)
+- [Delivery and remaining qualification](https://github.com/jeffglousher/coaptic/issues/130)
 - [Physical qualification and source-bound evidence](https://github.com/jeffglousher/coaptic/issues/333)
 - [Independent peers and benchmarks](https://github.com/jeffglousher/coaptic-validation)
 
