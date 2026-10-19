@@ -15,28 +15,28 @@ use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
-use crate::message::{Echo, MessageId, ParsedMessage, Token, Type};
+use crate::message::{Echo, MessageId, OwnedToken, ParsedMessage, Token, Type};
 
 /// Lookup identity for one outstanding request.
 ///
 /// RFC 7252 §5.3.2: the source endpoint of the response must be the
 /// destination of the request, and the tokens must match.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ExchangeKey {
-    token: Token,
+pub struct ExchangeKey<T: OwnedToken = Token> {
+    token: T,
     endpoint: Endpoint,
 }
 
-impl ExchangeKey {
+impl<T: OwnedToken> ExchangeKey<T> {
     /// Identity for one Token toward `endpoint`.
     #[must_use]
-    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new(token: T, endpoint: Endpoint) -> Self {
         Self { token, endpoint }
     }
 
     /// Client Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -57,23 +57,18 @@ impl ExchangeKey {
 /// Not a seventh core area; sidecar on this row. See
 /// `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ExchangeEntry {
-    key: ExchangeKey,
+pub struct ExchangeEntry<T: OwnedToken = Token> {
+    key: ExchangeKey<T>,
     message_id: MessageId,
     tx_slot: SlotId,
     echo: Option<Echo>,
     challenge: Option<Echo>,
 }
 
-impl ExchangeEntry {
+impl<T: OwnedToken> ExchangeEntry<T> {
     /// Outstanding request with `token` toward `endpoint`.
     #[must_use]
-    pub const fn new(
-        token: Token,
-        endpoint: Endpoint,
-        message_id: MessageId,
-        tx_slot: SlotId,
-    ) -> Self {
+    pub const fn new(token: T, endpoint: Endpoint, message_id: MessageId, tx_slot: SlotId) -> Self {
         Self {
             key: ExchangeKey::new(token, endpoint),
             message_id,
@@ -103,13 +98,13 @@ impl ExchangeEntry {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> ExchangeKey {
+    pub const fn key(self) -> ExchangeKey<T> {
         self.key
     }
 
     /// Client Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.key.token()
     }
 
@@ -163,20 +158,20 @@ impl ExchangeEntry {
     /// request Message ID. A separate CON/NON response matches by Token only.
     /// See `knowledge/rfcs/rfc7252.txt` §5.3.2.
     #[must_use]
-    pub fn matches_response(self, parsed: &ParsedMessage<'_>) -> bool {
+    pub fn matches_response(self, parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
         matches_response(parsed, self.message_id())
     }
 }
 
 /// CON or NON request (not an empty message, ACK, or RST).
 #[must_use]
-pub(crate) fn is_con_or_non_request(parsed: &ParsedMessage<'_>) -> bool {
+pub(crate) fn is_con_or_non_request(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
     parsed.code().is_request() && matches!(parsed.ty(), Type::Confirmable | Type::NonConfirmable)
 }
 
 /// Response that can complete an exchange. Empty ACK (code 0.00) is not one.
 #[must_use]
-pub(crate) fn is_token_response(parsed: &ParsedMessage<'_>) -> bool {
+pub(crate) fn is_token_response(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
     parsed.code().is_response()
         && matches!(
             parsed.ty(),
@@ -186,7 +181,10 @@ pub(crate) fn is_token_response(parsed: &ParsedMessage<'_>) -> bool {
 
 /// RFC 7252 §5.3.2 type/MID rules after Token + Endpoint already match.
 #[must_use]
-pub(crate) fn matches_response(parsed: &ParsedMessage<'_>, request_mid: MessageId) -> bool {
+pub(crate) fn matches_response(
+    parsed: &ParsedMessage<'_, impl OwnedToken>,
+    request_mid: MessageId,
+) -> bool {
     if !is_token_response(parsed) {
         return false;
     }
@@ -200,11 +198,11 @@ pub(crate) fn matches_response(parsed: &ParsedMessage<'_>, request_mid: MessageI
 /// Typed insert / lookup / take on an exchange table.
 ///
 /// Each operation scans the configured entry count (O(n) in capacity).
-pub(crate) trait ExchangeStore {
-    fn insert(&mut self, entry: ExchangeEntry) -> Option<SlotId>;
-    fn lookup(&self, key: ExchangeKey) -> Option<SlotId>;
-    fn take(&mut self, key: ExchangeKey) -> Option<ExchangeEntry>;
-    fn entry(&self, id: SlotId) -> Option<ExchangeEntry>;
+pub(crate) trait ExchangeStore<T: OwnedToken = Token> {
+    fn insert(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId>;
+    fn lookup(&self, key: ExchangeKey<T>) -> Option<SlotId>;
+    fn take(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>>;
+    fn entry(&self, id: SlotId) -> Option<ExchangeEntry<T>>;
 }
 
 /// Compact outstanding-request table, keyed by Token and remote [`Endpoint`].
@@ -215,12 +213,12 @@ pub(crate) trait ExchangeStore {
 ///
 /// Capacity is provisioned as the TX Datagram Pool count. Entries are not
 /// stored in TX slots: a released TX datagram must not drop the exchange.
-pub struct ExchangeTable<const ENTRIES: usize> {
-    entries: [Option<ExchangeEntry>; ENTRIES],
+pub struct ExchangeTable<const ENTRIES: usize, T: OwnedToken = Token> {
+    entries: [Option<ExchangeEntry<T>>; ENTRIES],
     occ: Occupancy<ENTRIES>,
 }
 
-impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> ExchangeTable<ENTRIES, T> {
     /// Empty table. Cursor starts at zero.
     #[must_use]
     pub const fn new() -> Self {
@@ -234,7 +232,7 @@ impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
     ///
     /// Returns `None` when the table is full and the key is not already stored.
     /// Scans the configured capacity (O(n)).
-    pub fn insert(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+    pub fn insert(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId> {
         if let Some(id) = self.lookup(entry.key()) {
             return Some(id);
         }
@@ -247,7 +245,7 @@ impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
     ///
     /// Scans the configured capacity (O(n)).
     #[must_use]
-    pub fn lookup(&self, key: ExchangeKey) -> Option<SlotId> {
+    pub fn lookup(&self, key: ExchangeKey<T>) -> Option<SlotId> {
         (0..ENTRIES).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.entry(id) {
@@ -260,7 +258,7 @@ impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
     /// Remove and return the occupied payload matching `key`, if any.
     ///
     /// Scans the configured capacity (O(n)).
-    pub fn take(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    pub fn take(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>> {
         let id = self.lookup(key)?;
         let entry = self.entry(id)?;
         let _ = self.release(id);
@@ -269,7 +267,7 @@ impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
 
     /// Occupied payload at `id`.
     #[must_use]
-    pub fn entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    pub fn entry(&self, id: SlotId) -> Option<ExchangeEntry<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
@@ -283,31 +281,31 @@ impl<const ENTRIES: usize> ExchangeTable<ENTRIES> {
     }
 }
 
-impl<const ENTRIES: usize> Default for ExchangeTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> Default for ExchangeTable<ENTRIES, T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const ENTRIES: usize> ExchangeStore for ExchangeTable<ENTRIES> {
-    fn insert(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+impl<const ENTRIES: usize, T: OwnedToken> ExchangeStore<T> for ExchangeTable<ENTRIES, T> {
+    fn insert(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId> {
         ExchangeTable::insert(self, entry)
     }
 
-    fn lookup(&self, key: ExchangeKey) -> Option<SlotId> {
+    fn lookup(&self, key: ExchangeKey<T>) -> Option<SlotId> {
         ExchangeTable::lookup(self, key)
     }
 
-    fn take(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    fn take(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>> {
         ExchangeTable::take(self, key)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    fn entry(&self, id: SlotId) -> Option<ExchangeEntry<T>> {
         ExchangeTable::entry(self, id)
     }
 }
 
-impl<const ENTRIES: usize> SlotPool for ExchangeTable<ENTRIES> {
+impl<const ENTRIES: usize, T: OwnedToken> SlotPool for ExchangeTable<ENTRIES, T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);
@@ -346,18 +344,18 @@ impl<const ENTRIES: usize> SlotPool for ExchangeTable<ENTRIES> {
 /// Insert, lookup, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the TX Datagram Pool count, with independent
 /// occupancy. [`super::Memory`] and `AllocMemory` (with `alloc`) implement this.
-pub trait Exchanges {
+pub trait Exchanges<T: OwnedToken = Token> {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
-    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId>;
+    fn insert_exchange(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId>;
 
     /// Occupied slot matching `key`, if any.
-    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId>;
+    fn lookup_exchange(&self, key: ExchangeKey<T>) -> Option<SlotId>;
 
     /// Remove and return the occupied payload matching `key`, if any.
-    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry>;
+    fn take_exchange(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>>;
 
     /// Occupied payload at `id`.
-    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry>;
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<T>>;
 }

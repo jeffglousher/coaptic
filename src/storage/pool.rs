@@ -12,7 +12,7 @@ use super::occupancy::Occupancy;
 use super::pending::{PendingMark, PendingRto};
 use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, SlotMessageError};
-use crate::message::{BlockValue, Message, MessageId, ParsedMessage};
+use crate::message::{BlockValue, Message, MessageId, OwnedToken, ParsedMessage, Token};
 
 /// One datagram of stack scratch. `N` is the profile RX or TX slot size.
 ///
@@ -456,14 +456,14 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramBytes for DatagramPool<SLOT
 ///
 /// Each occupied slot may hold a [`BlockTransfer`] sidecar (classic Block or
 /// incoming Q-Block).
-pub struct BodyPool<const SLOTS: usize, const BYTES: usize> {
+pub struct BodyPool<const SLOTS: usize, const BYTES: usize, T: OwnedToken = Token> {
     bytes: [[u8; BYTES]; SLOTS],
     lens: [usize; SLOTS],
-    transfers: [Option<BlockTransfer>; SLOTS],
+    transfers: [Option<BlockTransfer<T>>; SLOTS],
     occ: Occupancy<SLOTS>,
 }
 
-impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
+impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTES, T> {
     /// Empty pool. Cursor starts at zero.
     #[must_use]
     pub const fn new() -> Self {
@@ -517,7 +517,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
 
     /// [`BlockTransfer`] sidecar for an occupied slot.
     #[must_use]
-    pub fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    pub fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
@@ -525,7 +525,11 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     }
 
     /// Replace the sidecar on an occupied slot.
-    pub fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+    pub fn set_transfer(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer<T>,
+    ) -> Result<(), SlotError> {
         if !self.occ.is_occupied(id) {
             return Err(if id.index() < SLOTS {
                 SlotError::NotOccupied
@@ -572,7 +576,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     /// Use [`Self::lookup_role`] to distinguish request and response bodies.
     /// O(n) in slot count.
     #[must_use]
-    pub fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+    pub fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
             match self.transfer(id) {
@@ -584,7 +588,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
 
     /// Occupied body with the exact key and transfer role.
     #[must_use]
-    pub fn lookup_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    pub fn lookup_role(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
             self.transfer(id)
@@ -595,7 +599,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
 
     /// Occupied slot with the same present Request-Tag / ETag and endpoint.
     #[must_use]
-    pub fn lookup_identity(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    pub fn lookup_identity(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         if key.identity().is_absent() {
             return None;
         }
@@ -614,7 +618,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     /// 0. Subsequent blocks use [`Self::write_incoming`]. `role` must be incoming.
     pub fn admit_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -700,7 +704,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     /// requires the mandatory size indication on every Q-Block payload.
     pub fn apply_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -730,7 +734,7 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     /// `role` must be outgoing.
     pub fn start_outgoing(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
         szx: u8,
@@ -870,32 +874,34 @@ impl<const SLOTS: usize, const BYTES: usize> BodyPool<SLOTS, BYTES> {
     }
 }
 
-impl<const SLOTS: usize, const BYTES: usize> Default for BodyPool<SLOTS, BYTES> {
+impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> Default for BodyPool<SLOTS, BYTES, T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<SLOTS, BYTES> {
+impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> super::block::BodyOps<T>
+    for BodyPool<SLOTS, BYTES, T>
+{
     fn payload(&self, id: SlotId) -> Option<&[u8]> {
         BodyPool::payload(self, id)
     }
 
-    fn transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         BodyPool::transfer(self, id)
     }
 
-    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError> {
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
         BodyPool::set_transfer(self, id, transfer)
     }
 
-    fn lookup(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         BodyPool::lookup(self, key)
     }
 
     fn admit_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -916,7 +922,7 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
 
     fn apply_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -927,7 +933,7 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
 
     fn start_outgoing(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
         szx: u8,
@@ -979,7 +985,7 @@ impl<const SLOTS: usize, const BYTES: usize> super::block::BodyOps for BodyPool<
     }
 }
 
-impl<const SLOTS: usize, const BYTES: usize> SlotPool for BodyPool<SLOTS, BYTES> {
+impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> SlotPool for BodyPool<SLOTS, BYTES, T> {
     fn acquire(&mut self) -> Option<SlotId> {
         let id = self.occ.acquire()?;
         self.reset(id);
