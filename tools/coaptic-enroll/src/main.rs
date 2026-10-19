@@ -64,7 +64,7 @@ fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::err
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
-            "Coaptic commissioning ? run without arguments for the guided menu.
+            "Coaptic commissioning - run without arguments for the guided menu.
 \
 Inspect: inspect [--port PORT] [--host NAME]
 \
