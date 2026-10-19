@@ -174,7 +174,10 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 
-fn protect<C: AppStorage, S: AppStorage>(
+fn protect<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Peer<C>,
     server: &mut Peer<S>,
     protected: bool,
@@ -187,7 +190,10 @@ fn protect<C: AppStorage, S: AppStorage>(
     #[cfg(not(feature = "oscore"))]
     let _ = (client, server, protected);
 }
-fn deliver<C: AppStorage, S: AppStorage>(
+fn deliver<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     client: &mut Peer<C>,
     server: &mut Peer<S>,
     now: u64,
@@ -216,7 +222,10 @@ fn deliver<C: AppStorage, S: AppStorage>(
     }
     n
 }
-fn campaign<C: AppStorage, S: AppStorage>(
+fn campaign<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Peer<C>,
     mut server: Peer<S>,
     protected: bool,
@@ -574,7 +583,10 @@ fn randomized() -> App<Buffers, Io, 1, true> {
     .bind(Io::default())
     .unwrap()
 }
-fn begin<S: AppStorage>(client: &mut Peer<S>, now: u64) -> coaptic::Call {
+fn begin<S: AppStorage<Token = coaptic::message::Token>>(
+    client: &mut Peer<S>,
+    now: u64,
+) -> coaptic::Call {
     client
         .put("upload")
         .to(PEER)
@@ -587,7 +599,7 @@ fn begin<S: AppStorage>(client: &mut Peer<S>, now: u64) -> coaptic::Call {
         .send(now)
         .unwrap()
 }
-fn drain<S: AppStorage>(client: &mut Peer<S>) {
+fn drain<S: AppStorage<Token = coaptic::message::Token>>(client: &mut Peer<S>) {
     while client.transport_mut().take().is_some() {}
 }
 #[test]

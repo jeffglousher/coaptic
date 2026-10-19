@@ -151,7 +151,10 @@ struct Peer {
     observe: Option<coaptic::oscore::RequestRef>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -248,7 +251,7 @@ fn control(mid: MessageId, ty: Type) -> Frame {
     frame.len = encode(&Message::new(ty, Code::EMPTY, mid), &mut frame.bytes).unwrap();
     frame
 }
-fn begin<S: AppStorage>(
+fn begin<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &mut Peer,
     ty: Type,
@@ -274,7 +277,7 @@ fn begin<S: AppStorage>(
     assert!(server.transport_mut().take().is_none());
     handle.expect("bounded Observe handle")
 }
-fn content<S: AppStorage>(
+fn content<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &Peer,
     body: &[u8],
@@ -597,7 +600,9 @@ fn q_observe_failed_deferred_send_keeps_cancel_and_reset_authority() {
 fn key() -> coaptic::storage::ObserveKey {
     coaptic::storage::ObserveKey::new(Token::new(b"owner").unwrap(), PEER)
 }
-fn body<S: AppStorage>(s: &mut Server<S>) -> Option<coaptic::storage::SlotId> {
+fn body<S: AppStorage<Token = coaptic::message::Token>>(
+    s: &mut Server<S>,
+) -> Option<coaptic::storage::SlotId> {
     s.engine_mut().lookup_tx_body(
         coaptic::storage::BlockKey::new(key().token(), PEER)
             .with_identity(coaptic::storage::BodyTag::new(b"v1").unwrap()),
@@ -611,7 +616,10 @@ fn follow(peer: &mut Peer, mid: u16, block: BlockValue, path: &str) -> Frame {
             .with_options(&[Opt::uri_path(path), Opt::block2(&value)]),
     )
 }
-fn first<S: AppStorage>(s: &mut Server<S>, p: &Peer) -> (MessageId, BlockValue) {
+fn first<S: AppStorage<Token = coaptic::message::Token>>(
+    s: &mut Server<S>,
+    p: &Peer,
+) -> (MessageId, BlockValue) {
     let f = p.open(s.transport_mut().take().expect("first block"));
     let m = decode(&f.bytes[..f.len]).unwrap();
     assert_eq!(m.code(), Code::CONTENT);
@@ -625,7 +633,12 @@ fn first<S: AppStorage>(s: &mut Server<S>, p: &Peer) -> (MessageId, BlockValue) 
     assert_eq!(m.max_age(), Some(Ok(17)));
     (m.message_id(), block)
 }
-fn finish<S: AppStorage>(s: &mut Server<S>, p: &mut Peer, szx: u8, start: u64) {
+fn finish<S: AppStorage<Token = coaptic::message::Token>>(
+    s: &mut Server<S>,
+    p: &mut Peer,
+    szx: u8,
+    start: u64,
+) {
     let size = 1usize << (szx + 4);
     let count = LARGE.len().div_ceil(size);
     let observing = s.engine_mut().lookup_observe(key()).is_some();
@@ -663,7 +676,7 @@ fn finish<S: AppStorage>(s: &mut Server<S>, p: &mut Peer, szx: u8, start: u64) {
     }
     assert!(body(s).is_none());
 }
-fn cycle<S: AppStorage>(mut s: Server<S>, protected: bool) {
+fn cycle<S: AppStorage<Token = coaptic::message::Token>>(mut s: Server<S>, protected: bool) {
     let mut p = Peer::new(&mut s, protected);
     let h = begin(&mut s, &mut p, Type::Confirmable, 1, 0);
     without_allocating(|| s.complete(h, large(), 1)).unwrap();
@@ -1119,7 +1132,7 @@ fn preferred_request(p: &mut Peer, mid: u16, szx: u8) -> Frame {
     )
 }
 
-fn preferred_begin<S: AppStorage>(
+fn preferred_begin<S: AppStorage<Token = coaptic::message::Token>>(
     s: &mut Server<S>,
     p: &mut Peer,
     mid: u16,
@@ -1139,7 +1152,10 @@ fn preferred_begin<S: AppStorage>(
     assert!(decode(&f.bytes[..f.len]).unwrap().is_empty_ack());
     handle.expect("NUM0 Block2 Observe admits bounded work")
 }
-fn preferred_cycle<S: AppStorage>(mut s: Server<S>, protected: bool) {
+fn preferred_cycle<S: AppStorage<Token = coaptic::message::Token>>(
+    mut s: Server<S>,
+    protected: bool,
+) {
     let mut p = Peer::new(&mut s, protected);
     let h = preferred_begin(&mut s, &mut p, 90, 1, 0);
     without_allocating(|| s.complete(h, large(), 1)).unwrap();
@@ -1239,7 +1255,12 @@ fn observe_requested_block2_separate_initial_respects_limit() {
     }
 }
 
-fn finish_notification<S: AppStorage>(s: &mut Server<S>, p: &mut Peer, szx: u8, start: u64) {
+fn finish_notification<S: AppStorage<Token = coaptic::message::Token>>(
+    s: &mut Server<S>,
+    p: &mut Peer,
+    szx: u8,
+    start: u64,
+) {
     let size = 1usize << (szx + 4);
     let count = LARGE.len().div_ceil(size);
     let observing = s.engine_mut().lookup_observe(key()).is_some();

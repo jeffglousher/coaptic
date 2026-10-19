@@ -139,7 +139,7 @@ impl CommissioningReply {
                 out.uint(128)?;
                 out.bytes(&device.public_key())?;
                 out.uint(u64::from(device.kid()))?;
-                let mut bytes = [0; 224];
+                let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
                 let len = record.encode(&mut bytes)?;
                 blob(&mut out, &bytes[..len])?;
             }
@@ -153,7 +153,7 @@ impl CommissioningReply {
             Self::Committed(record) => {
                 out.raw(&[0x83, 1])?;
                 out.uint(131)?;
-                let mut bytes = [0; 224];
+                let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
                 let len = record.encode(&mut bytes)?;
                 blob(&mut out, &bytes[..len])?;
             }
@@ -182,7 +182,8 @@ impl CommissioningReply {
                 let kid = read.uint()?.try_into().map_err(|_| PairingError::Record)?;
                 let device =
                     PinnedPeer::from_public_key(&key, kid).map_err(|_| PairingError::Record)?;
-                let record = PairingRecord::decode(read_blob(&mut read, 224)?)?;
+                let record =
+                    PairingRecord::decode(read_blob(&mut read, PairingRecord::MAX_ENCODED_LEN)?)?;
                 if record.local_principal() != device.principal().fingerprint()
                     || record
                         .policy()
@@ -193,7 +194,10 @@ impl CommissioningReply {
                 Self::State { device, record }
             }
             (0x83, 130) => Self::Challenge(PairingChallenge::decode(read_blob(&mut read, 224)?)?),
-            (0x83, 131) => Self::Committed(PairingRecord::decode(read_blob(&mut read, 224)?)?),
+            (0x83, 131) => Self::Committed(PairingRecord::decode(read_blob(
+                &mut read,
+                PairingRecord::MAX_ENCODED_LEN,
+            )?)?),
             (0x82, 132) => Self::Restarting,
             (0x83, 255) => {
                 Self::Refused(read.uint()?.try_into().map_err(|_| PairingError::Record)?)

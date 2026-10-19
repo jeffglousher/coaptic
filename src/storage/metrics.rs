@@ -1,7 +1,7 @@
 //! Cheap wrapping counters at Engine / reactor hot sites.
 //!
-//! Always present (`no_std`, no allocator). One [`Metrics`] is 22 x `u32`
-//! (88 bytes) on [`crate::storage::Engine`]. Overflow wraps; there is no
+//! Always present (`no_std`, no allocator). One [`Metrics`] is 23 x `u32`
+//! (92 bytes) on [`crate::storage::Engine`]. Overflow wraps; there is no
 //! tracing or OTLP. Copy with [`Engine::metrics`](crate::storage::Engine::metrics)
 //! or [`crate::App::metrics`], optionally
 //! [`Engine::reset_metrics`](crate::storage::Engine::reset_metrics), then
@@ -29,6 +29,10 @@ use crate::error::BlockTransferError;
 /// [`Self::progress`] when [`crate::storage::Engine::progress`] runs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Metrics {
+    /// Valid requests refused because their token exceeds owned capacity.
+    /// Protected requests count only after authentication and replay persistence;
+    /// suppression and transport failure do not erase the refusal decision.
+    pub token_capacity_refused: u32,
     /// App work refused to preserve one RX packet or its logical credit.
     pub admission_rx_refused: u32,
     /// App work refused to preserve one TX packet.
@@ -80,6 +84,7 @@ pub struct Metrics {
 impl Metrics {
     /// All counters zero.
     pub const ZERO: Self = Self {
+        token_capacity_refused: 0,
         admission_rx_refused: 0,
         admission_tx_refused: 0,
         admission_refusal_sent: 0,
@@ -130,7 +135,7 @@ impl core::fmt::Display for Metrics {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "rx_accepted={} rx_error={} tx_ok={} tx_fail={} con_retransmit={} give_up={} observe_notify={} observe_register={} observe_cancel={} block1_assemble={} block2_assemble={} progress={} saturated={} nstart_reject={} empty_ack={} empty_rst={} admission_rx_refused={} admission_tx_refused={} admission_refusal_sent={} admission_refusal_unsent={} hard_rx_exhausted={} hard_tx_exhausted={}",
+            "rx_accepted={} rx_error={} tx_ok={} tx_fail={} con_retransmit={} give_up={} observe_notify={} observe_register={} observe_cancel={} block1_assemble={} block2_assemble={} progress={} saturated={} nstart_reject={} empty_ack={} empty_rst={} admission_rx_refused={} admission_tx_refused={} admission_refusal_sent={} admission_refusal_unsent={} hard_rx_exhausted={} hard_tx_exhausted={} token_capacity_refused={}",
             self.rx_accepted,
             self.rx_error,
             self.tx_ok,
@@ -153,6 +158,7 @@ impl core::fmt::Display for Metrics {
             self.admission_refusal_unsent,
             self.hard_rx_exhausted,
             self.hard_tx_exhausted,
+            self.token_capacity_refused,
         )
     }
 }

@@ -14,11 +14,12 @@ device-record = {
 }
 commissioning-request = {
   version: 1,
-  action: "pair" / "revoke" / "transfer",
+  action: "pair" / "revoke" / "transfer" / "configure-recovery" /
+    "confirm-recovery-credential" / "recover-owner" / "accept-recovered-ownership",
   device: public-identity,
   peer: public-identity,
   owner: bstr .size 32,
-  ? next_owner: bstr .size 32, ; nonzero only for transfer, different from owner
+  ? next_owner: bstr .size 32, ; other credential for transfer/recovery; zero omitted
   permissions: bstr .size 32,
   store: bstr .size 32,
   revision: 1..18446744073709551615,

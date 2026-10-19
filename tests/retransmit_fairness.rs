@@ -324,14 +324,14 @@ fn layout_evidence() {
         c.rx_body_bytes = None;
         c.tx_body_slots = None;
         c.tx_body_bytes = None;
-        let required = AllocMemory::required_heap_bytes(c).unwrap();
+        let required = AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
         println!(
             "allocated_inline={} requested_heap={required}",
             core::mem::size_of::<AllocMemory>()
         );
-        assert!(AllocMemory::try_new(c, required).is_ok());
+        assert!(AllocMemory::<coaptic::message::Token>::try_new(c, required).is_ok());
         assert!(matches!(
-            AllocMemory::try_new(c, required - 1),
+            AllocMemory::<coaptic::message::Token>::try_new(c, required - 1),
             Err(coaptic::BuildError::HeapBudgetExceeded { .. })
         ));
     }
@@ -359,7 +359,8 @@ fn allocated_empty_storage() {
     c.rx_body_bytes = None;
     c.tx_body_slots = None;
     c.tx_body_bytes = None;
-    let mut storage = coaptic::storage::AllocMemory::try_new(c, usize::MAX).unwrap();
+    let mut storage =
+        coaptic::storage::AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap();
     no_alloc(|| {
         assert!(storage.poll_retransmit(0).is_none());
         assert!(storage.poll_retransmit(u64::MAX).is_none());

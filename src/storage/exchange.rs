@@ -344,18 +344,21 @@ impl<const ENTRIES: usize, T: OwnedToken> SlotPool for ExchangeTable<ENTRIES, T>
 /// Insert, lookup, and take scan the configured entry count (O(n) in
 /// capacity). Capacity is the TX Datagram Pool count, with independent
 /// occupancy. [`super::Memory`] and `AllocMemory` (with `alloc`) implement this.
-pub trait Exchanges<T: OwnedToken = Token> {
+pub trait Exchanges: super::Storage {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
-    fn insert_exchange(&mut self, entry: ExchangeEntry<T>) -> Option<SlotId>;
+    fn insert_exchange(&mut self, entry: ExchangeEntry<Self::Token>) -> Option<SlotId>;
 
     /// Occupied slot matching `key`, if any.
-    fn lookup_exchange(&self, key: ExchangeKey<T>) -> Option<SlotId>;
+    fn lookup_exchange(&self, key: ExchangeKey<Self::Token>) -> Option<SlotId>;
 
     /// Remove and return the occupied payload matching `key`, if any.
-    fn take_exchange(&mut self, key: ExchangeKey<T>) -> Option<ExchangeEntry<T>>;
+    fn take_exchange(
+        &mut self,
+        key: ExchangeKey<Self::Token>,
+    ) -> Option<ExchangeEntry<Self::Token>>;
 
     /// Occupied payload at `id`.
-    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<T>>;
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<Self::Token>>;
 }

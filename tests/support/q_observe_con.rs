@@ -138,7 +138,7 @@ impl coaptic::platform::AsyncTimer for Timer {
 }
 
 #[cfg(feature = "oscore")]
-fn protected_admission<S: AppStorage>(mut server: Server<S>) {
+fn protected_admission<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<S>) {
     let mut peer = Peer::new(&mut server, true);
     let held = core::array::from_fn::<_, 3, _>(|_| server.engine_mut().acquire_tx().unwrap());
     let options = [Opt::uri_path("obs")];

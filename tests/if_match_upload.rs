@@ -166,7 +166,7 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     })
     .unwrap()
 }
-fn exercise<S: AppStorage>(
+fn exercise<S: AppStorage<Token = coaptic::message::Token>>(
     mut client: Client<S>,
     qblock: bool,
     empty: bool,

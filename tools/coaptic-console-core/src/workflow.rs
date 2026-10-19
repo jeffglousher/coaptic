@@ -73,6 +73,25 @@ pub fn operation(choice: &str) -> Option<Operation> {
         "15" => ("development-piv-test", &[]),
         "16" => ("serial-restart", &["Serial port"]),
         "17" => ("receipts-init", &["Existing host identity name"]),
+        "18" => (
+            "serial-backup",
+            &[
+                "Serial port",
+                "Backup credential directory",
+                "Backup mode (webauthn, touch, touchless)",
+            ],
+        ),
+        "19" => ("serial-backup-remove", &["Serial port"]),
+        "20" => (
+            "serial-owner-recover",
+            &[
+                "Serial port",
+                "New unpaired host identity name",
+                "Host IPv4 address:port",
+                "New owner credential directory",
+                "New owner mode (webauthn, touch, touchless)",
+            ],
+        ),
         _ => return None,
     };
     Some(Operation {
@@ -97,12 +116,15 @@ pub fn operation(choice: &str) -> Option<Operation> {
             "17" => {
                 "Initialize first receipt journal for an existing host (never reset lost history)"
             }
+            "18" => "Authorize a recovery credential with current-owner and backup proofs",
+            "19" => "Remove the preauthorized recovery credential",
+            "20" => "Recover ownership using the preauthorized backup and new owner proofs",
             _ => unreachable!(),
         },
         fields,
-        approval: matches!(choice, "2" | "3" | "4" | "5"),
+        approval: matches!(choice, "2" | "3" | "4" | "5" | "18" | "19" | "20"),
         connect: choice == "12",
-        permissions: matches!(choice, "2" | "4"),
+        permissions: matches!(choice, "2" | "4" | "20"),
     })
 }
 
@@ -119,7 +141,7 @@ pub fn group(choice: &str) -> Option<Group> {
         "2" => ("Set up", &["11", "8", "6", "17"]),
         "3" => ("Pair / connect", &["2", "12", "5"]),
         "4" => ("Credentials", &["9", "10", "14", "15", "13"]),
-        "5" => ("Maintenance", &["16", "3", "4"]),
+        "5" => ("Maintenance", &["16", "3", "4", "18", "19", "20"]),
         _ => return None,
     };
     Some(Group { title, operations })

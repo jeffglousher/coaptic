@@ -148,7 +148,10 @@ struct Peer {
     context: Option<coaptic::oscore::SecurityContext>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -235,7 +238,7 @@ fn control(mid: MessageId, ty: Type) -> Frame {
     frame.len = encode(&Message::new(ty, Code::EMPTY, mid), &mut frame.bytes).unwrap();
     frame
 }
-fn begin<S: AppStorage>(
+fn begin<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &mut Peer,
     ty: Type,
@@ -261,7 +264,7 @@ fn begin<S: AppStorage>(
     assert!(server.transport_mut().take().is_none());
     handle.expect("bounded Observe handle")
 }
-fn content<S: AppStorage>(
+fn content<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &Peer,
     body: &[u8],
@@ -280,7 +283,7 @@ fn content<S: AppStorage>(
     assert_eq!(p.content_format(), Some(Ok(ContentFormat::TEXT_PLAIN)));
     p.message_id()
 }
-fn cycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn cycle<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<S>, protected: bool) {
     let mut peer = Peer::new(&mut server, protected);
     for (index, ty) in [Type::Confirmable, Type::NonConfirmable]
         .into_iter()
@@ -394,13 +397,15 @@ fn deferred_observe_ambiguous_send_keeps_format_sequence_and_coalesced_signal() 
 fn key() -> coaptic::storage::ObserveKey {
     coaptic::storage::ObserveKey::new(Token::new(b"owner").unwrap(), PEER)
 }
-fn relation<S: AppStorage>(server: &mut Server<S>) -> Option<coaptic::storage::ObserveInterest> {
+fn relation<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &mut Server<S>,
+) -> Option<coaptic::storage::ObserveInterest> {
     let engine = server.engine_mut();
     engine
         .lookup_observe(key())
         .and_then(|id| engine.observe_interest(id))
 }
-fn drain<S: AppStorage>(server: &mut Server<S>) {
+fn drain<S: AppStorage<Token = coaptic::message::Token>>(server: &mut Server<S>) {
     while server.transport_mut().take().is_some() {}
 }
 
