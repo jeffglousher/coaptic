@@ -357,9 +357,9 @@ requirements and not implied by cross-compilation or layout tests. #365 owns the
 installed authorization/recovery boundary and its unresolved counterexamples.
 Companion #89 delivers the observation-only Rust ingress classifier, XDP program
 and owned-interface loader for #522. Portable tests, Linux loader cross-checks
-and BPF target type-checking pass. Linked-object, verifier and live-hook proof
-still require an actual Linux execution lane. Windows tests and cross-compilation
-cannot establish those results.
+and BPF target type-checking pass. Linked-object proof remains; verifier and
+live-hook proof require an actual Linux execution lane. Windows tests and
+cross-compilation cannot establish kernel acceptance or behavior.
 
 Publication #132 is an owner decision after a concrete candidate, package review
 and requested release qualification. No development issue, project status or
