@@ -462,3 +462,136 @@ fn recovered_host_survives_sealed_store_reopen() {
     std::fs::remove_file(directory.join("pairing.lock")).unwrap();
     std::fs::remove_dir(directory).unwrap();
 }
+
+#[test]
+fn existing_grant_preparation_checks_expiry_and_owner_before_remote_commit() {
+    let host = identity(4);
+    let device = identity(1);
+    let mut local = unpaired(&host, 6);
+    let policy = EnrollmentPolicy::new(device.peer(), OLD, [9; 32]).unwrap();
+    let challenge = local.begin(&host, 0, entropy).unwrap();
+    local
+        .pair(&challenge, policy.clone(), 1, |_, _| Ok::<_, Error>(()))
+        .unwrap();
+    let prior = local.checkpoint().clone();
+    let challenge = local.begin(&host, 2, entropy).unwrap();
+    assert!(
+        PreparedHostPairing::prepare_update(&mut local, &challenge, policy.clone(), false, 60_003)
+            .is_err()
+    );
+    assert_eq!(local.checkpoint().commitment(), prior.commitment());
+    let challenge = local.begin(&host, 60_004, entropy).unwrap();
+    let wrong = EnrollmentPolicy::new(device.peer(), NEW, [9; 32]).unwrap();
+    assert!(
+        PreparedHostPairing::prepare_update(&mut local, &challenge, wrong, false, 60_005).is_err()
+    );
+    assert_eq!(local.checkpoint().commitment(), prior.commitment());
+    let challenge = local.begin(&host, 60_006, entropy).unwrap();
+    let prepared =
+        PreparedHostPairing::prepare_update(&mut local, &challenge, policy, true, 60_007).unwrap();
+    let mut stored = prior.clone();
+    assert!(stored.enabled());
+    prepared
+        .commit(|old, next| {
+            assert_eq!(old.commitment(), stored.commitment());
+            stored = next.clone();
+            Ok(())
+        })
+        .unwrap();
+    assert!(!stored.enabled());
+    assert_eq!(stored.policy().unwrap().owner(), &OLD);
+}
+
+#[test]
+fn lost_grant_or_revocation_reply_repairs_only_exact_same_owner_destination() {
+    for revoked in [false, true] {
+        let device = identity(1);
+        let host = identity(4);
+        let mut remote = unpaired(&device, 7);
+        let mut local = unpaired(&host, 6);
+        let challenge = remote.begin(&device, 0, entropy).unwrap();
+        remote
+            .pair(
+                &challenge,
+                EnrollmentPolicy::new(host.peer(), OLD, [9; 32]).unwrap(),
+                1,
+                |_, _| Ok::<_, Error>(()),
+            )
+            .unwrap();
+        let challenge = local.begin(&host, 0, entropy).unwrap();
+        local
+            .pair(
+                &challenge,
+                EnrollmentPolicy::new(device.peer(), OLD, [9; 32]).unwrap(),
+                1,
+                |_, _| Ok::<_, Error>(()),
+            )
+            .unwrap();
+        let challenge = remote.begin(&device, 2, entropy).unwrap();
+        if revoked {
+            remote
+                .revoke(&challenge, &OLD, 3, |_, _| Ok::<_, Error>(()))
+                .unwrap();
+        } else {
+            remote
+                .pair(
+                    &challenge,
+                    EnrollmentPolicy::new(host.peer(), OLD, [10; 32]).unwrap(),
+                    3,
+                    |_, _| Ok::<_, Error>(()),
+                )
+                .unwrap();
+        }
+        let recovery = PeerRecovery::new(
+            device.peer(),
+            remote.checkpoint().clone(),
+            local.checkpoint(),
+        )
+        .unwrap();
+        let challenge = local.begin(&host, 4, entropy).unwrap();
+        assert!(recovery.request(&challenge, NEW).is_err());
+        let request = recovery.request(&challenge, OLD).unwrap();
+        assert_eq!(
+            request.action,
+            if revoked {
+                Action::Revoke
+            } else {
+                Action::Pair
+            }
+        );
+        let old = local.checkpoint().clone();
+        let mut durable = old.clone();
+        recovery
+            .commit(
+                &request,
+                &challenge,
+                (&device.peer(), remote.checkpoint()),
+                &mut local,
+                5,
+                |expected, next| {
+                    assert_eq!(expected.commitment(), durable.commitment());
+                    durable = next.clone();
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(durable.enabled(), !revoked);
+        assert_eq!(
+            durable.policy().unwrap().resource_policy(),
+            remote.checkpoint().policy().unwrap().resource_policy()
+        );
+        assert_eq!(durable.revision(), old.revision() + 1);
+        assert!(
+            recovery
+                .commit(
+                    &request,
+                    &challenge,
+                    (&device.peer(), remote.checkpoint()),
+                    &mut local,
+                    6,
+                    |_, _| panic!("replay persisted")
+                )
+                .is_err()
+        );
+    }
+}

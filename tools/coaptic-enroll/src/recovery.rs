@@ -1,4 +1,4 @@
-//! Complete an unpaired host after a device committed but its reply was lost.
+//! Repair the exact destination host after a device committed but its reply was lost.
 //! Read the device over the trusted physical channel and authenticate its current
 //! owner before calling `commit`. This never sends another device update, revives
 //! a former owner, or repairs missing/corrupt identity or pairing storage.
@@ -26,10 +26,35 @@ impl PreparedHostPairing {
         if state.checkpoint().policy().is_some() {
             return Err(Error::Input);
         }
+        Self::prepare_update(state, challenge, policy, false, now_ms)
+    }
+
+    /// Stage an ordinary same-owner grant or revocation without persisting it.
+    /// Authentication and exact remote-policy binding remain the caller's job.
+    pub fn prepare_update(
+        state: &mut LocalPairing,
+        challenge: &PairingChallenge,
+        policy: EnrollmentPolicy,
+        revoke: bool,
+        now_ms: u64,
+    ) -> Result<Self, Error> {
         let prior = state.checkpoint().clone();
-        state
-            .pair(challenge, policy, now_ms, |_, _| Ok::<_, Error>(()))
-            .map_err(|_| Error::Expired)?;
+        if revoke {
+            let current = prior.policy().ok_or(Error::Input)?;
+            if current.owner() != policy.owner()
+                || current.peer().principal() != policy.peer().principal()
+                || current.resource_policy() != policy.resource_policy()
+            {
+                return Err(Error::Input);
+            }
+            state
+                .revoke(challenge, policy.owner(), now_ms, |_, _| Ok::<_, Error>(()))
+                .map_err(|_| Error::Expired)?;
+        } else {
+            state
+                .pair(challenge, policy, now_ms, |_, _| Ok::<_, Error>(()))
+                .map_err(|_| Error::Expired)?;
+        }
         Ok(Self {
             prior,
             next: state.checkpoint().clone(),
@@ -46,7 +71,7 @@ impl PreparedHostPairing {
     }
 }
 
-/// One immutable device snapshot and the exact unpaired destination host record.
+/// One immutable device snapshot and the exact destination host record.
 pub struct PeerRecovery {
     device: PinnedPeer,
     record: PairingRecord,
@@ -55,20 +80,29 @@ pub struct PeerRecovery {
 
 impl PeerRecovery {
     /// Both records must come from trusted custody, never unauthenticated network
-    /// discovery. Refuse a revoked device, another host, or any existing host claim.
+    /// discovery. Existing claims must name this device and the same owner.
+    /// A revoked device can only revoke an exact existing reciprocal grant.
     pub fn new(
         device: PinnedPeer,
         record: PairingRecord,
         host: &PairingRecord,
     ) -> Result<Self, Error> {
         let policy = record.policy().ok_or(Error::Input)?;
-        if !record.enabled()
-            || record.local_principal() != device.principal().fingerprint()
+        if record.local_principal() != device.principal().fingerprint()
             || policy.peer().principal().fingerprint() != host.local_principal()
-            || host.policy().is_some()
-            || host.enabled()
         {
             return Err(Error::Input);
+        }
+        match host.policy() {
+            Some(prior)
+                if prior.peer().principal() == device.principal()
+                    && prior.owner() == policy.owner()
+                    && (host.enabled() != record.enabled()
+                        || prior.resource_policy() != policy.resource_policy())
+                    && (record.enabled()
+                        || prior.resource_policy() == policy.resource_policy()) => {}
+            None if record.enabled() && !host.enabled() => {}
+            _ => return Err(Error::Input),
         }
         Ok(Self {
             device,
@@ -95,7 +129,15 @@ impl PeerRecovery {
         let reciprocal =
             EnrollmentPolicy::new(self.device.clone(), owner, *policy.resource_policy())
                 .map_err(|_| Error::Input)?;
-        Request::for_pairing(challenge, &reciprocal, Action::Pair)
+        Request::for_pairing(
+            challenge,
+            &reciprocal,
+            if self.record.enabled() {
+                Action::Pair
+            } else {
+                Action::Revoke
+            },
+        )
     }
 
     /// Consume the hardware-approved request only after inspecting the physical
@@ -117,8 +159,13 @@ impl PeerRecovery {
         {
             return Err(Error::Input);
         }
-        host.pair(challenge, request.pairing_policy()?, now_ms, commit)
-            .map_err(|_| Error::Persistence)
+        if self.record.enabled() {
+            host.pair(challenge, request.pairing_policy()?, now_ms, commit)
+                .map_err(|_| Error::Persistence)
+        } else {
+            host.revoke(challenge, &request.owner, now_ms, commit)
+                .map_err(|_| Error::Persistence)
+        }
     }
 }
 
