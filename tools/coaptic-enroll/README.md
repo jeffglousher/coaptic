@@ -21,11 +21,10 @@ The default cross-platform PIV build uses RustCrypto for signatures, hashes,
 attestation verification and sealed records, with no OpenSSL dependency. It
 still uses native PC/SC and OS credential storage. This tool has no TLS transport;
 rustls is not needed for its USB and EDHOC/OSCORE communication.
-Linux Secret Service uses the Rust zbus client rather than libdbus. BLAKE3 uses
-its pure-Rust backend in both the library and CLI; this retains x86 Rust SIMD
-intrinsics but excludes its bundled AVX-512 assembly and ARM C/NEON backend.
-The cryptographic outputs and stored identities are unchanged. Throughput for
-these backend choices has not been measured.
+Linux Secret Service uses the Rust zbus client rather than libdbus. BLAKE3 keeps
+the official Rust crate's normal optimized backend selection, including supported
+assembly/C implementations. Rust ownership does not require disabling maintained
+platform acceleration. The core still disables BLAKE3's `std` feature.
 Optional `--features webauthn` enables Windows WebAuthn and retains OpenSSL
 through the upstream WebAuthn verifier. `--all-features` also enables its
 software-authenticator test fixtures. Existing credentials and encrypted records

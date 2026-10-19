@@ -34,7 +34,7 @@ serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 ciborium = "0.2"
 getrandom = { version = "=0.3.4", features = ["std"] }
-blake3 = { version = "=1.8.7", features = ["pure"] }
+blake3 = "=1.8.7"
 zeroize = "1"
 serialport = { version = "=4.8.1", default-features = false }
 yubikey = { version = "=0.8.0", optional = true, features = ["untested"] }
