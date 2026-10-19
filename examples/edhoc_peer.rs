@@ -71,8 +71,7 @@ impl EadReceipts {
 fn outgoing_ead(enabled: bool, stage: u8, critical_stage: u8) -> Ead {
     let mut ead = Ead::new();
     if enabled {
-        // Four ordered items fit the existing 64-byte aggregate bound.
-        ead.push(0, Some(&[stage, 0])).expect("padding");
+        // Three ordered items also fit the independent peer's CBOR item bound.
         ead.push(
             if critical_stage == stage {
                 -32771
