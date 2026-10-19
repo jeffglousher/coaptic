@@ -380,3 +380,94 @@ fn admission_continue_and_refusal_replay_exact_ciphertext_without_packet_pin() {
         }
     }
 }
+
+#[test]
+fn con_q_observe_recovery_retains_bounded_selection_until_exact_ack() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for suffix in [false, true] {
+            let (mut s, mut p) = register(protected);
+            s.notify_confirmable(5000, &["obs"], large()).unwrap();
+            for num in 0..22 {
+                let (mid, _) = chunk(&mut s, &p, num, false);
+                s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                s.poll(5010 + u64::from(num)).unwrap();
+            }
+            let first = BlockValue::new(1, suffix, 1).unwrap().encode();
+            let third = BlockValue::new(3, false, 1).unwrap().encode();
+            let other_set = BlockValue::new(11, false, 1).unwrap().encode();
+            let single = BlockValue::new(1, false, 1).unwrap().encode();
+            let original = body(&mut s);
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(899))
+                        .with_token(key().token())
+                        .with_options(&[
+                            Opt::uri_path("obs"),
+                            Opt::q_block2(&single),
+                            Opt::q_block2(&other_set),
+                        ]),
+                ),
+            );
+            s.poll_with(5900, |_, _| panic!("capacity refusal retains snapshot"))
+                .unwrap();
+            let refused = p.open(s.transport_mut().take().expect("bounded recovery refusal"));
+            let refused = decode(&refused.bytes[..refused.len]).unwrap();
+            assert_eq!(refused.code(), Code::SERVICE_UNAVAILABLE);
+            assert_eq!(refused.max_age(), Some(Ok(1)));
+            assert!(refused.observe().is_none());
+            assert_eq!(body(&mut s), original);
+            let mut options = coaptic::message::OptionsBuilder::<3>::new();
+            options.push(Opt::uri_path("obs")).unwrap();
+            options.push(Opt::q_block2(&first)).unwrap();
+            if !suffix {
+                options.push(Opt::q_block2(&third)).unwrap();
+            }
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(900))
+                        .with_token(key().token())
+                        .with_options(options.as_slice()),
+                ),
+            );
+            without_allocating(|| {
+                s.poll_with(6000, |_, _| panic!("retained recovery snapshot"))
+                    .unwrap()
+            });
+            let selected: &[u32] = if suffix {
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9]
+            } else {
+                &[1, 3]
+            };
+            for (index, &num) in selected.iter().enumerate() {
+                let wire = s.transport_mut().take().expect("selected CON payload");
+                let frame = p.open(wire);
+                let message = decode(&frame.bytes[..frame.len]).unwrap();
+                assert_eq!(message.ty(), Type::Confirmable);
+                assert_eq!(message.q_block2().next().unwrap().unwrap().num(), num);
+                assert!(
+                    message.observe().is_none(),
+                    "missing-block responses never carry Observe"
+                );
+                assert_eq!(
+                    message.payload(),
+                    &LARGE[num as usize * 32..(num as usize + 1) * 32]
+                );
+                assert!(s.transport_mut().take().is_none());
+                let mid = message.message_id();
+                s.transport_mut().incoming =
+                    Some(control(mid.wrapping_add(500), Type::Acknowledgement));
+                s.poll(6010 + index as u64 * 2).unwrap();
+                assert!(s.transport_mut().take().is_none());
+                s.transport_mut().incoming = Some(control(mid, Type::Acknowledgement));
+                s.poll(6011 + index as u64 * 2).unwrap();
+            }
+            assert!(
+                s.transport_mut().take().is_none(),
+                "selection must not advance to another set"
+            );
+            assert!(s.engine_mut().lookup_observe(key()).is_some());
+            s.notify_confirmable(10000, &["obs"], large()).unwrap();
+            chunk(&mut s, &p, 0, false);
+        }
+    }
+}

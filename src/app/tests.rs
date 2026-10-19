@@ -12674,7 +12674,7 @@ fn observe_notifications_decline_query_selection_and_recover_queryless() {
 }
 
 #[test]
-fn unsupported_observe_transfer_profiles_fall_back_and_recover() {
+fn observe_transfer_registration_and_selection_capacity_refusal_recover() {
     fn snapshot(_: Request<'_>) -> Response<'static> {
         Response::content(b"0123456789abcdef0123456789abcdef")
             .content_format(ContentFormat::TEXT_PLAIN)
@@ -12683,7 +12683,8 @@ fn unsupported_observe_transfer_profiles_fall_back_and_recover() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let token = Token::new(&[0xa1]).unwrap();
     for method in [Code::GET, Code::FETCH] {
-        // Nonzero classic and selective Q requests do not establish a relation.
+        // Both transfer profiles register; a later selection-capacity refusal
+        // must still retire the same-token relation and allow a fresh request.
         for (number, value) in [(OptionNumber::BLOCK2, 0x10), (OptionNumber::Q_BLOCK2, 0x10)] {
             for refresh in [false, true] {
                 let mut app = App::profile::<profiles::Default>()
@@ -12716,16 +12717,40 @@ fn unsupported_observe_transfer_profiles_fall_back_and_recover() {
                 app.poll(1).unwrap();
                 let response = last_wide(&app);
                 assert_eq!(response.code(), Code::CONTENT);
-                assert!(response.observe().is_none());
-                assert!(response.get_options(number).next().is_some());
+                assert_eq!(response.observe(), Some(Ok(u32::from(refresh))));
+                let selected = response
+                    .get_options(number)
+                    .next()
+                    .unwrap()
+                    .as_block()
+                    .unwrap();
+                assert_eq!(
+                    selected.num(),
+                    if number == OptionNumber::BLOCK2 { 0 } else { 1 }
+                );
+                assert!(observe_live(&app, peer, token));
+                app.transport_mut().send_n = 0;
+                let query = [b'x'; 255];
+                let query = core::str::from_utf8(&query).unwrap();
+                let oversized = [
+                    Opt::observe_register(),
+                    Opt::content_format(&cf),
+                    Opt::uri_query(query),
+                    Opt::uri_query(query),
+                ];
+                let (wire, n) = encode_wide_token(method, &["obs"], &oversized, 102, token);
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(2).unwrap();
+                assert_eq!(last_wide(&app).code(), Code::CONTENT);
+                assert!(last_wide(&app).observe().is_none());
                 assert!(!observe_live(&app, peer, token));
                 // A declined refresh must not leave a stale relation emitting
                 // notifications after the ordinary response ended observation.
-                assert_eq!(app.notify(2, &["obs"], snapshot_for_test()).unwrap(), 0);
+                assert_eq!(app.notify(3, &["obs"], snapshot_for_test()).unwrap(), 0);
                 app.transport_mut().send_n = 0;
-                let (wire, n) = encode_wide_token(method, &["obs"], &ordinary, 102, token);
+                let (wire, n) = encode_wide_token(method, &["obs"], &ordinary, 103, token);
                 app.transport_mut().inbox = Some((peer, wire, n));
-                app.poll(3).unwrap();
+                app.poll(4).unwrap();
                 assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
                 assert!(observe_live(&app, peer, token));
             }

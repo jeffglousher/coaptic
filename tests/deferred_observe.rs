@@ -2,7 +2,7 @@
 use coaptic::app::AppStorage;
 use coaptic::message::ContentFormat;
 use coaptic::message::decode;
-use coaptic::message::{BlockValue, Message, MessageId, Opt, Token, Type, encode};
+use coaptic::message::{Message, MessageId, Opt, Token, Type, encode};
 use coaptic::resources::Resources;
 use coaptic::storage::DatagramIo;
 use coaptic::{App, Code, Endpoint, Response};
@@ -562,7 +562,7 @@ fn deferred_observe_empty_ack_failure_duplicate_and_cross_app_authority() {
 }
 
 #[test]
-fn deferred_observe_capacity_fallback_and_unsupported_registration_recover() {
+fn deferred_observe_capacity_fallback_and_unavailable_source_recover() {
     for protected in [false, cfg!(feature = "oscore")] {
         let mut server = fixed();
         let mut peer = Peer::new(&mut server, protected);
@@ -582,13 +582,9 @@ fn deferred_observe_capacity_fallback_and_unsupported_registration_recover() {
         server.transport_mut().incoming = Some(control(p.message_id(), Type::Acknowledgement));
         server.poll(2).unwrap();
         server.engine_mut().take_observe(occupied.key());
-        for (index, code, block, q, path) in [
-            (0, Code::FETCH, false, false, "obs"),
-            (1, Code::GET, true, false, "obs"),
-            (2, Code::GET, false, true, "obs"),
-            (3, Code::GET, false, false, "missing"),
-        ] {
-            let b = BlockValue::new(1, false, 0).unwrap().encode();
+        // This requestless GET source cannot serve FETCH selections or a missing route.
+        // Nonzero classic/Q selections are covered by deferred_observe_block2.
+        for (index, code, path) in [(0, Code::FETCH, "obs"), (1, Code::GET, "missing")] {
             let zero = coaptic::message::EncodedUint::new(0);
             let mut opts = coaptic::message::OptionsBuilder::<4>::new();
             opts.push(Opt::observe(&zero)).unwrap();
@@ -596,12 +592,6 @@ fn deferred_observe_capacity_fallback_and_unsupported_registration_recover() {
             let cf = ContentFormat::TEXT_PLAIN.encode();
             if code == Code::FETCH {
                 opts.push(Opt::content_format(&cf)).unwrap();
-            }
-            if block {
-                opts.push(Opt::block2(&b)).unwrap();
-            }
-            if q {
-                opts.push(Opt::q_block2(&b)).unwrap();
             }
             server.transport_mut().incoming = Some(
                 peer.encode(

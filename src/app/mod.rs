@@ -118,6 +118,7 @@ mod admission;
 mod associations;
 mod builder;
 mod client;
+pub mod diagnostics;
 mod echo;
 mod identity;
 mod oscore;
@@ -701,7 +702,8 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
             .with_resource(observe.resource)
             .with_seq(sequence)
             .with_content_format(response.format())
-            .with_block2_max_szx(row.meta.block2.map(|b| b.szx()))
+            .with_block2_max_szx(row.meta.block2.or(row.meta.q_block2).map(|b| b.szx()))
+            .with_q_block2(row.meta.q_block2.is_some())
             .with_no_response(row.meta.no_response)
             .with_selection(Some(row.selection.stored()));
         #[cfg(feature = "oscore")]
@@ -875,7 +877,9 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
         q_block2: Some(BlockValue::new(q.num(), q.more(), szx).expect("negotiated Q SZX")),
         ..row.meta
     };
-    let result = if row.meta.q_block2.is_some_and(|q| !q.more()) {
+    let result = if row.meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0)
+        || row.q_selectors.iter().nth(1).is_some()
+    {
         issue_deferred_q(
             engine,
             io,
@@ -885,7 +889,10 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
             &response,
             Type::NonConfirmable,
             body,
-            None,
+            Some(
+                plan_deferred_q(row.q_selectors.iter(), response.payload().len())
+                    .map_err(Error::Block)?,
+            ),
             oscore,
             &mut None,
         )
@@ -980,8 +987,16 @@ fn prepare_deferred_observe<
             transfer.oscore_request = row.meta.oscore.map(|request| (row.meta.token, request));
         }
         engine.storage_mut().set_tx_body_transfer(body, transfer)?;
+        let probe_meta = SendResponse {
+            q_block2: row
+                .q_selectors
+                .iter()
+                .find(|q| q.num() != 0)
+                .or(row.meta.q_block2),
+            ..row.meta
+        };
         let encoded = encode_q_observe_first::<S, T, REQUESTS>(
-            engine, row.meta, response, ty, mid, body, oscore,
+            engine, probe_meta, response, ty, mid, body, oscore,
         );
         if encoded.is_ok() {
             row.snapshot = Some((body, metadata));
@@ -2108,9 +2123,9 @@ where
     /// independently of client Calls (zero by default). A handle
     /// is `None` when full, selection metadata exceeds 512 bytes, lifetime is
     /// zero, or initial Q-Block2 has more than ten selectors. An observable
-    /// queryless GET registration with no block option or a classic Block2 NUM=0
-    /// preference may defer a response; other Observe requests need synchronous
-    /// dispatch. Returning deferred without a handle produces 5.03.
+    /// GET registration or selected GET/FETCH source may defer with classic or
+    /// Q-Block2 preferences. Classic registrations start at NUM0; Q registration
+    /// retains its selected initial ranges. Returning deferred without a handle produces 5.03.
     /// Empty ACK/retransmission is protocol reception, never durable completion.
     pub fn poll_with(
         &mut self,
@@ -2345,8 +2360,10 @@ where
     /// Initial Q-Block2 deferral retains at most ten ordered, equal-size selectors.
     /// A larger selector list offers no deferred handle (5.03 if deferral is requested).
     /// Completion preflights every range before identity allocation or sending.
-    /// An observable queryless GET registration with no block option or a classic
-    /// Block2 NUM=0 preference can defer its initial response. With body storage enabled, an oversized successful
+    /// An observable GET or selection-aware GET/FETCH registration can defer its
+    /// initial response, including classic and Q-Block2 preferences. Classic
+    /// initial NUM selects no separate subresource: notifications start at NUM0.
+    /// With body storage enabled, an oversized successful
     /// completion requires an ETag and retains one immutable classic Block2
     /// snapshot. The first block is sized against actual datagram capacity,
     /// including OSCORE overhead, before registration or sending. Matching
@@ -2882,7 +2899,7 @@ where
         if let Some(etag) = transfer.identity().as_slice() {
             response = response.etag(etag);
         }
-        if code.is_success() {
+        if code.is_success() && !transfer.q_observe_recovery() {
             response = response.observe(transfer.q_observe_sequence().expect("Q Observe"));
         }
         #[cfg(feature = "oscore")]
@@ -3975,7 +3992,11 @@ where
                     )
                 }
             };
-            if outcome.is_ok() {
+            if outcome.is_ok()
+                && engine.tx_body_transfer(body).is_some_and(|current| {
+                    current.q_observe_last_mid() != transfer.q_observe_last_mid()
+                })
+            {
                 record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
             }
             if let InboundBody::Complete(id) = assembled {
@@ -4170,6 +4191,20 @@ where
     )
     .ok()
     .map(|request| ObservePlan::from_request(site, &request));
+    // RFC 7959 section 2.6 observes the entire resource and starts every
+    // notification at its first block. NUM is not an observed subresource.
+    let meta = if request_plan
+        .is_some_and(|plan| plan.register && plan.registration_supported && plan.has_source)
+    {
+        SendResponse {
+            block2: meta
+                .block2
+                .map(|b| BlockValue::new(0, false, b.szx()).expect("validated Block2")),
+            ..meta
+        }
+    } else {
+        meta
+    };
     if request_plan.is_some_and(|plan| plan.register || plan.deregister) {
         if let Err(error) = retire_terminal_response(engine, parsed.token(), peer) {
             if let InboundBody::Complete(id) = assembled {
@@ -4428,15 +4463,14 @@ impl<K: OwnedToken> ObservePlan<K> {
             selection,
             registration_supported: selection.is_some()
                 // RFC 7641 section 4.1 permits ordinary-response fallback.
-                // Only admit profiles whose subsequent notifications preserve
-                // the requested transfer semantics. Nonzero initial Block2
-                // initial Q selections begin at block zero; the Q M bit chooses
-                // the initial block or window, not a different observed resource.
+                // Classic notifications begin at NUM0. Q registration may
+                // select an initial range; later epochs still represent the
+                // complete resource, not a separately observed block.
                 && request.message().block2().is_none_or(|block| {
-                    block.is_ok_and(|b| b.num() == 0 && !b.more() && !b.is_bert())
+                    block.is_ok_and(|b| !b.is_bert())
                 })
                 && request.message().q_block2().next().is_none_or(|block| {
-                    block.is_ok_and(|b| b.num() == 0 && !b.is_bert())
+                    block.is_ok_and(|b| !b.is_bert())
                 })
                 && (selected
                     || (request.method() == Some(Method::Get)
@@ -4444,7 +4478,7 @@ impl<K: OwnedToken> ObservePlan<K> {
             block2_max_szx: request
                 .get_option(crate::message::OptionNumber::BLOCK2)
                 .and_then(|o| o.as_block().ok())
-                .filter(|b| b.num() == 0 && !b.more() && !b.is_bert())
+                .filter(|b| !b.is_bert())
                 .map(|b| b.szx())
                 .or_else(|| {
                     request
@@ -5340,7 +5374,11 @@ where
     }
 
     let mid = ids.next_for(engine, io, now_ms)?;
-    if meta.block2.is_some() && response.code().is_success() && response.observe_seq().is_some() {
+    if meta.block2.is_some()
+        && response.code().is_success()
+        && response.code() != Code::VALID
+        && response.observe_seq().is_some()
+    {
         return start_outgoing(
             engine,
             io,
@@ -5485,7 +5523,10 @@ where
         );
     }
 
-    if (meta.block2.is_some() || meta.q_block2.is_some()) && response.code().is_success() {
+    if (meta.block2.is_some() || meta.q_block2.is_some())
+        && response.code().is_success()
+        && response.code() != Code::VALID
+    {
         return start_outgoing(
             engine,
             io,
@@ -5714,10 +5755,26 @@ where
     T: crate::storage::DatagramTransport,
 {
     loop {
-        let issued = engine.peek_q_block2(body).map_err(Error::Block)?;
+        let issued = if let Some(q) = meta.q_block2.filter(|q| q.num() != 0) {
+            engine.reissue_q_block2(body, q.num())
+        } else {
+            engine.peek_q_block2(body)
+        }
+        .map_err(Error::Block)?;
         match encode_issued::<S, T, REQUESTS>(engine, meta, response, ty, mid, issued, true, oscore)
         {
             Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+                // NUM is expressed in the requested SZX. A selective offset
+                // cannot be silently reinterpreted after size negotiation.
+                if meta.q_block2.is_some_and(|q| q.num() != 0)
+                    || meta.q_request.is_some_and(|request| {
+                        request.q_block2().any(|q| q.is_ok_and(|q| q.num() != 0))
+                    })
+                {
+                    return Err(Error::Message(SlotMessageError::Encode(
+                        EncodeError::BufferTooSmall,
+                    )));
+                }
                 let mut transfer = engine
                     .tx_body_transfer(body)
                     .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
@@ -5737,7 +5794,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(issue_q_observe_followup_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async, issue_q_window => issue_q_window_async, issue_q_selection => issue_q_selection_async))]
+#[coaptic_io::dual_io(issue_q_observe_followup_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_refusal => admission::send_refusal_async, q_response_mid => q_response_mid_async, issue_q_window => issue_q_window_async, issue_q_selection => issue_q_selection_async))]
 fn issue_q_observe_followup<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -5763,7 +5820,8 @@ where
     if q.szx() != transfer.szx() {
         return Err(Error::Block(BlockTransferError::SzxMismatch));
     }
-    let continuation = q.more()
+    let continuation = !transfer.q_observe_confirmable()
+        && q.more()
         && q.num() != 0
         && q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0
         && meta
@@ -5786,44 +5844,69 @@ where
         meta
     };
     if transfer.q_observe_confirmable() {
-        if transfer.q_observe_pending_mid().is_some() {
-            return Err(Error::Saturated);
+        if transfer.q_observe_pending_mid().is_some() || !transfer.is_complete() {
+            return admission::send_refusal(
+                engine,
+                io,
+                ids,
+                now_ms,
+                SendResponse {
+                    block1: None,
+                    block2: None,
+                    q_block2: None,
+                    q_request: None,
+                    ..meta
+                },
+                oscore,
+                closed,
+            );
         }
-        // CON loss recovery normally uses the retained retransmission. A
-        // selective one-block retry remains CON and cannot turn the rest of
-        // this immutable body into a NON exchange.
-        if q.more()
-            || meta
-                .q_request
-                .is_some_and(|request| request.q_block2().nth(1).is_some())
+        let mut retained = transfer;
+        let selection = if let Some(request) = meta.q_request {
+            retained.select_q_observe_recovery(
+                request.q_block2().map(|q| q.expect("validated ingress")),
+            )
+        } else {
+            retained.select_q_observe_recovery(core::iter::once(q))
+        };
+        if let Err(error) = selection {
+            if error == BlockTransferError::OutsideWindow {
+                return admission::send_refusal(
+                    engine,
+                    io,
+                    ids,
+                    now_ms,
+                    SendResponse {
+                        block1: None,
+                        block2: None,
+                        q_block2: None,
+                        q_request: None,
+                        ..meta
+                    },
+                    oscore,
+                    closed,
+                );
+            }
+            return Err(Error::Block(error));
+        }
+        #[cfg(feature = "oscore")]
         {
-            return Err(Error::Block(BlockTransferError::IdentityMismatch));
+            retained.oscore_request = meta.oscore.map(|request| (meta.token, request));
         }
-        let issued = engine
-            .reissue_q_block2(body, q.num())
-            .map_err(Error::Block)?;
+        engine.storage_mut().set_tx_body_transfer(body, retained)?;
         let mid = q_response_mid(engine, io, ids, now_ms, meta, ty, closed)?;
-        send_issued(
+        return issue_q_window(
             engine,
             io,
-            meta,
+            ids,
+            now_ms,
+            SendResponse { mid, ..meta },
             &response,
             Type::Confirmable,
-            mid,
-            issued,
-            true,
-            Some((now_ms, mid, ids.jitter())),
+            body,
             oscore,
-        )?;
-        let mut retained = engine
-            .tx_body_transfer(body)
-            .ok_or(Error::CommitAfterSend)?;
-        retained.set_q_observe_pending_mid(Some(mid));
-        engine
-            .storage_mut()
-            .set_tx_body_transfer(body, retained)
-            .map_err(|_| Error::CommitAfterSend)?;
-        return Ok(());
+            closed,
+        );
     }
     // The complete immutable snapshot already owns every range. A Continue
     // selects one bounded window, including after an initial M=0 selection;

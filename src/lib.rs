@@ -88,15 +88,16 @@
 //! with `alloc`, bounded heap storage with an explicit byte limit. Customize
 //! resource bounds before constructing the App; the configured builder has no
 //! resource overrides. [`memory_profile!`] defines custom fixed pool sizes.
-//! `std` and `alloc` remain independent. Existing [`App::builder`] and
-//! [`App::profile`] construction is retained for compatibility.
+//! `std` and `alloc` remain independent. [`App::builder`] and [`App::profile`]
+//! also expose direct pool-profile construction.
 //!
 //! The configured path retains complete responses by default. Collect them
 //! with [`App::take_response_into`] and caller-owned output. Short buffers refuse
 //! without consuming or partially copying the reply. Observe shares the client
-//! Call budget. The single OSCORE context defaults to four live request bindings;
-//! [`resources::Resources::security_requests`] configures that independent bound.
-//! Larger storage is not a security-association or throughput guarantee.
+//! Call budget. The default OSCORE association has four live request bindings;
+//! [`resources::Resources::security_requests`] and
+//! [`resources::Resources::associations`] configure independent bounds.
+//! Larger packet storage does not increase either security capacity.
 //!
 //! Stateful or durable handlers use [`App::poll_with`], [`Response::deferred`],
 //! [`DeferredReply`] and [`App::complete`]. The empty ACK is only reception.
