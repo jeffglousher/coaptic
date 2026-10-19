@@ -73,6 +73,25 @@ not establish independent peer, physical device or exhaustive concurrency proof.
 Earlier 32-bit and s390x results retain their earlier sources; neither was rerun
 for this snapshot. Q2–Q4 and Q7–Q12 retain their separate owners.
 
+Q2 has an executed partial slice in [companion #91](https://github.com/jeffglousher/coaptic-validation/pull/91),
+merged as `a9f7d5d814b368e43f7549fece7b6f88946e8d81`. Fifteen supported
+independent metadata, URI, extended-token and Observe cases pass against their
+recorded aiocoap/libcoap implementations. Libcoap's nonzero initial Observe is
+unsupported, with a separate refusal/recovery control. Initial-Valid failures
+exposed the format-binding and GET continuation defects corrected in core #612;
+the retained successful captures identify their exact intermediate sources.
+The final async cancellation regression passes independently of those captures.
+Host fixture stack and response-buffer allowances are not device RAM results.
+Protected, routed/scoped and exact-effect directions remain separately open.
+
+Q12 now has the manual advisory Linux workflow delivered by
+[companion #92](https://github.com/jeffglousher/coaptic-validation/pull/92), merged
+as `712428bcb5f49903788de47db8130a298ff962a5`. Its source covers finite kernel
+classification, unchanged packet bytes, per-CPU/saturating counters and owned
+veth lifecycle/termination recovery. Tool and object inputs are pinned; the
+hosted kernel/image identity is observed per run. Adding the workflow and passing
+portable checks do not establish verifier or hook success.
+
 ## Execution order and prerequisites
 
 1. Preserve the delivered #486/#520/#521 fixes and completed Q1/Q5/Q6 slices.
