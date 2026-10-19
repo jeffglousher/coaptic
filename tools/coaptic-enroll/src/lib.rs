@@ -175,8 +175,9 @@ pub struct Request {
     pub peer: PublicIdentity,
     #[serde(with = "serde_bytes")]
     pub owner: [u8; 32],
-    /// Destination owner for an explicit transfer; zero and omitted otherwise.
-    /// `owner` remains the authenticated current owner releasing the device.
+    /// Other credential in a transfer or recovery transaction; zero and omitted
+    /// for ordinary pairing, revocation or removal of recovery authorization.
+    /// `owner` always names the credential signing this specific approval role.
     #[serde(default, skip_serializing_if = "no_owner", with = "serde_bytes")]
     pub next_owner: [u8; 32],
     #[serde(with = "serde_bytes")]
@@ -197,6 +198,10 @@ pub enum Action {
     Pair,
     Revoke,
     Transfer,
+    ConfigureRecovery,
+    ConfirmRecoveryCredential,
+    RecoverOwner,
+    AcceptRecoveredOwnership,
 }
 
 fn no_owner(owner: &[u8; 32]) -> bool {
@@ -204,6 +209,47 @@ fn no_owner(owner: &[u8; 32]) -> bool {
 }
 
 impl Request {
+    /// Bind recovery configuration to the current policy and exact live challenge.
+    pub fn for_recovery_configuration(
+        challenge: &coaptic::provisioning::PairingChallenge,
+        policy: &EnrollmentPolicy,
+        backup: Option<[u8; 32]>,
+    ) -> Result<Self> {
+        let mut request = Self::for_pairing(challenge, policy, Action::Pair)?;
+        request.action = Action::ConfigureRecovery;
+        request.next_owner = backup.unwrap_or([0; 32]);
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Bind a backup approval to the exact destination owner, peer and permissions.
+    pub fn for_owner_recovery(
+        challenge: &coaptic::provisioning::PairingChallenge,
+        backup: [u8; 32],
+        policy: &EnrollmentPolicy,
+    ) -> Result<Self> {
+        let mut request = Self::for_transfer(challenge, backup, policy)?;
+        request.action = Action::RecoverOwner;
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Require the other credential to prove possession over the same transaction.
+    pub fn recovery_cosignature(&self) -> Result<Self> {
+        self.validate()?;
+        if self.next_owner == [0; 32] {
+            return Err(Error::Input);
+        }
+        let mut request = self.clone();
+        request.action = match self.action {
+            Action::ConfigureRecovery => Action::ConfirmRecoveryCredential,
+            Action::RecoverOwner => Action::AcceptRecoveredOwnership,
+            _ => return Err(Error::Input),
+        };
+        std::mem::swap(&mut request.owner, &mut request.next_owner);
+        request.validate()?;
+        Ok(request)
+    }
     pub fn new(
         device: &PinnedPeer,
         peer: &PinnedPeer,
@@ -235,7 +281,7 @@ impl Request {
         policy: &EnrollmentPolicy,
         action: Action,
     ) -> Result<Self> {
-        if action == Action::Transfer {
+        if !matches!(action, Action::Pair | Action::Revoke) {
             return Err(Error::Input);
         }
         let (store, revision, digest) = challenge.expected();
@@ -274,7 +320,10 @@ impl Request {
         self.validate()?;
         EnrollmentPolicy::new(
             self.peer.peer()?,
-            if self.action == Action::Transfer {
+            if matches!(
+                self.action,
+                Action::Transfer | Action::RecoverOwner | Action::ConfirmRecoveryCredential
+            ) {
                 self.next_owner
             } else {
                 self.owner
@@ -312,7 +361,13 @@ impl Request {
             || self.nonce == [0; 32]
             || device.public_key()[1..33] == peer.public_key()[1..33]
             || match self.action {
-                Action::Transfer => self.next_owner == [0; 32] || self.next_owner == self.owner,
+                Action::Transfer
+                | Action::RecoverOwner
+                | Action::ConfirmRecoveryCredential
+                | Action::AcceptRecoveredOwnership => {
+                    self.next_owner == [0; 32] || self.next_owner == self.owner
+                }
+                Action::ConfigureRecovery => self.next_owner == self.owner,
                 _ => self.next_owner != [0; 32],
             }
         {
@@ -330,6 +385,10 @@ impl Request {
             Action::Pair => 0,
             Action::Revoke => 1,
             Action::Transfer => 2,
+            Action::ConfigureRecovery => 3,
+            Action::ConfirmRecoveryCredential => 4,
+            Action::RecoverOwner => 5,
+            Action::AcceptRecoveredOwnership => 6,
         }]);
         hash.update(self.device.peer()?.principal().fingerprint());
         hash.update(self.peer.peer()?.principal().fingerprint());
@@ -338,7 +397,7 @@ impl Request {
         }
         hash.update(&self.revision.to_be_bytes());
         hash.update(&self.record_digest);
-        if self.action == Action::Transfer {
+        if !matches!(self.action, Action::Pair | Action::Revoke) {
             hash.update(&self.next_owner);
         }
         Ok(*hash.finalize().as_bytes())
@@ -540,4 +599,52 @@ fn credential_counter(key: &Passkey) -> Result<u32> {
         return Err(Error::Authentication);
     }
     Ok(credential.counter)
+}
+
+#[cfg(test)]
+mod owner_recovery_tests {
+    use super::*;
+    use coaptic::provisioning::{Identity, LocalPairing, PairingRecord};
+
+    #[test]
+    fn two_credential_proofs_bind_roles_and_complete_destination() {
+        let identity = Identity::from_private_key([1; 32], 1).unwrap();
+        let peer = Identity::from_private_key([2; 32], 2).unwrap();
+        let mut state = LocalPairing::restore(
+            &identity,
+            PairingRecord::unpaired(&identity, [9; 32]).unwrap(),
+        )
+        .unwrap();
+        let challenge = state
+            .begin(&identity, 0, |bytes| {
+                bytes.fill(5);
+                true
+            })
+            .unwrap();
+        let policy = EnrollmentPolicy::new(peer.peer(), [3; 32], [4; 32]).unwrap();
+        for request in [
+            Request::for_recovery_configuration(&challenge, &policy, Some([6; 32])).unwrap(),
+            Request::for_owner_recovery(&challenge, [6; 32], &policy).unwrap(),
+        ] {
+            let proof = request.recovery_cosignature().unwrap();
+            assert_eq!(proof.owner, request.next_owner);
+            assert_eq!(proof.next_owner, request.owner);
+            assert_ne!(proof.commitment().unwrap(), request.commitment().unwrap());
+            assert_eq!(
+                proof.pairing_policy().unwrap().owner(),
+                request.pairing_policy().unwrap().owner()
+            );
+            proof.matches_pairing(&challenge).unwrap();
+            assert!(proof.recovery_cosignature().is_err());
+            let mut changed = proof.clone();
+            changed.permissions = [8; 32];
+            assert_ne!(proof.commitment().unwrap(), changed.commitment().unwrap());
+            let mut changed = proof.clone();
+            changed.next_owner = [7; 32];
+            assert_ne!(proof.commitment().unwrap(), changed.commitment().unwrap());
+        }
+        let remove = Request::for_recovery_configuration(&challenge, &policy, None).unwrap();
+        assert!(remove.recovery_cosignature().is_err());
+        assert!(Request::for_recovery_configuration(&challenge, &policy, Some([3; 32])).is_err());
+    }
 }

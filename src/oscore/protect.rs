@@ -2,8 +2,8 @@
 
 use crate::error::EncodeError;
 use crate::message::{
-    Code, Message, MessageId, Opt, OptionNumber, OptionsBuilder, ParsedMessage, Token, Type,
-    decode, write_option,
+    Code, Message, MessageId, Opt, OptionNumber, OptionsBuilder, OwnedToken, ParsedMessage, Token,
+    Type, write_option,
 };
 
 use super::aead::{self, Aad};
@@ -21,21 +21,21 @@ const INNER: usize = 1280;
 /// [`crate::App::set_oscore`] takes a matching [`BoundedSecurityContext`]. Use this trait when
 /// you drive protect/unprotect yourself (tests, a later group-OSCORE
 /// context, or a side table of pairwise contexts).
-pub trait OscoreContext {
+pub trait OscoreContext<T: OwnedToken = Token> {
     /// Protect a request. Writes a complete OSCORE datagram into `out`.
-    fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error>;
+    fn protect_request(&mut self, plain: &Message<'_, T>, out: &mut [u8]) -> Result<usize, Error>;
 
     /// Open a request. Writes the inner CoAP datagram into `out`.
     fn unprotect_request<'a>(
         &mut self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
-    ) -> Result<(ParsedMessage<'a>, RequestRef), Error>;
+    ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error>;
 
     /// Protect a response bound to `request`.
     fn protect_response(
         &self,
-        plain: &Message<'_>,
+        plain: &Message<'_, T>,
         request: RequestRef,
         out: &mut [u8],
     ) -> Result<usize, Error>;
@@ -43,28 +43,30 @@ pub trait OscoreContext {
     /// Open a response bound to `request`.
     fn unprotect_response<'a>(
         &self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         request: RequestRef,
         out: &'a mut [u8],
-    ) -> Result<ParsedMessage<'a>, Error>;
+    ) -> Result<ParsedMessage<'a, T>, Error>;
 }
 
-impl<const REQUESTS: usize> OscoreContext for BoundedSecurityContext<REQUESTS> {
-    fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
+impl<const REQUESTS: usize, T: OwnedToken> OscoreContext<T>
+    for BoundedSecurityContext<REQUESTS, T>
+{
+    fn protect_request(&mut self, plain: &Message<'_, T>, out: &mut [u8]) -> Result<usize, Error> {
         protect_request(self, plain, out)
     }
 
     fn unprotect_request<'a>(
         &mut self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
-    ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+    ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
         unprotect_request(self, protected, out)
     }
 
     fn protect_response(
         &self,
-        plain: &Message<'_>,
+        plain: &Message<'_, T>,
         request: RequestRef,
         out: &mut [u8],
     ) -> Result<usize, Error> {
@@ -73,26 +75,30 @@ impl<const REQUESTS: usize> OscoreContext for BoundedSecurityContext<REQUESTS> {
 
     fn unprotect_response<'a>(
         &self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         request: RequestRef,
         out: &'a mut [u8],
-    ) -> Result<ParsedMessage<'a>, Error> {
+    ) -> Result<ParsedMessage<'a, T>, Error> {
         unprotect_response(self, protected, request, out)
     }
 }
 
-impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     /// Protect `plain` as an OSCORE request. See [`OscoreContext::protect_request`].
-    pub fn protect_request(&mut self, plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
+    pub fn protect_request(
+        &mut self,
+        plain: &Message<'_, T>,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
         protect_request(self, plain, out)
     }
 
     /// Unprotect an OSCORE request. See [`OscoreContext::unprotect_request`].
     pub fn unprotect_request<'a>(
         &mut self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
-    ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+    ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
         unprotect_request(self, protected, out)
     }
 
@@ -103,7 +109,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// payloads or notifications. This low-level API does not retain that budget.
     pub fn protect_response(
         &self,
-        plain: &Message<'_>,
+        plain: &Message<'_, T>,
         request: RequestRef,
         out: &mut [u8],
     ) -> Result<usize, Error> {
@@ -113,7 +119,7 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Protect a response that carries a new Partial IV (Appendix C.8).
     pub fn protect_response_with_piv(
         &mut self,
-        plain: &Message<'_>,
+        plain: &Message<'_, T>,
         request: RequestRef,
         out: &mut [u8],
     ) -> Result<usize, Error> {
@@ -123,18 +129,18 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     /// Unprotect an OSCORE response.
     pub fn unprotect_response<'a>(
         &self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         request: RequestRef,
         out: &'a mut [u8],
-    ) -> Result<ParsedMessage<'a>, Error> {
+    ) -> Result<ParsedMessage<'a, T>, Error> {
         unprotect_response(self, protected, request, out)
     }
 }
 
 /// See [`super::SecurityContext::protect_request`].
-pub fn protect_request<const REQUESTS: usize>(
-    ctx: &mut BoundedSecurityContext<REQUESTS>,
-    plain: &Message<'_>,
+pub fn protect_request<const REQUESTS: usize, T: OwnedToken>(
+    ctx: &mut BoundedSecurityContext<REQUESTS, T>,
+    plain: &Message<'_, T>,
     out: &mut [u8],
 ) -> Result<usize, Error> {
     if !plain.code().is_request() {
@@ -187,11 +193,11 @@ pub fn protect_request<const REQUESTS: usize>(
 }
 
 /// See [`super::SecurityContext::unprotect_request`].
-pub fn unprotect_request<'a, const REQUESTS: usize>(
-    ctx: &mut BoundedSecurityContext<REQUESTS>,
-    protected: &ParsedMessage<'_>,
+pub fn unprotect_request<'a, const REQUESTS: usize, T: OwnedToken>(
+    ctx: &mut BoundedSecurityContext<REQUESTS, T>,
+    protected: &ParsedMessage<'_, T>,
     out: &'a mut [u8],
-) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
     let header = parse_protected(protected)?;
     if !ctx.matches_recipient(header.kid, header.kid_context) {
         return Err(Error::Context);
@@ -227,7 +233,7 @@ pub fn unprotect_request<'a, const REQUESTS: usize>(
         &plaintext[..pt_len],
         out,
     )?;
-    let inner = decode(&out[..n])?;
+    let inner = decode_owned::<T>(&out[..n])?;
     let request = RequestRef::from_kid(kid, piv)?;
     // Caller (App) holds `request` on the inbound exchange for
     // `protect_response`. The live Token table is the client in-flight
@@ -237,9 +243,9 @@ pub fn unprotect_request<'a, const REQUESTS: usize>(
 }
 
 /// See [`super::SecurityContext::protect_response`].
-pub fn protect_response<const REQUESTS: usize>(
-    ctx: &BoundedSecurityContext<REQUESTS>,
-    plain: &Message<'_>,
+pub fn protect_response<const REQUESTS: usize, T: OwnedToken>(
+    ctx: &BoundedSecurityContext<REQUESTS, T>,
+    plain: &Message<'_, T>,
     request: RequestRef,
     out: &mut [u8],
 ) -> Result<usize, Error> {
@@ -272,9 +278,9 @@ pub fn protect_response<const REQUESTS: usize>(
 }
 
 /// Protect a response and optionally include a new Partial IV.
-pub fn protect_response_piv<const REQUESTS: usize>(
-    ctx: &mut BoundedSecurityContext<REQUESTS>,
-    plain: &Message<'_>,
+pub fn protect_response_piv<const REQUESTS: usize, T: OwnedToken>(
+    ctx: &mut BoundedSecurityContext<REQUESTS, T>,
+    plain: &Message<'_, T>,
     request: RequestRef,
     out: &mut [u8],
 ) -> Result<usize, Error> {
@@ -308,21 +314,21 @@ pub fn protect_response_piv<const REQUESTS: usize>(
 }
 
 /// See [`super::SecurityContext::unprotect_response`].
-pub fn unprotect_response<'a, const REQUESTS: usize>(
-    ctx: &BoundedSecurityContext<REQUESTS>,
-    protected: &ParsedMessage<'_>,
+pub fn unprotect_response<'a, const REQUESTS: usize, T: OwnedToken>(
+    ctx: &BoundedSecurityContext<REQUESTS, T>,
+    protected: &ParsedMessage<'_, T>,
     request: RequestRef,
     out: &'a mut [u8],
-) -> Result<ParsedMessage<'a>, Error> {
+) -> Result<ParsedMessage<'a, T>, Error> {
     unprotect_response_candidates(ctx, protected, request, None, out).map(|(message, _)| message)
 }
 
-impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
+impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     pub(crate) fn unprotect_bound_response<'a>(
         &self,
-        protected: &ParsedMessage<'_>,
+        protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
-    ) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+    ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
         let request = self.lookup(protected.token()).ok_or(Error::Context)?;
         let observation = self
             .observe_request(protected.token())
@@ -331,13 +337,13 @@ impl<const REQUESTS: usize> BoundedSecurityContext<REQUESTS> {
     }
 }
 
-fn unprotect_response_candidates<'a, const REQUESTS: usize>(
-    ctx: &BoundedSecurityContext<REQUESTS>,
-    protected: &ParsedMessage<'_>,
+fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
+    ctx: &BoundedSecurityContext<REQUESTS, T>,
+    protected: &ParsedMessage<'_, T>,
     request: RequestRef,
     fallback: Option<RequestRef>,
     out: &'a mut [u8],
-) -> Result<(ParsedMessage<'a>, RequestRef), Error> {
+) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
     let header = parse_protected(protected)?;
     if protected.payload().len() < TAG_LEN {
         return Err(Error::MessageLength);
@@ -380,10 +386,12 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize>(
         &plaintext[..len],
         out,
     )?;
-    Ok((decode(&out[..n])?, request))
+    Ok((decode_owned::<T>(&out[..n])?, request))
 }
 
-fn parse_protected<'a>(protected: &ParsedMessage<'a>) -> Result<OscoreHeader<'a>, Error> {
+fn parse_protected<'a, T: OwnedToken>(
+    protected: &ParsedMessage<'a, T>,
+) -> Result<OscoreHeader<'a>, Error> {
     let value = protected.oscore().ok_or(Error::Header)?;
     if protected.payload().is_empty() {
         return Err(Error::MessageLength);
@@ -411,7 +419,7 @@ fn outer_code(inner: Code, opts: &[Opt<'_>]) -> Code {
     }
 }
 
-fn encode_plaintext(plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error> {
+fn encode_plaintext<T: OwnedToken>(plain: &Message<'_, T>, out: &mut [u8]) -> Result<usize, Error> {
     if out.is_empty() {
         return Err(Error::BufferTooSmall);
     }
@@ -455,11 +463,11 @@ fn encode_plaintext(plain: &Message<'_>, out: &mut [u8]) -> Result<usize, Error>
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_outer(
+fn encode_outer<T: OwnedToken>(
     ty: Type,
     code: Code,
     mid: MessageId,
-    token: Token,
+    token: T,
     inner_opts: &[Opt<'_>],
     piv: Option<PartialIv>,
     kid_context: Option<&[u8]>,
@@ -495,10 +503,10 @@ fn encode_outer(
     Ok(msg.encode(out)?)
 }
 
-fn stitch_inner(
+fn stitch_inner<T: OwnedToken>(
     ty: Type,
     mid: MessageId,
-    token: Token,
+    token: T,
     outer_opts: crate::message::Options<'_>,
     plaintext: &[u8],
     out: &mut [u8],
@@ -506,19 +514,19 @@ fn stitch_inner(
     if plaintext.is_empty() {
         return Err(Error::MessageLength);
     }
-    let tkl = token.len();
-    let header_end = 4 + tkl;
     let rest = &plaintext[1..];
-    if out.len() < header_end + rest.len() {
+    // Build only the header/token through the common RFC 8974 encoder, then
+    // attach the authenticated inner options for validation and merging.
+    let header_end = crate::message::Message::new(ty, Code::from_raw(plaintext[0]), mid)
+        .with_token(token)
+        .encode(out)?;
+    let end = header_end
+        .checked_add(rest.len())
+        .ok_or(Error::BufferTooSmall)?;
+    if end > out.len() {
         return Err(Error::BufferTooSmall);
     }
-    out[0] = (1 << 6) | (ty.to_bits() << 4) | (tkl as u8);
-    out[1] = plaintext[0];
-    let mid_be = mid.get().to_be_bytes();
-    out[2] = mid_be[0];
-    out[3] = mid_be[1];
-    out[4..header_end].copy_from_slice(token.as_bytes());
-    out[header_end..header_end + rest.len()].copy_from_slice(rest);
+    out[header_end..end].copy_from_slice(rest);
 
     // Re-encode so Class U-only outer options (Uri-Host, Hop-Limit, …)
     // sit beside Class E. Dual options on the outer datagram are not
@@ -528,7 +536,7 @@ fn stitch_inner(
     // discarded (§8.2 / §8.4).
     let mut merged = [0u8; INNER];
     let n = {
-        let fake = decode(&out[..header_end + rest.len()])?;
+        let fake = decode_owned::<T>(&out[..header_end + rest.len()])?;
         let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
         for opt in outer_opts {
             let n = opt.number().get();
@@ -551,4 +559,11 @@ fn stitch_inner(
     }
     out[..n].copy_from_slice(&merged[..n]);
     Ok(n)
+}
+
+fn decode_owned<T: OwnedToken>(wire: &[u8]) -> Result<ParsedMessage<'_, T>, Error> {
+    crate::message::decode_with_token(wire).map_err(|error| match error {
+        crate::message::TokenDecodeError::Malformed(error) => Error::Parse(error),
+        crate::message::TokenDecodeError::Capacity(_) => Error::MessageLength,
+    })
 }

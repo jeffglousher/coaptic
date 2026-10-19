@@ -22,6 +22,7 @@ struct Profile<const RR: usize, const RW: usize, const TR: usize, const TW: usiz
 impl<const RR: usize, const RW: usize, const TR: usize, const TW: usize> MemoryProfile
     for Profile<RR, RW, TR, TW>
 {
+    type Token = <profiles::Default as MemoryProfile>::Token;
     const RX_DATAGRAM_SLOTS: usize = <profiles::Default as MemoryProfile>::RX_DATAGRAM_SLOTS;
     const RX_DATAGRAM_BYTES: usize = <profiles::Default as MemoryProfile>::RX_DATAGRAM_BYTES;
     const TX_DATAGRAM_SLOTS: usize = <profiles::Default as MemoryProfile>::TX_DATAGRAM_SLOTS;

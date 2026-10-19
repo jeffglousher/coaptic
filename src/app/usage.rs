@@ -14,6 +14,12 @@ use crate::storage::{PoolUsage, StorageUsage};
 pub struct AppUsage {
     /// Six core storage areas.
     pub storage: StorageUsage,
+    /// Maximum packets retained by ordinary TX work; one physical slot is
+    /// reserved for transient control and overload responses.
+    pub ordinary_tx_capacity: usize,
+    /// Maximum full-response Call credits; one physical RX slot stays available
+    /// for ingress. Blockwise Calls conservatively consume the same credit.
+    pub full_response_capacity: usize,
     /// Registered paths (multiple methods on one path occupy one slot).
     pub routes: PoolUsage,
     /// Retained client request identities, including cooldown-only rows.

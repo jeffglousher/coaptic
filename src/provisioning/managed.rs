@@ -156,16 +156,16 @@ impl<E: core::error::Error + 'static> core::error::Error for ManagedRefreshError
 
 /// An outgoing operation bound to its authenticated connection and trust epoch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ManagedCall {
-    call: Call,
+pub struct ManagedCall<K: crate::message::OwnedToken = crate::message::Token> {
+    call: Call<K>,
     anchor: TrustAnchor,
     epoch: u64,
 }
 
-impl ManagedCall {
+impl<K: crate::message::OwnedToken> ManagedCall<K> {
     /// Public CoAP token for logging or correlation, never an authorization key.
     #[must_use]
-    pub const fn token(self) -> crate::message::Token {
+    pub const fn token(self) -> K {
         self.call.token()
     }
 
@@ -491,7 +491,7 @@ pub struct ManagedConnection<
     state: Option<State<P, T, ROUTES, DEFERRED>>,
     endpoint: Endpoint,
     randomness: RandomSource,
-    observed: [Option<(&'static str, Option<ObserveSource>)>; ROUTES],
+    observed: [Option<ObservedRoute<P::Token>>; ROUTES],
     last_now: u64,
     refresh_blocked: bool,
     validity: PolicyValidity,
@@ -722,7 +722,7 @@ where
     pub fn observable(
         &mut self,
         path: &'static str,
-        source: ObserveSource,
+        source: ObserveSource<P::Token>,
     ) -> Result<(), ManagedError<T::Error>> {
         self.configure_observable(path, Some(source))
     }
@@ -736,7 +736,7 @@ where
     fn configure_observable(
         &mut self,
         path: &'static str,
-        source: Option<ObserveSource>,
+        source: Option<ObserveSource<P::Token>>,
     ) -> Result<(), ManagedError<T::Error>> {
         if self.grant.is_some() {
             return Err(ManagedError::Busy);
@@ -809,7 +809,11 @@ where
     pub fn poll_with(
         &mut self,
         now_ms: u64,
-        dispatch: impl FnMut(&Principal, Request<'_>, Option<ManagedDeferredReply>) -> Response<'static>,
+        dispatch: impl FnMut(
+            &Principal,
+            Request<'_, P::Token>,
+            Option<ManagedDeferredReply>,
+        ) -> Response<'static, P::Token>,
     ) -> Result<(), ManagedError<T::Error>>
     where
         T: DatagramIo,
@@ -865,7 +869,7 @@ where
         payload: &[u8],
         format: Option<ContentFormat>,
         now_ms: u64,
-    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    ) -> Result<ManagedCall<P::Token>, ManagedError<T::Error>>
     where
         T: DatagramIo,
     {
@@ -877,7 +881,7 @@ where
         &mut self,
         path: impl IntoPath,
         now_ms: u64,
-    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    ) -> Result<ManagedCall<P::Token>, ManagedError<T::Error>>
     where
         T: DatagramIo,
     {
@@ -892,7 +896,7 @@ where
         format: Option<ContentFormat>,
         now_ms: u64,
         observe: bool,
-    ) -> Result<ManagedCall, ManagedError<T::Error>>
+    ) -> Result<ManagedCall<P::Token>, ManagedError<T::Error>>
     where
         T: DatagramIo,
     {
@@ -930,12 +934,13 @@ where
     }
 
     /// Collect a complete protected response without exposing App or key state.
+    #[allow(clippy::type_complexity)]
     pub fn take_response_into<'s>(
         &'s mut self,
-        call: ManagedCall,
+        call: ManagedCall<P::Token>,
         output: &'s mut [u8],
         now_ms: u64,
-    ) -> Result<Option<Result<Response<'s>, CallFailure>>, ManagedError<T::Error>> {
+    ) -> Result<Option<Result<Response<'s, P::Token>, CallFailure>>, ManagedError<T::Error>> {
         self.time(now_ms)?;
         self.ensure_grant()?;
         self.check_handle(call.anchor, call.epoch)?;
@@ -947,7 +952,7 @@ where
     /// Retire a local request or subscription without sending deregistration.
     pub fn cancel(
         &mut self,
-        call: ManagedCall,
+        call: ManagedCall<P::Token>,
         now_ms: u64,
     ) -> Result<bool, ManagedError<T::Error>> {
         self.time(now_ms)?;
@@ -960,7 +965,7 @@ where
     pub fn complete(
         &mut self,
         handle: ManagedDeferredReply,
-        response: Response<'_>,
+        response: Response<'_, P::Token>,
         now_ms: u64,
     ) -> Result<(), ManagedError<T::Error>>
     where
@@ -998,7 +1003,7 @@ where
     pub fn notify(
         &mut self,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, P::Token>,
         now_ms: u64,
     ) -> Result<usize, ManagedError<T::Error>>
     where
@@ -1390,6 +1395,9 @@ where
             return Err(ManagedError::Capacity);
         }
         let (context, _) = session.into_parts();
+        let context = context
+            .into_token_storage::<P::Token>()
+            .map_err(|error| ManagedError::Application(crate::app::Error::Oscore(error)))?;
         let mut builder = App::profile::<P>()
             .routes::<ROUTES>()
             .block_wise::<false>()
@@ -1423,9 +1431,9 @@ where
         now_ms: u64,
         mut dispatch: impl FnMut(
             &Principal,
-            Request<'_>,
+            Request<'_, P::Token>,
             Option<ManagedDeferredReply>,
-        ) -> Response<'static>,
+        ) -> Response<'static, P::Token>,
     ) -> Result<(), ManagedError<T::Error>>
     where
         T: DatagramIo,
@@ -1480,8 +1488,10 @@ where
     }
 }
 
-fn observable_path<const ROUTES: usize>(
-    observed: &[Option<(&'static str, Option<ObserveSource>)>; ROUTES],
+type ObservedRoute<K> = (&'static str, Option<ObserveSource<K>>);
+
+fn observable_path<const ROUTES: usize, K: crate::message::OwnedToken>(
+    observed: &[Option<ObservedRoute<K>>; ROUTES],
     path: &[&str],
 ) -> bool {
     observed.iter().flatten().any(|(registered, _)| {

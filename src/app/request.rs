@@ -4,7 +4,7 @@
 use crate::error::ValueError;
 use crate::message::{
     BlockValue, Code, ContentFormat, HopLimit, MessageId, NoResponse, Opt, OptionNumber, Options,
-    ParsedMessage, Precondition, Token, Type,
+    OwnedToken, ParsedMessage, Precondition, Token, Type,
 };
 use crate::message::{OpaqueOptions, StringOptions};
 use crate::storage::Endpoint;
@@ -137,9 +137,11 @@ pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathE
 /// }
 /// # let _ = echo;
 /// ```
+/// `T` owns the complete request token; the default retains the compact
+/// eight-byte capacity. The decoded options and body remain borrowed.
 #[derive(Clone, Copy, Debug)]
-pub struct Request<'a> {
-    message: ParsedMessage<'a>,
+pub struct Request<'a, T: OwnedToken = Token> {
+    message: ParsedMessage<'a, T>,
     path: Path<'a>,
     peer: Endpoint,
     association: Option<super::Association>,
@@ -148,9 +150,9 @@ pub struct Request<'a> {
     retained_if_none_match: bool,
 }
 
-impl<'a> Request<'a> {
+impl<'a, T: OwnedToken> Request<'a, T> {
     pub(crate) fn from_decoded(
-        message: ParsedMessage<'a>,
+        message: ParsedMessage<'a, T>,
         peer: Endpoint,
         body: Option<&'a [u8]>,
     ) -> Result<Self, PathError> {
@@ -232,7 +234,7 @@ impl<'a> Request<'a> {
 
     /// Token (echo this on the response).
     #[must_use]
-    pub const fn token(&self) -> Token {
+    pub const fn token(&self) -> T {
         self.message.token()
     }
 
@@ -385,7 +387,7 @@ impl<'a> Request<'a> {
 
     /// Current decoded datagram, without retained NUM0 conditions. Advanced: remaining options, Block2, …
     #[must_use]
-    pub const fn message(&self) -> ParsedMessage<'a> {
+    pub const fn message(&self) -> ParsedMessage<'a, T> {
         self.message
     }
 }
@@ -421,7 +423,9 @@ impl<'a> Path<'a> {
         Ok(path)
     }
 
-    pub(crate) fn from_message(parsed: &ParsedMessage<'a>) -> Result<Self, PathError> {
+    pub(crate) fn from_message(
+        parsed: &ParsedMessage<'a, impl OwnedToken>,
+    ) -> Result<Self, PathError> {
         let mut path = Self::empty();
         for segment in parsed.uri_path() {
             let segment = segment.map_err(|_| PathError::BadUtf8)?;

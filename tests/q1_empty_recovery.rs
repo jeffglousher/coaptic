@@ -149,7 +149,10 @@ struct Peer {
     context: Option<coaptic::oscore::SecurityContext>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -275,7 +278,11 @@ fn valid(peer: &mut Peer, mid: u16, num: u32) -> Frame {
         &BODY[num as usize * 16..num as usize * 16 + 16],
     )
 }
-fn poll<S: AppStorage>(server: &mut Server<S>, now: u64, effects: &Cell<usize>) {
+fn poll<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &mut Server<S>,
+    now: u64,
+    effects: &Cell<usize>,
+) {
     without_allocating(|| {
         server
             .poll_with(now, |request, _| {
@@ -286,7 +293,7 @@ fn poll<S: AppStorage>(server: &mut Server<S>, now: u64, effects: &Cell<usize>) 
             .unwrap()
     });
 }
-fn drain<S: AppStorage>(server: &mut Server<S>, peer: &Peer) {
+fn drain<S: AppStorage<Token = coaptic::message::Token>>(server: &mut Server<S>, peer: &Peer) {
     while let Some(frame) = server.transport_mut().take() {
         let frame = peer.open(frame);
         let parsed = decode(&frame.bytes[..frame.len]).unwrap();
@@ -297,7 +304,7 @@ fn drain<S: AppStorage>(server: &mut Server<S>, peer: &Peer) {
         );
     }
 }
-fn report<S: AppStorage>(
+fn report<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &Peer,
     now: u64,
@@ -322,7 +329,10 @@ fn report<S: AppStorage>(
     assert_eq!(&nums[..count], expected);
     assert!(server.transport_mut().take().is_none());
 }
-fn campaign<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn campaign<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let effects = Cell::new(0);
     let mut peer = Peer::new(&mut server, protected);
     for num in 1..32 {
@@ -387,13 +397,17 @@ fn q1_empty_windows_allocated_exact_budget_repair_without_growth() {
     }
 }
 
-fn slot<S: AppStorage>(server: &Server<S>) -> Option<coaptic::storage::SlotId> {
+fn slot<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &Server<S>,
+) -> Option<coaptic::storage::SlotId> {
     server.engine().lookup_rx_body(
         coaptic::storage::BlockKey::new(Token::new(b"owner").unwrap(), PEER)
             .with_identity(coaptic::storage::BodyTag::new(b"body").unwrap()),
     )
 }
-fn transfer<S: AppStorage>(server: &Server<S>) -> coaptic::storage::BlockTransfer {
+fn transfer<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &Server<S>,
+) -> coaptic::storage::BlockTransfer {
     server
         .engine()
         .rx_body_transfer(slot(server).unwrap())

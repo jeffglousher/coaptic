@@ -160,7 +160,10 @@ struct Peer {
     context: Option<coaptic::oscore::SecurityContext>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -293,7 +296,13 @@ impl Peer {
         frame
     }
 }
-fn packets<S: AppStorage>(server: &mut Server<S>, peer: &Peer, start: u32, end: u32, szx: u8) {
+fn packets<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &mut Server<S>,
+    peer: &Peer,
+    start: u32,
+    end: u32,
+    szx: u8,
+) {
     for num in start..end {
         let frame = peer.open(server.transport_mut().take().expect("selected payload"));
         let p = decode(&frame.bytes[..frame.len]).unwrap();
@@ -313,14 +322,17 @@ fn packets<S: AppStorage>(server: &mut Server<S>, peer: &Peer, start: u32, end: 
     }
     assert!(server.transport_mut().take().is_none());
 }
-fn ack<S: AppStorage>(server: &mut Server<S>, mid: u16) {
+fn ack<S: AppStorage<Token = coaptic::message::Token>>(server: &mut Server<S>, mid: u16) {
     let f = server.transport_mut().take().unwrap();
     let p = decode(&f.bytes[..f.len]).unwrap();
     assert_eq!(p.code(), Code::EMPTY);
     assert_eq!(p.ty(), Type::Acknowledgement);
     assert_eq!(p.message_id(), MessageId::new(mid));
 }
-fn campaign<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn campaign<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
         server.transport_mut().incoming = Some(peer.request(1, 0, true, 6));
@@ -629,7 +641,11 @@ fn capacity_expiry(initial_repeated: bool) {
     });
 }
 
-fn reply_code<S: AppStorage>(server: &mut Server<S>, peer: &Peer, code: Code) {
+fn reply_code<S: AppStorage<Token = coaptic::message::Token>>(
+    server: &mut Server<S>,
+    peer: &Peer,
+    code: Code,
+) {
     let frame = peer.open(server.transport_mut().take().unwrap());
     let parsed = decode(&frame.bytes[..frame.len]).unwrap();
     assert_eq!(parsed.code(), code, "reply MID {:?}", parsed.message_id());
@@ -1121,7 +1137,10 @@ fn non_identity_refusal(repeated: bool) {
     }
 }
 
-fn repeated_campaign<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn repeated_campaign<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
         server.transport_mut().incoming = Some(peer.request(1, 0, false, 6));
@@ -1385,7 +1404,11 @@ fn deferred_qblock2_repeated_failed_send_and_expiry_preserve_bounds() {
     }
 }
 
-fn initial_repeated_campaign<S: AppStorage>(mut server: Server<S>, protected: bool, non: bool) {
+fn initial_repeated_campaign<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+    non: bool,
+) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
         server.transport_mut().incoming = Some(peer.custom(

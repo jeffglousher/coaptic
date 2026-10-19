@@ -33,7 +33,7 @@ use super::pending::outstanding_pending;
 use crate::error::{BlockTransferError, SlotMessageError, ValueError};
 use crate::message::{
     BlockValue, Code, Echo, EchoFreshness, EncodedUint, Message, MessageId, Opt, OptionsBuilder,
-    ParsedMessage, Token, Type, encode_uint,
+    OwnedToken, ParsedMessage, Type, encode_uint,
 };
 
 /// Protocol engine over bounded [`Storage`].
@@ -146,7 +146,7 @@ impl<S: Storage> Engine<S> {
     }
 
     /// Echo option on `parsed`. `Ok(None)` if absent.
-    pub fn echo(parsed: &ParsedMessage<'_>) -> Result<Option<Echo>, ValueError> {
+    pub fn echo(parsed: &ParsedMessage<'_, S::Token>) -> Result<Option<Echo>, ValueError> {
         Echo::from_message(parsed)
     }
 
@@ -156,7 +156,11 @@ impl<S: Storage> Engine<S> {
     /// Event-based freshness is equality against a caller-owned [`Echo`].
     /// Does not invent 4.01 / RST policy. See `knowledge/rfcs/rfc9175.txt`.
     #[must_use]
-    pub fn echo_freshness(parsed: &ParsedMessage<'_>, now_ms: u64, fresh_ms: u64) -> EchoFreshness {
+    pub fn echo_freshness(
+        parsed: &ParsedMessage<'_, S::Token>,
+        now_ms: u64,
+        fresh_ms: u64,
+    ) -> EchoFreshness {
         EchoFreshness::of(parsed, now_ms, fresh_ms)
     }
 
@@ -171,6 +175,7 @@ impl<S: Storage> Engine<S> {
         match self.storage.rx_datagram().acquire() {
             Some(id) => Some(id),
             None => {
+                Metrics::inc(&mut self.metrics.hard_rx_exhausted);
                 Metrics::inc(&mut self.metrics.saturated);
                 None
             }
@@ -197,6 +202,7 @@ impl<S: Storage> Engine<S> {
         match self.storage.tx_datagram().acquire() {
             Some(id) => Some(id),
             None => {
+                Metrics::inc(&mut self.metrics.hard_tx_exhausted);
                 Metrics::inc(&mut self.metrics.saturated);
                 None
             }
@@ -332,24 +338,32 @@ impl<S: Storage + DatagramSlots> Engine<S> {
     ///
     /// Does not run [`ParsedMessage::check_rfc7252_options`] or
     /// [`ParsedMessage::check_rfc7252_formats`].
-    pub fn decode_rx(&self, id: SlotId) -> Result<ParsedMessage<'_>, SlotMessageError> {
-        decode_occupied(self.storage.rx_payload(id))
+    pub fn decode_rx(&self, id: SlotId) -> Result<ParsedMessage<'_, S::Token>, SlotMessageError> {
+        decode_occupied::<S::Token>(self.storage.rx_payload(id))
     }
 
     /// Decode the occupied TX datagram with [`crate::message::decode`].
-    pub fn decode_tx(&self, id: SlotId) -> Result<ParsedMessage<'_>, SlotMessageError> {
-        decode_occupied(self.storage.tx_payload(id))
+    pub fn decode_tx(&self, id: SlotId) -> Result<ParsedMessage<'_, S::Token>, SlotMessageError> {
+        decode_occupied::<S::Token>(self.storage.tx_payload(id))
     }
 
     /// Encode `msg` into an acquired RX slot and [`DatagramSlots::set_rx_len`].
-    pub fn encode_rx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
+    pub fn encode_rx(
+        &mut self,
+        id: SlotId,
+        msg: &Message<'_, impl OwnedToken>,
+    ) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.rx_payload_mut(id), msg)?;
         self.storage.set_rx_len(id, n)?;
         Ok(n)
     }
 
     /// Encode `msg` into an acquired TX slot and [`DatagramSlots::set_tx_len`].
-    pub fn encode_tx(&mut self, id: SlotId, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
+    pub fn encode_tx(
+        &mut self,
+        id: SlotId,
+        msg: &Message<'_, impl OwnedToken>,
+    ) -> Result<usize, SlotMessageError> {
         let n = encode_occupied(self.storage.tx_payload_mut(id), msg)?;
         self.storage.set_tx_len(id, n)?;
         #[cfg(feature = "diagnostics")]
@@ -598,7 +612,7 @@ impl<S: Storage + PendingCons> Engine<S> {
     /// Dedup Table.
     pub fn match_empty_ack_rst(
         &mut self,
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, impl crate::message::OwnedToken>,
         endpoint: Endpoint,
     ) -> Option<SlotId> {
         if !parsed.is_empty_ack_or_rst() {
@@ -619,7 +633,7 @@ impl<S: Storage + PendingCons> Engine<S> {
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         let (message_id, is_empty, is_ack) = {
-            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            let parsed = decode_occupied::<S::Token>(self.storage.rx_payload(id))?;
             (
                 parsed.message_id(),
                 parsed.is_empty_ack_or_rst(),
@@ -696,13 +710,13 @@ impl<S: Storage + Exchanges> Engine<S> {
     ///
     /// `None` when the table is full and the key is not already stored. Scans
     /// the TX-derived capacity (O(n)). Does not use Dedup or pending CON.
-    pub fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+    pub fn insert_exchange(&mut self, entry: ExchangeEntry<S::Token>) -> Option<SlotId> {
         self.storage.insert_exchange(entry)
     }
 
     /// Occupied exchange slot matching `key`, if any. O(n) in capacity.
     #[must_use]
-    pub fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+    pub fn lookup_exchange(&self, key: ExchangeKey<S::Token>) -> Option<SlotId> {
         self.storage.lookup_exchange(key)
     }
 
@@ -710,13 +724,13 @@ impl<S: Storage + Exchanges> Engine<S> {
     ///
     /// The caller releases [`ExchangeEntry::tx_slot`] when it still holds that
     /// TX datagram. `None` on miss.
-    pub fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    pub fn take_exchange(&mut self, key: ExchangeKey<S::Token>) -> Option<ExchangeEntry<S::Token>> {
         self.storage.take_exchange(key)
     }
 
     /// Occupied exchange payload at `id`.
     #[must_use]
-    pub fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    pub fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<S::Token>> {
         self.storage.exchange_entry(id)
     }
 
@@ -730,12 +744,12 @@ impl<S: Storage + Exchanges> Engine<S> {
         &mut self,
         id: SlotId,
         endpoint: Endpoint,
-    ) -> Result<Option<ExchangeEntry>, SlotMessageError>
+    ) -> Result<Option<ExchangeEntry<S::Token>>, SlotMessageError>
     where
         S: DatagramSlots,
     {
         let (token, message_id, is_request, echo) = {
-            let parsed = decode_occupied(self.storage.tx_payload(id))?;
+            let parsed = decode_occupied::<S::Token>(self.storage.tx_payload(id))?;
             (
                 parsed.token(),
                 parsed.message_id(),
@@ -764,9 +778,9 @@ impl<S: Storage + Exchanges> Engine<S> {
     /// `None` on miss. Does not consult Dedup or pending CON.
     pub fn match_response(
         &mut self,
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, S::Token>,
         endpoint: Endpoint,
-    ) -> Option<ExchangeEntry> {
+    ) -> Option<ExchangeEntry<S::Token>> {
         self.take_matching_response(
             parsed.token(),
             parsed.ty(),
@@ -781,13 +795,13 @@ impl<S: Storage + Exchanges> Engine<S> {
     pub fn match_response_rx(
         &mut self,
         id: SlotId,
-    ) -> Result<Option<ExchangeEntry>, SlotMessageError>
+    ) -> Result<Option<ExchangeEntry<S::Token>>, SlotMessageError>
     where
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         let (token, ty, code, message_id, echo) = {
-            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            let parsed = decode_occupied::<S::Token>(self.storage.rx_payload(id))?;
             (
                 parsed.token(),
                 parsed.ty(),
@@ -801,13 +815,13 @@ impl<S: Storage + Exchanges> Engine<S> {
 
     fn take_matching_response(
         &mut self,
-        token: Token,
+        token: S::Token,
         ty: crate::message::Type,
         code: crate::message::Code,
         message_id: MessageId,
         endpoint: Endpoint,
         challenge: Option<Echo>,
-    ) -> Option<ExchangeEntry> {
+    ) -> Option<ExchangeEntry<S::Token>> {
         if !code.is_response()
             || !matches!(
                 ty,
@@ -843,7 +857,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// `None` when the table is full and the key is not already stored. Scans
     /// the configured capacity (O(n)). Does not use Dedup, pending CON, or
     /// exchange matching.
-    pub fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+    pub fn insert_observe(&mut self, interest: ObserveInterest<S::Token>) -> Option<SlotId> {
         match self.storage.insert_observe(interest) {
             Some(id) => {
                 Metrics::inc(&mut self.metrics.observe_register);
@@ -858,12 +872,12 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
     /// Occupied Observe slot matching `key`, if any. O(n) in capacity.
     #[must_use]
-    pub fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+    pub fn lookup_observe(&self, key: ObserveKey<S::Token>) -> Option<SlotId> {
         self.storage.lookup_observe(key)
     }
 
     /// Release the Observe slot matching `key`, if occupied. O(n) in capacity.
-    pub fn remove_observe(&mut self, key: ObserveKey) -> bool {
+    pub fn remove_observe(&mut self, key: ObserveKey<S::Token>) -> bool {
         let removed = self.storage.remove_observe(key);
         if removed {
             Metrics::inc(&mut self.metrics.observe_cancel);
@@ -872,7 +886,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     }
 
     /// Remove and return the Observe interest matching `key`, if any.
-    pub fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    pub fn take_observe(&mut self, key: ObserveKey<S::Token>) -> Option<ObserveInterest<S::Token>> {
         let taken = self.storage.take_observe(key);
         if taken.is_some() {
             Metrics::inc(&mut self.metrics.observe_cancel);
@@ -882,7 +896,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
 
     /// Occupied Observe payload at `id`.
     #[must_use]
-    pub fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+    pub fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<S::Token>> {
         self.storage.observe_interest(id)
     }
 
@@ -892,7 +906,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// still yields one work item. `None` for client-side subscriptions or
     /// when no row matches. Does not
     /// encode a payload, acquire a TX slot, or invent 4.02 / RST policy.
-    pub fn signal_observe(&mut self, key: ObserveKey) -> Option<SlotId> {
+    pub fn signal_observe(&mut self, key: ObserveKey<S::Token>) -> Option<SlotId> {
         if key.is_client() {
             return None;
         }
@@ -910,7 +924,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// `knowledge/rfcs/rfc7252.txt`.
     pub fn refresh_observe_max_age(
         &mut self,
-        key: ObserveKey,
+        key: ObserveKey<S::Token>,
         now_ms: u64,
         max_age_secs: u32,
         con_mid: Option<MessageId>,
@@ -954,7 +968,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// policy.
     pub fn record_observe_notify(
         &mut self,
-        key: ObserveKey,
+        key: ObserveKey<S::Token>,
         now_ms: u64,
         message_id: MessageId,
         confirmable: bool,
@@ -995,7 +1009,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         &mut self,
         message_id: MessageId,
         endpoint: Endpoint,
-    ) -> Option<ObserveInterest> {
+    ) -> Option<ObserveInterest<S::Token>> {
         let id = lookup_observe_unacked(&mut self.storage, message_id, endpoint).or_else(|| {
             self.superseded_observe_notify(message_id, endpoint)
                 .and_then(|row| self.lookup_observe(row.key()))
@@ -1008,7 +1022,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
         &self,
         message_id: MessageId,
         endpoint: Endpoint,
-    ) -> Option<ObserveInterest> {
+    ) -> Option<ObserveInterest<S::Token>> {
         (0..self.storage.capacities().observe_entries).find_map(|index| {
             let row = self.storage.observe_interest(SlotId::from_index(index))?;
             (!row.key().is_client()
@@ -1034,7 +1048,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// register GET, or the table is full. Does not invent 4.02 / RST policy.
     pub fn register_observe(
         &mut self,
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, S::Token>,
         endpoint: Endpoint,
     ) -> Option<SlotId> {
         if !parsed.is_observe_register() {
@@ -1051,9 +1065,9 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     /// `None` when the datagram is not a deregister GET, or no row matches.
     pub fn deregister_observe(
         &mut self,
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, S::Token>,
         endpoint: Endpoint,
-    ) -> Option<ObserveInterest> {
+    ) -> Option<ObserveInterest<S::Token>> {
         if !parsed.is_observe_deregister() {
             return None;
         }
@@ -1067,7 +1081,7 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         let (token, is_register, resource) = {
-            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            let parsed = decode_occupied::<S::Token>(self.storage.rx_payload(id))?;
             (
                 parsed.token(),
                 parsed.is_observe_register(),
@@ -1084,13 +1098,13 @@ impl<S: Storage + ObserveSlots> Engine<S> {
     pub fn deregister_observe_rx(
         &mut self,
         id: SlotId,
-    ) -> Result<Option<ObserveInterest>, SlotMessageError>
+    ) -> Result<Option<ObserveInterest<S::Token>>, SlotMessageError>
     where
         S: DatagramSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
         let (token, is_deregister) = {
-            let parsed = decode_occupied(self.storage.rx_payload(id))?;
+            let parsed = decode_occupied::<S::Token>(self.storage.rx_payload(id))?;
             (parsed.token(), parsed.is_observe_deregister())
         };
         if !is_deregister {
@@ -1236,8 +1250,8 @@ impl<S: Storage + PendingCons + ObserveSlots> Engine<S> {
     pub(crate) fn supersede_observe_con(
         &mut self,
         pending: PendingCon,
-        original: ObserveInterest,
-        replacement: ObserveInterest,
+        original: ObserveInterest<S::Token>,
+        replacement: ObserveInterest<S::Token>,
         bytes: &[u8],
     ) -> Result<(), super::PendingReplaceError> {
         self.storage
@@ -1248,7 +1262,7 @@ impl<S: Storage + PendingCons + ObserveSlots> Engine<S> {
     }
 }
 
-fn observe_resource_from_message(parsed: &ParsedMessage<'_>) -> ObserveResource {
+fn observe_resource_from_message(parsed: &ParsedMessage<'_, impl OwnedToken>) -> ObserveResource {
     let mut segs = [""; 8];
     let mut n = 0usize;
     for item in parsed.uri_path() {
@@ -1382,7 +1396,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Incoming Block1 / Block2 sidecar on `id`.
     #[inline]
     #[must_use]
-    pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    pub fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<S::Token>> {
         self.storage.rx_body_transfer(id)
     }
 
@@ -1390,7 +1404,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     pub(crate) fn remember_qblock1_request(
         &mut self,
         id: SlotId,
-        token: crate::message::Token,
+        token: S::Token,
         request: crate::oscore::RequestRef,
     ) {
         let Some(mut transfer) = self.storage.rx_body_transfer(id) else {
@@ -1415,8 +1429,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         S: DatagramSlots + BodySlots,
     {
         let endpoint = self.storage.rx_endpoint(rx).ok_or(SlotError::NotOccupied)?;
-        let parsed =
-            crate::message::decode(self.storage.rx_payload(rx).ok_or(SlotError::NotOccupied)?)?;
+        let parsed = crate::message::decode_with_token::<S::Token>(
+            self.storage.rx_payload(rx).ok_or(SlotError::NotOccupied)?,
+        )?;
         if parsed.ty() != crate::message::Type::NonConfirmable {
             return Err(BlockTransferError::IdentityMismatch);
         }
@@ -1461,7 +1476,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// App::poll calls this after apply so the wait starts at receive time.
     /// [`Self::progress`] lazy-arms when holes exist and no wait is stored.
     /// `None` when `id` has no incoming transfer.
-    pub fn note_q_receive(&mut self, id: SlotId, now_ms: u64) -> Option<BlockTransfer> {
+    pub fn note_q_receive(&mut self, id: SlotId, now_ms: u64) -> Option<BlockTransfer<S::Token>> {
         let mut transfer = self.storage.rx_body_transfer(id)?;
         transfer.note_q_receive(now_ms);
         self.storage.set_rx_body_transfer(id, transfer).ok()?;
@@ -1471,21 +1486,21 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Outgoing Block1 / Block2 sidecar on `id`.
     #[inline]
     #[must_use]
-    pub fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    pub fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<S::Token>> {
         self.storage.tx_body_transfer(id)
     }
 
     /// First incoming body matching `key` across roles; see [`Self::lookup_rx_body_role`].
     #[inline]
     #[must_use]
-    pub fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
+    pub fn lookup_rx_body(&self, key: BlockKey<S::Token>) -> Option<SlotId> {
         self.storage.lookup_rx_body(key)
     }
 
     /// First outgoing body matching `key` across roles; see [`Self::lookup_tx_body_role`].
     #[inline]
     #[must_use]
-    pub fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
+    pub fn lookup_tx_body(&self, key: BlockKey<S::Token>) -> Option<SlotId> {
         self.storage.lookup_tx_body(key)
     }
 
@@ -1493,7 +1508,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// both client and server: opposite directions may use identical Tokens
     /// and tags at the same endpoint. This scans the configured slot bound.
     #[must_use]
-    pub fn lookup_rx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    pub fn lookup_rx_body_role(&self, key: BlockKey<S::Token>, role: BlockRole) -> Option<SlotId> {
         (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
             let id = SlotId::from_index(index);
             self.storage
@@ -1506,7 +1521,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// Outgoing body matching both key and role, without selecting a body
     /// owned by the opposite client/server direction.
     #[must_use]
-    pub fn lookup_tx_body_role(&self, key: BlockKey, role: BlockRole) -> Option<SlotId> {
+    pub fn lookup_tx_body_role(&self, key: BlockKey<S::Token>, role: BlockRole) -> Option<SlotId> {
         (0..self.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
             let id = SlotId::from_index(index);
             self.storage
@@ -1524,7 +1539,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn admit_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1550,7 +1565,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn apply_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1588,7 +1603,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn admit_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1614,7 +1629,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn apply_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1642,7 +1657,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn admit_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1668,7 +1683,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn apply_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1703,7 +1718,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn admit_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1729,7 +1744,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn apply_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1757,7 +1772,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn start_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1854,7 +1869,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn start_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1994,7 +2009,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn start_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -2082,7 +2097,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn start_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<S::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -2282,7 +2297,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// 4.08. Does not invent response codes.
     pub fn encode_q_block2_recover_tx(
         &mut self,
-        recover: QBlockRecover,
+        recover: QBlockRecover<S::Token>,
         tx_id: SlotId,
         ty: Type,
         code: Code,
@@ -2327,6 +2342,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
             SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
             SlotMessageError::Parse(p) => BlockTransferError::Parse(p),
+            SlotMessageError::TokenCapacity(e) => BlockTransferError::TokenCapacity(e),
             SlotMessageError::Encode(enc) => BlockTransferError::Encode(enc),
         })?;
         self.storage.set_tx_len(tx_id, n)?;
@@ -2387,8 +2403,9 @@ impl<S: Storage + BodySlots> Engine<S> {
         // Profile-sized copy so Constrained does not stack Default 1472.
         let mut tmp = S::RxScratch::default();
         let (token, block, expected, identity, mut binding, n) = {
-            let parsed =
-                crate::message::decode(self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?)?;
+            let parsed = crate::message::decode_with_token::<S::Token>(
+                self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?,
+            )?;
             let block = match which.read_block(&parsed) {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Err(e.into()),
@@ -2686,6 +2703,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         let n = encode_occupied(self.storage.tx_payload_mut(tx_id), &msg).map_err(|e| match e {
             SlotMessageError::Slot(s) => BlockTransferError::Slot(s),
             SlotMessageError::Parse(p) => BlockTransferError::Parse(p),
+            SlotMessageError::TokenCapacity(e) => BlockTransferError::TokenCapacity(e),
             SlotMessageError::Encode(enc) => BlockTransferError::Encode(enc),
         })?;
         self.storage.set_tx_len(tx_id, n)?;
@@ -2707,7 +2725,7 @@ impl<S: Storage + BodySlots> Engine<S> {
             .rx_endpoint(rx_id)
             .ok_or(SlotError::NotOccupied)?;
         let num = {
-            let parsed = crate::message::decode(
+            let parsed = crate::message::decode_with_token::<S::Token>(
                 self.storage
                     .rx_payload(rx_id)
                     .ok_or(SlotError::NotOccupied)?,
@@ -2763,7 +2781,7 @@ impl RxBlockOpt {
 
     fn read_block(
         self,
-        parsed: &ParsedMessage<'_>,
+        parsed: &ParsedMessage<'_, impl OwnedToken>,
     ) -> Option<Result<BlockValue, crate::error::ValueError>> {
         match self {
             Self::Block1 => parsed.block1(),
@@ -2773,7 +2791,10 @@ impl RxBlockOpt {
         }
     }
 
-    fn read_identity(self, parsed: &ParsedMessage<'_>) -> Result<BodyTag, BlockTransferError> {
+    fn read_identity(
+        self,
+        parsed: &ParsedMessage<'_, impl OwnedToken>,
+    ) -> Result<BodyTag, BlockTransferError> {
         let first = match self {
             Self::Block1 | Self::QBlock1 => parsed.request_tag().next(),
             Self::Block2 | Self::QBlock2 => parsed.etag().next(),
@@ -2782,13 +2803,66 @@ impl RxBlockOpt {
     }
 }
 
-#[inline]
-fn decode_occupied(bytes: Option<&[u8]>) -> Result<ParsedMessage<'_>, SlotMessageError> {
-    crate::message::decode(bytes.ok_or(SlotError::NotOccupied)?).map_err(SlotMessageError::Parse)
+impl<S: Storage + BodySlots> Engine<S> {
+    /// Recognize an already admitted upload without changing its bytes or binding.
+    /// Admission may let this packet advance existing work, but the ordinary
+    /// receive path still validates its range and payload before applying it.
+    pub(crate) fn admitted_upload(
+        &self,
+        parsed: &ParsedMessage<'_, S::Token>,
+        peer: Endpoint,
+    ) -> bool {
+        let (which, role) = if parsed.q_block1().is_some() {
+            (RxBlockOpt::QBlock1, BlockRole::IncomingQBlock1)
+        } else if parsed.block1().is_some() {
+            (RxBlockOpt::Block1, BlockRole::IncomingBlock1)
+        } else {
+            return false;
+        };
+        let Some(Ok(block)) = which.read_block(parsed) else {
+            return false;
+        };
+        let Ok(identity) = which.read_identity(parsed) else {
+            return false;
+        };
+        let Ok(candidate) = RequestBinding::from_message(parsed, block.num()) else {
+            return false;
+        };
+        let key = BlockKey::new(parsed.token(), peer).with_identity(identity);
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        (0..self.capacities().rx_body_slots.unwrap_or(0)).any(|index| {
+            let Some(transfer) = self.storage.rx_body_transfer(SlotId::from_index(index)) else {
+                return false;
+            };
+            let Some(stored) = transfer.request_binding else {
+                return false;
+            };
+            let matches = if untagged_classic {
+                transfer.role() == role
+                    && transfer.endpoint() == peer
+                    && transfer.identity().is_absent()
+                    && stored.same_options(candidate)
+                    && !(block.num() == 0 && key != transfer.key())
+            } else {
+                same_body_identity(transfer, key, role)
+            };
+            matches && stored.retain_condition(candidate).is_ok()
+        })
+    }
 }
 
 #[inline]
-fn encode_occupied(buf: Option<&mut [u8]>, msg: &Message<'_>) -> Result<usize, SlotMessageError> {
+fn decode_occupied<T: OwnedToken>(
+    bytes: Option<&[u8]>,
+) -> Result<ParsedMessage<'_, T>, SlotMessageError> {
+    crate::message::decode_with_token::<T>(bytes.ok_or(SlotError::NotOccupied)?).map_err(Into::into)
+}
+
+#[inline]
+fn encode_occupied(
+    buf: Option<&mut [u8]>,
+    msg: &Message<'_, impl OwnedToken>,
+) -> Result<usize, SlotMessageError> {
     crate::message::encode(msg, buf.ok_or(SlotError::NotOccupied)?)
         .map_err(SlotMessageError::Encode)
 }

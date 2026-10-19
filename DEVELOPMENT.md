@@ -77,7 +77,7 @@ cargo test --no-default-features --features alloc,oscore
 cargo test --no-default-features --features std
 cargo test --features std --test std_fixed_storage
 cargo doc --no-deps --all-features
-cargo package -p coaptic --locked
+cargo package --workspace --locked
 cargo +1.89.0 check --locked -p coaptic --no-default-features
 cargo +1.89.0 check --locked -p coaptic --all-features
 ```

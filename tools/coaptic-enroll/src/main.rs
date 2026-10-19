@@ -12,6 +12,7 @@ mod piv_cli;
 
 mod pairing_cli;
 
+mod owner_recovery_cli;
 mod serial_cli;
 
 mod guided;
@@ -77,14 +78,21 @@ Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only] APPROVAL
 Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
 \
 Maintain: serial-restart PORT | serial-recover PORT HOST APPROVAL
+  serial-recover also accepts --approval-directory DIRECTORY for the current owner's credential.
 \
   serial-revoke PORT HOST APPROVAL
 \
   serial-transfer PORT NEW_HOST HOST_ADDRESS VERIFIED_OWNER_HEX [--read-only] APPROVAL
+  serial-backup PORT BACKUP_DIRECTORY COSIGNER_MODE APPROVAL
+  serial-backup-remove PORT APPROVAL
+  serial-owner-recover PORT NEW_HOST HOST_ADDRESS NEW_OWNER_DIRECTORY COSIGNER_MODE [--read-only] APPROVAL
+COSIGNER_MODE: webauthn | touch | touchless. Register credentials in separate directories
+using COAPTIC_ENROLLMENT_DIR (an absolute path). Recovery requires a previously authorized
+backup and proof by the destination owner; it never resets device identity.
 \
 Inspect individual records: serial-info PORT | device-info HOST | pairing-info HOST
 \
-Local pairing: pairing-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
+Local pairing: pairing-init DEVICE | receipts-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
 \
   transfer DEVICE NEW_PEER VERIFIED_OWNER_HEX [--read-only] APPROVAL"
         );
@@ -130,6 +138,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "revoke",
         "transfer",
         "pairing-init",
+        "receipts-init",
         "pairing-info",
         "peer",
         "serial-info",
@@ -139,6 +148,9 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "serial-revoke",
         "serial-transfer",
         "serial-recover",
+        "serial-backup",
+        "serial-backup-remove",
+        "serial-owner-recover",
         "custody-init",
     ]
     .iter()
@@ -149,6 +161,16 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
     }
     let directory = enrollment_directory()?;
     private_directory(&directory)?;
+    if [
+        "serial-backup",
+        "serial-backup-remove",
+        "serial-owner-recover",
+    ]
+    .iter()
+    .any(|value| command == *value)
+    {
+        return owner_recovery_cli::run(&command, args, &directory);
+    }
     if command == "custody-init" {
         if args.next().is_some() {
             return Err("unexpected arguments".into());
@@ -185,6 +207,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "revoke",
         "transfer",
         "pairing-init",
+        "receipts-init",
         "pairing-info",
         "peer",
     ]
@@ -221,6 +244,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
             private_directory(&device_directory)?;
             let identity = coaptic_enroll::device::provision(&device_directory, kid)?;
             coaptic_enroll::pairing::PairingFile::open(&device_directory)?.initialize(&identity)?;
+            coaptic_enroll::pairing::initialize_receipts(&device_directory, &identity)?;
             identity
         } else {
             if args.next().is_some() {
@@ -325,6 +349,13 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn enrollment_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = std::env::var_os("COAPTIC_ENROLLMENT_DIR") {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err("COAPTIC_ENROLLMENT_DIR must be absolute".into());
+        }
+        return Ok(path);
+    }
     #[cfg(windows)]
     {
         Ok(

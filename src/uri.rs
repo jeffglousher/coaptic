@@ -53,7 +53,7 @@ impl<'a> Component<'a> {
 
     /// Decode once into caller storage, preserving encoded slash/ampersand and
     /// literal plus signs. Short output is not modified.
-    pub fn decode<'b>(self, output: &'b mut [u8]) -> Result<&'b str, Error> {
+    pub fn decode(self, output: &mut [u8]) -> Result<&str, Error> {
         let n = self.decoded_len();
         if output.len() < n {
             return Err(Error::Capacity);

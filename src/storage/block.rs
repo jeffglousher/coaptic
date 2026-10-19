@@ -19,7 +19,7 @@ use super::AccessMut;
 use super::endpoint::Endpoint;
 use super::slot::{SlotError, SlotId};
 use crate::error::{BlockTransferError, ValueError};
-use crate::message::{BlockValue, QBlockTransmission, Token};
+use crate::message::{BlockValue, OwnedToken, QBlockTransmission, Token};
 
 pub(crate) fn classic_block2_range(
     total: usize,
@@ -110,16 +110,16 @@ impl BodyTag {
 /// slot. Request/response transfer roles are matched separately; identical
 /// keys can coexist in opposite directions. See `knowledge/rfcs/rfc9175.txt`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct BlockKey {
-    token: Token,
+pub struct BlockKey<T: OwnedToken = Token> {
+    token: T,
     endpoint: Endpoint,
     identity: BodyTag,
 }
 
-impl BlockKey {
+impl<T: OwnedToken> BlockKey<T> {
     /// Identity for one Token at `endpoint` with absent Request-Tag / ETag.
     #[must_use]
-    pub const fn new(token: Token, endpoint: Endpoint) -> Self {
+    pub const fn new(token: T, endpoint: Endpoint) -> Self {
         Self {
             token,
             endpoint,
@@ -135,7 +135,7 @@ impl BlockKey {
 
     /// Token of the block-wise exchange.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -325,9 +325,9 @@ impl OutgoingBlock {
 ///
 /// See `knowledge/rfcs/rfc9177.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct QBlockRecover {
+pub struct QBlockRecover<T: OwnedToken = Token> {
     id: SlotId,
-    key: BlockKey,
+    key: BlockKey<T>,
     role: BlockRole,
     missing_num: u32,
     hole_mask: u16,
@@ -335,10 +335,10 @@ pub struct QBlockRecover {
     szx: u8,
 }
 
-impl QBlockRecover {
+impl<T: OwnedToken> QBlockRecover<T> {
     pub(crate) const fn new(
         id: SlotId,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         missing_num: u32,
         hole_mask: u16,
@@ -364,7 +364,7 @@ impl QBlockRecover {
 
     /// Token + endpoint identity of the transfer.
     #[must_use]
-    pub const fn key(self) -> BlockKey {
+    pub const fn key(self) -> BlockKey<T> {
         self.key
     }
 
@@ -538,7 +538,7 @@ pub(crate) struct RequestBinding {
 }
 impl RequestBinding {
     pub(crate) fn from_message(
-        message: &crate::message::ParsedMessage<'_>,
+        message: &crate::message::ParsedMessage<'_, impl OwnedToken>,
         num: u32,
     ) -> Result<Self, BlockTransferError> {
         use crate::message::{OptionNumber as N, OptionValueFormat};
@@ -611,15 +611,15 @@ impl RequestBinding {
 /// Block transfer sidecar stored next to one body-slot buffer.
 ///
 /// Classic Block is in-order: the next NUM must be [`Self::next_num`]. Incoming
-/// Q-Block tracks a [`Self::MAX_PAYLOADS`]-wide bitmap on the current window
+/// Q-Block tracks a [`BlockTransfer::MAX_PAYLOADS`]-wide bitmap on the current window
 /// and allows out-of-order NUMs inside that window. Outgoing Q-Block issues
 /// unsent NUMs in that same window (increasing NUM; RFC 9177 §4.3) and
 /// advances on a peer window ACK. BERT (SZX 7) is classic Block with
 /// multi-block payloads. See `knowledge/rfcs/rfc7959.txt`,
 /// `knowledge/rfcs/rfc9177.txt`, and `knowledge/rfcs/rfc8323.txt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BlockTransfer {
-    key: BlockKey,
+pub struct BlockTransfer<T: OwnedToken = Token> {
+    key: BlockKey<T>,
     role: BlockRole,
     num: u32,
     szx: u8,
@@ -633,8 +633,19 @@ pub struct BlockTransfer {
     pub(crate) request_binding: Option<RequestBinding>,
     // Highest authenticated request PIV and its Token for timed Q-Block1 reports.
     #[cfg(feature = "oscore")]
-    pub(crate) oscore_request: Option<(Token, crate::oscore::RequestRef)>,
+    pub(crate) oscore_request: Option<(T, crate::oscore::RequestRef)>,
     notification: Option<NotificationSnapshot>,
+}
+
+impl BlockTransfer {
+    /// RFC 9177 §7.2 default `MAX_PAYLOADS`; this crate's Q-Block window size.
+    pub const MAX_PAYLOADS: u8 = 10;
+
+    /// Maximum retained method/cache-key bytes for datagram request assembly.
+    /// Each option uses four framing bytes plus its value. Larger identities
+    /// are refused before body mutation. Direct range APIs leave matching to
+    /// their caller; RX-datagram APIs retain this context in the body sidecar.
+    pub const REQUEST_IDENTITY_BYTES: usize = 512;
 }
 
 /// Only the fields an outgoing issue may change; retained request bytes stay
@@ -650,7 +661,7 @@ pub(crate) struct IssueCheckpoint {
 
 const _: () = assert!(core::mem::size_of::<IssueCheckpoint>() <= 16);
 
-impl BlockTransfer {
+impl<T: OwnedToken> BlockTransfer<T> {
     /// Outgoing uploads reuse the incoming request-binding area for the control
     /// options that must survive fragmentation. `role` distinguishes the layouts.
     pub(crate) fn retain_upload_controls(
@@ -664,7 +675,7 @@ impl BlockTransfer {
         ) {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        let mut selected = OptionsBuilder::<{ Self::MAX_PAYLOADS as usize + 2 }>::new();
+        let mut selected = OptionsBuilder::<{ BlockTransfer::MAX_PAYLOADS as usize + 2 }>::new();
         for option in options
             .iter()
             .filter(|o| matches!(o.number(), N::OBSERVE | N::BLOCK2 | N::Q_BLOCK2))
@@ -677,7 +688,7 @@ impl BlockTransfer {
             return Ok(());
         }
         let mut binding = RequestBinding {
-            bytes: [0; Self::REQUEST_IDENTITY_BYTES],
+            bytes: [0; BlockTransfer::REQUEST_IDENTITY_BYTES],
             len: 0,
             if_none_match: None,
             non_confirmable: false,
@@ -727,21 +738,13 @@ impl BlockTransfer {
             q.mask = mask;
         }
     }
-    /// RFC 9177 §7.2 default `MAX_PAYLOADS`; this crate's Q-Block window size.
-    pub const MAX_PAYLOADS: u8 = 10;
-
-    /// Maximum retained method/cache-key bytes for datagram request assembly.
-    /// Each option uses four framing bytes plus its value. Larger identities
-    /// are refused before body mutation. Direct range APIs leave matching to
-    /// their caller; RX-datagram APIs retain this context in the body sidecar.
-    pub const REQUEST_IDENTITY_BYTES: usize = 512;
 
     /// Incoming sidecar after the first accepted block.
     ///
     /// `role` must be [`BlockRole::IncomingBlock1`] or
     /// [`BlockRole::IncomingBlock2`]. Classic Block starts at NUM 0.
     pub fn incoming(
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload_len: usize,
@@ -777,7 +780,7 @@ impl BlockTransfer {
 
     /// Incoming Block1 sidecar after the first accepted block.
     pub fn incoming_block1(
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload_len: usize,
         capacity: usize,
@@ -795,7 +798,7 @@ impl BlockTransfer {
 
     /// Incoming Block2 sidecar after the first accepted block.
     pub fn incoming_block2(
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload_len: usize,
         capacity: usize,
@@ -817,7 +820,7 @@ impl BlockTransfer {
     /// [`BlockRole::IncomingQBlock2`]. The first datagram may be any NUM in
     /// window 0 (`0..MAX_PAYLOADS`). See `knowledge/rfcs/rfc9177.txt`.
     pub fn incoming_q(
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload_len: usize,
@@ -860,7 +863,7 @@ impl BlockTransfer {
 
     /// Incoming Q-Block1 sidecar after the first accepted block.
     pub fn incoming_q_block1(
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload_len: usize,
         capacity: usize,
@@ -878,7 +881,7 @@ impl BlockTransfer {
 
     /// Incoming Q-Block2 sidecar after the first accepted block.
     pub fn incoming_q_block2(
-        key: BlockKey,
+        key: BlockKey<T>,
         block: BlockValue,
         payload_len: usize,
         capacity: usize,
@@ -899,7 +902,7 @@ impl BlockTransfer {
     /// `role` must be [`BlockRole::OutgoingBlock1`] or
     /// [`BlockRole::OutgoingBlock2`].
     pub fn outgoing(
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body_len: usize,
         szx: u8,
@@ -918,7 +921,7 @@ impl BlockTransfer {
     /// `MAX_PAYLOADS` window until [`Self::ack_q_window`]. See
     /// `knowledge/rfcs/rfc9177.txt`.
     pub fn outgoing_q(
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body_len: usize,
         szx: u8,
@@ -948,7 +951,7 @@ impl BlockTransfer {
     }
 
     fn outgoing_common(
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body_len: usize,
         szx: u8,
@@ -984,7 +987,7 @@ impl BlockTransfer {
 
     /// Outgoing Block1 sidecar for a complete body already in the slot.
     pub fn outgoing_block1(
-        key: BlockKey,
+        key: BlockKey<T>,
         body_len: usize,
         szx: u8,
         capacity: usize,
@@ -994,7 +997,7 @@ impl BlockTransfer {
 
     /// Outgoing Block2 sidecar for a complete body already in the slot.
     pub fn outgoing_block2(
-        key: BlockKey,
+        key: BlockKey<T>,
         body_len: usize,
         szx: u8,
         capacity: usize,
@@ -1004,7 +1007,7 @@ impl BlockTransfer {
 
     /// Outgoing Q-Block1 sidecar for a complete body already in the slot.
     pub fn outgoing_q_block1(
-        key: BlockKey,
+        key: BlockKey<T>,
         body_len: usize,
         szx: u8,
         capacity: usize,
@@ -1014,7 +1017,7 @@ impl BlockTransfer {
 
     /// Outgoing Q-Block2 sidecar for a complete body already in the slot.
     pub fn outgoing_q_block2(
-        key: BlockKey,
+        key: BlockKey<T>,
         body_len: usize,
         szx: u8,
         capacity: usize,
@@ -1024,13 +1027,13 @@ impl BlockTransfer {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> BlockKey {
+    pub const fn key(self) -> BlockKey<T> {
         self.key
     }
 
     /// Token of the transfer.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.key.token()
     }
 
@@ -1178,13 +1181,87 @@ impl BlockTransfer {
     }
 
     pub(crate) const fn terminal_deadline(self) -> Option<u64> {
-        if matches!(self.role, BlockRole::OutgoingBlock2) {
+        if matches!(
+            self.role,
+            BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+        ) {
             match self.q_receive {
                 Some(wait) => Some(wait.next_timeout_ms),
                 None => None,
             }
         } else {
             None
+        }
+    }
+
+    // Outgoing Q notifications never use the incoming missing-block timer.
+    // Reuse that storage for the representation epoch and bounded retention.
+    pub(crate) fn remember_q_observe(&mut self, sequence: u32, deadline: u64) {
+        debug_assert_eq!(self.role, BlockRole::OutgoingQBlock2);
+        self.q_receive = Some(QBlockReceiveWait {
+            attempts: 0,
+            timeout_ms: sequence,
+            next_timeout_ms: deadline,
+        });
+    }
+
+    pub(crate) const fn q_observe_sequence(self) -> Option<u32> {
+        if matches!(self.role, BlockRole::OutgoingQBlock2) {
+            match self.q_receive {
+                Some(state) => Some(state.timeout_ms),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn negotiate_q_observe_szx(&mut self, szx: u8) -> Result<(), BlockTransferError> {
+        if self.q_observe_sequence().is_none()
+            || szx > self.szx
+            || self.next_num != 0
+            || self.q.is_none_or(|window| window.mask != 0)
+        {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+        self.szx = szx;
+        Ok(())
+    }
+
+    pub(crate) fn set_q_observe_confirmable(&mut self) {
+        debug_assert!(self.q_observe_sequence().is_some());
+        if let Some(state) = self.q_receive.as_mut() {
+            state.attempts = 1;
+        }
+    }
+
+    pub(crate) fn q_observe_confirmable(self) -> bool {
+        self.q_observe_sequence().is_some()
+            && self.q_receive.is_some_and(|state| state.attempts == 1)
+    }
+
+    // Outgoing Q bodies do not use the incoming Continue-response cache.
+    pub(crate) fn q_observe_pending_mid(self) -> Option<crate::message::MessageId> {
+        self.q_observe_confirmable().then_some(())?;
+        self.q_observe_last_mid()
+    }
+
+    pub(crate) fn q_observe_last_mid(self) -> Option<crate::message::MessageId> {
+        self.q_observe_sequence()?;
+        self.q?
+            .continue_ack
+            .map(|mid| crate::message::MessageId::new(mid as u16))
+    }
+
+    pub(crate) fn set_q_observe_pending_mid(&mut self, mid: Option<crate::message::MessageId>) {
+        debug_assert!(self.q_observe_confirmable());
+        self.set_q_observe_last_mid(mid);
+    }
+
+    pub(crate) fn set_q_observe_last_mid(&mut self, mid: Option<crate::message::MessageId>) {
+        debug_assert!(self.q_observe_sequence().is_some());
+        if let Some(window) = self.q.as_mut() {
+            window.continue_ack = mid.map(|mid| u32::from(mid.get()));
         }
     }
 
@@ -1199,7 +1276,12 @@ impl BlockTransfer {
     }
 
     pub(crate) fn observe_selection(&self) -> Option<super::ObserveSelection> {
-        if self.notification.is_none() || self.role != BlockRole::OutgoingBlock2 {
+        if self.notification.is_none()
+            || !matches!(
+                self.role,
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            )
+        {
             return None;
         }
         self.request_binding.map(|binding| super::ObserveSelection {
@@ -1226,7 +1308,7 @@ impl BlockTransfer {
         let Some(q) = self.q else {
             return None;
         };
-        let max = Self::MAX_PAYLOADS as u32;
+        let max = BlockTransfer::MAX_PAYLOADS as u32;
         // RFC 9177 sections 4.6 and 7.2: exact Size1 also identifies an
         // entirely missing next set after Continue. No future payload bitmap
         // is retained, and reporting stays bounded to the current ten blocks.
@@ -1441,7 +1523,7 @@ impl BlockTransfer {
             return Err(BlockTransferError::Duplicate);
         }
         let idx = block.num() - q.base;
-        if idx >= u32::from(Self::MAX_PAYLOADS) {
+        if idx >= u32::from(BlockTransfer::MAX_PAYLOADS) {
             return Err(BlockTransferError::OutsideWindow);
         }
         let bit = 1u16 << idx;
@@ -1455,7 +1537,7 @@ impl BlockTransfer {
         }
         if !block.more() {
             let after = idx.saturating_add(1);
-            if after < u32::from(Self::MAX_PAYLOADS) && (q.mask >> after) != 0 {
+            if after < u32::from(BlockTransfer::MAX_PAYLOADS) && (q.mask >> after) != 0 {
                 return Err(BlockTransferError::LengthInconsistent);
             }
         }
@@ -1470,17 +1552,17 @@ impl BlockTransfer {
             q.final_payload_len = final_payload_len;
         }
 
-        let window_full = (1u16 << Self::MAX_PAYLOADS) - 1;
+        let window_full = (1u16 << BlockTransfer::MAX_PAYLOADS) - 1;
         while q.mask == window_full && q.final_num.is_none() {
             let ack = q
                 .base
-                .checked_add(u32::from(Self::MAX_PAYLOADS) - 1)
+                .checked_add(u32::from(BlockTransfer::MAX_PAYLOADS) - 1)
                 .ok_or(BlockTransferError::Overflow)?;
             q.continue_trigger = Some(block.num());
             q.continue_ack = Some(ack);
             q.base = q
                 .base
-                .checked_add(u32::from(Self::MAX_PAYLOADS))
+                .checked_add(u32::from(BlockTransfer::MAX_PAYLOADS))
                 .ok_or(BlockTransferError::Overflow)?;
             q.mask = 0;
         }
@@ -1533,7 +1615,7 @@ impl BlockTransfer {
             return Err(BlockTransferError::SzxMismatch);
         }
         let q = self.q.ok_or(BlockTransferError::IdentityMismatch)?;
-        if block.num().saturating_sub(q.base) < u32::from(Self::MAX_PAYLOADS)
+        if block.num().saturating_sub(q.base) < u32::from(BlockTransfer::MAX_PAYLOADS)
             || q.final_num.is_some()
         {
             return Err(BlockTransferError::IdentityMismatch);
@@ -1659,7 +1741,7 @@ impl BlockTransfer {
         }
         let q = self.q.ok_or(BlockTransferError::IdentityMismatch)?;
         let idx = q.mask.trailing_ones();
-        if idx >= u32::from(Self::MAX_PAYLOADS) {
+        if idx >= u32::from(BlockTransfer::MAX_PAYLOADS) {
             return Err(BlockTransferError::OutsideWindow);
         }
         let num = q
@@ -1701,12 +1783,12 @@ impl BlockTransfer {
             .q
             .as_mut()
             .ok_or(BlockTransferError::IdentityMismatch)?;
-        if q.mask != (1u16 << Self::MAX_PAYLOADS) - 1 {
+        if q.mask != (1u16 << BlockTransfer::MAX_PAYLOADS) - 1 {
             return Err(BlockTransferError::Gap);
         }
         q.base = q
             .base
-            .checked_add(u32::from(Self::MAX_PAYLOADS))
+            .checked_add(u32::from(BlockTransfer::MAX_PAYLOADS))
             .ok_or(BlockTransferError::Overflow)?;
         q.mask = 0;
         Ok(())
@@ -1735,8 +1817,8 @@ impl BlockTransfer {
         if self.complete {
             return Err(BlockTransferError::AlreadyComplete);
         }
-        let max = u32::from(Self::MAX_PAYLOADS);
-        let window_full = (1u16 << Self::MAX_PAYLOADS) - 1;
+        let max = u32::from(BlockTransfer::MAX_PAYLOADS);
+        let window_full = (1u16 << BlockTransfer::MAX_PAYLOADS) - 1;
         match self.role {
             BlockRole::OutgoingQBlock1 => {
                 let q = self
@@ -1808,7 +1890,7 @@ impl BlockTransfer {
                 return Err(BlockTransferError::Duplicate);
             }
             let idx = num - q.base;
-            if idx >= u32::from(Self::MAX_PAYLOADS) {
+            if idx >= u32::from(BlockTransfer::MAX_PAYLOADS) {
                 return Err(BlockTransferError::OutsideWindow);
             }
             let bit = 1u16 << idx;
@@ -1878,7 +1960,11 @@ pub(crate) fn block_offset(num: u32, size: usize) -> Result<usize, BlockTransfer
 /// Used when Q-Block datagrams of one body carry distinct Tokens
 /// (`knowledge/rfcs/rfc9177.txt`). Absent identity is not a unique key.
 #[must_use]
-pub(crate) fn same_body_identity(transfer: BlockTransfer, key: BlockKey, role: BlockRole) -> bool {
+pub(crate) fn same_body_identity<T: OwnedToken>(
+    transfer: BlockTransfer<T>,
+    key: BlockKey<T>,
+    role: BlockRole,
+) -> bool {
     !key.identity().is_absent()
         && transfer.role() == role
         && transfer.endpoint() == key.endpoint()
@@ -1886,14 +1972,14 @@ pub(crate) fn same_body_identity(transfer: BlockTransfer, key: BlockKey, role: B
 }
 
 /// Start a classic or Q-Block incoming sidecar from `role`.
-pub(crate) fn start_incoming(
-    key: BlockKey,
+pub(crate) fn start_incoming<T: OwnedToken>(
+    key: BlockKey<T>,
     role: BlockRole,
     block: BlockValue,
     payload_len: usize,
     capacity: usize,
     expected_len: Option<u32>,
-) -> Result<BlockTransfer, BlockTransferError> {
+) -> Result<BlockTransfer<T>, BlockTransferError> {
     if role.is_q_block() {
         BlockTransfer::incoming_q(key, role, block, payload_len, capacity, expected_len)
     } else {
@@ -1902,8 +1988,8 @@ pub(crate) fn start_incoming(
 }
 
 /// Accept the next classic or Q-Block incoming range from `transfer.role()`.
-pub(crate) fn accept_incoming_role(
-    transfer: &mut BlockTransfer,
+pub(crate) fn accept_incoming_role<T: OwnedToken>(
+    transfer: &mut BlockTransfer<T>,
     block: BlockValue,
     payload_len: usize,
     capacity: usize,
@@ -1938,14 +2024,14 @@ pub(crate) fn store_incoming(
 }
 
 /// Byte and transfer access shared by [`super::BodyPool`] and the alloc body pool.
-pub(crate) trait BodyOps {
+pub(crate) trait BodyOps<T: OwnedToken = Token> {
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
-    fn transfer(&self, id: SlotId) -> Option<BlockTransfer>;
-    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer) -> Result<(), SlotError>;
-    fn lookup(&self, key: BlockKey) -> Option<SlotId>;
+    fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>>;
+    fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError>;
+    fn lookup(&self, key: BlockKey<T>) -> Option<SlotId>;
     fn admit_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1960,7 +2046,7 @@ pub(crate) trait BodyOps {
     ) -> Result<BlockProgress, BlockTransferError>;
     fn apply_incoming(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         block: BlockValue,
         payload: &[u8],
@@ -1968,7 +2054,7 @@ pub(crate) trait BodyOps {
     ) -> Result<BlockProgress, BlockTransferError>;
     fn start_outgoing(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
         szx: u8,
