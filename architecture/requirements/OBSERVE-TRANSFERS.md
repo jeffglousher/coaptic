@@ -26,12 +26,30 @@ Original texts: [RFC 7641](../../knowledge/rfcs/rfc7641.txt), [7959](../../knowl
 
 10. **HOP-LIMIT — RFC 8768 §§1.1, 3.** The origin API parses the option through [Request::hop_limit](../../src/app/request.rs); this does not implement forwarding, decrement, loop detection or proxy diagnostics. Proxy/cache roles are unsupported contribution opportunities in this milestone. Those requirements are inapplicable to this accepted origin Observe/transfer profile, not completed by option decoding.
 
+A payloadless initial Valid may omit Content-Format. Explicit Accept establishes
+its format immediately; otherwise the format remains unknown until the first
+visible Content. Unknown format differs from a representation known to omit
+Content-Format. Later Valid responses retain a known binding. Admission refusal
+before sending leaves the binding unknown; an ambiguous send or cancellation
+after a committed Q packet preserves it. The existing observer policy byte holds
+this state; no retained buffers or tables are added. Direct proofs include
+`valid_without_format_preserves_known_absence_and_accept_constraints`,
+`first_content_format_binds_on_ambiguous_send_but_not_admission_refusal` and
+`cancelled_q_first_content_binds_only_after_a_packet_commits` in
+[deferred_observe_block2](../../tests/deferred_observe_block2.rs).
+
+Automatic GET Block2 retrieval omits the original request's cache-validation
+ETag. Response ETags still establish representation identity; explicit
+preconditions and non-GET validators, including FETCH selection, remain retained.
+`download_followups_retain_conditions_and_fetch_selection` in
+[App tests](../../src/app/tests.rs) covers that distinction.
+
 ## Completion and independent gates
 
 The implementation gate is the applicable rows above, including their explicit capacity/refusal/recovery contracts. Source tests are relevant proof; they are not independent interoperability or current-device execution. No ordinary-response fallback closes an accepted registration row. Any future expansion of the retained selector/window capacities must account for the entire App, scratch, security and transport lifetimes rather than increasing a table in isolation.
 
-- [#199](https://github.com/jeffglousher/coaptic/issues/199) stays open for its finite literal scenario/direction inventory and reviewed normative-conflict dispositions. DTLS02 wrong-PSK alerts cannot be relabeled PASS; optional RPK contribution scenarios do not gate UDP/OSCORE.
+- [#199](https://github.com/jeffglousher/coaptic/issues/199) is complete for its selected literal inventory in companion #90. Mixed-peer fixture gaps remain #200. DTLS02 wrong-PSK alerts have a reviewed conflict disposition, never literal PASS; optional RPK contribution scenarios do not gate UDP/OSCORE.
 - [#200](https://github.com/jeffglousher/coaptic/issues/200) stays open for independent selected/nonzero/CON-Q directions, discovery/bootstrap contracts, routed/scoped addresses and exact duplicate-effect evidence. [Companion capability inventory](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/capabilities.json) and [protected Observe harness](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/oscore_observe.py) own directions; old captures retain their original sources.
-- [#202](https://github.com/jeffglousher/coaptic/issues/202) stays open for named parser/state/concurrency/fault campaigns and diagnostic host/export integration. Cross-compilation, emulation, host loopback and physical interruption are distinct evidence.
-- [#522](https://github.com/jeffglousher/coaptic/issues/522) stays open outside the RFC gate: no named loaded/verifier-approved Rust ingress classifier is established by this source audit. Next work is a shared-decoder classifier with explicit hook/stack/instruction/map bounds and conservative userspace pass-through, then actual hook proof.
+- [#202](https://github.com/jeffglousher/coaptic/issues/202) is complete for the finite host campaigns and diagnostic export delivered by companion #88. Cross-compilation, emulation, host loopback and physical interruption remain distinct evidence.
+- [#522](https://github.com/jeffglousher/coaptic/issues/522) stays open outside the RFC gate. Companion #89 delivers the shared-decoder classifier and observation-only loader; #92 adds the finite manual Linux execution workflow. Linked object, verifier and hook outcomes require actual source-bound execution.
 - [#341](https://github.com/jeffglousher/coaptic/issues/341) stays open for requested matching-source SmallDevice measurements, complete system peaks and equivalent protected competitor fixtures. Tests and linked object sizes do not establish throughput or peak stack/heap. Coding takes precedence over expansion of that campaign.
