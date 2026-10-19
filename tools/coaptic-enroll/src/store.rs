@@ -1,6 +1,8 @@
 //! Exclusive bounded public operator storage. It is not a device trust anchor.
 //! Sync/readback protect process recovery, not hostile whole-disk rollback.
-use crate::{Error, Operator};
+use crate::Error;
+#[cfg(feature = "webauthn")]
+use crate::Operator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -42,6 +44,7 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
     decode(&bytes)
 }
 
+#[cfg(feature = "webauthn")]
 pub type OperatorStore = RecordStore<Operator>;
 
 pub struct RecordStore<T> {
@@ -50,6 +53,7 @@ pub struct RecordStore<T> {
     _record: std::marker::PhantomData<T>,
 }
 
+#[cfg(feature = "webauthn")]
 impl OperatorStore {
     /// `directory` must already be private to the authenticated OS administrator.
     pub fn open(directory: &Path) -> Result<Self, Error> {

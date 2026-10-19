@@ -4,7 +4,7 @@ use coaptic_enroll::{
     Action, Error, Request, device,
     pairing::{self, PairingFile},
 };
-#[cfg(windows)]
+#[cfg(all(windows, feature = "webauthn"))]
 use coaptic_enroll::{origin, store::OperatorStore};
 use std::{
     ffi::{OsStr, OsString},
@@ -181,6 +181,8 @@ pub fn approve<T>(
     request: impl FnOnce([u8; 32]) -> Result<Request, Error>,
     commit: impl FnOnce(&Request) -> Result<T, Error>,
 ) -> Result<T, Box<dyn std::error::Error>> {
+    #[cfg(not(any(feature = "development-piv", all(windows, feature = "webauthn"))))]
+    let _ = (directory, &request, &commit);
     if approval != ApprovalMode::WebAuthn {
         #[cfg(feature = "development-piv")]
         {
@@ -212,14 +214,14 @@ pub fn approve<T>(
         #[cfg(not(feature = "development-piv"))]
         return Err("binary was built without the development-piv feature".into());
     }
-    #[cfg(not(windows))]
+    #[cfg(not(all(windows, feature = "webauthn")))]
     {
         Err(
             "native WebAuthn approval is unavailable; select an explicitly registered PIV profile"
                 .into(),
         )
     }
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "webauthn"))]
     {
         let store = OperatorStore::open(directory)?;
         let operator = store.load()?;
@@ -235,6 +237,7 @@ pub fn approve<T>(
     }
 }
 
+#[cfg(any(feature = "development-piv", all(windows, feature = "webauthn")))]
 fn review(request: &Request, approval: ApprovalMode) -> Result<(), Error> {
     println!(
         "Approve {:?}: device {} peer {} owner {} permissions {}",

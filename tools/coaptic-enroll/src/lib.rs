@@ -16,13 +16,16 @@
 //! device keys with DPAPI; it does not provide flash/disk rollback resistance.
 
 use std::fmt;
-use std::time::{Duration, Instant};
+#[cfg(any(feature = "webauthn", feature = "development-piv"))]
+use std::time::Duration;
+#[cfg(feature = "webauthn")]
+use std::time::Instant;
 
-use coaptic::provisioning::{
-    ApprovalCommitError, EnrollmentAnchor, EnrollmentAuthority, EnrollmentPolicy, EnrollmentStore,
-    PinnedPeer,
-};
+#[cfg(feature = "webauthn")]
+use coaptic::provisioning::{ApprovalCommitError, EnrollmentAuthority, EnrollmentStore};
+use coaptic::provisioning::{EnrollmentAnchor, EnrollmentPolicy, PinnedPeer};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "webauthn")]
 use webauthn_rs::prelude::*;
 
 pub mod recovery;
@@ -40,11 +43,14 @@ pub mod native_custody;
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 mod sealing;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "webauthn-tests"))]
 mod tests;
 
+#[cfg(feature = "webauthn")]
 const RP_ID: &str = "coaptic.local";
+#[cfg(feature = "webauthn")]
 const ORIGIN: &str = "https://coaptic.local";
+#[cfg(any(feature = "webauthn", feature = "development-piv"))]
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 type Result<T> = std::result::Result<T, Error>;
@@ -87,6 +93,7 @@ impl std::error::Error for Error {}
 /// Stored public operator credential; it contains no authenticator private key.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "webauthn")]
 pub struct Operator {
     version: u8,
     #[serde(with = "serde_bytes")]
@@ -95,6 +102,7 @@ pub struct Operator {
     counter: u32,
 }
 
+#[cfg(feature = "webauthn")]
 impl Operator {
     /// Exact owner commitment, independent of a display label.
     pub fn owner(&self) -> &[u8; 32] {
@@ -338,6 +346,7 @@ impl Request {
 }
 
 /// Consumed challenge state. It is deliberately neither cloneable nor serializable.
+#[cfg(feature = "webauthn")]
 pub struct PendingApproval {
     state: PasskeyAuthentication,
     request: Request,
@@ -345,6 +354,7 @@ pub struct PendingApproval {
     started: Instant,
 }
 
+#[cfg(feature = "webauthn")]
 impl PendingApproval {
     /// Verify the fresh proof, persist updated operator state, then expose one approval.
     /// The callback must serialize and durably compare-and-swap the prior operator state.
@@ -384,17 +394,20 @@ impl PendingApproval {
 }
 
 /// One successful operator approval, not a serializable authorization token.
+#[cfg(feature = "webauthn")]
 pub struct ApprovedRequest {
     request: Request,
     started: Instant,
 }
 
 #[derive(Debug)]
+#[cfg(feature = "webauthn")]
 pub enum CommitError<E> {
     Approval(Error),
     Authority(ApprovalCommitError<E>),
 }
 
+#[cfg(feature = "webauthn")]
 impl ApprovedRequest {
     /// Consume a production FIDO2 approval through an authenticated local
     /// commissioning sink. The sink must compare the complete live device
@@ -445,12 +458,14 @@ impl ApprovedRequest {
 }
 
 /// In-memory initial registration state for a trusted local administrator.
+#[cfg(feature = "webauthn")]
 pub struct PendingRegistration {
     state: PasskeyRegistration,
     owner: [u8; 32],
     started: Instant,
 }
 
+#[cfg(feature = "webauthn")]
 pub fn begin_registration(
     owner: [u8; 32],
 ) -> Result<(CreationChallengeResponse, PendingRegistration)> {
@@ -477,6 +492,7 @@ pub fn begin_registration(
     ))
 }
 
+#[cfg(feature = "webauthn")]
 impl PendingRegistration {
     pub fn finish(self, proof: &RegisterPublicKeyCredential) -> Result<Operator> {
         if self.started.elapsed() >= TIMEOUT {
@@ -498,10 +514,12 @@ impl PendingRegistration {
     }
 }
 
+#[cfg(feature = "webauthn")]
 pub fn origin() -> Url {
     Url::parse(ORIGIN).expect("fixed native client origin")
 }
 
+#[cfg(feature = "webauthn")]
 fn verifier() -> Result<Webauthn> {
     WebauthnBuilder::new(RP_ID, &origin())
         .map_err(|_| Error::Input)?
@@ -515,6 +533,7 @@ fn verifier() -> Result<Webauthn> {
 // an alternate verifier or authenticator/model attestation. Reject unsuitable
 // credentials before persisting registration, rather than trapping an operator
 // with a credential which can never satisfy the selected approval profile.
+#[cfg(feature = "webauthn")]
 fn credential_counter(key: &Passkey) -> Result<u32> {
     let credential: Credential = key.clone().into();
     if !credential.user_verified || credential.backup_eligible || credential.backup_state {

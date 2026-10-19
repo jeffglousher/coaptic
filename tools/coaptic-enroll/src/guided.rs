@@ -28,13 +28,35 @@ fn line<const N: usize>(
     Ok(Some(line))
 }
 
+/// Availability of platform-specific operator registration and approval.
+#[derive(Clone, Copy)]
+pub struct Capabilities {
+    pub webauthn: bool,
+    pub piv: bool,
+}
+
+fn available(id: &str, capabilities: Capabilities) -> bool {
+    match id {
+        "13" => capabilities.webauthn,
+        "9" | "10" | "14" | "15" => capabilities.piv,
+        "2" | "3" | "4" | "5" => capabilities.piv || capabilities.webauthn,
+        _ => true,
+    }
+}
+
+enum Input {
+    Value(String),
+    Back,
+    Cancel,
+}
 fn prompt(
     input: &mut impl BufRead,
     output: &mut impl Write,
     label: &str,
-) -> io::Result<Option<String>> {
+    optional: bool,
+) -> io::Result<Input> {
     loop {
-        write!(output, "{label} (:cancel to leave): ")?;
+        write!(output, "{label}: ")?;
         output.flush()?;
         let value = match line::<256>(input) {
             Ok(Some(line)) => match line.text() {
@@ -44,19 +66,130 @@ fn prompt(
                     continue;
                 }
             },
-            Ok(None) => return Ok(None),
+            Ok(None) => return Ok(Input::Cancel),
             Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
                 writeln!(output, "{error}")?;
                 continue;
             }
             Err(error) => return Err(error),
         };
-        if value == ":cancel" {
-            return Ok(None);
+        match value.as_str() {
+            ":cancel" => return Ok(Input::Cancel),
+            ":back" => return Ok(Input::Back),
+            "" if !optional => writeln!(output, "Enter a value, :back or :cancel.")?,
+            _ => return Ok(Input::Value(value)),
         }
-        if !value.is_empty() {
-            return Ok(Some(value));
+    }
+}
+
+enum Selection {
+    Ready(Vec<std::ffi::OsString>),
+    Back,
+    Cancel,
+}
+macro_rules! answer {
+    ($input:expr, $output:expr, $label:expr, $optional:expr) => {
+        match prompt($input, $output, $label, $optional)? {
+            Input::Value(value) => value,
+            Input::Back => return Ok(Selection::Back),
+            Input::Cancel => return Ok(Selection::Cancel),
         }
+    };
+}
+
+fn collect_operation(
+    operation: coaptic_console_core::workflow::Operation,
+    capabilities: Capabilities,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> io::Result<Selection> {
+    let mut args = vec![operation.command.into()];
+    let mut review = Vec::new();
+    if operation.command == "inspect" {
+        for (label, flag) in [
+            ("Serial port (blank skips device query)", "--port"),
+            ("Host identity (blank skips targeted host query)", "--host"),
+        ] {
+            let value = answer!(input, output, label, true);
+            if !value.is_empty() {
+                review.push((label, value.clone()));
+                args.push(flag.into());
+                args.push(value.into());
+            }
+        }
+    }
+    for field in operation.fields {
+        let value = answer!(input, output, field, false);
+        review.push((*field, value.clone()));
+        args.push(value.into());
+    }
+    if operation.connect {
+        args.push("--connect".into());
+    }
+    if operation.approval {
+        loop {
+            if capabilities.piv {
+                writeln!(
+                    output,
+                    "Approval: 1 Touch-required YubiKey, 2 Touchless development YubiKey"
+                )?;
+            }
+            if capabilities.webauthn {
+                writeln!(output, "          3 Windows verified authenticator")?;
+            }
+            let choice = answer!(input, output, "Approval choice", false);
+            let label = match choice.as_str() {
+                "1" if capabilities.piv => {
+                    args.push("--piv-touch".into());
+                    "Touch-required YubiKey"
+                }
+                "2" if capabilities.piv => {
+                    args.push("--development-no-touch".into());
+                    "Touchless development YubiKey"
+                }
+                "3" if capabilities.webauthn => "Windows verified authenticator",
+                _ => {
+                    writeln!(output, "Choose an available approval mode.")?;
+                    continue;
+                }
+            };
+            review.push(("Approval", label.to_owned()));
+            break;
+        }
+    }
+    if operation.permissions {
+        loop {
+            let choice = answer!(input, output, "Access: 1 Read-only, 2 Read/write", false);
+            let label = match choice.as_str() {
+                "1" => {
+                    args.push("--read-only".into());
+                    "Read-only"
+                }
+                "2" => "Read/write",
+                _ => {
+                    writeln!(output, "Choose 1 or 2.")?;
+                    continue;
+                }
+            };
+            review.push(("Access", label.to_owned()));
+            break;
+        }
+    }
+    writeln!(output, "\nReview: {}", operation.description)?;
+    for (label, value) in review {
+        writeln!(output, "  {label}: {value}")?;
+    }
+    loop {
+        let confirm = answer!(
+            input,
+            output,
+            "Type 'continue' to execute, :back to change selection",
+            false
+        );
+        if confirm == "continue" {
+            return Ok(Selection::Ready(args));
+        }
+        writeln!(output, "Enter 'continue', :back or :cancel.")?;
     }
 }
 
@@ -64,115 +197,161 @@ fn prompt(
 pub fn collect(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    capabilities: Capabilities,
 ) -> io::Result<Option<Vec<std::ffi::OsString>>> {
     writeln!(
         output,
-        "Coaptic commissioning\n1 Inspect device\n2 Pair\n3 Revoke\n4 Transfer ownership\n5 Recover host pairing\n6 Initialize device identity\n7 Inspect host identity\n8 Initialize host identity\n9 Register touch-required PIV credential\n10 Register touchless development PIV credential\n11 Prepare native credential storage\n12 Connect protected peer\n13 Register Windows WebAuthn operator\n14 Test touch-required credential\n15 Test touchless credential\n16 Restart device (retains identity and pairing)"
+        "Coaptic commissioning - :back returns, :cancel exits."
     )?;
-    let Some(choice) = prompt(input, output, "Operation")? else {
-        return Ok(None);
-    };
-    let Some(operation) = coaptic_console_core::workflow::operation(&choice) else {
-        writeln!(output, "Unknown operation; no changes made.")?;
-        return Ok(None);
-    };
-    let command = operation.command;
-    let fields = operation.fields;
-    let mut args = vec![command.into()];
-    for field in fields {
-        let Some(value) = prompt(input, output, field)? else {
-            return Ok(None);
-        };
-        args.push(std::ffi::OsString::from(value));
-    }
-    if operation.connect {
-        args.push("--connect".into());
-    }
-    if operation.approval {
-        let Some(mode) = prompt(
-            input,
+    loop {
+        writeln!(
             output,
-            "Approval: 1 Windows verified authenticator, 2 development PIV no-touch, 3 PIV touch required",
-        )?
-        else {
-            return Ok(None);
+            "\n1 Inspect - local overview, optional device/host query\n2 Set up - storage and identities\n3 Pair / connect - establish or recover communication"
+        )?;
+        if capabilities.piv || capabilities.webauthn {
+            writeln!(output, "4 Credentials - register or test approval keys")?;
+        }
+        writeln!(
+            output,
+            "5 Maintenance - restart, revoke or transfer ownership"
+        )?;
+        let choice = match prompt(input, output, "Group", false)? {
+            Input::Value(value) => value,
+            Input::Back => continue,
+            Input::Cancel => return Ok(None),
         };
-        match mode.as_str() {
-            "1" => {}
-            "2" => args.push("--development-no-touch".into()),
-            "3" => args.push("--piv-touch".into()),
-            _ => {
-                writeln!(output, "Unknown approval mode; no changes made.")?;
-                return Ok(None);
+        let Some(group) = coaptic_console_core::workflow::group(&choice) else {
+            writeln!(output, "Choose a group from 1 to 5.")?;
+            continue;
+        };
+        let operations: Vec<_> = group
+            .operations
+            .iter()
+            .copied()
+            .filter(|id| available(id, capabilities))
+            .collect();
+        if operations.is_empty() {
+            writeln!(
+                output,
+                "This group has no available operations in this build."
+            )?;
+            continue;
+        }
+        loop {
+            let operation = if choice == "1" {
+                coaptic_console_core::workflow::operation("1").unwrap()
+            } else {
+                writeln!(output, "\n{}", group.title)?;
+                for (index, id) in operations.iter().enumerate() {
+                    let operation = coaptic_console_core::workflow::operation(id).unwrap();
+                    writeln!(output, "{} {}", index + 1, operation.description)?;
+                }
+                let selected = match prompt(input, output, "Operation (:back for groups)", false)? {
+                    Input::Value(value) => value,
+                    Input::Back => break,
+                    Input::Cancel => return Ok(None),
+                };
+                let id = selected
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|index| operations.get(index));
+                let Some(id) = id else {
+                    writeln!(output, "Choose an available operation.")?;
+                    continue;
+                };
+                coaptic_console_core::workflow::operation(id).unwrap()
+            };
+            match collect_operation(operation, capabilities, input, output)? {
+                Selection::Ready(args) => return Ok(Some(args)),
+                Selection::Cancel => return Ok(None),
+                Selection::Back if choice == "1" => break,
+                Selection::Back => {}
             }
         }
     }
-    if operation.permissions {
-        let Some(access) = prompt(input, output, "Access: 1 read-only, 2 read/write")? else {
-            return Ok(None);
-        };
-        match access.as_str() {
-            "1" => args.push("--read-only".into()),
-            "2" => {}
-            _ => {
-                writeln!(output, "Unknown access selection; no changes made.")?;
-                return Ok(None);
-            }
-        }
-    }
-    writeln!(output, "Selected operation: {args:?}")?;
-    let Some(confirm) = prompt(input, output, "Type 'continue' to execute")? else {
-        return Ok(None);
-    };
-    if confirm != "continue" {
-        writeln!(output, "Cancelled; no changes made.")?;
-        return Ok(None);
-    }
-    Ok(Some(args))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn collect_text(text: &str) -> (Option<Vec<std::ffi::OsString>>, String) {
+        let mut output = Vec::new();
+        let result = collect(
+            &mut io::Cursor::new(text),
+            &mut output,
+            Capabilities {
+                webauthn: false,
+                piv: true,
+            },
+        )
+        .unwrap();
+        (result, String::from_utf8(output).unwrap())
+    }
     #[test]
     fn overflow_drains_the_entire_line() {
         let mut input = io::Cursor::new(b"oversized\nnext\n");
         assert!(
             matches!(line::<4>(&mut input), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
         );
-        let line = line::<4>(&mut input).unwrap().unwrap();
-        assert_eq!(line.text(), Ok("next"));
+        assert_eq!(line::<4>(&mut input).unwrap().unwrap().text(), Ok("next"));
     }
     #[test]
     fn cancellation_and_eof_never_execute() {
-        for text in ["2\n:cancel\n", "2\nCOM6\n", "1\nCOM6\nno\n"] {
-            assert!(
-                collect(&mut io::Cursor::new(text), &mut Vec::new())
-                    .unwrap()
-                    .is_none()
-            );
+        for text in [":cancel\n", "3\n1\nCOM6\n", "1\n\n\n:cancel\n"] {
+            assert!(collect_text(text).0.is_none());
         }
     }
     #[test]
-    fn explicit_touchless_selection_is_preserved() {
-        let result = collect(
-            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n2\n2\ncontinue\n"),
-            &mut Vec::new(),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(result.last().unwrap(), "--development-no-touch");
+    fn inspect_blank_and_targeted_inputs() {
+        assert_eq!(collect_text("1\n\n\ncontinue\n").0.unwrap(), ["inspect"]);
+        assert_eq!(
+            collect_text("1\nCOM6\nhost\ncontinue\n").0.unwrap(),
+            ["inspect", "--port", "COM6", "--host", "host"]
+        );
+    }
+    #[test]
+    fn back_and_invalid_choices_preserve_navigation() {
+        let (args, output) = collect_text("invalid\n2\n99\n1\n:back\n:back\n1\n\n\ncontinue\n");
+        assert_eq!(args.unwrap(), ["inspect"]);
+        assert!(output.contains("Choose a group"));
+        assert!(output.contains("Choose an available operation"));
+    }
+    #[test]
+    fn approval_and_access_retry_without_silent_fallback() {
+        let (args, output) =
+            collect_text("3\n1\nCOM6\nhost\n192.0.2.1:5683\n3\n2\ninvalid\n1\ncontinue\n");
+        let args = args.unwrap();
+        assert!(args.iter().any(|arg| arg == "--development-no-touch"));
+        assert!(args.iter().any(|arg| arg == "--read-only"));
+        assert!(!output.contains("Windows verified authenticator"));
+        assert!(output.contains("Approval: Touchless development YubiKey"));
+    }
+    #[test]
+    fn touch_required_profile_and_hidden_registration() {
+        let (args, output) =
+            collect_text("4\n5\n:back\n3\n1\nCOM6\nhost\n192.0.2.1:5683\n1\n2\ncontinue\n");
+        let args = args.unwrap();
+        assert!(args.iter().any(|arg| arg == "--piv-touch"));
+        assert!(!args.iter().any(|arg| arg == "--development-no-touch"));
+        assert!(!output.contains("Windows verified authenticator"));
     }
 
     #[test]
-    fn touch_required_selection_is_not_touchless() {
-        let result = collect(
-            &mut io::Cursor::new("2\nCOM6\nhost\n192.0.2.1:5683\n3\n2\ncontinue\n"),
-            &mut Vec::new(),
+    fn webauthn_only_build_omits_piv_options() {
+        let mut output = Vec::new();
+        let args = collect(
+            &mut io::Cursor::new("4\n1\ncontinue\n"),
+            &mut output,
+            Capabilities {
+                webauthn: true,
+                piv: false,
+            },
         )
         .unwrap()
         .unwrap();
-        assert_eq!(result.last().unwrap(), "--piv-touch");
-        assert!(!result.iter().any(|arg| arg == "--development-no-touch"));
+        assert_eq!(args, ["operator-init"]);
+        let output = String::from_utf8(output).unwrap();
+        assert!(!output.contains("YubiKey"));
     }
 }
