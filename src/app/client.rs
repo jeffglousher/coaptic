@@ -4453,9 +4453,10 @@ where
             if live.if_none_match {
                 push_opt(&mut opts, Opt::if_none_match())?;
             }
-            // RFC 9177 section 4.4: Q missing requests avoid ETag validation
-            // replies (2.03) without payload. Classic Block2 retains it.
+            // Missing GET blocks retrieve bytes, rather than revalidate the
+            // original cached response. FETCH retains its explicit selection.
             if q_block2.is_empty()
+                && code == Code::FETCH
                 && let Some(tag) = live.etag.as_slice()
             {
                 push_opt(&mut opts, Opt::etag(tag))?;
@@ -4550,7 +4551,7 @@ where
                 live.echo,
                 live.no_response,
                 live.if_match.as_slice(),
-                if q_block2.is_empty() {
+                if q_block2.is_empty() && code == Code::FETCH {
                     live.etag.as_slice()
                 } else {
                     None

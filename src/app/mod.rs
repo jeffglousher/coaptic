@@ -650,20 +650,21 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         row.completed = true;
         return Ok(());
     }
+    let observe = row.observe.expect("Observe completion");
+    let attempted_format = if observe.attempted.is_some() {
+        let owner = deferred_observe_owner(engine, *row).ok_or(Error::DeferredUnknown)?;
+        if response.code().is_success()
+            && !owner.content_format_matches(response.code(), response.format())
+        {
+            return Err(Error::Response(ResponseError::DeferredObserveFormat));
+        }
+        (!owner.format_unbound()).then_some(owner.content_format())
+    } else {
+        None
+    };
     if row.meta.q_block2.is_some() && response.code().is_success() && response.code() != Code::VALID
     {
         return complete_deferred_q_observe(engine, io, ids, oscore, now_ms, row, response);
-    }
-    let observe = row.observe.expect("Observe completion");
-    if observe.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
-        return Err(Error::DeferredUnknown);
-    }
-    if response.code().is_success()
-        && observe
-            .attempted
-            .is_some_and(|(_, format)| format != response.format())
-    {
-        return Err(Error::Response(ResponseError::DeferredObserveFormat));
     }
     if observe_endpoint_held(engine, row.meta.dest, now_ms) >= usize::from(Transmission::NSTART) {
         return Err(Error::Saturated);
@@ -701,11 +702,11 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         let mut interest = ObserveInterest::new(row.meta.token, row.meta.dest)
             .with_resource(observe.resource)
             .with_seq(sequence)
-            .with_content_format(response.format())
             .with_block2_max_szx(row.meta.block2.or(row.meta.q_block2).map(|b| b.szx()))
             .with_q_block2(row.meta.q_block2.is_some())
             .with_no_response(row.meta.no_response)
             .with_selection(Some(row.selection.stored()));
+        interest = initial_observe_format(interest, &response, attempted_format);
         #[cfg(feature = "oscore")]
         {
             interest = interest.with_oscore(row.meta.oscore);
@@ -730,7 +731,7 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
             }
         };
         row.observe.as_mut().expect("Observe completion").attempted =
-            Some((sequence, response.format()));
+            Some((sequence, interest.content_format()));
         installed = Some((id, interest));
         if engine
             .record_observe_notify(key, now_ms, mid, ty == Type::Confirmable)
@@ -857,6 +858,7 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
         .with_q_block2(true)
         .with_no_response(row.meta.no_response)
         .with_selection(Some(row.selection.stored()));
+    interest = initial_observe_format(interest, &response, None);
     #[cfg(feature = "oscore")]
     {
         interest = interest.with_oscore(row.meta.oscore);
@@ -868,7 +870,7 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
         }
     }
     row.observe.as_mut().expect("Observe completion").attempted =
-        Some((sequence, response.format()));
+        Some((sequence, interest.content_format()));
     let q = row.meta.q_block2.expect("Q completion");
     let szx = engine.tx_body_transfer(body).expect("Q snapshot").szx();
     let meta = SendResponse {
@@ -4542,11 +4544,11 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
         let interest = ObserveInterest::new(plan.token, peer)
             .with_seq(sequence)
             .with_resource(plan.resource)
-            .with_content_format(response.format())
             .with_block2_max_szx(plan.block2_max_szx)
             .with_q_block2(plan.q_block2)
             .with_no_response(plan.no_response)
             .with_selection(plan.selection);
+        let interest = initial_observe_format(interest, &response, None);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
         #[cfg(not(feature = "oscore"))]
@@ -4563,6 +4565,60 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
         let _ = engine.mark_observe_resource_deleted(plan.resource);
     }
     Ok(response)
+}
+
+fn initial_observe_format<K: OwnedToken>(
+    interest: ObserveInterest<K>,
+    response: &Response<'_, K>,
+    attempted_format: Option<Option<ContentFormat>>,
+) -> ObserveInterest<K> {
+    if response.code() != Code::VALID || response.format().is_some() {
+        return interest.with_content_format(response.format());
+    }
+    if let Some(format) = attempted_format {
+        return interest.with_content_format(format);
+    }
+    // A validation response need not repeat cached representation metadata.
+    // Accept can bind its format; otherwise the resource must keep its cached
+    // format invariant and the first Content supplies the observable binding.
+    let accept = interest.selection().and_then(|selection| {
+        crate::message::decode_with_token::<K>(&selection.bytes[..usize::from(selection.len)])
+            .ok()?
+            .accept()?
+            .ok()
+    });
+    match accept {
+        Some(format) => interest.with_content_format(Some(format)),
+        None => interest.with_unbound_format(),
+    }
+}
+
+fn bind_observe_format<S: Storage + ObserveSlots>(
+    engine: &mut Engine<S>,
+    interest: ObserveInterest<S::Token>,
+    response: &Response<'_, S::Token>,
+) -> Result<(), crate::storage::SlotError> {
+    if !interest.format_unbound()
+        || !response.code().is_success()
+        || (response.code() == Code::VALID && response.format().is_none())
+    {
+        return Ok(());
+    }
+    let id = engine
+        .lookup_observe(interest.key())
+        .ok_or(crate::storage::SlotError::NotOccupied)?;
+    let current = engine
+        .observe_interest(id)
+        .ok_or(crate::storage::SlotError::NotOccupied)?;
+    let result = engine
+        .storage_mut()
+        .set_observe_interest(id, current.with_content_format(response.format()));
+    if result.is_err() {
+        // A possibly visible representation must not leave an unbound relation
+        // able to send another format after a failed metadata commit.
+        engine.take_observe(interest.key());
+    }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4617,7 +4673,9 @@ where
         response
     };
     response.validate().map_err(Error::Response)?;
-    if response.code().is_success() && response.format() != interest.content_format() {
+    if response.code().is_success()
+        && !interest.content_format_matches(response.code(), response.format())
+    {
         response = Response::new(Code::NOT_ACCEPTABLE);
     }
     if interest.suppresses(response.code()) {
@@ -4631,9 +4689,15 @@ where
         return Err(Error::Saturated);
     }
     let mid = ids.next_for(engine, io, now_ms)?;
-    let replacement = interest
+    let mut replacement = interest
         .supersede_con(now_ms, mid)
         .ok_or(Error::Saturated)?;
+    if interest.format_unbound()
+        && response.code().is_success()
+        && (response.code() != Code::VALID || response.format().is_some())
+    {
+        replacement = replacement.with_content_format(response.format());
+    }
     response = if terminal {
         response.without_observe()
     } else {
@@ -5060,7 +5124,7 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_notification_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, start_outgoing => start_outgoing_async, start_notify_block2 => start_notify_block2_async, finish_send => finish_send_async))]
+#[coaptic_io::dual_io(send_notification_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, send_may_have_reached_peer => async_server::send_may_have_reached_peer_async, start_outgoing => start_outgoing_async, start_notify_block2 => start_notify_block2_async, finish_send => finish_send_async))]
 fn send_notification<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -5078,7 +5142,9 @@ where
     response.validate().map_err(Error::Response)?;
     let mut notify = if interest.is_deleted() {
         Response::not_found()
-    } else if response.code().is_success() && response.format() != interest.content_format() {
+    } else if response.code().is_success()
+        && !interest.content_format_matches(response.code(), response.format())
+    {
         Response::new(Code::NOT_ACCEPTABLE)
     } else {
         *response
@@ -5139,9 +5205,20 @@ where
     };
 
     if meta.q_block2.is_some() {
-        start_outgoing(
+        let sent_before = engine.metrics().tx_ok;
+        let outcome = start_outgoing(
             engine, io, ids, now_ms, meta, &notify, ty, key, oscore, &mut None, false,
-        )?;
+        );
+        let ambiguous = match &outcome {
+            Err(error) => {
+                matches!(error, Error::CommitAfterSend) || send_may_have_reached_peer(io, error)
+            }
+            Ok(()) => false,
+        };
+        if outcome.is_ok() || engine.metrics().tx_ok != sent_before || ambiguous {
+            bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
+        }
+        outcome?;
         retain_q_observe_selection(engine, key, interest.selection().copied())?;
         let now_ms = completion_time(io, now_ms);
         if !notify.code().is_success() {
@@ -5185,6 +5262,7 @@ where
             oscore_req,
         )
     };
+    let sent_before = engine.metrics().tx_ok;
     let outcome = match encoded {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
@@ -5196,6 +5274,15 @@ where
             Err(e)
         }
     };
+    let ambiguous = match &outcome {
+        Err(error) => {
+            matches!(error, Error::CommitAfterSend) || send_may_have_reached_peer(io, error)
+        }
+        Ok(()) => false,
+    };
+    if outcome.is_ok() || engine.metrics().tx_ok != sent_before || ambiguous {
+        bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
+    }
     outcome?;
     let now_ms = completion_time(io, now_ms);
     if !notify.code().is_success() {
