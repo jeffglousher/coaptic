@@ -84,7 +84,7 @@ Maintain: serial-restart PORT | serial-recover PORT HOST APPROVAL
 \
 Inspect individual records: serial-info PORT | device-info HOST | pairing-info HOST
 \
-Local pairing: pairing-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
+Local pairing: pairing-init DEVICE | receipts-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
 \
   transfer DEVICE NEW_PEER VERIFIED_OWNER_HEX [--read-only] APPROVAL"
         );
@@ -130,6 +130,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "revoke",
         "transfer",
         "pairing-init",
+        "receipts-init",
         "pairing-info",
         "peer",
         "serial-info",
@@ -185,6 +186,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "revoke",
         "transfer",
         "pairing-init",
+        "receipts-init",
         "pairing-info",
         "peer",
     ]
@@ -221,6 +223,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
             private_directory(&device_directory)?;
             let identity = coaptic_enroll::device::provision(&device_directory, kid)?;
             coaptic_enroll::pairing::PairingFile::open(&device_directory)?.initialize(&identity)?;
+            coaptic_enroll::pairing::initialize_receipts(&device_directory, &identity)?;
             identity
         } else {
             if args.next().is_some() {

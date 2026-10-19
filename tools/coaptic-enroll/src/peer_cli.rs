@@ -1,11 +1,16 @@
 use coaptic::{
     Code, ContentFormat, Endpoint, Method, Response, profiles,
-    provisioning::{Identity, LocalPairing, ManagedConnection, ManagedError, ManagedSubscription},
+    provisioning::{
+        Identity, LocalPairing, ManagedConnection, ManagedError, ManagedSubscription, OperationId,
+        ReceiptError, ReceiptStore, TelemetryOperation, TrustAnchor,
+    },
     storage::UdpSocketIo,
 };
 use coaptic_enroll::pairing;
+use coaptic_receipts::{Authority, Journal, Policy};
 use std::{
     net::{SocketAddr, UdpSocket},
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -18,6 +23,7 @@ pub enum Probe {
 }
 
 pub fn run(
+    directory: &Path,
     identity: &Identity,
     pairing: &LocalPairing,
     local: &str,
@@ -32,10 +38,29 @@ pub fn run(
         .policy()
         .ok_or("missing policy")?
         .resource_policy();
-    let write = *permission == pairing::permissions(true);
+    let telemetry = *permission == pairing::permissions(true);
+    let write = telemetry || *permission == pairing::echo_permissions();
     if !write && *permission != pairing::permissions(false) {
         return Err("unknown application permissions".into());
     }
+    let record = pairing.checkpoint();
+    let anchor = TrustAnchor::from_parts(*record.store(), record.revision(), record.commitment())?;
+    let resource = pairing::telemetry_resource();
+    // PairingFile remains exclusively locked by the caller for this entire
+    // service. Management must stop it before committing another grant.
+    let mut journal = if telemetry {
+        Some(Journal::open(
+            &directory.join("receipts.bin"),
+            Authority::new(Policy {
+                anchor,
+                principal: peer.principal(),
+                resource,
+                enabled: record.enabled(),
+            }),
+        )?)
+    } else {
+        None
+    };
     let socket = UdpSocket::bind(local)?;
     socket.set_nonblocking(true)?;
     let endpoint = Endpoint::from(remote.parse::<SocketAddr>()?);
@@ -60,7 +85,7 @@ pub fn run(
     let mut subscription_received = 0;
     loop {
         let now = started.elapsed().as_millis().try_into()?;
-        let result = connection.poll_with(now, |_, request, _| {
+        let result = connection.poll_with(now, |principal, request, _| {
             if request.path() == ["identity"] && request.method() == Some(Method::Get) {
                 let response =
                     Response::content_copy(identity.peer().principal().fingerprint()).max_age(10);
@@ -69,6 +94,52 @@ pub fn run(
                 } else {
                     response
                 }
+            } else if request.path() == ["telemetry"] && request.method() == Some(Method::Post) {
+                let Some(journal) = journal.as_mut() else {
+                    return Response::new(Code::FORBIDDEN);
+                };
+                // This managed service accepts complete datagram operations.
+                // Never commit a fragment as an application's complete effect.
+                if request
+                    .get_option(coaptic::message::OptionNumber::BLOCK1)
+                    .is_some()
+                    || request
+                        .get_option(coaptic::message::OptionNumber::Q_BLOCK1)
+                        .is_some()
+                {
+                    return Response::new(Code::BAD_REQUEST);
+                }
+                let Some(id) = request.payload().get(..16) else {
+                    return Response::new(Code::BAD_REQUEST);
+                };
+                let format = match request.content_format() {
+                    Some(Ok(format)) => Some(format.get()),
+                    Some(Err(_)) => return Response::new(Code::BAD_REQUEST),
+                    None => None,
+                };
+                let operation = match TelemetryOperation::new(
+                    OperationId::new(id.try_into().unwrap()),
+                    resource,
+                    format,
+                    &request.payload()[16..],
+                ) {
+                    Ok(operation) => operation,
+                    Err(_) => return Response::new(Code::REQUEST_ENTITY_TOO_LARGE),
+                };
+                match journal.commit(&anchor, principal, &operation) {
+                    Ok(receipt) => {
+                        println!(
+                            "Durable telemetry receipt {} ({} bytes).",
+                            receipt.sequence(),
+                            operation.payload().len()
+                        );
+                        Response::new(Code::CHANGED).payload_copy(&receipt.encode())
+                    }
+                    Err(ReceiptError::Unauthorized) => Response::new(Code::FORBIDDEN),
+                    Err(ReceiptError::Conflict) => Response::new(Code::CONFLICT),
+                    Err(ReceiptError::Capacity) => Response::new(Code::SERVICE_UNAVAILABLE),
+                    Err(_) => Response::new(Code::INTERNAL_SERVER_ERROR),
+                }
             } else if request.path() == ["echo"] && request.method() == Some(Method::Post) {
                 if !write {
                     Response::new(Code::FORBIDDEN)
@@ -76,7 +147,7 @@ pub fn run(
                     Response::new(Code::REQUEST_ENTITY_TOO_LARGE)
                 } else {
                     println!(
-                        "Protected telemetry received and acknowledged ({} bytes).",
+                        "Protected echo received and acknowledged ({} bytes).",
                         request.payload().len()
                     );
                     Response::content_copy(request.payload())

@@ -113,11 +113,39 @@ pub fn permissions(write: bool) -> [u8; 32] {
     blake3::derive_key(
         "coaptic local service permissions v1",
         if write {
-            b"GET /identity;POST /echo".as_slice()
+            b"GET /identity;POST /echo;POST /telemetry".as_slice()
         } else {
             b"GET /identity".as_slice()
         },
     )
+}
+
+/// Previously approved echo-only permission; never grants durable telemetry.
+pub fn echo_permissions() -> [u8; 32] {
+    blake3::derive_key(
+        "coaptic local service permissions v1",
+        b"GET /identity;POST /echo",
+    )
+}
+
+pub fn telemetry_resource() -> [u8; 32] {
+    blake3::derive_key("coaptic local service resource v1", b"POST /telemetry")
+}
+
+/// Explicit first initialization, never a missing-journal recovery fallback.
+pub fn initialize_receipts(directory: &Path, identity: &Identity) -> Result<(), Error> {
+    use coaptic::provisioning::TrustAnchor;
+    use coaptic_receipts::{Authority, Journal, MAX_ROWS, Policy};
+    let authority = Authority::new(Policy {
+        anchor: TrustAnchor::genesis(*identity.peer().principal().fingerprint())
+            .map_err(|_| Error::Input)?,
+        principal: identity.peer().principal(),
+        resource: telemetry_resource(),
+        enabled: false,
+    });
+    Journal::create(&directory.join("receipts.bin"), authority, MAX_ROWS)
+        .map_err(|_| Error::Persistence)?;
+    Ok(())
 }
 
 #[cfg(all(test, windows))]

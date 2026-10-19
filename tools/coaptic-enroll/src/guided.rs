@@ -159,7 +159,12 @@ fn collect_operation(
     }
     if operation.permissions {
         loop {
-            let choice = answer!(input, output, "Access: 1 Read-only, 2 Read/write", false);
+            let choice = answer!(
+                input,
+                output,
+                "Access: 1 Read-only, 2 Read/write (echo and durable telemetry)",
+                false
+            );
             let label = match choice.as_str() {
                 "1" => {
                     args.push("--read-only".into());
