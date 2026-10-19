@@ -10,6 +10,11 @@ update affected callers in the same batch. Do not add compatibility shims,
 deprecation periods or version bumps unless explicitly requested for a release.
 Protocol standards, security invariants and preservation of user data still apply.
 
+Hosted CI is advisory during pre-release. Merge authorized changes after focused
+local validation; queued or running hosted checks do not delay delivery. Diagnose
+concrete failures while keeping independent work moving. Run broad qualification
+on demand or for an explicitly requested release, rather than on every PR.
+
 ## Deterministic resource design
 
 Constrained means intentionally bounded memory and work for reliability,

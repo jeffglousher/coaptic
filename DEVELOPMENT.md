@@ -2,7 +2,8 @@
 
 Follow [AGENTS.md](AGENTS.md) for delivery. Use the pinned Rust toolchain;
 the library is edition 2024 with MSRV 1.89. Test peers may require newer tools.
-Merges to `main` are squash-only and require the repository's CI checks.
+Merges to `main` are squash-only. During pre-release, focused local validation
+supports authorized merges; hosted CI is advisory and does not block delivery.
 
 Pre-release development does not require version bumps, backwards compatibility,
 deprecation cycles or compatibility layers. Update affected callers together when
@@ -29,7 +30,9 @@ only when requested or necessary to diagnose a particular regression.
 
 Complete a coherent batch of capability, optimization or cleanup work before
 testing. Run an earlier focused check when it resolves an implementation uncertainty.
-Choose checks from the affected boundaries and record what ran. For a Rust batch:
+Choose checks from the affected boundaries and record what ran. Format and lint
+affected Rust targets, then run focused behavior tests. For batches spanning core
+protocols, resource ownership or integrations, broader checks include:
 
 ```sh
 cargo fmt --all -- --check
@@ -47,13 +50,24 @@ Use focused loopback or ESP32 proof when transport, persistence or hardware beha
 changes. Reuse existing tests and source-matched evidence. After a meaningful check
 passes, continue delivery; repeat testing for a concrete unresolved concern.
 
+## Hosted CI
+
+Pull requests run one advisory development job: formatting, Clippy and library
+tests with all features and without defaults. A queued hosted run is not a merge
+prerequisite when focused local checks support the change.
+
+Run the CI workflow manually with `full_validation` enabled for the full feature,
+MSRV, documentation, packaging and companion matrix. Enrollment provider checks
+are manual. The additional CodeQL candidate workflow runs weekly or manually;
+GitHub's separate default CodeQL setup remains independent.
+
 ## Companion validation
 
 [coaptic-validation](https://github.com/jeffglousher/coaptic-validation) owns
 independent peers, hardware tooling and benchmarks. This repository owns the Rust
 library, examples and unit/integration tests.
 
-CI calls a pinned companion workflow against the exact library revision. Follow
+Full CI calls a pinned companion workflow against the exact library revision. Follow
 its [run instructions](https://github.com/jeffglousher/coaptic-validation#run) for
 transport, security or harness changes. Retain both revisions, lockfiles, setup
 limits and reports. Review suite-pin changes. Short process timings are preliminary
