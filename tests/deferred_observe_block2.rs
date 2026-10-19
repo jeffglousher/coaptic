@@ -299,6 +299,301 @@ fn large() -> Response<'static> {
     response(&LARGE).etag(b"v1").max_age(17)
 }
 
+#[test]
+fn q_observe_retains_epoch_snapshot_and_last_block_for_recovery() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for deferred in [false, true] {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            let encode_request = |p: &mut Peer, mid, num, more, observe| {
+                let q = BlockValue::new(num, more, 1).unwrap().encode();
+                let mut options = coaptic::message::OptionsBuilder::<3>::new();
+                if observe {
+                    options.push(Opt::observe_register()).unwrap();
+                }
+                options.push(Opt::uri_path("obs")).unwrap();
+                options.push(Opt::q_block2(&q)).unwrap();
+                p.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(mid))
+                        .with_token(key().token())
+                        .with_options(options.as_slice()),
+                )
+            };
+            s.transport_mut().incoming = Some(encode_request(&mut p, 200, 0, true, true));
+            let mut handle = None;
+            without_allocating(|| {
+                s.poll_with(0, |_, candidate| {
+                    if deferred {
+                        handle = candidate;
+                        Response::deferred()
+                    } else {
+                        large()
+                    }
+                })
+                .unwrap()
+            });
+            if deferred {
+                without_allocating(|| s.complete(handle.unwrap(), large(), 1).unwrap());
+            }
+            let take_set = |s: &mut Server, p: &Peer, first: u32, count: u32, observed: bool| {
+                let mut sequence = None;
+                for num in first..first + count {
+                    let opened = p.open(s.transport_mut().take().expect("Q payload"));
+                    let message = decode(&opened.bytes[..opened.len]).unwrap();
+                    let block = message.q_block2().next().unwrap().unwrap();
+                    assert_eq!(block.num(), num);
+                    assert_eq!(block.szx(), 1);
+                    assert_eq!(message.size2(), Some(Ok(LARGE.len() as u32)));
+                    assert_eq!(message.etag().next(), Some(b"v1".as_slice()));
+                    assert_eq!(message.observe().is_some(), observed);
+                    if observed {
+                        let current = message.observe().unwrap().unwrap();
+                        assert!(sequence.is_none_or(|previous| previous == current));
+                        sequence = Some(current);
+                    }
+                    let offset = num as usize * 32;
+                    assert_eq!(
+                        message.payload(),
+                        &LARGE[offset..(offset + 32).min(LARGE.len())]
+                    );
+                }
+                assert!(s.transport_mut().take().is_none());
+                sequence
+            };
+            let epoch = take_set(&mut s, &p, 0, 10, true);
+            for (num, count, clock) in [(10, 10, 2), (20, 2, 3)] {
+                s.transport_mut().incoming =
+                    Some(encode_request(&mut p, 200 + num as u16, num, true, false));
+                without_allocating(|| {
+                    s.poll_with(clock, |_, _| panic!("snapshot must not redispatch"))
+                        .unwrap()
+                });
+                assert_eq!(take_set(&mut s, &p, num, count, true), epoch);
+            }
+            // Final transmission is not proof of delivery: recovery still
+            // selects the same body, but carries no Observe option.
+            s.transport_mut().incoming = Some(encode_request(&mut p, 230, 21, false, false));
+            without_allocating(|| {
+                s.poll_with(4, |_, _| panic!("recovery must not redispatch"))
+                    .unwrap()
+            });
+            take_set(&mut s, &p, 21, 1, false);
+            assert!(body(&mut s).is_some());
+            assert!(s.engine_mut().lookup_observe(key()).is_some());
+            without_allocating(|| s.notify(5000, &["obs"], large()).unwrap());
+            let next = take_set(&mut s, &p, 0, 10, true);
+            if !protected {
+                assert_ne!(next, epoch);
+            }
+        }
+    }
+}
+
+#[test]
+fn q_observe_builder_negotiates_constrained_packets_and_delivers_updates() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for deferred in [false, true] {
+            let mut server = fixed();
+            let mut client = fixed();
+            #[allow(unused_mut, unused_variables)]
+            let mut peer = Peer::new(&mut server, protected);
+            #[cfg(feature = "oscore")]
+            if protected {
+                client.set_oscore(&mut peer.context).unwrap();
+            }
+            let call = without_allocating(|| {
+                client
+                    .get("obs")
+                    .to(PEER)
+                    .observe()
+                    .q_block2()
+                    .send(0)
+                    .unwrap()
+            });
+            let mut clock = 1;
+            let mut delivered = 0;
+            for _ in 0..80 {
+                while let Some(frame) = client.transport_mut().take() {
+                    server.transport_mut().incoming = Some(frame);
+                    let mut handle = None;
+                    without_allocating(|| {
+                        server
+                            .poll_with(clock, |_, candidate| {
+                                if deferred {
+                                    handle = candidate;
+                                    Response::deferred()
+                                } else {
+                                    large()
+                                }
+                            })
+                            .unwrap()
+                    });
+                    clock += 1;
+                    if let Some(handle) = handle {
+                        without_allocating(|| server.complete(handle, large(), clock).unwrap());
+                        clock += 1;
+                    }
+                }
+                while let Some(frame) = server.transport_mut().take() {
+                    client.transport_mut().incoming = Some(frame);
+                    without_allocating(|| client.poll(clock).unwrap());
+                    clock += 1;
+                }
+                if let Some(reply) = client.take_response(call) {
+                    let reply = reply.unwrap();
+                    assert_eq!(reply.body(), Some(LARGE.as_slice()));
+                    assert!(reply.observe_seq().is_some());
+                    delivered += 1;
+                    if delivered == 2 {
+                        break;
+                    }
+                    clock += 5000;
+                    without_allocating(|| server.notify(clock, &["obs"], large()).unwrap());
+                }
+            }
+            assert_eq!(delivered, 2, "protected={protected}, deferred={deferred}");
+        }
+    }
+}
+
+#[test]
+fn q_observe_initial_non_reset_retires_snapshot_and_relation() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        let q = BlockValue::new(0, true, 1).unwrap().encode();
+        let options = [
+            Opt::observe_register(),
+            Opt::uri_path("obs"),
+            Opt::q_block2(&q),
+        ];
+        server.transport_mut().incoming = Some(
+            peer.encode(
+                &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(400))
+                    .with_token(key().token())
+                    .with_options(&options),
+            ),
+        );
+        server.poll_with(0, |_, _| large()).unwrap();
+        let mut last = None;
+        while let Some(frame) = server.transport_mut().take() {
+            last = Some(decode(&frame.bytes[..frame.len]).unwrap().message_id());
+        }
+        let last = last.expect("initial Q notification");
+        server.transport_mut().incoming = Some(control(
+            MessageId::new(last.get().wrapping_add(100)),
+            Type::Reset,
+        ));
+        server.poll(1).unwrap();
+        assert!(server.engine_mut().lookup_observe(key()).is_some());
+        server.transport_mut().incoming = Some(control(last, Type::Reset));
+        server.poll(2).unwrap();
+        assert!(server.engine_mut().lookup_observe(key()).is_none());
+        assert!(body(&mut server).is_none());
+    }
+}
+
+#[test]
+fn q_observe_first_block_preference_registers_and_continues_without_redispatch() {
+    for deferred in [false, true] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, false);
+        for (mid, num, more, registering, expected_count, observed) in [
+            (500, 0, false, true, 1, true),
+            (501, 1, true, false, 9, false),
+            (502, 10, true, false, 10, true),
+            (503, 20, true, false, 2, true),
+        ] {
+            let q = BlockValue::new(num, more, 1).unwrap().encode();
+            let mut options = coaptic::message::OptionsBuilder::<3>::new();
+            if registering {
+                options.push(Opt::observe_register()).unwrap();
+            }
+            options.push(Opt::uri_path("obs")).unwrap();
+            options.push(Opt::q_block2(&q)).unwrap();
+            server.transport_mut().incoming = Some(
+                peer.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(mid))
+                        .with_token(key().token())
+                        .with_options(options.as_slice()),
+                ),
+            );
+            let mut handle = None;
+            server
+                .poll_with(u64::from(mid), |_, candidate| {
+                    assert!(registering, "retained selection must not redispatch");
+                    if deferred {
+                        handle = candidate;
+                        Response::deferred()
+                    } else {
+                        large()
+                    }
+                })
+                .unwrap();
+            if let Some(handle) = handle {
+                server.complete(handle, large(), u64::from(mid)).unwrap();
+            }
+            let mut count = 0;
+            while let Some(frame) = server.transport_mut().take() {
+                let message = decode(&frame.bytes[..frame.len]).unwrap();
+                assert_eq!(
+                    message.q_block2().next().unwrap().unwrap().num(),
+                    num + count
+                );
+                assert_eq!(message.observe().is_some(), observed);
+                count += 1;
+            }
+            assert_eq!(count, expected_count);
+            assert!(server.engine_mut().lookup_observe(key()).is_some());
+        }
+    }
+}
+
+#[test]
+fn q_observe_failed_deferred_send_keeps_cancel_and_reset_authority() {
+    for reset in [false, true] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, false);
+        let q = BlockValue::new(0, true, 1).unwrap().encode();
+        let options = [
+            Opt::observe_register(),
+            Opt::uri_path("obs"),
+            Opt::q_block2(&q),
+        ];
+        server.transport_mut().incoming = Some(
+            peer.encode(
+                &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(600))
+                    .with_token(key().token())
+                    .with_options(&options),
+            ),
+        );
+        let mut handle = None;
+        server
+            .poll_with(0, |_, candidate| {
+                handle = candidate;
+                Response::deferred()
+            })
+            .unwrap();
+        let handle = handle.unwrap();
+        server.transport_mut().fail_send = true;
+        assert!(server.complete(handle, large(), 1).is_err());
+        server.transport_mut().fail_send = false;
+        let attempted = server.transport_mut().take().unwrap();
+        let mid = decode(&attempted.bytes[..attempted.len])
+            .unwrap()
+            .message_id();
+        assert!(body(&mut server).is_some());
+        if reset {
+            server.transport_mut().incoming = Some(control(mid, Type::Reset));
+            server.poll(2).unwrap();
+        } else {
+            assert!(server.cancel_deferred(handle));
+        }
+        assert!(server.engine_mut().lookup_observe(key()).is_none());
+        assert!(body(&mut server).is_none());
+    }
+}
+
 fn key() -> coaptic::storage::ObserveKey {
     coaptic::storage::ObserveKey::new(Token::new(b"owner").unwrap(), PEER)
 }
@@ -1260,3 +1555,6 @@ fn deferred_error_only_no_response_keeps_observe_and_suppresses_terminal() {
         }
     }
 }
+
+#[path = "support/q_observe_con.rs"]
+mod q_observe_con;

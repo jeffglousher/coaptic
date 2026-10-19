@@ -1178,13 +1178,87 @@ impl BlockTransfer {
     }
 
     pub(crate) const fn terminal_deadline(self) -> Option<u64> {
-        if matches!(self.role, BlockRole::OutgoingBlock2) {
+        if matches!(
+            self.role,
+            BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+        ) {
             match self.q_receive {
                 Some(wait) => Some(wait.next_timeout_ms),
                 None => None,
             }
         } else {
             None
+        }
+    }
+
+    // Outgoing Q notifications never use the incoming missing-block timer.
+    // Reuse that storage for the representation epoch and bounded retention.
+    pub(crate) fn remember_q_observe(&mut self, sequence: u32, deadline: u64) {
+        debug_assert_eq!(self.role, BlockRole::OutgoingQBlock2);
+        self.q_receive = Some(QBlockReceiveWait {
+            attempts: 0,
+            timeout_ms: sequence,
+            next_timeout_ms: deadline,
+        });
+    }
+
+    pub(crate) const fn q_observe_sequence(self) -> Option<u32> {
+        if matches!(self.role, BlockRole::OutgoingQBlock2) {
+            match self.q_receive {
+                Some(state) => Some(state.timeout_ms),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn negotiate_q_observe_szx(&mut self, szx: u8) -> Result<(), BlockTransferError> {
+        if self.q_observe_sequence().is_none()
+            || szx > self.szx
+            || self.next_num != 0
+            || self.q.is_none_or(|window| window.mask != 0)
+        {
+            return Err(BlockTransferError::SzxMismatch);
+        }
+        self.szx = szx;
+        Ok(())
+    }
+
+    pub(crate) fn set_q_observe_confirmable(&mut self) {
+        debug_assert!(self.q_observe_sequence().is_some());
+        if let Some(state) = self.q_receive.as_mut() {
+            state.attempts = 1;
+        }
+    }
+
+    pub(crate) fn q_observe_confirmable(self) -> bool {
+        self.q_observe_sequence().is_some()
+            && self.q_receive.is_some_and(|state| state.attempts == 1)
+    }
+
+    // Outgoing Q bodies do not use the incoming Continue-response cache.
+    pub(crate) fn q_observe_pending_mid(self) -> Option<crate::message::MessageId> {
+        self.q_observe_confirmable().then_some(())?;
+        self.q_observe_last_mid()
+    }
+
+    pub(crate) fn q_observe_last_mid(self) -> Option<crate::message::MessageId> {
+        self.q_observe_sequence()?;
+        self.q?
+            .continue_ack
+            .map(|mid| crate::message::MessageId::new(mid as u16))
+    }
+
+    pub(crate) fn set_q_observe_pending_mid(&mut self, mid: Option<crate::message::MessageId>) {
+        debug_assert!(self.q_observe_confirmable());
+        self.set_q_observe_last_mid(mid);
+    }
+
+    pub(crate) fn set_q_observe_last_mid(&mut self, mid: Option<crate::message::MessageId>) {
+        debug_assert!(self.q_observe_sequence().is_some());
+        if let Some(window) = self.q.as_mut() {
+            window.continue_ack = mid.map(|mid| u32::from(mid.get()));
         }
     }
 
@@ -1199,7 +1273,12 @@ impl BlockTransfer {
     }
 
     pub(crate) fn observe_selection(&self) -> Option<super::ObserveSelection> {
-        if self.notification.is_none() || self.role != BlockRole::OutgoingBlock2 {
+        if self.notification.is_none()
+            || !matches!(
+                self.role,
+                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+            )
+        {
             return None;
         }
         self.request_binding.map(|binding| super::ObserveSelection {

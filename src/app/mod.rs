@@ -133,10 +133,12 @@ pub(crate) fn completion_time<T: crate::storage::DatagramTransport>(_io: &T, now
 }
 
 fn commit_q_window_send<S: Storage + BodySlots, E>(
-    _engine: &mut Engine<S>,
-    _issued: OutgoingBlock,
+    engine: &mut Engine<S>,
+    issued: OutgoingBlock,
 ) -> Result<(), Error<E>> {
-    Ok(())
+    engine
+        .commit_q_block2(issued)
+        .map_err(|_| Error::CommitAfterSend)
 }
 
 fn send_may_have_reached_peer<T: crate::storage::DatagramTransport>(
@@ -625,7 +627,7 @@ fn retire_deferred_observe<S: AppStorage>(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(complete_deferred_observe_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, send_may_have_reached_peer => async_server::send_may_have_reached_peer_async, finish_send => finish_send_async))]
+#[coaptic_io::dual_io(complete_deferred_observe_io_async, bound(crate::app::async_server::ProtocolIo), calls(complete_deferred_q_observe => complete_deferred_q_observe_async, completion_time => async_server::completion_time_async, send_may_have_reached_peer => async_server::send_may_have_reached_peer_async, finish_send => finish_send_async))]
 fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -635,12 +637,16 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     row: &mut DeferredRow,
     response: &Response<'_>,
 ) -> Result<(), Error<T::Error>> {
-    let observe = row.observe.expect("Observe completion");
     if row.meta.no_response.suppresses(response.code()) {
         retire_deferred_observe(engine, *row)?;
         row.completed = true;
         return Ok(());
     }
+    if row.meta.q_block2.is_some() && response.code().is_success() && response.code() != Code::VALID
+    {
+        return complete_deferred_q_observe(engine, io, ids, oscore, now_ms, row, response);
+    }
+    let observe = row.observe.expect("Observe completion");
     if observe.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
         return Err(Error::DeferredUnknown);
     }
@@ -776,6 +782,147 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(complete_deferred_q_observe_async, bound(crate::app::async_server::ProtocolIo), calls(send_may_have_reached_peer => async_server::send_may_have_reached_peer_async, issue_deferred_q => issue_deferred_q_async, issue_q_window => issue_q_window_async, completion_time => async_server::completion_time_async))]
+fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS>,
+    now_ms: u64,
+    row: &mut DeferredRow,
+    response: &Response<'_>,
+) -> Result<(), Error<T::Error>> {
+    let observed = row.observe.expect("Observe completion");
+    if observed.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
+        return Err(Error::DeferredUnknown);
+    }
+    let key = ObserveKey::new(row.meta.token, row.meta.dest);
+    let previous = engine.lookup_observe(key);
+    let previous_body = response_body_for(engine, BlockKey::new(row.meta.token, row.meta.dest));
+    if previous_body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
+        return Err(Error::Slot(crate::storage::SlotError::Pinned));
+    }
+    if observe_endpoint_held(engine, row.meta.dest, now_ms) >= usize::from(Transmission::NSTART) {
+        return Err(Error::Saturated);
+    }
+    let room = previous.is_some()
+        || (0..engine.capacities().observe_entries)
+            .any(|index| engine.observe_interest(SlotId::from_index(index)).is_none());
+    if !room {
+        return Err(Error::Saturated);
+    }
+    let sequence = observed.attempted.map_or_else(
+        || {
+            previous
+                .and_then(|id| engine.observe_interest(id))
+                .filter(|old| old.resource() == observed.resource)
+                .map_or(0, |old| old.seq().wrapping_add(1) & 0x00ff_ffff)
+        },
+        |(sequence, _)| sequence,
+    );
+    let response = response.without_observe().observe(sequence);
+    let mid = ids.next_for(engine, io, now_ms)?;
+    // Stage and size-check before committing the relation. The actual sender
+    // encodes again so each protected datagram consumes its own fresh nonce.
+    let tx = prepare_deferred_observe::<S, T, REQUESTS>(
+        engine,
+        oscore,
+        row,
+        &response,
+        Type::NonConfirmable,
+        mid,
+        now_ms,
+    )?;
+    engine.release_tx(tx)?;
+    let body = row.snapshot.expect("Q snapshot staged").0;
+    if let Some(old) = previous_body.filter(|old| *old != body) {
+        engine.release_tx_body(old)?;
+    }
+    #[allow(unused_mut)]
+    let mut interest = ObserveInterest::new(row.meta.token, row.meta.dest)
+        .with_resource(observed.resource)
+        .with_seq(sequence)
+        .with_content_format(response.format())
+        .with_block2_max_szx(row.meta.q_block2.map(|q| q.szx()))
+        .with_q_block2(true)
+        .with_no_response(row.meta.no_response)
+        .with_selection(Some(row.selection.stored()));
+    #[cfg(feature = "oscore")]
+    {
+        interest = interest.with_oscore(row.meta.oscore);
+    }
+    match previous {
+        Some(id) => engine.storage_mut().set_observe_interest(id, interest)?,
+        None => {
+            engine.insert_observe(interest).ok_or(Error::Saturated)?;
+        }
+    }
+    row.observe.as_mut().expect("Observe completion").attempted =
+        Some((sequence, response.format()));
+    let q = row.meta.q_block2.expect("Q completion");
+    let szx = engine.tx_body_transfer(body).expect("Q snapshot").szx();
+    let meta = SendResponse {
+        ty: Type::NonConfirmable,
+        mid,
+        q_block2: Some(BlockValue::new(q.num(), q.more(), szx).expect("negotiated Q SZX")),
+        ..row.meta
+    };
+    let result = if row.meta.q_block2.is_some_and(|q| !q.more()) {
+        issue_deferred_q(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            &response,
+            Type::NonConfirmable,
+            body,
+            None,
+            oscore,
+            &mut None,
+        )
+    } else {
+        issue_q_window(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            &response,
+            Type::NonConfirmable,
+            body,
+            oscore,
+            &mut None,
+        )
+    };
+    let now_ms = completion_time(io, now_ms);
+    // Keep a failed completion handle and immutable body retryable. The
+    // installed relation owns the snapshot after successful completion.
+    if result.is_ok() {
+        record_q_observe_sent(engine, BlockKey::new(key.token(), key.endpoint()), now_ms);
+        let _ = engine.refresh_observe_max_age(
+            key,
+            now_ms,
+            response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS),
+            None,
+        );
+        row.snapshot = None;
+    } else if let Err(error) = &result
+        && send_may_have_reached_peer(io, error)
+    {
+        let sent = engine
+            .tx_body_transfer(body)
+            .and_then(|transfer| transfer.q_observe_last_mid())
+            .unwrap_or(mid);
+        row.observe.as_mut().expect("Q completion owner").failed_mid = Some((
+            sent,
+            now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+        ));
+    }
+    result
+}
+
 // Stage bytes and all bounded snapshot ownership before installing a relation or sending.
 #[allow(clippy::too_many_arguments)]
 fn prepare_deferred_observe<
@@ -792,6 +939,50 @@ fn prepare_deferred_observe<
     now_ms: u64,
 ) -> Result<SlotId, Error<T::Error>> {
     let metadata = deferred_reply_metadata(response, row.meta, now_ms).map_err(Error::Response)?;
+    if let Some(q) = row
+        .meta
+        .q_block2
+        .filter(|_| response.observe_seq().is_some() && response.code() != Code::VALID)
+    {
+        let existing = row.snapshot.map(|(body, _)| body);
+        let body = if let Some((body, retained)) = row.snapshot {
+            if !retained.same_header(&metadata)
+                || !retained_body_matches(engine, body, response.payload())
+            {
+                return Err(Error::Block(BlockTransferError::IdentityMismatch));
+            }
+            body
+        } else {
+            let key = response_block_key(row.meta.token, row.meta.dest, response)?;
+            response
+                .etag_bytes()
+                .ok_or(Error::Block(BlockTransferError::MissingIdentity))?;
+            engine
+                .start_q_block2(key, response.payload(), q.szx())
+                .map_err(Error::Block)?
+        };
+        let mut transfer = engine.tx_body_transfer(body).expect("Q body staged");
+        transfer.remember_notification(response.code(), response.format(), response.max_age_secs());
+        transfer.remember_q_observe(
+            response.observe_seq().expect("Q observation"),
+            row.deadline_ms,
+        );
+        transfer.retain_observe_selection(Some(row.selection.stored()));
+        #[cfg(feature = "oscore")]
+        {
+            transfer.oscore_request = row.meta.oscore.map(|request| (row.meta.token, request));
+        }
+        engine.storage_mut().set_tx_body_transfer(body, transfer)?;
+        let encoded = encode_q_observe_first::<S, T, REQUESTS>(
+            engine, row.meta, response, ty, mid, body, oscore,
+        );
+        if encoded.is_ok() {
+            row.snapshot = Some((body, metadata));
+        } else if existing.is_none() {
+            let _ = engine.release_tx_body(body);
+        }
+        return encoded;
+    }
     if let Some((body, retained)) = row.snapshot {
         if !retained.same_header(&metadata)
             || !retained_body_matches(engine, body, response.payload())
@@ -1297,6 +1488,20 @@ impl<
             let id = SlotId::from_index(index);
             let pool = self.engine.storage_mut().rx_datagram();
             if pool.is_occupied(id) && !pool.is_pinned(id) && !self.inbox.holds_datagram(id) {
+                return Some(now_ms);
+            }
+        }
+        for index in 0..capacities.tx_body_slots.unwrap_or(0) {
+            let id = SlotId::from_index(index);
+            if let Some(transfer) = self.engine.tx_body_transfer(id)
+                && transfer.q_observe_confirmable()
+                && transfer.q_observe_pending_mid().is_none()
+                && !transfer.is_complete()
+                && !self.engine.tx_body_is_pinned(id)
+                && oscore::route_allowed(&self.oscore, transfer.endpoint())
+                && observe_endpoint_held(&self.engine, transfer.endpoint(), now_ms)
+                    < usize::from(Transmission::NSTART)
+            {
                 return Some(now_ms);
             }
         }
@@ -2366,7 +2571,7 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(poll_engine_async, bound(crate::app::async_server::ProtocolIo), calls(refresh_progress_deadlines => async_server::refresh_progress_deadlines_async, send_retransmit_packet => async_server::send_retransmit_packet_async, send_qblock_recover => async_server::send_qblock_recover_async, dispatch_rx => dispatch_rx_async, send_notification => send_notification_async, client::pace_qblock1 => client::pace_qblock1_async), methods(recv_from => receive_retained_async), renames(progress_before_dispatch => progress_before_dispatch_async, next_qblock_recovery => next_qblock_recovery_async))]
+#[coaptic_io::dual_io(poll_engine_async, bound(crate::app::async_server::ProtocolIo), calls(progress_q_observe => progress_q_observe_async, refresh_progress_deadlines => async_server::refresh_progress_deadlines_async, send_retransmit_packet => async_server::send_retransmit_packet_async, send_qblock_recover => async_server::send_qblock_recover_async, dispatch_rx => dispatch_rx_async, send_notification => send_notification_async, client::pace_qblock1 => client::pace_qblock1_async), methods(recv_from => receive_retained_async), renames(progress_before_dispatch => progress_before_dispatch_async, next_qblock_recovery => next_qblock_recovery_async))]
 fn poll_engine<
     Mem,
     T,
@@ -2443,6 +2648,7 @@ where
                 {
                     release_observe_response_body(engine, interest);
                 }
+                control_q_observe(engine, pending.endpoint(), pending.message_id(), false)?;
                 engine.release_tx(pending.tx_slot())?;
             }
         }
@@ -2501,6 +2707,8 @@ where
             )?;
         }
     }
+
+    progress_q_observe(engine, io, ids, oscore, now_ms)?;
 
     // Claim after ingress. Replacement registrations start with no pending
     // signal, so a reused slot cannot inherit the old relation's opportunity.
@@ -2568,6 +2776,120 @@ where
     }
     if let Some(error) = replacement_error {
         return Err(error);
+    }
+    Ok(())
+}
+
+// Only an exact retained CON packet can advance a Q Observe representation.
+// The body remains the owner when terminal delivery has removed its observer.
+fn control_q_observe<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    mid: MessageId,
+    acknowledged: bool,
+) -> Result<(), SlotError> {
+    for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(index);
+        let Some(mut transfer) = engine.tx_body_transfer(id) else {
+            continue;
+        };
+        if transfer.endpoint() != peer || transfer.q_observe_pending_mid() != Some(mid) {
+            continue;
+        }
+        if !acknowledged {
+            engine.release_tx_body(id)?;
+            continue;
+        }
+        transfer.set_q_observe_pending_mid(None);
+        if !transfer.is_complete() {
+            let next = transfer.num() + 1;
+            if next.is_multiple_of(u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)) {
+                // Every earlier packet in the set was separately confirmed.
+                let _ = transfer.ack_q_window(next);
+            }
+        }
+        engine.storage_mut().set_tx_body_transfer(id, transfer)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(progress_q_observe_async, bound(crate::app::async_server::ProtocolIo), calls(issue_q_window => issue_q_window_async, completion_time => async_server::completion_time_async))]
+fn progress_q_observe<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS>,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
+    T: DatagramIo,
+{
+    for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+        let id = SlotId::from_index(index);
+        let Some(transfer) = engine.tx_body_transfer(id) else {
+            continue;
+        };
+        if !transfer.q_observe_confirmable()
+            || transfer.q_observe_pending_mid().is_some()
+            || transfer.is_complete()
+            || !oscore::route_allowed(oscore, transfer.endpoint())
+            || observe_endpoint_held(engine, transfer.endpoint(), now_ms)
+                >= usize::from(Transmission::NSTART)
+        {
+            continue;
+        }
+        let Some((code, format, age)) = transfer.notification_metadata() else {
+            continue;
+        };
+        let mut response = Response::new(code).retain_max_age(age).with_fresh_piv();
+        if let Some(format) = format {
+            response = response.content_format(format);
+        }
+        if let Some(etag) = transfer.identity().as_slice() {
+            response = response.etag(etag);
+        }
+        if code.is_success() {
+            response = response.observe(transfer.q_observe_sequence().expect("Q Observe"));
+        }
+        #[cfg(feature = "oscore")]
+        let request = transfer.oscore_request.map(|(_, request)| request);
+        #[cfg(not(feature = "oscore"))]
+        let request = oscore::no_request();
+        let mid = ids.next_for(engine, io, now_ms)?;
+        let meta = SendResponse {
+            dest: transfer.endpoint(),
+            token: transfer.token(),
+            mid,
+            ty: Type::Confirmable,
+            no_response: NoResponse::DEFAULT,
+            block2: None,
+            q_block2: None,
+            q_request: None,
+            block1: None,
+            oscore: request,
+            request: Code::GET,
+        };
+        issue_q_window(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            &response,
+            Type::Confirmable,
+            id,
+            oscore,
+            &mut None,
+        )?;
+        let now_ms = completion_time(io, now_ms);
+        let _ = engine.record_observe_notify(
+            ObserveKey::new(transfer.token(), transfer.endpoint()),
+            now_ms,
+            mid,
+            true,
+        );
     }
     Ok(())
 }
@@ -2880,7 +3202,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
+#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
 fn dispatch_rx<
     Mem,
     T,
@@ -2974,6 +3296,12 @@ where
         }
         if let Some(tx) = engine.match_empty_ack_rst(&parsed, peer) {
             let _ = engine.release_tx(tx);
+            if let Err(error) =
+                control_q_observe(engine, peer, parsed.message_id(), parsed.is_empty_ack())
+            {
+                let _ = engine.release_rx(rx);
+                return Err(error.into());
+            }
             if parsed.is_empty_ack()
                 && let Err(error) = client::continue_qblock1_ack(
                     engine,
@@ -3473,7 +3801,7 @@ where
 
     // A terminal notification has no observer row, but its body still owns the
     // exact selection and response metadata until the last requested block.
-    if meta.block2.is_some()
+    if (meta.block2.is_some() || meta.q_block2.is_some())
         && parsed.observe().is_none()
         && let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer))
     {
@@ -3500,6 +3828,8 @@ where
                     ids,
                     SendResponse {
                         block2: None,
+                        q_block2: None,
+                        q_request: None,
                         ..meta
                     },
                     &Response::bad_request(),
@@ -3525,20 +3855,38 @@ where
                 } else {
                     ids.next_for(engine, io, now_ms)?
                 };
-                issue_classic(
-                    engine,
-                    io,
-                    meta,
-                    &response,
-                    ty,
-                    mid,
-                    body,
-                    None,
-                    true,
-                    Some((now_ms, dedup_closed)),
-                    oscore,
-                )
+                if meta.q_block2.is_some() && transfer.q_observe_sequence().is_some() {
+                    issue_q_observe_followup(
+                        engine,
+                        io,
+                        ids,
+                        now_ms,
+                        SendResponse { mid, ..meta },
+                        &response,
+                        ty,
+                        body,
+                        oscore,
+                        dedup_closed,
+                    )
+                } else {
+                    issue_classic(
+                        engine,
+                        io,
+                        meta,
+                        &response,
+                        ty,
+                        mid,
+                        body,
+                        None,
+                        true,
+                        Some((now_ms, dedup_closed)),
+                        oscore,
+                    )
+                }
             };
+            if outcome.is_ok() {
+                record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
+            }
             if let InboundBody::Complete(id) = assembled {
                 let _ = engine.release_rx_body(id);
             }
@@ -3874,11 +4222,17 @@ where
             dedup_closed,
         )
     };
+    let retained =
+        retain_q_observe_selection(engine, BlockKey::new(meta.token, peer), plan.selection)
+            .map_err(Error::Slot);
+    if outcome.is_ok() && response.observe_seq().is_some() {
+        record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
+    }
     if let InboundBody::Complete(id) = assembled {
         let _ = engine.release_rx_body(id);
     }
     let _ = engine.release_rx(rx);
-    outcome
+    outcome.and(retained)
 }
 
 #[derive(Clone, Copy)]
@@ -3888,6 +4242,7 @@ struct ObservePlan {
     registration_supported: bool,
     no_response: NoResponse,
     block2_max_szx: Option<u8>,
+    q_block2: bool,
     deregister: bool,
     delete: bool,
     has_source: bool,
@@ -3903,6 +4258,7 @@ impl ObservePlan {
             registration_supported: false,
             no_response: NoResponse::DEFAULT,
             block2_max_szx: None,
+            q_block2: false,
             deregister: false,
             delete: false,
             has_source: false,
@@ -3933,11 +4289,14 @@ impl ObservePlan {
                 // RFC 7641 section 4.1 permits ordinary-response fallback.
                 // Only admit profiles whose subsequent notifications preserve
                 // the requested transfer semantics. Nonzero initial Block2
-                // and Q-Block2 observation are not implemented yet (#520).
+                // initial Q selections begin at block zero; the Q M bit chooses
+                // the initial block or window, not a different observed resource.
                 && request.message().block2().is_none_or(|block| {
                     block.is_ok_and(|b| b.num() == 0 && !b.more() && !b.is_bert())
                 })
-                && request.message().q_block2().next().is_none()
+                && request.message().q_block2().next().is_none_or(|block| {
+                    block.is_ok_and(|b| b.num() == 0 && !b.is_bert())
+                })
                 && (selected
                     || (request.method() == Some(Method::Get)
                         && request.uri_query().next().is_none())),
@@ -3945,7 +4304,16 @@ impl ObservePlan {
                 .get_option(crate::message::OptionNumber::BLOCK2)
                 .and_then(|o| o.as_block().ok())
                 .filter(|b| b.num() == 0 && !b.more() && !b.is_bert())
-                .map(|b| b.szx()),
+                .map(|b| b.szx())
+                .or_else(|| {
+                    request
+                        .message()
+                        .q_block2()
+                        .next()
+                        .and_then(Result::ok)
+                        .map(|b| b.szx())
+                }),
+            q_block2: request.message().q_block2().next().is_some(),
             deregister: request.is_observe_deregister(),
             delete: request.method() == Some(Method::Delete),
             has_source: site.has_observe_source(request.path()),
@@ -4001,6 +4369,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .with_resource(plan.resource)
             .with_content_format(response.format())
             .with_block2_max_szx(plan.block2_max_szx)
+            .with_q_block2(plan.q_block2)
             .with_no_response(plan.no_response)
             .with_selection(plan.selection);
         #[cfg(feature = "oscore")]
@@ -4047,6 +4416,16 @@ where
     let Some(interest) = interest else {
         return Ok(());
     };
+    // Finish the immutable Q representation before replacing its epoch/type.
+    if response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()))
+        .and_then(|id| engine.tx_body_transfer(id))
+        .is_some_and(|body| {
+            body.q_observe_confirmable()
+                && (!body.is_complete() || body.q_observe_pending_mid().is_some())
+        })
+    {
+        return Ok(());
+    }
     if deferred.blocks_observe(interest.key()) {
         return Ok(());
     }
@@ -4506,7 +4885,7 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_notification_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, start_notify_block2 => start_notify_block2_async, finish_send => finish_send_async))]
+#[coaptic_io::dual_io(send_notification_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, start_outgoing => start_outgoing_async, start_notify_block2 => start_notify_block2_async, finish_send => finish_send_async))]
 fn send_notification<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -4561,8 +4940,17 @@ where
         no_response: NoResponse::DEFAULT,
         block2: interest
             .block2_max_szx()
+            .filter(|_| {
+                !interest.q_block2()
+                    || (!notify.code().is_success() && notify.etag_bytes().is_none())
+            })
             .map(|szx| BlockValue::new(0, false, szx).expect("admitted SZX")),
-        q_block2: None,
+        q_block2: interest
+            .block2_max_szx()
+            .filter(|_| {
+                interest.q_block2() && (notify.code().is_success() || notify.etag_bytes().is_some())
+            })
+            .map(|szx| BlockValue::new(0, true, szx).expect("admitted SZX")),
         q_request: None,
         block1: None,
         oscore: oscore_req,
@@ -4572,6 +4960,27 @@ where
             .map_or(Code::GET, |parsed| parsed.code()),
     };
 
+    if meta.q_block2.is_some() {
+        start_outgoing(
+            engine, io, ids, now_ms, meta, &notify, ty, key, oscore, &mut None, false,
+        )?;
+        retain_q_observe_selection(engine, key, interest.selection().copied())?;
+        let now_ms = completion_time(io, now_ms);
+        if !notify.code().is_success() {
+            engine.take_observe(interest.key());
+            return Ok(true);
+        }
+        record_q_observe_sent(engine, key, now_ms);
+        if ty == Type::NonConfirmable {
+            let _ = engine.refresh_observe_max_age(
+                interest.key(),
+                now_ms,
+                notify.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS),
+                None,
+            );
+        }
+        return Ok(true);
+    }
     let Some(tx) = engine.acquire_tx() else {
         return Err(Error::Saturated);
     };
@@ -5097,6 +5506,173 @@ fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) 
     })
 }
 
+fn retain_q_observe_selection<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    key: BlockKey,
+    selection: Option<crate::storage::ObserveSelection>,
+) -> Result<(), crate::storage::SlotError> {
+    if let Some(id) = response_body_for(engine, key)
+        && let Some(mut transfer) = engine.tx_body_transfer(id)
+        && transfer.q_observe_sequence().is_some()
+    {
+        transfer.retain_observe_selection(selection);
+        engine.storage_mut().set_tx_body_transfer(id, transfer)?;
+    }
+    Ok(())
+}
+
+fn record_q_observe_sent<S: Storage + BodySlots + ObserveSlots>(
+    engine: &mut Engine<S>,
+    key: BlockKey,
+    now_ms: u64,
+) {
+    if let Some(body) = response_body_for(engine, key)
+        && let Some(transfer) = engine.tx_body_transfer(body)
+        && let Some(mid) = transfer.q_observe_last_mid()
+    {
+        let _ = engine.record_observe_notify(
+            ObserveKey::new(key.token(), key.endpoint()),
+            now_ms,
+            mid,
+            transfer.q_observe_confirmable(),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_q_observe_first<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    meta: SendResponse<'_>,
+    response: &Response<'_>,
+    ty: Type,
+    mid: MessageId,
+    body: SlotId,
+    oscore: &mut oscore::Field<REQUESTS>,
+) -> Result<SlotId, Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    T: crate::storage::DatagramTransport,
+{
+    loop {
+        let issued = engine.peek_q_block2(body).map_err(Error::Block)?;
+        match encode_issued::<S, T, REQUESTS>(engine, meta, response, ty, mid, issued, true, oscore)
+        {
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
+                let mut transfer = engine
+                    .tx_body_transfer(body)
+                    .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+                let Some(szx) = transfer.szx().checked_sub(1) else {
+                    return Err(Error::Message(SlotMessageError::Encode(
+                        EncodeError::BufferTooSmall,
+                    )));
+                };
+                transfer
+                    .negotiate_q_observe_szx(szx)
+                    .map_err(Error::Block)?;
+                engine.storage_mut().set_tx_body_transfer(body, transfer)?;
+            }
+            result => return result,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_q_observe_followup_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async, issue_q_window => issue_q_window_async, issue_q_selection => issue_q_selection_async))]
+fn issue_q_observe_followup<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    now_ms: u64,
+    meta: SendResponse<'_>,
+    response: &Response<'_>,
+    ty: Type,
+    body: SlotId,
+    oscore: &mut oscore::Field<REQUESTS>,
+    closed: &mut Option<DedupClosed>,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: DatagramIo,
+{
+    let transfer = engine
+        .tx_body_transfer(body)
+        .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+    let q = meta
+        .q_block2
+        .ok_or(Error::Block(BlockTransferError::IdentityMismatch))?;
+    if q.szx() != transfer.szx() {
+        return Err(Error::Block(BlockTransferError::SzxMismatch));
+    }
+    let continuation = q.more()
+        && q.num() != 0
+        && q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0
+        && meta
+            .q_request
+            .is_none_or(|request| request.q_block2().nth(1).is_none());
+    let response = if continuation && response.code().is_success() {
+        response
+            .without_observe()
+            .observe(transfer.q_observe_sequence().expect("Q snapshot"))
+    } else {
+        response.without_observe()
+    };
+    #[cfg(feature = "oscore")]
+    let meta = if continuation {
+        SendResponse {
+            oscore: transfer.oscore_request.map(|(_, request)| request),
+            ..meta
+        }
+    } else {
+        meta
+    };
+    if transfer.q_observe_confirmable() {
+        if transfer.q_observe_pending_mid().is_some() {
+            return Err(Error::Saturated);
+        }
+        // CON loss recovery normally uses the retained retransmission. A
+        // selective one-block retry remains CON and cannot turn the rest of
+        // this immutable body into a NON exchange.
+        if q.more()
+            || meta
+                .q_request
+                .is_some_and(|request| request.q_block2().nth(1).is_some())
+        {
+            return Err(Error::Block(BlockTransferError::IdentityMismatch));
+        }
+        let issued = engine
+            .reissue_q_block2(body, q.num())
+            .map_err(Error::Block)?;
+        let mid = q_response_mid(engine, io, ids, now_ms, meta, ty, closed)?;
+        send_issued(
+            engine,
+            io,
+            meta,
+            &response,
+            Type::Confirmable,
+            mid,
+            issued,
+            true,
+            Some((now_ms, mid, ids.jitter())),
+            oscore,
+        )?;
+        let mut retained = engine
+            .tx_body_transfer(body)
+            .ok_or(Error::CommitAfterSend)?;
+        retained.set_q_observe_pending_mid(Some(mid));
+        engine
+            .storage_mut()
+            .set_tx_body_transfer(body, retained)
+            .map_err(|_| Error::CommitAfterSend)?;
+        return Ok(());
+    }
+    // The complete immutable snapshot already owns every range. A Continue
+    // selects one bounded window, including after an initial M=0 selection;
+    // it need not infer delivery from the server's local issue bitmap.
+    issue_q_selection(
+        engine, io, ids, now_ms, meta, &response, ty, body, oscore, closed,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 #[coaptic_io::dual_io(start_outgoing_async, bound(crate::app::async_server::ProtocolIo), calls(issue_borrowed_classic => issue_borrowed_classic_async, issue_observe_preferred => issue_observe_preferred_async, issue_classic => issue_classic_async, issue_q_selection => issue_q_selection_async, issue_q_window => issue_q_window_async))]
 fn start_outgoing<S, T, const REQUESTS: usize>(
@@ -5159,6 +5735,29 @@ where
     };
     let mut body_owner = async_server::BodyOwner::outgoing(engine, id);
     let engine = &mut *body_owner.engine;
+    if meta.q_block2.is_some()
+        && (response.observe_seq().is_some() || !response.code().is_success())
+    {
+        let sequence = response.observe_seq().unwrap_or(0);
+        let mut transfer = engine.tx_body_transfer(id).expect("started body");
+        transfer.remember_notification(response.code(), response.format(), response.max_age_secs());
+        transfer.remember_q_observe(
+            sequence,
+            now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
+        );
+        #[cfg(feature = "oscore")]
+        {
+            transfer.oscore_request = meta.oscore.map(|request| (meta.token, request));
+        }
+        engine
+            .storage_mut()
+            .set_tx_body_transfer(id, transfer)
+            .map_err(Error::Slot)?;
+        let tx = encode_q_observe_first::<S, T, REQUESTS>(
+            engine, meta, response, ty, meta.mid, id, oscore_ctx,
+        )?;
+        engine.release_tx(tx)?;
+    }
     let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0)
         || meta
             .q_request
@@ -5221,7 +5820,12 @@ where
     // only a temporary snapshot; retaining it would leave an unadvanced window
     // occupying a body slot forever. Existing full-transfer state is handled
     // separately by continue_outgoing and survives recovery selections.
-    if outcome.is_err() || selective {
+    if outcome.is_err()
+        || (selective
+            && engine
+                .tx_body_transfer(id)
+                .is_none_or(|body| body.q_observe_sequence().is_none()))
+    {
         let _ = engine.release_tx_body(id);
     }
     body_owner.disarm();
@@ -5837,6 +6441,15 @@ where
             return Err(error);
         }
         finish_send(engine, io, tx, meta.dest, None)?;
+        if let Some(mut transfer) = engine.tx_body_transfer(body)
+            && transfer.q_observe_sequence().is_some()
+        {
+            transfer.set_q_observe_last_mid(Some(mid));
+            engine
+                .storage_mut()
+                .set_tx_body_transfer(body, transfer)
+                .map_err(|_| Error::CommitAfterSend)?;
+        }
         if end == length {
             break;
         }
@@ -5893,6 +6506,15 @@ where
             send_issued(
                 engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
             )?;
+            if let Some(mut transfer) = engine.tx_body_transfer(id)
+                && transfer.q_observe_sequence().is_some()
+            {
+                transfer.set_q_observe_last_mid(Some(mid));
+                engine
+                    .storage_mut()
+                    .set_tx_body_transfer(id, transfer)
+                    .map_err(|_| Error::CommitAfterSend)?;
+            }
             last_sent = Some(num);
             if !issued.block().more() {
                 return Ok(());
@@ -5903,7 +6525,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(issue_q_window_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async, commit_q_window_send => async_server::commit_q_window_send_async), renames(next_q_block2 => peek_q_block2))]
+#[coaptic_io::dual_io(issue_q_window_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async, commit_q_window_send => async_server::commit_q_window_send_async))]
 fn issue_q_window<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -5920,9 +6542,26 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    let retained_observe = engine
+        .tx_body_transfer(id)
+        .is_some_and(|transfer| transfer.q_observe_sequence().is_some());
+    let confirmable = retained_observe && first_ty == Type::Confirmable;
+    if confirmable {
+        let mut transfer = engine
+            .tx_body_transfer(id)
+            .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
+        transfer.set_q_observe_confirmable();
+        if transfer.q_observe_pending_mid().is_some() {
+            return Ok(());
+        }
+        engine
+            .storage_mut()
+            .set_tx_body_transfer(id, transfer)
+            .map_err(Error::Slot)?;
+    }
     let mut extra = 0u16;
     loop {
-        let issued = match engine.next_q_block2(id) {
+        let issued = match engine.peek_q_block2(id) {
             Ok(issued) => issued,
             Err(BlockTransferError::OutsideWindow) => return Ok(()),
             Err(e) => return Err(Error::Block(e)),
@@ -5932,14 +6571,46 @@ where
         } else {
             ids.next_for(engine, io, now_ms)?
         };
-        let ty = Type::NonConfirmable;
+        let ty = if confirmable {
+            Type::Confirmable
+        } else {
+            Type::NonConfirmable
+        };
         send_issued(
-            engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
+            engine,
+            io,
+            meta,
+            response,
+            ty,
+            mid,
+            issued,
+            true,
+            confirmable.then_some((now_ms, mid, ids.jitter())),
+            oscore_ctx,
         )?;
         commit_q_window_send(engine, issued)?;
+        if retained_observe && !confirmable {
+            let mut transfer = engine.tx_body_transfer(id).ok_or(Error::CommitAfterSend)?;
+            transfer.set_q_observe_last_mid(Some(mid));
+            engine
+                .storage_mut()
+                .set_tx_body_transfer(id, transfer)
+                .map_err(|_| Error::CommitAfterSend)?;
+        }
+        if confirmable {
+            let mut transfer = engine.tx_body_transfer(id).ok_or(Error::CommitAfterSend)?;
+            transfer.set_q_observe_pending_mid(Some(mid));
+            engine
+                .storage_mut()
+                .set_tx_body_transfer(id, transfer)
+                .map_err(|_| Error::CommitAfterSend)?;
+            return Ok(());
+        }
         extra = extra.saturating_add(1);
         if issued.complete() {
-            let _ = engine.release_tx_body(id);
+            if !retained_observe {
+                let _ = engine.release_tx_body(id);
+            }
             return Ok(());
         }
     }
