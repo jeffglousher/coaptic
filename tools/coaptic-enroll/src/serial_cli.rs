@@ -402,8 +402,14 @@ pub fn run(
 fn show(reply: CommissioningReply) -> Result<()> {
     match reply {
         CommissioningReply::Empty => println!("Device identity is not initialized."),
-        CommissioningReply::State { device, record, .. } => {
+        CommissioningReply::State {
+            device,
+            record,
+            pending,
+            ..
+        } => {
             show_peer(&device);
+            println!("Durable work: {}", custody_description(pending));
             println!(
                 "Pairing revision {} enabled {}",
                 record.revision(),
@@ -423,6 +429,21 @@ fn show(reply: CommissioningReply) -> Result<()> {
         _ => return Err("unexpected device state response".into()),
     }
     Ok(())
+}
+
+fn custody_description(pending: CommissioningPending) -> &'static str {
+    match pending {
+        CommissioningPending::Missing => {
+            "missing history; reconciliation required before grant changes"
+        }
+        CommissioningPending::Complete => "authenticated empty or completed",
+        CommissioningPending::Unresolved => {
+            "authenticated unresolved work; serve receipts and quiesce before grant changes"
+        }
+        CommissioningPending::Unverifiable => {
+            "unverifiable under current pairing; preserve history for reconciliation"
+        }
+    }
 }
 
 fn preflight_pending(
@@ -456,6 +477,33 @@ fn show_peer(peer: &PinnedPeer) {
 mod tests {
     use super::*;
     use std::io::{self, Cursor};
+
+    #[test]
+    fn custody_output_distinguishes_absence_completion_unresolved_and_unverifiable() {
+        for (status, expected) in [
+            (
+                CommissioningPending::Missing,
+                "Durable work: missing history; reconciliation required before grant changes",
+            ),
+            (
+                CommissioningPending::Complete,
+                "Durable work: authenticated empty or completed",
+            ),
+            (
+                CommissioningPending::Unresolved,
+                "Durable work: authenticated unresolved work; serve receipts and quiesce before grant changes",
+            ),
+            (
+                CommissioningPending::Unverifiable,
+                "Durable work: unverifiable under current pairing; preserve history for reconciliation",
+            ),
+        ] {
+            assert_eq!(
+                format!("Durable work: {}", custody_description(status)),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn pending_preflight_refuses_grants_without_blocking_revocation_or_host_repair() {
