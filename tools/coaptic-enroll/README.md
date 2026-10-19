@@ -9,6 +9,8 @@ menu after completion or failure; it never automatically retries a mutation.
 
 Build with `cargo build --manifest-path tools/coaptic-enroll/Cargo.toml`.
 Direct commands remain available through `--help` for automation.
+Use `inspect --help` or `peer --help` for selection and connection options.
+Help works before credential storage or a device is available.
 
 `inspect` shows local credential-record presence, host names and serial ports
 without contacting devices or asking for a key touch. Add `--host NAME` for

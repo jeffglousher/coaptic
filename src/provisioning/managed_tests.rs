@@ -959,7 +959,11 @@ fn authenticated_fresh_handoff_invalidates_old_call_and_deferred_handle_epochs()
     let a = identity(1, 1);
     let b = identity(2, 2);
     let (mut client, mut server, network) = pair(&a, &b);
+    assert_eq!(client.session_generation(), None);
+    assert_eq!(server.session_generation(), None);
     let now = connect(&mut client, &mut server, 0) + 1;
+    let client_generation = client.session_generation().unwrap();
+    let server_generation = server.session_generation().unwrap();
     let old_call = client
         .request(Method::Post, "work", &[], None, now)
         .unwrap();
@@ -973,6 +977,8 @@ fn authenticated_fresh_handoff_invalidates_old_call_and_deferred_handle_epochs()
     client.poll_with(now, idle).unwrap();
     let old_deferred = old_deferred.unwrap();
     let now = connect(&mut client, &mut server, now + 1) + 1;
+    assert_ne!(client.session_generation(), Some(client_generation));
+    assert_ne!(server.session_generation(), Some(server_generation));
     let mut output = [0; 32];
     assert!(matches!(
         client.take_response_into(old_call, &mut output, now),
@@ -1004,6 +1010,7 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
     let attacker = identity(3, 1);
     let (mut client, mut server, network) = pair(&a, &b);
     let now = connect(&mut client, &mut server, 0) + 1;
+    let generation = server.session_generation();
     let (initiator, first) =
         super::super::Initiator::start(&attacker, b.peer().clone(), entropy).unwrap();
     let bytes = [0; DATAGRAM_BYTES];
@@ -1030,6 +1037,7 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
         .push_back((packet[..len].to_vec(), CLIENT));
     server.poll_with(now, idle).unwrap();
     assert!(server.is_connected());
+    assert_eq!(server.session_generation(), generation);
     assert!(server.recovery.as_ref().unwrap().has_candidate());
     let message2 = network.borrow_mut().a.pop_front().unwrap().0;
     let decoded = decode(&message2).unwrap();
@@ -1065,6 +1073,7 @@ fn unauthenticated_candidate_failure_preserves_the_old_authenticated_app() {
     ));
     assert!(server.is_connected());
     assert!(!server.recovery.as_ref().unwrap().has_candidate());
+    assert_eq!(server.session_generation(), generation);
     let refusal = network.borrow_mut().a.pop_front().unwrap().0;
     let refused = decode(&refusal).unwrap();
     assert_eq!(refused.code(), Code::BAD_REQUEST);
