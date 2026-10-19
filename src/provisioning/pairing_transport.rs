@@ -33,6 +33,9 @@ pub enum CommissioningRequest {
     },
     /// Restart the platform, preserving identity/policy and discarding sessions.
     Restart,
+    /// Drain existing durable work and hold production for local administration.
+    /// Implementations bound the drain and hold deadlines; no grant is changed.
+    Quiesce,
 }
 
 impl CommissioningRequest {
@@ -62,6 +65,7 @@ impl CommissioningRequest {
                 blob(&mut out, &bytes)?;
             }
             Self::Restart => out.raw(&[0x82, 1, 4])?,
+            Self::Quiesce => out.raw(&[0x82, 1, 5])?,
         }
         Ok(out.pos)
     }
@@ -92,11 +96,25 @@ impl CommissioningRequest {
                 }
             }
             (0x82, 4) => Self::Restart,
+            (0x82, 5) => Self::Quiesce,
             _ => return Err(PairingError::Record),
         };
         read.finish()?;
         Ok(result)
     }
+}
+
+/// Read-only status of pending-work custody under the current pairing record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommissioningPending {
+    /// No pending record exists; this does not prove unused history.
+    Missing = 0,
+    /// Authenticated empty or completed record; no unresolved effect.
+    Complete = 1,
+    /// Authenticated work is awaiting a matching durable receipt.
+    Unresolved = 2,
+    /// Read failed or this record cannot authenticate the retained pending bytes.
+    Unverifiable = 3,
 }
 
 /// Public response. No response ever exports a device's private identity.
@@ -111,6 +129,8 @@ pub enum CommissioningReply {
         device: PinnedPeer,
         /// Complete public durable policy for that same device credential.
         record: PairingRecord,
+        /// Pending-work status; never exports payloads, operation IDs or keys.
+        pending: CommissioningPending,
     },
     /// Fresh device-generated challenge bound to its exact current record.
     Challenge(PairingChallenge),
@@ -118,6 +138,9 @@ pub enum CommissioningReply {
     Committed(PairingRecord),
     /// Restart acknowledgment; no claim about elapsed power-off time.
     Restarting,
+    /// Existing durable work is complete; new production is held for60 seconds.
+    /// An administrative challenge may extend the hold to its own deadline.
+    Quiesced,
     /// Bounded refusal code, with no private data or detailed logs.
     Refused(u8),
 }
@@ -134,14 +157,19 @@ impl CommissioningReply {
                 out.raw(&[0x82, 1])?;
                 out.uint(129)?;
             }
-            Self::State { device, record } => {
-                out.raw(&[0x85, 1])?;
+            Self::State {
+                device,
+                record,
+                pending,
+            } => {
+                out.raw(&[0x86, 1])?;
                 out.uint(128)?;
                 out.bytes(&device.public_key())?;
                 out.uint(u64::from(device.kid()))?;
                 let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
                 let len = record.encode(&mut bytes)?;
                 blob(&mut out, &bytes[..len])?;
+                out.uint(*pending as u64)?;
             }
             Self::Challenge(challenge) => {
                 out.raw(&[0x83, 1])?;
@@ -161,6 +189,10 @@ impl CommissioningReply {
                 out.raw(&[0x82, 1])?;
                 out.uint(132)?;
             }
+            Self::Quiesced => {
+                out.raw(&[0x82, 1])?;
+                out.uint(133)?;
+            }
             Self::Refused(code) => {
                 out.raw(&[0x83, 1])?;
                 out.uint(255)?;
@@ -177,7 +209,7 @@ impl CommissioningReply {
         read.exact(&[1])?;
         let result = match (array, read.uint()?) {
             (0x82, 129) => Self::Empty,
-            (0x85, 128) => {
+            (0x86, 128) => {
                 let key = read.bytes::<65>()?;
                 let kid = read.uint()?.try_into().map_err(|_| PairingError::Record)?;
                 let device =
@@ -191,7 +223,18 @@ impl CommissioningReply {
                 {
                     return Err(PairingError::Binding);
                 }
-                Self::State { device, record }
+                let pending = match read.uint()? {
+                    0 => CommissioningPending::Missing,
+                    1 => CommissioningPending::Complete,
+                    2 => CommissioningPending::Unresolved,
+                    3 => CommissioningPending::Unverifiable,
+                    _ => return Err(PairingError::Record),
+                };
+                Self::State {
+                    device,
+                    record,
+                    pending,
+                }
             }
             (0x83, 130) => Self::Challenge(PairingChallenge::decode(read_blob(&mut read, 224)?)?),
             (0x83, 131) => Self::Committed(PairingRecord::decode(read_blob(
@@ -199,6 +242,7 @@ impl CommissioningReply {
                 PairingRecord::MAX_ENCODED_LEN,
             )?)?),
             (0x82, 132) => Self::Restarting,
+            (0x82, 133) => Self::Quiesced,
             (0x83, 255) => {
                 Self::Refused(read.uint()?.try_into().map_err(|_| PairingError::Record)?)
             }
@@ -341,6 +385,24 @@ impl CommissioningDecoder {
 mod tests {
     use super::*;
     use crate::provisioning::{EnrollmentPolicy, Identity, LocalPairing};
+
+    #[test]
+    fn quiesce_is_bounded_and_rejects_trailing_bytes() {
+        let mut out = [0; 8];
+        let len = CommissioningRequest::Quiesce.encode(&mut out).unwrap();
+        assert_eq!(&out[..len], &[0x82, 1, 5]);
+        assert!(matches!(
+            CommissioningRequest::decode(&out[..len]),
+            Ok(CommissioningRequest::Quiesce)
+        ));
+        assert!(CommissioningRequest::decode(&out[..len + 1]).is_err());
+        let len = CommissioningReply::Quiesced.encode(&mut out).unwrap();
+        assert!(matches!(
+            CommissioningReply::decode(&out[..len]),
+            Ok(CommissioningReply::Quiesced)
+        ));
+        assert!(CommissioningReply::decode(&out[..len + 1]).is_err());
+    }
 
     #[test]
     fn framed_update_round_trip_is_exact_bounded_and_single_use() {

@@ -110,6 +110,31 @@ pub fn apply(
     }
 }
 
+/// Named service capabilities chosen before operator approval.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Access {
+    ReadOnly,
+    Echo,
+    #[default]
+    Telemetry,
+}
+impl Access {
+    pub fn from_flag(flag: &str) -> Option<Self> {
+        match flag {
+            "--read-only" => Some(Self::ReadOnly),
+            "--echo-only" => Some(Self::Echo),
+            _ => None,
+        }
+    }
+    pub fn permissions(self) -> [u8; 32] {
+        match self {
+            Self::ReadOnly => permissions(false),
+            Self::Echo => echo_permissions(),
+            Self::Telemetry => permissions(true),
+        }
+    }
+}
+
 /// Named application policy enforced by the commissioning runtime's routes.
 pub fn permissions(write: bool) -> [u8; 32] {
     blake3::derive_key(

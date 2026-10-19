@@ -6,6 +6,9 @@ rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 description = "Compile-time shared sync and async protocol bodies for coaptic"
 
+repository = "https://github.com/jeffglousher/coaptic"
+homepage = "https://github.com/jeffglousher/coaptic"
+
 [lib]
 proc-macro = true
 

@@ -68,7 +68,8 @@ pub(super) fn run(
     };
     let mut approval = ApprovalMode::WebAuthn;
     let mut selected = false;
-    let mut write = true;
+    let mut access = pairing::Access::default();
+    let mut access_selected = false;
     for option in args {
         if let Some(value) = option.to_str().and_then(ApprovalMode::from_flag) {
             if selected {
@@ -76,8 +77,12 @@ pub(super) fn run(
             }
             approval = value;
             selected = true;
-        } else if option == "--read-only" && recovering && write {
-            write = false;
+        } else if let Some(value) = option.to_str().and_then(pairing::Access::from_flag) {
+            if access_selected || !recovering {
+                return Err("unexpected or repeated access option".into());
+            }
+            access = value;
+            access_selected = true;
         } else {
             return Err("unexpected recovery option".into());
         }
@@ -98,7 +103,7 @@ pub(super) fn run(
         .map(|(identity, store)| store.restore(identity))
         .transpose()?;
     let _receipts = match (&host,&destination) {
-        (Some((identity,_)),Some((name,_))) if write => Some(pairing::preflight_receipts(&super::existing_device_directory(directory,name)?,identity).map_err(|_|"destination receipt journal is missing or invalid; inspect it or explicitly initialize its first journal before recovery")?),
+        (Some((identity,_)),Some((name,_))) if access == pairing::Access::Telemetry => Some(pairing::preflight_receipts(&super::existing_device_directory(directory,name)?,identity).map_err(|_|"destination receipt journal is missing or invalid; inspect it or explicitly initialize its first journal before recovery")?),
         _ => None,
     };
     if host_state
@@ -120,6 +125,7 @@ pub(super) fn run(
     let CommissioningReply::State {
         device: device_pin,
         record,
+        ..
     } = usb.request(&CommissioningRequest::Inspect)?
     else {
         return Err("device has no existing identity to recover".into());
@@ -145,7 +151,7 @@ pub(super) fn run(
                 let next = EnrollmentPolicy::new(
                     host.as_ref().ok_or(Error::Input)?.0.peer(),
                     other_owner.ok_or(Error::Input)?,
-                    pairing::permissions(write),
+                    access.permissions(),
                 )
                 .map_err(|_| Error::Input)?;
                 Request::for_owner_recovery(&challenge, owner, &next)

@@ -89,7 +89,8 @@ pub fn run(
             Some(value) if value == "--probe" => Some(peer::Probe::Identity),
             Some(value) if value == "--probe-echo" => Some(peer::Probe::Echo),
             Some(value) if value == "--probe-denied" => Some(peer::Probe::DeniedEcho),
-            _ => return Err("expected --connect, --probe, --probe-echo or --probe-denied".into()),
+            Some(value) if value == "--qualify-lost-receipt" => Some(peer::Probe::LostReceipt),
+            _ => return Err("expected --connect, --probe, --probe-echo, --probe-denied or --qualify-lost-receipt".into()),
         };
         if args.next().is_some() {
             return Err("unexpected arguments".into());
@@ -121,7 +122,8 @@ pub fn run(
     };
     let mut approval = ApprovalMode::WebAuthn;
     let mut approval_selected = false;
-    let mut write = true;
+    let mut access = pairing::Access::default();
+    let mut access_selected = false;
     for option in args {
         if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
             if approval_selected {
@@ -129,8 +131,12 @@ pub fn run(
             }
             approval = mode;
             approval_selected = true;
-        } else if option == "--read-only" && write && (command == "pair" || command == "transfer") {
-            write = false;
+        } else if let Some(value) = option.to_str().and_then(pairing::Access::from_flag) {
+            if access_selected || !(command == "pair" || command == "transfer") {
+                return Err("unexpected or repeated access option".into());
+            }
+            access = value;
+            access_selected = true;
         } else {
             return Err("unexpected or repeated pairing option".into());
         }
@@ -145,7 +151,7 @@ pub fn run(
         Action::Revoke
     };
     let existing = state.checkpoint().policy().cloned();
-    let permissions = pairing::permissions(write);
+    let permissions = access.permissions();
     let make_request = |owner| {
         let policy = match &peer {
             Some(peer) => {

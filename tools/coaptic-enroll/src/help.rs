@@ -29,6 +29,11 @@ One-shot checks (30-second deadline):
   --probe-echo    Send and verify a protected echo.
   --probe-denied  Verify that the peer refuses an echo with 4.03 Forbidden.
 
+Qualification-only fault injection (approved telemetry grant required):
+  --qualify-lost-receipt  Exit 75 after the first new durable effect is synced,
+                         before sending its receipt. Preserve the journal and
+                         restart normally to recover the same effect/receipt.
+
 Shared integration check (separate handshake and operation deadlines):
   --probe-shared  Exercise concurrent shared connection handles.
 
@@ -36,6 +41,17 @@ Identity and echo probes retry authenticated 4.29/5.03 responses at most three
 attempts, respecting Max-Age within the deadline. Durable telemetry has its own
 receipt policy. The service holds the pairing lock; stop it before management.
 No operator signature or key touch is needed for ordinary communication.",
+        )
+    } else if command == "serial-quiesce" {
+        Some(
+            "Usage: coaptic-enroll serial-quiesce PORT
+
+Privileged USB only. Drain existing durable work for at most 30 seconds while
+the host service keeps serving receipts. Refusal preserves unresolved work.
+On success, hold new production for 60 seconds; an administrative challenge extends
+the hold through its own approval deadline. Expiry resumes the existing policy.
+After success, stop the host service before pairing to release its store locks.
+No grant changes and no host-store lock are taken by this command.",
         )
     } else {
         None

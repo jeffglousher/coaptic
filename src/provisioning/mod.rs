@@ -66,7 +66,9 @@ pub use managed::{
     ManagedAsyncError, ManagedCall, ManagedConnection, ManagedDeferredReply, ManagedError,
     ManagedIoError, ManagedRefreshError, ManagedSubscription, PolicyValidity,
 };
-pub use pairing_transport::{CommissioningDecoder, CommissioningReply, CommissioningRequest};
+pub use pairing_transport::{
+    CommissioningDecoder, CommissioningPending, CommissioningReply, CommissioningRequest,
+};
 pub use peer_error::{PeerError, PeerErrorCode};
 pub use profile::CipherSuite;
 pub use receipt::{

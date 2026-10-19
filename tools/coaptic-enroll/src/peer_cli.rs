@@ -20,6 +20,9 @@ pub enum Probe {
     Identity,
     Echo,
     DeniedEcho,
+    /// Explicit qualification fault: exit after one durable journal sync,
+    /// before sending its receipt. Never enabled by ordinary peer modes.
+    LostReceipt,
 }
 
 pub fn run(
@@ -31,7 +34,7 @@ pub fn run(
     probe: Option<Probe>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let peer = pairing.peer()?;
-    let persistent = probe.is_none() || matches!(probe, Some(Probe::Connect));
+    let persistent = probe.is_none() || matches!(probe, Some(Probe::Connect | Probe::LostReceipt));
     let initiates = identity.peer().principal().fingerprint() > peer.principal().fingerprint();
     let permission = pairing
         .checkpoint()
@@ -39,6 +42,9 @@ pub fn run(
         .ok_or("missing policy")?
         .resource_policy();
     let telemetry = *permission == pairing::permissions(true);
+    if matches!(probe, Some(Probe::LostReceipt)) && !telemetry {
+        return Err("lost-receipt qualification requires an approved telemetry grant".into());
+    }
     let write = telemetry || *permission == pairing::echo_permissions();
     if !write && *permission != pairing::permissions(false) {
         return Err("unknown application permissions".into());
@@ -61,6 +67,12 @@ pub fn run(
     } else {
         None
     };
+    if matches!(probe, Some(Probe::LostReceipt)) {
+        journal
+            .as_mut()
+            .ok_or("missing telemetry journal")?
+            .set_checkpoint(lost_receipt_checkpoint);
+    }
     let socket = UdpSocket::bind(local)?;
     socket.set_nonblocking(true)?;
     let endpoint = Endpoint::from(remote.parse::<SocketAddr>()?);
@@ -71,7 +83,8 @@ pub fn run(
     )?;
     connection.observable_manual("identity")?;
     let mut subscription = ManagedSubscription::new("identity");
-    if initiates || probe.is_some_and(|probe| !matches!(probe, Probe::Connect)) {
+    if initiates || probe.is_some_and(|probe| !matches!(probe, Probe::Connect | Probe::LostReceipt))
+    {
         connection.connect(0)?;
     }
     let mut sample = [0; 36];
@@ -180,10 +193,11 @@ pub fn run(
         if connection.is_connected()
             && call.is_none()
             && now >= probe_due
-            && let Some(probe) = probe.filter(|probe| !matches!(probe, Probe::Connect))
+            && let Some(probe) =
+                probe.filter(|probe| !matches!(probe, Probe::Connect | Probe::LostReceipt))
         {
             let (method, path, payload, format) = match probe {
-                Probe::Connect => unreachable!(),
+                Probe::Connect | Probe::LostReceipt => unreachable!(),
                 Probe::Identity => (Method::Get, "identity", &[][..], None),
                 Probe::Echo | Probe::DeniedEcho => {
                     (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
@@ -206,7 +220,7 @@ pub fn run(
                     let response =
                         response.map_err(|error| format!("protected probe failed: {error:?}"))?;
                     let valid = match probe.ok_or("missing probe")? {
-                        Probe::Connect => unreachable!(),
+                        Probe::Connect | Probe::LostReceipt => unreachable!(),
                         Probe::Identity => {
                             response.code() == Code::CONTENT
                                 && response.payload() == peer.principal().fingerprint()
@@ -287,7 +301,7 @@ pub fn run(
                 Err(error) => return Err(error.into()),
             });
         }
-        if probe.is_some_and(|probe| !matches!(probe, Probe::Connect))
+        if probe.is_some_and(|probe| !matches!(probe, Probe::Connect | Probe::LostReceipt))
             && started.elapsed() >= Duration::from_secs(30)
         {
             return Err("paired probe deadline".into());
@@ -331,6 +345,18 @@ impl PeerLiveness {
     }
 }
 
+// Process termination is deliberately before receipt construction. The journal
+// has synchronized the complete effect; a new process must reopen and retry it.
+fn lost_receipt_checkpoint(stage: coaptic_receipts::Stage) -> std::io::Result<()> {
+    if stage == coaptic_receipts::Stage::AfterSync {
+        use std::io::Write;
+        println!("Qualification checkpoint: durable effect synced; exiting75 before receipt.");
+        std::io::stdout().flush()?;
+        std::process::exit(75);
+    }
+    Ok(())
+}
+
 // Only the fixed identity/echo probes call this policy, never durable telemetry.
 fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> Option<u64> {
     if !matches!(code, Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE) || attempts >= 3 {
@@ -343,6 +369,69 @@ fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> O
 #[cfg(test)]
 mod retry_tests {
     use super::*;
+
+    fn fault_policy() -> Policy {
+        let identity = Identity::from_private_key([1; 32], 1).unwrap();
+        Policy {
+            anchor: coaptic::provisioning::TrustAnchor::genesis([3; 32]).unwrap(),
+            principal: identity.peer().principal(),
+            resource: [7; 32],
+            enabled: true,
+        }
+    }
+    fn fault_operation() -> TelemetryOperation<'static> {
+        TelemetryOperation::new(
+            OperationId::new([9; 16]),
+            [7; 32],
+            Some(60),
+            b"complete effect",
+        )
+        .unwrap()
+    }
+    #[test]
+    fn after_sync_process_child() {
+        let Some(path) = std::env::var_os("COAPTIC_RECEIPT_FAULT_CHILD") else {
+            return;
+        };
+        let policy = fault_policy();
+        let mut journal = Journal::open(Path::new(&path), Authority::new(policy)).unwrap();
+        journal.set_checkpoint(lost_receipt_checkpoint);
+        let _ = journal.commit(&policy.anchor, &policy.principal, &fault_operation());
+        panic!("AfterSync fault did not terminate before receipt");
+    }
+    #[test]
+    fn explicit_after_sync_fault_preserves_one_effect_across_process_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "coaptic-peer-fault-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let policy = fault_policy();
+        drop(Journal::create(&path, Authority::new(policy), 2).unwrap());
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pairing_cli::peer::retry_tests::after_sync_process_child",
+                "--nocapture",
+            ])
+            .env("COAPTIC_RECEIPT_FAULT_CHILD", &path)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(75));
+        assert!(String::from_utf8_lossy(&result.stdout).contains("durable effect synced"));
+        let mut journal = Journal::open(&path, Authority::new(policy)).unwrap();
+        assert_eq!(journal.effects().unwrap(), 1);
+        let receipt = journal
+            .commit(&policy.anchor, &policy.principal, &fault_operation())
+            .unwrap();
+        assert_eq!(receipt.sequence(), 1);
+        assert_eq!(journal.effects().unwrap(), 1);
+        drop(journal);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn authenticated_activity_prevents_rekey_and_silence_quiesces() {
