@@ -24,7 +24,7 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 
 | ID / owner | Selected boundary and existing executable | Completion evidence still required |
 | --- | --- | --- |
-| Q1 / [#199](https://github.com/jeffglousher/coaptic/issues/199) | Literal supported UDP TD directions: companion `crates/coaptic-plugtest`, original `tests/plugtest/td-coap4` fixtures. | Enumerate each required scenario/direction once; retain complete endpoint/content/control capture, refusal and recovery. Distinguish engine self-tests from actual peer execution. A reviewed fixture/RFC conflict is a disposition, not literal PASS. |
+| Q1 / [#199](https://github.com/jeffglousher/coaptic/issues/199) | Literal supported UDP TD directions: companion `crates/coaptic-plugtest`, original `tests/plugtest/td-coap4` fixtures. | Completed selected inventory in companion #90: 52 required IDs, 133 passing direct-UDP directions, exact conditional/readback grading and 87 refusal mutations. All 52 same-Coaptic scenarios pass. The 23 mixed-peer Observe fixture skips remain Q2; DTLS02 is a reviewed alert conflict, never literal PASS. |
 | Q2 / [#200](https://github.com/jeffglousher/coaptic/issues/200) | Independent UDP/OSCORE directions: companion `tools/interop/capabilities.json`, process runner and protected fixtures. | Source-matched discovery, extended tokens, selected Observe/transfers and ownership/error directions against actual independent implementations. Record each unsupported peer capability instead of substituting a different scenario or shared crypto backend. |
 | Q3 / #200 | Scoped/routed IPv6 and network errors using actual interfaces/routes. | Nonzero zone identity, PMTU/ICMP and exact endpoint matching; compound loss/malformed traffic followed by a valid operation. `::1` proves neither routing nor nonzero zone handling. Requires a named usable network topology. |
 | Q4 / #200 | Non-idempotent effects against alternative servers. | Duplicate/lost-reply schedules bind one effect to its exact operation and owner; report actual peer behavior, bounded refusal and fresh recovery. A successful repeated GET does not qualify it. |
@@ -42,7 +42,18 @@ requirement ledger. DTLS qualification fixtures remain distinct from the active
 MVP. New supported features need explicit requirement/test rows; older inventory
 counts cannot establish that the current feature set is qualified.
 
-## Completed host slice
+## Completed literal and host slices
+
+Q1 is delivered by [companion #90](https://github.com/jeffglousher/coaptic-validation/pull/90),
+merged as `7e6107c03d41f9624beb4241b26f31ff06e762de`. CORE20–23 now execute
+their full conditional workflows rather than shortened substitutes. Mandatory
+format fields and endpoint/control ownership have refusal checks. The full run
+at companion `8dedf8c` / core `a508757` passed 22 of 23 tests; its sole failure
+was an overly strict LINK09 format grader. The corrected six affected tests
+passed at `d868d32` / core `ede6ee8`; final reason-only `e5ca104` passed strict
+Clippy. Original failure and rerun records are retained with #199. Timed Observe
+and supplemental DTLS scenarios were not unnecessarily repeated. CORE15/16 use
+the permitted request-loss branch, not every listed loss alternative.
 
 Q5/Q6 use core `73ec43c0bc8db0e204eacb221b42d140459f6d36` and companion
 [host integration #88](https://github.com/jeffglousher/coaptic-validation/pull/88),
@@ -60,14 +71,14 @@ cover required fields, extensions and malformed, indefinite and nested inputs.
 These finite schedules establish their named refusal/recovery contracts. They do
 not establish independent peer, physical device or exhaustive concurrency proof.
 Earlier 32-bit and s390x results retain their earlier sources; neither was rerun
-for this snapshot. Q1–Q4 and Q7–Q12 retain their separate owners.
+for this snapshot. Q2–Q4 and Q7–Q12 retain their separate owners.
 
 ## Execution order and prerequisites
 
-1. Preserve the delivered #486/#520/#521 fixes and completed Q5/Q6 host slice.
+1. Preserve the delivered #486/#520/#521 fixes and completed Q1/Q5/Q6 slices.
    Implement concrete fixture or integration gaps in coherent batches, then commit
    a clean source snapshot before provenance-enforcing execution.
-2. Complete Q1/Q2/Q4 with literal scenarios and independent UDP/OSCORE peers.
+2. Complete Q2/Q4 with independent UDP/OSCORE peers and exact effect ownership.
    Reuse proof when its exact source and required boundary still match. Keep
    optional DTLS fixtures and their reviewed RFC conflicts separate from the MVP.
 3. Execute Q7–Q10 on a source-matched installed image. Hardware touch is only

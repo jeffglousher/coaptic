@@ -349,8 +349,8 @@ delivered; independent and physical qualification retain their separate owners.
 limited to one security association; its remaining deployment accounting belongs
 with #333/#341 rather than a second association implementation.
 
-The [qualification plan](requirements/VALIDATION-PLAN.md) separates the remaining
-literal scenarios (#199), independent peers/addressing (#200), completed finite
+The [qualification plan](requirements/VALIDATION-PLAN.md) separates the completed
+literal inventory (#199), remaining independent peers/addressing (#200), completed finite
 host/parser campaigns and diagnostic adapters (#202), physical custody/persistence (#333),
 and controlled measurements (#341). These are actual remaining proof, not CI
 requirements and not implied by cross-compilation or layout tests. #365 owns the

@@ -291,6 +291,13 @@ fn managed_diagnostics_observe_retained_app_without_advancing_owner() {
 
     client.refresh_blocked = false;
     assert!(client.cancel(call, now).unwrap());
+    let cancelled = client.diagnostic_snapshot(now).unwrap();
+    assert_eq!(cancelled.usage.completed_replies, 1);
+    let mut output = [0; 32];
+    assert!(matches!(
+        client.take_response_into(call, &mut output, now).unwrap(),
+        Some(Err(crate::CallFailure::Cancelled))
+    ));
     let after = client.diagnostic_snapshot(now).unwrap();
     assert_eq!(after.usage.client_requests.occupied, 0);
     assert_eq!(after.usage.client_replies.occupied, 0);
