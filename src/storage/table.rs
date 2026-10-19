@@ -472,7 +472,8 @@ pub struct ObserveInterest {
     key: ObserveKey,
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
-    // SZX in bits 0..2, presence in bit 7; No-Response error bits in 3..4.
+    // SZX in bits 0..2, presence in bit 7, Q mode in bit 6;
+    // No-Response error bits in 3..4.
     response_policy: u8,
     seq: u32,
     pending: bool,
@@ -593,6 +594,15 @@ impl ObserveInterest {
                 None => 0,
             };
         self
+    }
+
+    pub(crate) const fn with_q_block2(mut self, enabled: bool) -> Self {
+        self.response_policy = (self.response_policy & !0x40) | if enabled { 0x40 } else { 0 };
+        self
+    }
+
+    pub(crate) const fn q_block2(self) -> bool {
+        self.response_policy & 0x40 != 0
     }
 
     pub(crate) const fn with_no_response(mut self, mask: crate::message::NoResponse) -> Self {

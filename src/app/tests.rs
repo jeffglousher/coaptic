@@ -12656,12 +12656,8 @@ fn unsupported_observe_transfer_profiles_fall_back_and_recover() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let token = Token::new(&[0xa1]).unwrap();
     for method in [Code::GET, Code::FETCH] {
-        // Classic nonzero selection, Q single block, and Q entire body.
-        for (number, value) in [
-            (OptionNumber::BLOCK2, 0x10),
-            (OptionNumber::Q_BLOCK2, 0x10),
-            (OptionNumber::Q_BLOCK2, 0x08),
-        ] {
+        // Nonzero classic and selective Q requests do not establish a relation.
+        for (number, value) in [(OptionNumber::BLOCK2, 0x10), (OptionNumber::Q_BLOCK2, 0x10)] {
             for refresh in [false, true] {
                 let mut app = App::profile::<profiles::Default>()
                     .deterministic_for_tests()
