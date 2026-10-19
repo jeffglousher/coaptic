@@ -28,6 +28,7 @@ mod builder;
 mod decode;
 mod echo;
 mod encode;
+pub mod extended;
 mod hop;
 mod id;
 mod missing_blocks;

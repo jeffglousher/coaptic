@@ -155,18 +155,36 @@ pub(crate) fn encode_iter<'a>(
     options: impl IntoIterator<Item = Opt<'a>>,
     payload: &[u8],
 ) -> Result<usize, EncodeError> {
-    let tkl = token.len();
-    let header_end = 4 + tkl;
+    encode_token_iter(buf, ty, code, id, token.as_bytes(), options, payload)
+}
+
+pub(super) fn encode_token_iter<'a>(
+    buf: &mut [u8],
+    ty: Type,
+    code: Code,
+    id: MessageId,
+    token: &[u8],
+    options: impl IntoIterator<Item = Opt<'a>>,
+    payload: &[u8],
+) -> Result<usize, EncodeError> {
+    let (tkl, extension, extension_len) = super::extended::encode_length(token.len())?;
+    let mut options = options.into_iter().peekable();
+    if code.is_empty() && (!token.is_empty() || !payload.is_empty() || options.peek().is_some()) {
+        return Err(EncodeError::EmptyMessageNotEmpty);
+    }
+    let token_start = 4 + extension_len;
+    let header_end = token_start + token.len();
     if buf.len() < header_end {
         return Err(EncodeError::BufferTooSmall);
     }
 
-    buf[0] = (1 << 6) | (ty.to_bits() << 4) | (tkl as u8);
+    buf[0] = (1 << 6) | (ty.to_bits() << 4) | tkl;
     buf[1] = code.as_raw();
     let mid = id.get().to_be_bytes();
     buf[2] = mid[0];
     buf[3] = mid[1];
-    buf[4..header_end].copy_from_slice(token.as_bytes());
+    buf[4..token_start].copy_from_slice(&extension[..extension_len]);
+    buf[token_start..header_end].copy_from_slice(token);
 
     let mut i = header_end;
     let mut prev = 0u16;
@@ -229,7 +247,7 @@ pub(crate) fn write_option(
     Ok(i)
 }
 
-fn ext_nibble(n: u32) -> Result<(u8, [u8; 2], usize), EncodeError> {
+pub(super) fn ext_nibble(n: u32) -> Result<(u8, [u8; 2], usize), EncodeError> {
     if n < 13 {
         Ok((n as u8, [0, 0], 0))
     } else if n < 269 {
