@@ -158,14 +158,20 @@ Ethernet/PoE and sustained hostile-load campaigns need explicit scope decisions;
 ordinary flash must not be described as physically rollback-resistant.
 
 DTLS belongs to the companion test adapter, not the first-party core.
-[#486](https://github.com/jeffglousher/coaptic/issues/486) concerns that adapter's
-GCM record-error policy and finite capture proof. Short-tag checks and typed
-invalid-MAC codec refusal were already implemented before this ledger; connection
-policy and GCM-specific proof must be assessed separately. RFC 6347 section
-4.1.2.1 allows silent discard; when sending an invalid-MAC alert it requires fatal
-`bad_record_mac(20)`. This cannot satisfy literal TD_COAP_DTLS_02's prescribed
-`decrypt_error(51)`. Neither a closed companion issue list nor CCM evidence closes
-GCM acceptance.
+[#486](https://github.com/jeffglousher/coaptic/issues/486) is corrected by
+[companion PR 87](https://github.com/jeffglousher/coaptic-validation/pull/87):
+short GCM tags refuse before nonce allocation or subtraction, typed invalid-MAC
+errors follow the actual PSK GCM fatal-20 policy, structural errors discard and
+non-PSK behavior is unchanged. Eight offline codec/policy tests, CCM8/GCM live
+control/wrong-key/fresh-recovery profiles and 92 capture mutations passed.
+Captures bind core `73ec43c` and companion `1a1e42e`; merged companion `a48f0f2`
+has the identical tree. This is finite local same-backend UDP proof, not
+independent-peer or ESP32 DTLS qualification.
+
+RFC 6347 section 4.1.2.1 allows silent discard; when sending an invalid-MAC alert
+it requires fatal `bad_record_mac(20)`. This does not satisfy literal
+TD_COAP_DTLS_02's prescribed `decrypt_error(51)`; the reviewed conflict remains a
+separate #199 disposition rather than a relabeled PASS.
 
 Normative sources: original [RFC 9528](../../knowledge/rfcs/rfc9528.txt),
 [RFC 9668](../../knowledge/rfcs/rfc9668.txt) and
