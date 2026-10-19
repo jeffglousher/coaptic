@@ -136,7 +136,7 @@ fn server() -> Server {
     .bind(Io::default())
     .unwrap()
 }
-fn deliver<S: AppStorage, const R: usize>(
+fn deliver<S: AppStorage<Token = coaptic::message::Token>, const R: usize>(
     client: &mut Client<S, R>,
     server: &mut Server,
     request: Frame,
@@ -155,7 +155,7 @@ fn deliver<S: AppStorage, const R: usize>(
     client.poll(now + 1).unwrap();
     reply
 }
-fn capacity<S: AppStorage>(mut client: Client<S, 6>) {
+fn capacity<S: AppStorage<Token = coaptic::message::Token>>(mut client: Client<S, 6>) {
     let mut server = server();
     without_allocating(|| {
         let mut calls = [None; 6];
@@ -284,7 +284,7 @@ fn security_capacity_allocated_has_identical_bounded_behavior() {
             .unwrap(),
     );
 }
-fn observe<S: AppStorage>(mut client: Client<S, 1>) {
+fn observe<S: AppStorage<Token = coaptic::message::Token>>(mut client: Client<S, 1>) {
     let mut server = server();
     without_allocating(|| {
         let call = client.get("observe").observe().to(PEER).send(0).unwrap();

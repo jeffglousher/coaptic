@@ -1,6 +1,7 @@
 //! Bounded table of [`MethodRouter`](super::MethodRouter) routes.
 
-use crate::message::{Code, ContentFormat};
+use crate::link_format::Metadata;
+use crate::message::{Code, ContentFormat, OwnedToken, Token};
 use crate::storage::ObserveResource;
 
 use super::request::{IntoPath, MAX_PATH_SEGMENTS, Path, PathError, Request, path_from_into};
@@ -17,6 +18,10 @@ pub enum RouteError {
     Path(PathError),
     /// No slot remains for a new path. Existing paths may still be replaced.
     Full,
+    /// No route exists at the supplied metadata path.
+    NotFound,
+    /// Discovery metadata is malformed. Existing metadata is unchanged.
+    Metadata(crate::link_format::Error),
 }
 
 /// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
@@ -111,9 +116,10 @@ impl<const N: usize> Default for LinkFormatScratch<N> {
 
 const WELL_KNOWN: &[&str] = &[".well-known", "core"];
 
-struct Entry {
+struct Entry<T: OwnedToken = Token> {
     path: Path<'static>,
-    methods: MethodRouter,
+    methods: MethodRouter<T>,
+    metadata: Option<&'static Metadata<'static>>,
 }
 
 /// Fixed table of path → method router.
@@ -124,13 +130,19 @@ struct Entry {
 /// and not a shared application bag. `/.well-known/core` uses
 /// [`LinkFormatScratch`] ([`link_format_capacity`]).
 /// Use [`Self::try_route`] for recoverable registration at a resource boundary.
-pub struct Site<const N: usize = DEFAULT_ROUTES> {
-    entries: [Option<Entry>; N],
+/// Each route retains one nullable pointer for discovery metadata (one machine
+/// word). The descriptor, attribute slices and text are borrowed static data;
+/// include their placement in application flash/RAM accounting. No metadata
+/// payload buffer is added to the Site or its discovery scratch.
+/// `T` selects the handlers' token type. The Site stores function pointers,
+/// so choosing larger token storage does not enlarge the routing table.
+pub struct Site<const N: usize = DEFAULT_ROUTES, T: OwnedToken = Token> {
+    entries: [Option<Entry<T>>; N],
     len: usize,
     well_known: bool,
 }
 
-impl<const N: usize> Site<N> {
+impl<const N: usize, T: OwnedToken> Site<N, T> {
     /// Empty site.
     #[must_use]
     pub const fn new() -> Self {
@@ -191,7 +203,7 @@ impl<const N: usize> Site<N> {
     ///
     /// If the table is full and `path` is new, if the path has more than
     /// [`MAX_PATH_SEGMENTS`] segments, or if a segment is empty.
-    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
+    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter<T>) -> &mut Self {
         let path = expect_path(path);
         self.insert_route(path, methods).unwrap_or_else(|_| {
             panic!("site is full ({N} routes); bind with .routes::<M>() for a larger M")
@@ -205,7 +217,7 @@ impl<const N: usize> Site<N> {
     pub fn try_route(
         &mut self,
         path: impl IntoPath,
-        methods: MethodRouter,
+        methods: MethodRouter<T>,
     ) -> Result<&mut Self, RouteError> {
         let path = path_from_into(path).map_err(RouteError::Path)?;
         self.insert_route(path, methods)
@@ -215,15 +227,41 @@ impl<const N: usize> Site<N> {
     pub fn try_route_path(
         &mut self,
         path: &'static str,
-        methods: MethodRouter,
+        methods: MethodRouter<T>,
     ) -> Result<&mut Self, RouteError> {
         self.try_route(path, methods)
+    }
+
+    /// Attach or clear borrowed discovery metadata on an existing route.
+    ///
+    /// Invalid paths/metadata or an absent route leave the Site unchanged.
+    /// Replacing the handler on the same path preserves metadata; removing the
+    /// route discards it. `observable` advertises a hint only and does not install
+    /// an Observe handler. The serialized catalog still must fit dispatch scratch;
+    /// overflow yields 5.00 instead of truncating or omitting attributes.
+    pub fn set_discovery_metadata(
+        &mut self,
+        path: impl IntoPath,
+        metadata: Option<&'static Metadata<'static>>,
+    ) -> Result<&mut Self, RouteError> {
+        let path = path_from_into(path).map_err(RouteError::Path)?;
+        if let Some(metadata) = metadata {
+            metadata.encoded_len().map_err(RouteError::Metadata)?;
+        }
+        let entry = self
+            .entries
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.path.matches(path.segments()))
+            .ok_or(RouteError::NotFound)?;
+        entry.metadata = metadata;
+        Ok(self)
     }
 
     fn insert_route(
         &mut self,
         path: Path<'static>,
-        methods: MethodRouter,
+        methods: MethodRouter<T>,
     ) -> Result<&mut Self, RouteError> {
         for entry in self.entries.iter_mut().flatten() {
             if entry.path.matches(path.segments()) {
@@ -239,7 +277,11 @@ impl<const N: usize> Site<N> {
             .iter()
             .position(Option::is_none)
             .ok_or(RouteError::Full)?;
-        self.entries[index] = Some(Entry { path, methods });
+        self.entries[index] = Some(Entry {
+            path,
+            methods,
+            metadata: None,
+        });
         self.len += 1;
         Ok(self)
     }
@@ -285,7 +327,7 @@ impl<const N: usize> Site<N> {
     /// # Panics
     ///
     /// Same as [`Self::route`].
-    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
+    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter<T>) -> &mut Self {
         self.route(path, methods)
     }
 
@@ -295,12 +337,14 @@ impl<const N: usize> Site<N> {
     /// `catalog` is scratch for `/.well-known/core` when the list exceeds
     /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Pass
     /// [`LinkFormatScratch`] (or any slice of
-    /// [`link_format_capacity`], capped at [`RESPONSE_BODY`]).
+    /// [`link_format_capacity`]). A standalone caller may supply larger scratch
+    /// for richer metadata; at most [`RESPONSE_BODY`] bytes are used. App's
+    /// configured [`LinkFormatScratch`] budget is unchanged.
     /// Links encode decoded path segments as URI references without changing
     /// their boundaries (RFC 6690 section 2 and RFC 7252 section 6.5).
     /// Unsupported unicast discovery query filters are ignored.
     #[must_use]
-    pub fn dispatch<'a>(&self, request: Request<'_>, catalog: &'a mut [u8]) -> Response<'a> {
+    pub fn dispatch<'a>(&self, request: Request<'_, T>, catalog: &'a mut [u8]) -> Response<'a, T> {
         for entry in self.entries.iter().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
@@ -334,7 +378,7 @@ impl<const N: usize> Site<N> {
     }
 
     /// Snapshot fn for an opaque App route identity.
-    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource> {
+    pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource<T>> {
         self.entries.iter().enumerate().find_map(|(index, entry)| {
             entry
                 .as_ref()
@@ -349,7 +393,7 @@ impl<const N: usize> Site<N> {
     }
 }
 
-impl<const N: usize> Default for Site<N> {
+impl<const N: usize, T: OwnedToken> Default for Site<N, T> {
     fn default() -> Self {
         Self::new()
     }
@@ -373,8 +417,11 @@ fn path_is_well_known(path: &[&str]) -> bool {
     path == WELL_KNOWN
 }
 
-fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Response<'a> {
-    let cap = link_format_capacity::<N>().min(storage.len());
+fn link_format<'a, const N: usize, T: OwnedToken>(
+    site: &Site<N, T>,
+    storage: &'a mut [u8],
+) -> Response<'a, T> {
+    let cap = RESPONSE_BODY.min(storage.len());
     let buf = &mut storage[..cap];
     let mut n = 0usize;
     let mut first = true;
@@ -390,12 +437,26 @@ fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Res
         if !write_link(buf, &mut n, entry.path.segments()) {
             return Response::internal_error();
         }
+        if let Some(metadata) = entry.metadata {
+            match metadata.write_into(&mut buf[n..]) {
+                Ok(written) => n += written,
+                Err(_) => return Response::internal_error(),
+            }
+        }
     }
     Response::new(Code::CONTENT)
         .payload_copy_full(&buf[..n])
         .content_format(ContentFormat::LINK_FORMAT)
         .etag(&catalog_etag(&buf[..n]))
 }
+
+#[cfg(test)]
+#[path = "site_metadata_tests.rs"]
+mod metadata_tests;
+
+#[cfg(test)]
+#[path = "extended_handler_tests.rs"]
+mod extended_handler_tests;
 
 /// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
 fn catalog_etag(body: &[u8]) -> [u8; 4] {

@@ -52,7 +52,9 @@ impl NoResponse {
     }
 
     /// No-Response on `parsed`. Absent is [`Self::DEFAULT`].
-    pub fn from_message(parsed: &ParsedMessage<'_>) -> Result<Self, ValueError> {
+    pub fn from_message(
+        parsed: &ParsedMessage<'_, impl super::OwnedToken>,
+    ) -> Result<Self, ValueError> {
         match parsed.no_response() {
             None => Ok(Self::DEFAULT),
             Some(result) => result,

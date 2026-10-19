@@ -3,20 +3,20 @@
 use crate::error::ParseError;
 
 use super::option::{OptionNumber, Options, read_option};
-use super::{Code, Header, MessageId, Token, Type};
+use super::{Code, Header, MessageId, OwnedToken, Token, Type};
 
 /// Zero-copy view of a decoded CoAP datagram.
 ///
 /// Options and payload borrow `buf` from [`decode`]. No allocator is used.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParsedMessage<'a> {
+pub struct ParsedMessage<'a, T: OwnedToken = Token> {
     header: Header,
-    token: Token,
+    token: T,
     options: &'a [u8],
     payload: &'a [u8],
 }
 
-impl<'a> ParsedMessage<'a> {
+impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
     /// Parsed header.
     #[must_use]
     pub const fn header(self) -> Header {
@@ -43,7 +43,7 @@ impl<'a> ParsedMessage<'a> {
 
     /// Token.
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(self) -> T {
         self.token
     }
 
@@ -143,6 +143,66 @@ impl<'a> ParsedMessage<'a> {
 /// and [`ParsedMessage::check_rfc7252_formats`] (known option, wrong
 /// format).
 pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
+    let parts = decode_parts(buf, false)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token: Token::from_checked(parts.token),
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
+/// Syntax errors and valid tokens exceeding selected retained capacity are
+/// separate outcomes. Capacity refusal must not be treated as a malformed UDP
+/// request when extended-token support is enabled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TokenDecodeError {
+    /// Invalid/truncated wire syntax.
+    Malformed(ParseError),
+    /// Valid datagram, but the selected representation cannot retain its token.
+    Capacity(super::extended::CapacityError),
+}
+
+/// Decode RFC 8974 syntax and retain the token in caller-selected owned storage.
+/// On [`TokenDecodeError::Capacity`], [`super::extended::decode`] can still borrow
+/// the full token from the same input to construct a refusal response.
+pub fn decode_with_token<T: OwnedToken>(
+    buf: &[u8],
+) -> Result<ParsedMessage<'_, T>, TokenDecodeError> {
+    let parts = decode_parts(buf, true).map_err(TokenDecodeError::Malformed)?;
+    let token = T::try_from_bytes(parts.token).map_err(TokenDecodeError::Capacity)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token,
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
+// OSCORE excludes the outer token from authentication. Capacity refusal can
+// authenticate options/payload with an empty local token, then echo the original
+// borrowed token on its response. Never use this view to dispatch application work.
+#[cfg(feature = "oscore")]
+pub(crate) fn decode_without_token<T: OwnedToken>(
+    buf: &[u8],
+) -> Result<ParsedMessage<'_, T>, ParseError> {
+    let parts = decode_parts(buf, true)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token: T::EMPTY,
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
+pub(super) struct Parts<'a> {
+    pub header: Header,
+    pub token: &'a [u8],
+    pub options: &'a [u8],
+    pub payload: &'a [u8],
+}
+
+pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, ParseError> {
     if buf.len() < 4 {
         return Err(ParseError::TruncatedHeader);
     }
@@ -159,7 +219,7 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
         _ => Type::Reset,
     };
     let tkl = buf[0] & 0x0f;
-    if tkl > 8 {
+    if !extended && tkl > 8 {
         return Err(ParseError::BadTokenLength);
     }
 
@@ -167,29 +227,33 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     let id = MessageId::new(u16::from_be_bytes([buf[2], buf[3]]));
 
     let rest = &buf[4..];
-    let tkl_usize = usize::from(tkl);
+    let (tkl_usize, prefix) = if extended {
+        super::extended::decode_length(tkl, rest)?
+    } else {
+        (usize::from(tkl), 0)
+    };
+    let rest = &rest[prefix..];
     if rest.len() < tkl_usize {
         return Err(ParseError::TruncatedToken);
     }
     let (token_bytes, after_token) = rest.split_at(tkl_usize);
-    let token = Token::from_checked(token_bytes);
 
     if code.is_empty() {
         if tkl != 0 || !after_token.is_empty() {
             return Err(ParseError::EmptyMessageNotEmpty);
         }
-        return Ok(ParsedMessage {
+        return Ok(Parts {
             header: Header::new(version, ty, tkl, code, id),
-            token,
+            token: token_bytes,
             options: &[],
             payload: &[],
         });
     }
 
     let (options, payload) = split_options_and_payload(after_token)?;
-    Ok(ParsedMessage {
+    Ok(Parts {
         header: Header::new(version, ty, tkl, code, id),
-        token,
+        token: token_bytes,
         options,
         payload,
     })

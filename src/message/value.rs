@@ -809,7 +809,7 @@ fn check_format(opt: Opt<'_>) -> Result<(), ParseError> {
     }
 }
 
-impl<'a> ParsedMessage<'a> {
+impl<'a, T: super::OwnedToken> ParsedMessage<'a, T> {
     /// First option with `number`, if any.
     #[must_use]
     pub fn get_option(self, number: OptionNumber) -> Option<Opt<'a>> {

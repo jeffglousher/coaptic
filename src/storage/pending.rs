@@ -331,9 +331,10 @@ pub(crate) fn validate_replacement(
             super::SlotError::LengthExceedsSlot,
         ));
     }
-    let old = crate::message::decode(original.ok_or(PendingReplaceError::Stale)?)
+    let old = crate::message::extended::decode(original.ok_or(PendingReplaceError::Stale)?)
         .map_err(|_| PendingReplaceError::InvalidMessage)?;
-    let new = crate::message::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
+    let new =
+        crate::message::extended::decode(bytes).map_err(|_| PendingReplaceError::InvalidMessage)?;
     if old.ty() != crate::message::Type::Confirmable
         || old.code().is_empty()
         || old.message_id() != expected.message_id()

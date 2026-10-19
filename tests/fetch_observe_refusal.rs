@@ -149,7 +149,10 @@ struct Peer {
     context: Option<coaptic::oscore::SecurityContext>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -255,7 +258,7 @@ fn request(
             .with_payload(body),
     )
 }
-fn take<S: AppStorage>(
+fn take<S: AppStorage<Token = coaptic::message::Token>>(
     server: &mut Server<S>,
     peer: &Peer,
     token: &[u8],
@@ -271,7 +274,7 @@ fn take<S: AppStorage>(
     assert_eq!(p.observe().is_some(), observed);
     assert!(server.transport_mut().take().is_none());
 }
-fn cycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn cycle<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<S>, protected: bool) {
     let mut peer = Peer::new(&mut server, protected);
     SOURCE_CALLS.with(|n| n.set(0));
     for round in 0..20u16 {
@@ -627,7 +630,10 @@ fn query_request(peer: &mut Peer, mid: u16, observation: Option<u32>, query: &st
             .with_options(opts.as_slice()),
     )
 }
-fn query_cycle<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn query_cycle<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut peer = Peer::new(&mut server, protected);
     SOURCE_CALLS.with(|n| n.set(0));
     for (index, query) in ["b", ""].into_iter().enumerate() {

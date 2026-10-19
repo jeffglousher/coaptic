@@ -85,9 +85,9 @@ fn track<R>(fail_at: Option<usize>, run: impl FnOnce() -> R) -> (R, Record) {
 }
 
 fn exercise(c: Capacities) {
-    let required = AllocMemory::required_heap_bytes(c).unwrap();
+    let required = AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
     let (result, baseline) = track(None, || {
-        let mut memory = AllocMemory::try_new(c, required)?;
+        let mut memory = AllocMemory::<coaptic::message::Token>::try_new(c, required)?;
         // Exhaustion and recovery operate without growing any pool.
         let id = memory.rx_datagram().acquire().unwrap();
         for _ in 1..c.rx_datagram_slots {
@@ -106,7 +106,9 @@ fn exercise(c: Capacities) {
     );
     assert_eq!(baseline.live, 0);
 
-    let (error, record) = track(None, || AllocMemory::try_new(c, required - 1).unwrap_err());
+    let (error, record) = track(None, || {
+        AllocMemory::<coaptic::message::Token>::try_new(c, required - 1).unwrap_err()
+    });
     assert_eq!(
         error,
         BuildError::HeapBudgetExceeded {
@@ -121,7 +123,7 @@ fn exercise(c: Capacities) {
 
     for index in 1..=baseline.attempts {
         let (error, record) = track(Some(index), || {
-            AllocMemory::try_new(c, required).unwrap_err()
+            AllocMemory::<coaptic::message::Token>::try_new(c, required).unwrap_err()
         });
         assert_eq!(error, BuildError::AllocationFailed, "allocation {index}");
         assert_eq!(record.attempts, index);
@@ -129,7 +131,9 @@ fn exercise(c: Capacities) {
             record.live, 0,
             "partial construction leaked at allocation {index}"
         );
-        let (recovered, record) = track(None, || AllocMemory::try_new(c, required).map(drop));
+        let (recovered, record) = track(None, || {
+            AllocMemory::<coaptic::message::Token>::try_new(c, required).map(drop)
+        });
         assert_eq!(recovered, Ok(()));
         assert_eq!(record.live, 0);
         assert_eq!(record.requested, required);
@@ -162,7 +166,9 @@ fn impossible_layout_and_aggregate_overflow_refuse_without_allocating() {
     // Each payload layout fits, but four such payloads exceed usize.
     cases[2].rx_datagram_bytes = isize::MAX as usize;
     for c in cases {
-        let (error, record) = track(None, || AllocMemory::try_new(c, usize::MAX).unwrap_err());
+        let (error, record) = track(None, || {
+            AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap_err()
+        });
         assert_eq!(error, BuildError::CapacityOverflow);
         assert_eq!(record.attempts, 0);
     }
@@ -172,7 +178,9 @@ fn impossible_layout_and_aggregate_overflow_refuse_without_allocating() {
 fn incomplete_body_configuration_refuses_before_allocating() {
     let mut c = Capacities::from_profile::<profiles::Default>();
     c.rx_body_slots = Some(1);
-    let (error, record) = track(None, || AllocMemory::try_new(c, usize::MAX).unwrap_err());
+    let (error, record) = track(None, || {
+        AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap_err()
+    });
     assert_eq!(error, BuildError::IncompleteBodyCapacities);
     assert_eq!(record.attempts, 0);
 }
@@ -180,8 +188,8 @@ fn incomplete_body_configuration_refuses_before_allocating() {
 #[test]
 fn budgeted_storage_binds_to_app_and_legacy_allocation_is_fallible() {
     let c = Capacities::from_profile::<profiles::Default>();
-    let required = AllocMemory::required_heap_bytes(c).unwrap();
-    let memory = AllocMemory::try_new(c, required).unwrap();
+    let required = AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
+    let memory = AllocMemory::<coaptic::message::Token>::try_new(c, required).unwrap();
     let _app = App::builder()
         .allow_unprotected()
         .deterministic_for_tests()
@@ -347,7 +355,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
         assert_eq!(record.attempts, 0);
         assert_eq!(entropy.get(), 0);
         // Engine-only storage remains legal; App adds the scratch admission rule.
-        let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
+        let memory = AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap();
         assert_eq!(
             App::builder()
                 .allow_unprotected()
@@ -364,7 +372,7 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
                 .is_ok()
         );
         assert_eq!(entropy.get(), 1);
-        let memory = AllocMemory::try_new(c, usize::MAX).unwrap();
+        let memory = AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap();
         assert!(
             App::builder()
                 .allow_unprotected()

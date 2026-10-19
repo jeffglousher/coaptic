@@ -113,7 +113,7 @@ See [SECURITY.md](SECURITY.md) for the boundary and
 
 Unprotected CoAP carries binary or textual payloads without message encryption,
 authentication or replay protection. Select `.allow_unprotected()` explicitly for
-compatibility or tests. `.allow_plaintext()` remains a compatibility alias.
+compatibility or tests.
 An attached OSCORE context still enforces protection; authentication failure never
 selects unprotected mode. Disabling Cargo defaults does not select it either.
 

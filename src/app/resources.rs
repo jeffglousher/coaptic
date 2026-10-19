@@ -275,7 +275,7 @@ impl<
 
 #[cfg(feature = "alloc")]
 impl<
-    P,
+    P: MemoryProfile,
     const N: usize,
     const B: bool,
     const D: usize,
@@ -316,7 +316,7 @@ impl<
     /// Checked requested heap bytes; this does not allocate or include inline App state.
     pub fn required_heap_bytes(&self) -> Result<usize, BuildError> {
         self.storage.capacities.validate_for_build(B)?;
-        crate::storage::AllocMemory::required_heap_bytes(self.storage.capacities)
+        crate::storage::AllocMemory::<P::Token>::required_heap_bytes(self.storage.capacities)
     }
 
     /// Maximum requested heap bytes selected for this configuration.
@@ -404,13 +404,13 @@ impl<
     /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
     /// for recoverable refusal.
     #[must_use]
-    pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
+    pub fn route(mut self, path: impl IntoPath, methods: MethodRouter<P::Token>) -> Self {
         self.inner = self.inner.route(path, methods);
         self
     }
     /// Register a static path within the selected route capacity.
     #[must_use]
-    pub fn route_path(mut self, path: &'static str, methods: MethodRouter) -> Self {
+    pub fn route_path(mut self, path: &'static str, methods: MethodRouter<P::Token>) -> Self {
         self.inner = self.inner.route_path(path, methods);
         self
     }
@@ -429,7 +429,7 @@ impl<
     pub fn try_route(
         &mut self,
         path: impl IntoPath,
-        methods: MethodRouter,
+        methods: MethodRouter<P::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.inner.try_route(path, methods)?;
         Ok(self)
@@ -438,7 +438,7 @@ impl<
     pub fn try_route_path(
         &mut self,
         path: &'static str,
-        methods: MethodRouter,
+        methods: MethodRouter<P::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.try_route(path, methods)
     }
@@ -470,6 +470,13 @@ impl<
         self.inner = self.inner.randomness(source);
         self
     }
+    /// Select request token length; see [`AppBuilder::token_length`].
+    #[must_use]
+    pub fn token_length(mut self, len: usize) -> Self {
+        self.inner = self.inner.token_length(len);
+        self
+    }
+
     /// Select deterministic identity generation for tests only.
     #[must_use]
     pub fn deterministic_for_tests(mut self) -> Self {
@@ -482,15 +489,13 @@ impl<
         self.inner = self.inner.allow_unprotected();
         self
     }
-    /// Compatibility alias for [`Self::allow_unprotected`].
-    #[must_use]
-    pub fn allow_plaintext(self) -> Self {
-        self.allow_unprotected()
-    }
     /// Supply a provisioned OSCORE context; protection is required by default.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub fn oscore(mut self, context: crate::oscore::BoundedSecurityContext<REQUESTS>) -> Self {
+    pub fn oscore(
+        mut self,
+        context: crate::oscore::BoundedSecurityContext<REQUESTS, P::Token>,
+    ) -> Self {
         self.inner = self.inner.oscore(context);
         self
     }
@@ -581,6 +586,7 @@ impl<
 {
     /// Bind bounded heap storage and a stateful cryptographic RNG, without `std`.
     /// See [`AppBuilder::bind_with_entropy`] for source ambiguity and failures.
+    #[allow(clippy::type_complexity)]
     pub fn bind_with_entropy<T: DatagramIo, R: FnMut(&mut [u8]) -> bool>(
         self,
         io: T,
@@ -591,7 +597,7 @@ impl<
             crate::platform::WithEntropy<T, R>,
             N,
             B,
-            crate::storage::AllocMemory,
+            crate::storage::AllocMemory<P::Token>,
             D,
             C,
             REQUESTS,
@@ -601,7 +607,7 @@ impl<
     > {
         self.inner.validate_entropy_source()?;
         AppBuilder::<P, Present, N, B, D, C, REQUESTS, ASSOCIATIONS>::validate_scratch::<
-            crate::storage::AllocMemory,
+            crate::storage::AllocMemory<P::Token>,
         >(self.storage.capacities)?;
         let (inner, io) = self.inner.prepare_entropy(io, random)?;
         ConfiguredBuilder {
@@ -616,15 +622,17 @@ impl<
         self,
         io: T,
     ) -> Result<
-        App<P, T, N, B, crate::storage::AllocMemory, D, C, REQUESTS, ASSOCIATIONS>,
+        App<P, T, N, B, crate::storage::AllocMemory<P::Token>, D, C, REQUESTS, ASSOCIATIONS>,
         BuildError,
     > {
         self.inner.validate_security()?;
         AppBuilder::<P, Present, N, B, D, C, REQUESTS, ASSOCIATIONS>::validate_scratch::<
-            crate::storage::AllocMemory,
+            crate::storage::AllocMemory<P::Token>,
         >(self.storage.capacities)?;
-        let storage =
-            crate::storage::AllocMemory::try_new(self.storage.capacities, self.storage.heap_limit)?;
+        let storage = crate::storage::AllocMemory::<P::Token>::try_new(
+            self.storage.capacities,
+            self.storage.heap_limit,
+        )?;
         self.inner.bind_storage(io, storage)
     }
 }

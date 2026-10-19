@@ -49,7 +49,9 @@ impl Echo {
     }
 
     /// Echo on `parsed`. `Ok(None)` if absent.
-    pub fn from_message(parsed: &ParsedMessage<'_>) -> Result<Option<Self>, ValueError> {
+    pub fn from_message(
+        parsed: &ParsedMessage<'_, impl super::OwnedToken>,
+    ) -> Result<Option<Self>, ValueError> {
         match parsed.echo() {
             None => Ok(None),
             Some(bytes) => Self::new(bytes).map(Some),
@@ -137,7 +139,11 @@ impl EchoFreshness {
 
     /// Classify the Echo option on `parsed` using caller `now_ms` / `fresh_ms`.
     #[must_use]
-    pub fn of(parsed: &ParsedMessage<'_>, now_ms: u64, fresh_ms: u64) -> Self {
+    pub fn of(
+        parsed: &ParsedMessage<'_, impl super::OwnedToken>,
+        now_ms: u64,
+        fresh_ms: u64,
+    ) -> Self {
         match Echo::from_message(parsed) {
             Ok(None) => Self::Missing,
             Err(_) => Self::Invalid,

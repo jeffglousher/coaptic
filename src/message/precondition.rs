@@ -27,7 +27,11 @@ impl Precondition {
     /// current ETag when known (used only for a non-empty If-Match). See
     /// `knowledge/rfcs/rfc7252.txt` §5.10.8.
     #[must_use]
-    pub fn of(parsed: &ParsedMessage<'_>, exists: bool, etag: Option<&[u8]>) -> Self {
+    pub fn of(
+        parsed: &ParsedMessage<'_, impl super::OwnedToken>,
+        exists: bool,
+        etag: Option<&[u8]>,
+    ) -> Self {
         parsed.precondition(exists, etag)
     }
 

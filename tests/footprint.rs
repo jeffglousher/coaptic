@@ -1,9 +1,5 @@
-//! RAM locks for Default / Constrained App vs Memory (#93 / PERF-00).
-//!
-//! `.block_wise::<false>()` must not pay `WithBodies` padding or the
-//! client Block2 assembled hold (`RESPONSE_BODY`). Host `usize=8`
-//! magnitudes at `06a39cd`: Memory Default 13416, WithBodies 30312
-//! (Δ16896), App-with-enum 33600.
+//! Whole-object RAM ceilings for App and its owned storage.
+//! Without blockwise, App omits body pools and the assembled-response hold.
 
 use core::mem::size_of;
 
@@ -68,6 +64,10 @@ const RETAINED_CONDITIONS_BUDGET: usize = 4 * 24;
 // Four three-state Observe format values, including potential alignment.
 const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 
+// Each route borrows one static discovery descriptor; descriptor contents stay
+// caller-owned. Independent whole-App ceilings above remain unchanged.
+const DISCOVERY_METADATA_BUDGET: usize = DEFAULT_ROUTES * size_of::<usize>();
+
 // Complete-response retention adds one optional RX slot identity per Call.
 // App also retains the deferred generation/deadline, retention flag and padding;
 // zero deferred slots reserve no request/response header arrays.
@@ -104,6 +104,7 @@ fn assert_datagram_omits_assembled(
                 + OBSERVE_REQUEST_BUDGET
                 + RETAINED_CONDITIONS_BUDGET
                 + OBSERVE_FORMAT_BUDGET
+                + DISCOVERY_METADATA_BUDGET
                 + FULL_RESPONSE_STATE_BUDGET
                 + SECURITY_CONTEXT_BUDGET,
         "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"

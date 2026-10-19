@@ -40,6 +40,7 @@ impl App {
             full_responses: false,
             deferred_lifetime_ms: Transmission::EXCHANGE_LIFETIME_MS as u64,
             identity: None,
+            token_length: None,
             oscore: oscore::Store::new(),
             oscore_checkpoint: oscore::CheckpointState::new(),
             allow_unprotected: false,
@@ -94,6 +95,7 @@ impl<
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            token_length: self.token_length,
             oscore: self.oscore,
             oscore_checkpoint: self.oscore_checkpoint,
             allow_unprotected: self.allow_unprotected,
@@ -127,6 +129,7 @@ impl<
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            token_length: self.token_length,
             oscore: self.oscore,
             oscore_checkpoint: self.oscore_checkpoint,
             allow_unprotected: self.allow_unprotected,
@@ -158,6 +161,7 @@ impl<
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            token_length: self.token_length,
             oscore: self.oscore,
             oscore_checkpoint: self.oscore_checkpoint,
             allow_unprotected: self.allow_unprotected,
@@ -170,8 +174,10 @@ impl<
     ///
     /// Ordinary responses keep one bounded RX datagram occupied until collection;
     /// Block2 retains its existing RX body. Untaken replies apply backpressure.
-    /// This removes the legacy 128-byte snapshot / 4096-byte hold restrictions,
-    /// while the selected storage still bounds every representation.
+    /// Each active or uncollected Call reserves one logical RX credit, including
+    /// blockwise Calls. At most `rx_datagram_slots - 1` such Calls are admitted;
+    /// the remaining packet receives control traffic and overload refusals.
+    /// Collection or cancellation releases the credit. Observe refreshes reuse it.
     #[must_use]
     pub const fn full_responses(mut self) -> Self {
         self.full_responses = true;
@@ -199,14 +205,14 @@ impl<
     /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
     /// for recoverable refusal.
     #[must_use]
-    pub fn route(mut self, path: impl IntoPath, methods: MethodRouter) -> Self {
+    pub fn route(mut self, path: impl IntoPath, methods: MethodRouter<P::Token>) -> Self {
         self.site.route(path, methods);
         self
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
     #[must_use]
-    pub fn route_path(mut self, path: &'static str, methods: MethodRouter) -> Self {
+    pub fn route_path(mut self, path: &'static str, methods: MethodRouter<P::Token>) -> Self {
         self.site.route_path(path, methods);
         self
     }
@@ -218,7 +224,7 @@ impl<
     pub fn try_route(
         &mut self,
         path: impl IntoPath,
-        methods: MethodRouter,
+        methods: MethodRouter<P::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.site.try_route(path, methods)?;
         Ok(self)
@@ -228,7 +234,7 @@ impl<
     pub fn try_route_path(
         &mut self,
         path: &'static str,
-        methods: MethodRouter,
+        methods: MethodRouter<P::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.try_route(path, methods)
     }
@@ -267,6 +273,16 @@ impl<
         self
     }
 
+    /// Select the length of generated request tokens (at least eight bytes).
+    /// Binding refuses lengths above this profile's token storage capacity.
+    /// The default is eight random bytes; deterministic test identities keep
+    /// their four-byte default unless this setting is supplied explicitly.
+    #[must_use]
+    pub const fn token_length(mut self, len: usize) -> Self {
+        self.token_length = Some(len);
+        self
+    }
+
     /// Predictable counters and minimum RTO, for reproducible tests only.
     /// Do not use this configuration on a production network.
     #[must_use]
@@ -286,7 +302,10 @@ impl<
     /// The `oscore` feature is enabled by default and works without an allocator.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub fn oscore(mut self, context: crate::oscore::BoundedSecurityContext<REQUESTS>) -> Self {
+    pub fn oscore(
+        mut self,
+        context: crate::oscore::BoundedSecurityContext<REQUESTS, P::Token>,
+    ) -> Self {
         self.oscore.set_primary(context);
         self.oscore_checkpoint.invalidate();
         self
@@ -331,12 +350,6 @@ impl<
     pub const fn allow_unprotected(mut self) -> Self {
         self.allow_unprotected = true;
         self
-    }
-
-    /// Compatibility alias for [`Self::allow_unprotected`].
-    #[must_use]
-    pub const fn allow_plaintext(self) -> Self {
-        self.allow_unprotected()
     }
 
     pub(super) fn validate_security(&self) -> Result<(), BuildError> {
@@ -403,6 +416,7 @@ impl<
             full_responses: self.full_responses,
             deferred_lifetime_ms: self.deferred_lifetime_ms,
             identity: self.identity,
+            token_length: self.token_length,
             oscore: self.oscore,
             oscore_checkpoint: self.oscore_checkpoint,
             allow_unprotected: self.allow_unprotected,
@@ -428,6 +442,9 @@ where
         c: crate::storage::Capacities,
     ) -> Result<(), BuildError> {
         c.validate_for_build(BLOCK_WISE)?;
+        if c.rx_datagram_slots < 2 || c.tx_datagram_slots < 2 {
+            return Err(BuildError::PacketHeadroom);
+        }
         // Check the actual borrowed slices: custom storage need not use the
         // default associated constants. This is App admission, not Engine policy.
         {
@@ -455,6 +472,8 @@ where
     }
 
     /// Bind the profile's fixed memory, with or without body pools.
+    /// At least two RX and two TX packets are required: one of each remains
+    /// available for ingress and transient control/refusal traffic.
     ///
     /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.
@@ -483,7 +502,7 @@ where
     /// `P` remains the default-memory marker;
     /// the selected `S` supplies actual datagram/body dimensions and scratch.
     /// With `alloc`, use `Self::bind_alloc` for one-time bounded allocation.
-    pub fn bind_storage<T, S: AppStorage>(
+    pub fn bind_storage<T, S: AppStorage<Token = P::Token>>(
         self,
         io: T,
         storage: S,
@@ -506,7 +525,7 @@ where
     ///
     /// Requires `alloc`, independently of `std`. There is no growth during poll.
     /// Allocation/layout failure returns [`BuildError`]. For an aggregate heap
-    /// request limit, construct [`crate::storage::AllocMemory::try_new`] and pass
+    /// request limit, construct [`crate::storage::AllocMemory<P::Token>::try_new`] and pass
     /// it to [`Self::bind_storage`].
     #[cfg(feature = "alloc")]
     pub fn bind_alloc<T>(
@@ -519,7 +538,7 @@ where
             T,
             N,
             BLOCK_WISE,
-            crate::storage::AllocMemory,
+            crate::storage::AllocMemory<P::Token>,
             DEFERRED,
             CALLS,
             REQUESTS,
@@ -528,14 +547,14 @@ where
         BuildError,
     > {
         self.validate_security()?;
-        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
+        Self::validate_scratch::<crate::storage::AllocMemory<P::Token>>(c)?;
         let engine = EngineBuilder::new()
             .rx_datagram(c.rx_datagram_slots, c.rx_datagram_bytes)
             .tx_datagram(c.tx_datagram_slots, c.tx_datagram_bytes)
             .dedup(c.dedup_entries)
             .observe(c.observe_entries)
             .block_wise(BLOCK_WISE)
-            .build_alloc(c)?;
+            .build_alloc_with_token::<P::Token>(c)?;
         self.bind_built(io, engine)
     }
 
@@ -580,7 +599,7 @@ where
     pub fn bind_storage_with_entropy<
         T: DatagramTransport,
         R: FnMut(&mut [u8]) -> bool,
-        S: AppStorage,
+        S: AppStorage<Token = P::Token>,
     >(
         self,
         io: T,
@@ -609,6 +628,7 @@ where
     /// Allocate bounded pools once and bind a stateful entropy callback.
     /// Requires `alloc` independently of `std`; see [`Self::bind_with_entropy`].
     #[cfg(feature = "alloc")]
+    #[allow(clippy::type_complexity)]
     pub fn bind_alloc_with_entropy<T: DatagramTransport, R: FnMut(&mut [u8]) -> bool>(
         self,
         io: T,
@@ -620,7 +640,7 @@ where
             crate::platform::WithEntropy<T, R>,
             N,
             BLOCK_WISE,
-            crate::storage::AllocMemory,
+            crate::storage::AllocMemory<P::Token>,
             DEFERRED,
             CALLS,
             REQUESTS,
@@ -629,7 +649,7 @@ where
         BuildError,
     > {
         self.validate_entropy_source()?;
-        Self::validate_scratch::<crate::storage::AllocMemory>(c)?;
+        Self::validate_scratch::<crate::storage::AllocMemory<P::Token>>(c)?;
         let (builder, io) = self.prepare_entropy(io, random)?;
         builder.bind_alloc(io, c)
     }
@@ -659,17 +679,30 @@ where
         Ok((self, io))
     }
 
-    fn bind_built<T, S: AppStorage>(
+    fn bind_built<T, S: AppStorage<Token = P::Token>>(
         self,
         io: T,
         engine: Engine<S>,
     ) -> Result<App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>, BuildError>
     {
+        let length =
+            self.token_length
+                .unwrap_or(if matches!(self.identity, Some(IdentitySource::Test)) {
+                    4
+                } else {
+                    8
+                });
+        if self.token_length.is_some_and(|len| len < 8)
+            || length > P::Token::MAX_LEN
+            || length > crate::message::extended::MAX_TOKEN_LEN
+        {
+            return Err(BuildError::TokenLength);
+        }
         Ok(App {
             engine,
             io,
             site: self.site,
-            ids: AppIds::new(self.identity)?,
+            ids: AppIds::new(self.identity, self.token_length)?,
             inbox: client::ClientInbox::new(),
             lives: client::ClientLives::new(),
             echo_policy: self.echo_policy,

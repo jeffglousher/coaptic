@@ -6,6 +6,10 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// Requested outgoing token length is outside the configured capacity.
+    TokenLength,
+    /// App requires at least two RX and two TX packet slots for admission headroom.
+    PacketHeadroom,
     /// A requested heap array or the aggregate allocation size is unrepresentable.
     CapacityOverflow,
     /// Heap storage requests exceed the caller's byte budget, before allocation.
@@ -44,6 +48,12 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::TokenLength => f.write_str(
+                "outgoing token length must be at least 8 and fit the configured token capacity",
+            ),
+            Self::PacketHeadroom => {
+                f.write_str("App requires at least two RX and two TX packet slots")
+            }
             Self::CapacityOverflow => f.write_str("storage capacity exceeds addressable memory"),
             Self::HeapBudgetExceeded { required, limit } => {
                 write!(
@@ -91,7 +101,7 @@ pub enum ParseError {
     TruncatedHeader,
     /// Version field is not 1.
     UnsupportedVersion,
-    /// Token length nibble is 9–15.
+    /// Unsupported/reserved TKL: 9–15 for the compact decoder, 15 for RFC 8974.
     BadTokenLength,
     /// Buffer ends before the token bytes given by TKL.
     TruncatedToken,
@@ -128,7 +138,7 @@ impl core::fmt::Display for ParseError {
         match self {
             Self::TruncatedHeader => f.write_str("truncated CoAP header"),
             Self::UnsupportedVersion => f.write_str("unsupported CoAP version"),
-            Self::BadTokenLength => f.write_str("token length is 9-15"),
+            Self::BadTokenLength => f.write_str("unsupported or reserved token length field"),
             Self::TruncatedToken => f.write_str("truncated token"),
             Self::TruncatedOption => f.write_str("truncated option"),
             Self::ReservedOptionDelta => f.write_str("reserved option delta 15"),
@@ -152,6 +162,8 @@ impl std::error::Error for ParseError {}
 /// Failure to encode a CoAP datagram.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EncodeError {
+    /// Token length exceeds the RFC 8974 wire maximum of 65804 bytes.
+    TokenTooLong,
     /// Output buffer is shorter than the encoded message.
     BufferTooSmall,
     /// Empty message (code 0.00) has a token, options, or payload.
@@ -171,6 +183,7 @@ pub enum EncodeError {
 impl core::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::TokenTooLong => f.write_str("token exceeds the RFC 8974 wire maximum"),
             Self::BufferTooSmall => f.write_str("encode buffer is too small"),
             Self::EmptyMessageNotEmpty => f.write_str("empty message is not empty"),
             Self::OptionsNotAscending => f.write_str("option numbers are not ascending"),
@@ -252,6 +265,8 @@ pub enum SlotMessageError {
     Slot(SlotError),
     /// Occupied bytes are not a well-formed CoAP datagram.
     Parse(ParseError),
+    /// Valid wire token exceeds configured owned capacity.
+    TokenCapacity(crate::message::extended::CapacityError),
     /// Encoding failed (buffer too small, empty-message rules, or options).
     Encode(EncodeError),
 }
@@ -261,6 +276,11 @@ impl core::fmt::Display for SlotMessageError {
         match self {
             Self::Slot(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
+            Self::TokenCapacity(e) => write!(
+                f,
+                "token requires {} bytes, capacity is {}",
+                e.required, e.available
+            ),
             Self::Encode(e) => write!(f, "{e}"),
         }
     }
@@ -290,6 +310,7 @@ impl std::error::Error for SlotMessageError {
         match self {
             Self::Slot(e) => Some(e),
             Self::Parse(e) => Some(e),
+            Self::TokenCapacity(_) => None,
             Self::Encode(e) => Some(e),
         }
     }
@@ -340,6 +361,8 @@ pub enum BlockTransferError {
     Value(ValueError),
     /// Occupied datagram is not a well-formed CoAP message.
     Parse(ParseError),
+    /// Valid wire token exceeds configured owned capacity.
+    TokenCapacity(crate::message::extended::CapacityError),
     /// Encoding a Block1 / Block2 datagram failed.
     Encode(EncodeError),
 }
@@ -370,6 +393,11 @@ impl core::fmt::Display for BlockTransferError {
             Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
             Self::Value(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
+            Self::TokenCapacity(e) => write!(
+                f,
+                "token requires {} bytes, capacity is {}",
+                e.required, e.available
+            ),
             Self::Encode(e) => write!(f, "{e}"),
         }
     }
@@ -406,8 +434,27 @@ impl std::error::Error for BlockTransferError {
             Self::Slot(e) => Some(e),
             Self::Value(e) => Some(e),
             Self::Parse(e) => Some(e),
+            Self::TokenCapacity(_) => None,
             Self::Encode(e) => Some(e),
             _ => None,
+        }
+    }
+}
+
+impl From<crate::message::TokenDecodeError> for SlotMessageError {
+    fn from(error: crate::message::TokenDecodeError) -> Self {
+        match error {
+            crate::message::TokenDecodeError::Malformed(error) => Self::Parse(error),
+            crate::message::TokenDecodeError::Capacity(error) => Self::TokenCapacity(error),
+        }
+    }
+}
+
+impl From<crate::message::TokenDecodeError> for BlockTransferError {
+    fn from(error: crate::message::TokenDecodeError) -> Self {
+        match error {
+            crate::message::TokenDecodeError::Malformed(error) => Self::Parse(error),
+            crate::message::TokenDecodeError::Capacity(error) => Self::TokenCapacity(error),
         }
     }
 }

@@ -18,6 +18,7 @@ use super::table::{DedupTable, ObserveTable};
 pub struct WithObserve<P, const ENTRIES: usize>(core::marker::PhantomData<P>);
 
 impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, ENTRIES> {
+    type Token = P::Token;
     const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
     const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
     const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
@@ -34,7 +35,7 @@ impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, EN
     type RxBody = P::RxBody;
     type TxBody = P::TxBody;
     type Dedup = P::Dedup;
-    type Observe = ObserveTable<ENTRIES>;
+    type Observe = ObserveTable<ENTRIES, P::Token>;
     type Exchange = P::Exchange;
     type RxScratch = P::RxScratch;
     type TxScratch = P::TxScratch;
@@ -47,6 +48,7 @@ impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, EN
 pub struct WithDedup<P, const ENTRIES: usize>(core::marker::PhantomData<P>);
 
 impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithDedup<P, ENTRIES> {
+    type Token = P::Token;
     const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
     const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
     const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
@@ -80,6 +82,7 @@ macro_rules! impl_profile {
         observe = $obs:expr;
     ) => {
         impl MemoryProfile for $name {
+            type Token = crate::message::Token;
             const RX_DATAGRAM_SLOTS: usize = $rx_n;
             const RX_DATAGRAM_BYTES: usize = $rx_b;
             const TX_DATAGRAM_SLOTS: usize = $tx_n;
@@ -205,6 +208,7 @@ impl_profile! {
 #[macro_export]
 macro_rules! memory_profile {
     ($(#[$meta:meta])* $vis:vis $name:ident {
+        token: $token:ty,
         rx_datagram: ($rx_n:expr, $rx_b:expr), tx_datagram: ($tx_n:expr, $tx_b:expr),
         rx_body: ($rxb_n:expr, $rxb_b:expr), tx_body: ($txb_n:expr, $txb_b:expr),
         dedup: $dedup:expr, observe: $obs:expr $(,)?
@@ -212,6 +216,7 @@ macro_rules! memory_profile {
         $(#[$meta])*
         $vis struct $name;
         impl $crate::storage::MemoryProfile for $name {
+            type Token = $token;
             const RX_DATAGRAM_SLOTS: usize = $rx_n;
             const RX_DATAGRAM_BYTES: usize = $rx_b;
             const TX_DATAGRAM_SLOTS: usize = $tx_n;
@@ -224,13 +229,19 @@ macro_rules! memory_profile {
             const TX_BODY_BYTES: usize = $txb_b;
             type RxDatagram = $crate::storage::DatagramPool<$rx_n, $rx_b>;
             type TxDatagram = $crate::storage::DatagramPool<$tx_n, $tx_b>;
-            type RxBody = $crate::storage::BodyPool<$rxb_n, $rxb_b>;
-            type TxBody = $crate::storage::BodyPool<$txb_n, $txb_b>;
+            type RxBody = $crate::storage::BodyPool<$rxb_n, $rxb_b, $token>;
+            type TxBody = $crate::storage::BodyPool<$txb_n, $txb_b, $token>;
             type Dedup = $crate::storage::DedupTable<$dedup>;
-            type Observe = $crate::storage::ObserveTable<$obs>;
-            type Exchange = $crate::storage::ExchangeTable<$tx_n>;
+            type Observe = $crate::storage::ObserveTable<$obs, $token>;
+            type Exchange = $crate::storage::ExchangeTable<$tx_n, $token>;
             type RxScratch = $crate::storage::DatagramScratch<$rx_b>;
             type TxScratch = $crate::storage::DatagramScratch<$tx_b>;
         }
     };
+    ($(#[$meta:meta])* $vis:vis $name:ident { $($fields:tt)* }) => {
+        $crate::memory_profile! { $(#[$meta])* $vis $name {
+            token: $crate::message::Token, $($fields)*
+        } }
+    };
+
 }

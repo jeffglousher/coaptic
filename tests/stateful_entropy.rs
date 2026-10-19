@@ -4,6 +4,16 @@ use coaptic::storage::{DatagramIo, DatagramTransport};
 use coaptic::{App, BuildError, Endpoint, Request, Response, get, resources::SmallDevice};
 use core::cell::Cell;
 
+// A self-loopback App simultaneously retains the client CON and prepares the
+// server response. Change only TX capacity: two ordinary owners plus reserve.
+coaptic::memory_profile! {
+    SelfLoopback {
+        rx_datagram: (2, 1152), tx_datagram: (3, 1152),
+        rx_body: (1, 4096), tx_body: (1, 4096), dedup: 4, observe: 2,
+    }
+}
+type SelfLoopResources = coaptic::resources::Resources<SelfLoopback, 4, false, 0, 1>;
+
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
 struct LoopIo {
     wire: [u8; 1152],
@@ -120,7 +130,7 @@ fn stateful_entropy_token_and_jitter_refusal_preserve_capacity_and_recover() {
         }
         true
     };
-    let mut app = App::with_resources(SmallDevice::new())
+    let mut app = App::with_resources(SelfLoopResources::new())
         .allow_unprotected()
         .route("hello", get(|_: Request<'_>| Response::content(b"hello")))
         .bind_with_entropy(LoopIo::default(), &mut random)
@@ -183,10 +193,10 @@ fn stateful_entropy_wrapper_forwards_io_and_default_hook_refuses() {
 #[cfg(feature = "alloc")]
 #[test]
 fn stateful_entropy_allocated_configuration_is_bounded_and_recovers() {
-    let resources = SmallDevice::new().allocated(64 * 1024);
+    let resources = SelfLoopResources::new().allocated(64 * 1024);
     let required = resources.required_heap_bytes().unwrap();
     assert_eq!(
-        App::with_resources(SmallDevice::new().allocated(required - 1))
+        App::with_resources(SelfLoopResources::new().allocated(required - 1))
             .allow_unprotected()
             .bind_with_entropy(LoopIo::default(), |b: &mut [u8]| {
                 b.fill(0);
@@ -199,7 +209,7 @@ fn stateful_entropy_allocated_configuration_is_bounded_and_recovers() {
         })
     );
     let mut counter = 0u8;
-    let mut app = App::with_resources(SmallDevice::new().allocated(required))
+    let mut app = App::with_resources(SelfLoopResources::new().allocated(required))
         .allow_unprotected()
         .route("hello", get(|_: Request<'_>| Response::content(b"hello")))
         .bind_with_entropy(LoopIo::default(), |b: &mut [u8]| {

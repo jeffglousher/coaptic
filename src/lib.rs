@@ -156,6 +156,7 @@ extern crate std;
 
 pub mod app;
 pub mod error;
+pub mod link_format;
 pub mod message;
 #[cfg(feature = "oscore")]
 pub mod oscore;
@@ -163,6 +164,7 @@ pub mod platform;
 #[cfg(feature = "edhoc")]
 pub mod provisioning;
 pub mod storage;
+pub mod uri;
 
 pub use app::resources;
 pub use storage::profiles;
