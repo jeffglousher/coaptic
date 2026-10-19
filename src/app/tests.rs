@@ -12647,6 +12647,74 @@ fn observe_notifications_decline_query_selection_and_recover_queryless() {
 }
 
 #[test]
+fn unsupported_observe_transfer_profiles_fall_back_and_recover() {
+    fn snapshot(_: Request<'_>) -> Response<'static> {
+        Response::content(b"0123456789abcdef0123456789abcdef")
+            .content_format(ContentFormat::TEXT_PLAIN)
+            .etag(b"version1")
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xa1]).unwrap();
+    for method in [Code::GET, Code::FETCH] {
+        // Classic nonzero selection, Q single block, and Q entire body.
+        for (number, value) in [
+            (OptionNumber::BLOCK2, 0x10),
+            (OptionNumber::Q_BLOCK2, 0x10),
+            (OptionNumber::Q_BLOCK2, 0x08),
+        ] {
+            for refresh in [false, true] {
+                let mut app = App::profile::<profiles::Default>()
+                    .deterministic_for_tests()
+                    .block_wise::<true>()
+                    .route(
+                        "obs",
+                        get(snapshot).fetch(snapshot).observe_selected(snapshot),
+                    )
+                    .allow_unprotected()
+                    .bind(WideLoopback::default())
+                    .unwrap();
+                let cf = ContentFormat::CBOR.encode();
+                let ordinary = [Opt::observe_register(), Opt::content_format(&cf)];
+                if refresh {
+                    let (wire, n) = encode_wide_token(method, &["obs"], &ordinary, 100, token);
+                    app.transport_mut().inbox = Some((peer, wire, n));
+                    app.poll(0).unwrap();
+                    assert!(observe_live(&app, peer, token));
+                    app.transport_mut().send_n = 0;
+                }
+                let block = [value];
+                let options = [
+                    Opt::observe_register(),
+                    Opt::content_format(&cf),
+                    Opt::new(number, &block),
+                ];
+                let (wire, n) = encode_wide_token(method, &["obs"], &options, 101, token);
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(1).unwrap();
+                let response = last_wide(&app);
+                assert_eq!(response.code(), Code::CONTENT);
+                assert!(response.observe().is_none());
+                assert!(response.get_options(number).next().is_some());
+                assert!(!observe_live(&app, peer, token));
+                // A declined refresh must not leave a stale relation emitting
+                // notifications after the ordinary response ended observation.
+                assert_eq!(app.notify(2, &["obs"], snapshot_for_test()).unwrap(), 0);
+                app.transport_mut().send_n = 0;
+                let (wire, n) = encode_wide_token(method, &["obs"], &ordinary, 102, token);
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(3).unwrap();
+                assert_eq!(last_wide(&app).observe(), Some(Ok(0)));
+                assert!(observe_live(&app, peer, token));
+            }
+        }
+    }
+
+    fn snapshot_for_test() -> Response<'static> {
+        Response::content(b"updated").content_format(ContentFormat::TEXT_PLAIN)
+    }
+}
+
+#[test]
 fn observe_sequence_starts_at_zero_on_a_new_app() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::observe_register()];
