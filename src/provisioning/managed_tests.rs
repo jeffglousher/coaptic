@@ -262,6 +262,48 @@ fn connect(client: &mut Owner<'_>, server: &mut Owner<'_>, now: u64) -> u64 {
 }
 
 #[test]
+fn managed_diagnostics_observe_retained_app_without_advancing_owner() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    assert_eq!(client.diagnostic_snapshot(10), None);
+    assert_eq!(client.last_now, 0);
+    assert_eq!(network.borrow().receives, 0);
+    assert!(network.borrow().sent.is_empty());
+
+    let now = connect(&mut client, &mut server, 0) + 1;
+    let call = client.request(Method::Get, "work", &[], None, now).unwrap();
+    let (receives, sent) = {
+        let network = network.borrow();
+        (network.receives, network.sent.len())
+    };
+    let before = client.diagnostic_snapshot(now).unwrap();
+    assert_eq!(before.usage.client_requests.occupied, 1);
+    assert_eq!(client.diagnostic_snapshot(now), Some(before));
+    client.refresh_blocked = true;
+    assert!(!client.is_connected());
+    assert_eq!(client.diagnostic_snapshot(now), Some(before));
+    assert_eq!(client.next_poll_at(now), None);
+    assert_eq!(client.last_now, now);
+    assert_eq!(network.borrow().receives, receives);
+    assert_eq!(network.borrow().sent.len(), sent);
+
+    client.refresh_blocked = false;
+    assert!(client.cancel(call, now).unwrap());
+    let cancelled = client.diagnostic_snapshot(now).unwrap();
+    assert_eq!(cancelled.usage.completed_replies, 1);
+    let mut output = [0; 32];
+    assert!(matches!(
+        client.take_response_into(call, &mut output, now).unwrap(),
+        Some(Err(crate::CallFailure::Cancelled))
+    ));
+    let after = client.diagnostic_snapshot(now).unwrap();
+    assert_eq!(after.usage.client_requests.occupied, 0);
+    assert_eq!(after.usage.client_replies.occupied, 0);
+}
+
+#[test]
 fn managed_scheduling_queries_do_not_drive_io_or_advance_time() {
     reset_mid_seeds();
     let a = identity(1, 1);

@@ -645,6 +645,23 @@ where
             && !matches!(self.validity, PolicyValidity::OnlineUntil { deadline_ms, .. } if self.last_now >= deadline_ms)
     }
 
+    /// Copy diagnostics from the retained authenticated App, if one exists.
+    ///
+    /// Sampling performs no I/O, allocation, clock advancement or policy change.
+    /// A retained App can remain observable while this owner is blocked; `Some`
+    /// does not grant permission to send or dispatch. Bootstrap has no App and
+    /// returns `None`. The snapshot's readiness fields describe only the App;
+    /// use [`Self::next_poll_at`] and [`Self::next_timeout`] to schedule this owner.
+    pub fn diagnostic_snapshot(
+        &mut self,
+        now_ms: u64,
+    ) -> Option<crate::app::diagnostics::Snapshot> {
+        match self.state.as_mut() {
+            Some(State::Established(app)) => Some(app.diagnostic_snapshot(now_ms)),
+            _ => None,
+        }
+    }
+
     /// Earliest recovery, active application or online-policy deadline.
     ///
     /// Recovery can report an immediately pending send. Application timers are
