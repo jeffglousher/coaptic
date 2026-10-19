@@ -78,17 +78,18 @@ pub fn run(
     sample[..4].copy_from_slice(&[0x82, 1, 0x58, 32]);
     getrandom::fill(&mut sample[4..])?;
     println!("Pairing restored; waiting for peer at {remote}.");
-    let mut reported = false;
+    let mut liveness = PeerLiveness::default();
     let mut call = None;
     let mut probe_due = 0;
     let mut probe_attempts = 0;
     let mut output = [0; 128];
     let mut retry_at = 30_000;
-    let mut subscription_received = 0;
     let mut observation_reported = false;
     loop {
         let now = started.elapsed().as_millis().try_into()?;
+        let was_quiet = liveness.quiet;
         let result = connection.poll_with(now, |principal, request, _| {
+            liveness.authenticated(now);
             if request.path() == ["identity"] && request.method() == Some(Method::Get) {
                 let response =
                     Response::content_copy(identity.peer().principal().fingerprint()).max_age(10);
@@ -164,12 +165,17 @@ pub fn run(
             Err(ManagedError::Application(coaptic::app::Error::Io(_))) if persistent => {}
             Err(error) => return Err(error.into()),
         }
-        if connection.is_connected() && !reported {
+        if liveness.generation(connection.session_generation(), now) {
             println!(
-                "Fresh EDHOC/OSCORE session connected to {}.",
+                "Fresh EDHOC/OSCORE session generation {} connected to {}.",
+                liveness.generation.expect("connected generation"),
                 super::super::hex(peer.principal().fingerprint())
             );
-            reported = true;
+            retry_at = u64::MAX;
+        }
+        if was_quiet && !liveness.quiet {
+            subscription = ManagedSubscription::new("identity");
+            observation_reported = false;
         }
         if connection.is_connected()
             && call.is_none()
@@ -244,31 +250,36 @@ pub fn run(
                         println!("Protected identity observation confirmed.");
                         observation_reported = true;
                     }
-                    subscription_received = now;
-                    retry_at = u64::MAX;
+                    liveness.authenticated(now);
                 }
                 Ok(None) => {}
-                Ok(Some(_)) => retry_at = now,
+                Ok(Some(Ok(_))) => liveness.authenticated(now),
+                Ok(Some(Err(_))) => {}
                 Err(
                     ManagedError::Busy | ManagedError::NotConnected | ManagedError::StaleHandle,
                 ) => {}
                 Err(error) => return Err(error.into()),
             }
-            match connection.poll_subscription(&mut subscription, now) {
-                Ok(_) | Err(ManagedError::Busy | ManagedError::NotConnected) => {}
-                Err(ManagedError::Application(
-                    coaptic::app::Error::Io(_) | coaptic::app::Error::Saturated,
-                )) => {}
-                Err(error) => return Err(error.into()),
-            }
-            if now.saturating_sub(subscription_received) >= 30_000 {
+            if liveness.expired(now) {
                 connection.stop_subscription(&mut subscription, now)?;
-                subscription = ManagedSubscription::new("identity");
-                subscription_received = now;
+                liveness.quiet = true;
                 retry_at = now;
             }
+            if !liveness.quiet {
+                match connection.poll_subscription(&mut subscription, now) {
+                    Ok(_) | Err(ManagedError::Busy | ManagedError::NotConnected) => {}
+                    Err(ManagedError::Application(
+                        coaptic::app::Error::Io(_) | coaptic::app::Error::Saturated,
+                    )) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
         }
-        if persistent && initiates && now >= retry_at {
+        if persistent
+            && initiates
+            && (liveness.quiet || !connection.is_connected())
+            && now >= retry_at
+        {
             retry_at = now.saturating_add(match connection.connect(now) {
                 Ok(()) => 30_000,
                 Err(ManagedError::Busy | ManagedError::Capacity) => 1_000,
@@ -289,6 +300,37 @@ fn entropy(bytes: &mut [u8]) -> bool {
     getrandom::fill(bytes).is_ok()
 }
 
+// Only authenticated peer traffic establishes liveness. Application refusal or
+// an unaccepted Observe response leaves retry scheduling with ManagedSubscription.
+#[derive(Default)]
+struct PeerLiveness {
+    last_authenticated: u64,
+    generation: Option<u64>,
+    quiet: bool,
+}
+impl PeerLiveness {
+    fn authenticated(&mut self, now: u64) {
+        self.last_authenticated = now;
+        self.quiet = false;
+    }
+
+    fn generation(&mut self, generation: Option<u64>, now: u64) -> bool {
+        if generation.is_some() && generation != self.generation {
+            self.generation = generation;
+            self.authenticated(now);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expired(&self, now: u64) -> bool {
+        self.generation.is_some()
+            && !self.quiet
+            && now.saturating_sub(self.last_authenticated) >= 30_000
+    }
+}
+
 // Only the fixed identity/echo probes call this policy, never durable telemetry.
 fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> Option<u64> {
     if !matches!(code, Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE) || attempts >= 3 {
@@ -301,6 +343,30 @@ fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> O
 #[cfg(test)]
 mod retry_tests {
     use super::*;
+
+    #[test]
+    fn authenticated_activity_prevents_rekey_and_silence_quiesces() {
+        assert!(core::mem::size_of::<PeerLiveness>() <= 32);
+        let mut state = PeerLiveness::default();
+        assert!(!state.expired(60_000));
+        assert!(state.generation(Some(1), 0));
+        for now in (5_000..=90_000).step_by(5_000) {
+            assert!(!state.expired(now));
+            state.authenticated(now);
+            assert!(!state.generation(Some(1), now));
+        }
+        assert!(!state.expired(119_999));
+        assert!(state.expired(120_000));
+        state.quiet = true;
+        assert!(!state.generation(None, 121_000));
+        assert!(!state.generation(Some(1), 122_000));
+        assert!(state.quiet);
+        assert!(state.generation(Some(2), 123_000));
+        assert!(!state.quiet);
+        state.quiet = true;
+        state.authenticated(124_000);
+        assert!(!state.quiet);
+    }
 
     #[test]
     fn retry_respects_overload_deadline_and_attempt_bound() {
