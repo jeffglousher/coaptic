@@ -3705,8 +3705,6 @@ where
                 && plan.has_source
                 && !plan.resource.is_none()
                 && plan.registration_supported
-                && block2.is_none_or(|b| b.num() == 0 && !b.more() && !b.is_bert())
-                && parsed.q_block2().next().is_none()
                 && !no_response.suppresses(Code::CONTENT)
         })
         .map(|plan| DeferredObserve {
@@ -3932,6 +3930,14 @@ impl ObservePlan {
                 .unwrap_or(NoResponse::DEFAULT),
             selection,
             registration_supported: selection.is_some()
+                // RFC 7641 section 4.1 permits ordinary-response fallback.
+                // Only admit profiles whose subsequent notifications preserve
+                // the requested transfer semantics. Nonzero initial Block2
+                // and Q-Block2 observation are not implemented yet (#520).
+                && request.message().block2().is_none_or(|block| {
+                    block.is_ok_and(|b| b.num() == 0 && !b.more() && !b.is_bert())
+                })
+                && request.message().q_block2().next().is_none()
                 && (selected
                     || (request.method() == Some(Method::Get)
                         && request.uri_query().next().is_none())),
