@@ -4,8 +4,8 @@
 use coaptic::{
     Endpoint,
     provisioning::{
-        CommissioningDecoder, CommissioningReply, CommissioningRequest, EnrollmentPolicy,
-        PairingUpdate, PinnedPeer,
+        CommissioningDecoder, CommissioningPending, CommissioningReply, CommissioningRequest,
+        EnrollmentPolicy, PairingUpdate, PinnedPeer,
     },
 };
 use coaptic_console_core::ApprovalMode;
@@ -61,7 +61,12 @@ fn exchange<T: Read + Write + ?Sized>(
     let len = CommissioningDecoder::frame(&payload[..len], &mut frame)?;
     port.write_all(&frame[..len])?;
     port.flush()?;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now()
+        + Duration::from_secs(if matches!(request, CommissioningRequest::Quiesce) {
+            35
+        } else {
+            10
+        });
     let mut bytes = [0; 64];
     while Instant::now() < deadline {
         match port.read(&mut bytes) {
@@ -106,6 +111,21 @@ pub fn run(
             return Err("unexpected arguments".into());
         }
         return show(usb.request(&CommissioningRequest::Initialize { kid })?);
+    }
+    if command == "serial-quiesce" {
+        if args.next().is_some() {
+            return Err("unexpected arguments".into());
+        }
+        if !matches!(
+            usb.request(&CommissioningRequest::Quiesce)?,
+            CommissioningReply::Quiesced
+        ) {
+            return Err("unexpected quiescence response".into());
+        }
+        println!(
+            "Durable work drained; production held for 60 seconds. Stop the host service before changing its pairing; an administrative challenge extends the hold through approval."
+        );
+        return Ok(());
     }
     if command == "serial-restart" {
         if args.next().is_some() {
@@ -160,7 +180,8 @@ pub fn run(
     let mut approval_selected = false;
     let mut approval_directory = directory.to_path_buf();
     let mut directory_selected = false;
-    let mut write = true;
+    let mut access = pairing::Access::default();
+    let mut access_selected = false;
     while let Some(option) = args.next() {
         if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
             if approval_selected {
@@ -171,11 +192,12 @@ pub fn run(
         } else if option == "--approval-directory" && !directory_selected {
             approval_directory = args.next().ok_or("missing approval directory")?.into();
             directory_selected = true;
-        } else if option == "--read-only"
-            && write
-            && (command == "serial-pair" || command == "serial-transfer")
-        {
-            write = false;
+        } else if let Some(value) = option.to_str().and_then(pairing::Access::from_flag) {
+            if access_selected || !(command == "serial-pair" || command == "serial-transfer") {
+                return Err("unexpected or repeated access option".into());
+            }
+            access = value;
+            access_selected = true;
         } else {
             return Err("unexpected or repeated commissioning option".into());
         }
@@ -183,6 +205,8 @@ pub fn run(
     let CommissioningReply::State {
         device: device_pin,
         record,
+        pending,
+        ..
     } = usb.request(&CommissioningRequest::Inspect)?
     else {
         return Err("device has no identity; explicit serial-init is required".into());
@@ -190,6 +214,7 @@ pub fn run(
     if device_pin.principal() == host.peer().principal() {
         return Err("device and host identities must differ".into());
     }
+    preflight_pending(command.to_str().ok_or("invalid command")?, pending)?;
     // Hold the existing journal's exclusive lock before approving telemetry.
     // Missing state is never initialized as a side effect of changing a grant.
     let telemetry = if command == "serial-recover" {
@@ -198,7 +223,8 @@ pub fn run(
                 .policy()
                 .is_some_and(|policy| *policy.resource_policy() == pairing::permissions(true))
     } else {
-        write && (command == "serial-pair" || command == "serial-transfer")
+        access == pairing::Access::Telemetry
+            && (command == "serial-pair" || command == "serial-transfer")
     };
     let _receipts = if telemetry {
         Some(pairing::preflight_receipts(&host_directory, &host).map_err(|_| {
@@ -224,7 +250,7 @@ pub fn run(
             approval,
             |owner| recovery.request(&local_challenge, owner),
             |request| {
-                let CommissioningReply::State { device, record } = usb
+                let CommissioningReply::State { device, record, .. } = usb
                     .request(&CommissioningRequest::Inspect)
                     .map_err(commissioning_error)?
                 else {
@@ -265,7 +291,7 @@ pub fn run(
     };
     let prior = local.checkpoint().policy().cloned();
     let device_policy = record.policy().cloned();
-    let permission = pairing::permissions(write);
+    let permission = access.permissions();
     let make_request = |owner| {
         if prior
             .as_ref()
@@ -376,7 +402,7 @@ pub fn run(
 fn show(reply: CommissioningReply) -> Result<()> {
     match reply {
         CommissioningReply::Empty => println!("Device identity is not initialized."),
-        CommissioningReply::State { device, record } => {
+        CommissioningReply::State { device, record, .. } => {
             show_peer(&device);
             println!(
                 "Pairing revision {} enabled {}",
@@ -399,6 +425,24 @@ fn show(reply: CommissioningReply) -> Result<()> {
     Ok(())
 }
 
+fn preflight_pending(
+    command: &str,
+    pending: CommissioningPending,
+) -> std::result::Result<(), &'static str> {
+    if !matches!(command, "serial-pair" | "serial-transfer") {
+        return Ok(());
+    }
+    match pending {
+        CommissioningPending::Complete => Ok(()),
+        CommissioningPending::Unresolved => Err(
+            "device has unresolved durable work; keep the authorized host serving receipts and run serial-quiesce before changing the grant",
+        ),
+        CommissioningPending::Missing | CommissioningPending::Unverifiable => Err(
+            "device durable history is missing or unverifiable; preserve the device and host journals and reconcile their authenticated history before changing the grant; do not reset or initialize replacement history",
+        ),
+    }
+}
+
 fn show_peer(peer: &PinnedPeer) {
     println!(
         "Device {} public key {} credential ID {}",
@@ -412,6 +456,21 @@ fn show_peer(peer: &PinnedPeer) {
 mod tests {
     use super::*;
     use std::io::{self, Cursor};
+
+    #[test]
+    fn pending_preflight_refuses_grants_without_blocking_revocation_or_host_repair() {
+        for pending in [
+            CommissioningPending::Missing,
+            CommissioningPending::Unverifiable,
+            CommissioningPending::Unresolved,
+        ] {
+            assert!(preflight_pending("serial-pair", pending).is_err());
+            assert!(preflight_pending("serial-transfer", pending).is_err());
+            assert!(preflight_pending("serial-revoke", pending).is_ok());
+            assert!(preflight_pending("serial-recover", pending).is_ok());
+        }
+        assert!(preflight_pending("serial-pair", CommissioningPending::Complete).is_ok());
+    }
 
     struct Port {
         input: Cursor<Vec<u8>>,

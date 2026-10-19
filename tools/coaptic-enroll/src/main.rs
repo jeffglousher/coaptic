@@ -84,19 +84,20 @@ Inspect: inspect [--port PORT] [--host NAME]
 \
 Setup: custody-init | device-init NAME KID | serial-init PORT KID
 \
-Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only] APPROVAL
+Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only | --echo-only] APPROVAL
 \
 Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
+  Qualification only: --qualify-lost-receipt exits75 after first durable effect, before receipt.
 \
-Maintain: serial-restart PORT | serial-recover PORT HOST APPROVAL
+Maintain: serial-quiesce PORT | serial-restart PORT | serial-recover PORT HOST APPROVAL
   serial-recover also accepts --approval-directory DIRECTORY for the current owner's credential.
 \
   serial-revoke PORT HOST APPROVAL
 \
-  serial-transfer PORT NEW_HOST HOST_ADDRESS VERIFIED_OWNER_HEX [--read-only] APPROVAL
+  serial-transfer PORT NEW_HOST HOST_ADDRESS VERIFIED_OWNER_HEX [--read-only | --echo-only] APPROVAL
   serial-backup PORT BACKUP_DIRECTORY COSIGNER_MODE APPROVAL
   serial-backup-remove PORT APPROVAL
-  serial-owner-recover PORT NEW_HOST HOST_ADDRESS NEW_OWNER_DIRECTORY COSIGNER_MODE [--read-only] APPROVAL
+  serial-owner-recover PORT NEW_HOST HOST_ADDRESS NEW_OWNER_DIRECTORY COSIGNER_MODE [--read-only | --echo-only] APPROVAL
 COSIGNER_MODE: webauthn | touch | touchless. Register credentials in separate directories
 using COAPTIC_ENROLLMENT_DIR (an absolute path). Recovery requires a previously authorized
 backup and proof by the destination owner; it never resets device identity.
@@ -105,7 +106,7 @@ Inspect individual records: serial-info PORT | device-info HOST | pairing-info H
 \
 Local pairing: pairing-init DEVICE | receipts-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
 \
-  transfer DEVICE NEW_PEER VERIFIED_OWNER_HEX [--read-only] APPROVAL"
+  transfer DEVICE NEW_PEER VERIFIED_OWNER_HEX [--read-only | --echo-only] APPROVAL"
         );
         #[cfg(feature = "development-piv")]
         println!(
@@ -155,6 +156,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "serial-info",
         "serial-init",
         "serial-restart",
+        "serial-quiesce",
         "serial-pair",
         "serial-revoke",
         "serial-transfer",
@@ -199,6 +201,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "serial-info",
         "serial-init",
         "serial-restart",
+        "serial-quiesce",
         "serial-pair",
         "serial-revoke",
         "serial-transfer",

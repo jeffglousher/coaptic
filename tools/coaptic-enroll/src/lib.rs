@@ -78,7 +78,14 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeviceRefused(code) => {
-                write!(f, "device refused commissioning request (code {code})")
+                write!(f, "device refused commissioning request (code {code})")?;
+                if *code == 6 {
+                    write!(
+                        f,
+                        "; durable work is unresolved or drain unavailable/timed out: inspect durable-work state, keep the authorized host serving receipts, then serial-quiesce before changing policy"
+                    )?;
+                }
+                Ok(())
             }
             Self::Commissioning(reason) => write!(
                 f,

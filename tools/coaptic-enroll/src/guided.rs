@@ -162,7 +162,7 @@ fn collect_operation(
             let choice = answer!(
                 input,
                 output,
-                "Access: 1 Read-only, 2 Read/write (echo and durable telemetry)",
+                "Access: 1 Read-only, 2 Read/write (echo and durable telemetry), 3 Echo only",
                 false
             );
             let label = match choice.as_str() {
@@ -171,8 +171,12 @@ fn collect_operation(
                     "Read-only"
                 }
                 "2" => "Read/write",
+                "3" => {
+                    args.push("--echo-only".into());
+                    "Echo only"
+                }
                 _ => {
-                    writeln!(output, "Choose 1 or 2.")?;
+                    writeln!(output, "Choose 1, 2 or 3.")?;
                     continue;
                 }
             };
@@ -332,6 +336,17 @@ mod tests {
         assert!(!output.contains("Windows verified authenticator"));
         assert!(output.contains("Approval: Touchless development YubiKey"));
     }
+    #[test]
+    fn echo_only_and_quiesce_are_explicit_guided_operations() {
+        let (args, output) = collect_text("3\n1\nCOM6\nhost\n192.0.2.1:5683\n2\n3\ncontinue\n");
+        assert!(args.unwrap().iter().any(|arg| arg == "--echo-only"));
+        assert!(output.contains("Access: Echo only"));
+        assert_eq!(
+            collect_text("5\n1\nCOM6\ncontinue\n").0.unwrap(),
+            ["serial-quiesce", "COM6"]
+        );
+    }
+
     #[test]
     fn touch_required_profile_and_hidden_registration() {
         let (args, output) =

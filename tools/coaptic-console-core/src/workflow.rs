@@ -35,7 +35,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
         ),
         "5" => (
             "serial-recover",
-            &["Serial port", "Unpaired host identity name"],
+            &["Serial port", "Existing destination host identity name"],
         ),
         "6" => ("serial-init", &["Serial port", "Credential ID (0-255)"]),
         "7" => ("device-info", &["Host identity name"]),
@@ -72,6 +72,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
         "14" => ("piv-touch-test", &[]),
         "15" => ("development-piv-test", &[]),
         "16" => ("serial-restart", &["Serial port"]),
+        "21" => ("serial-quiesce", &["Serial port"]),
         "17" => ("receipts-init", &["Existing host identity name"]),
         "18" => (
             "serial-backup",
@@ -113,6 +114,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
             "14" => "Test the touch-required credential",
             "15" => "Test the touchless development credential",
             "16" => "Restart device, retaining identity and pairing",
+            "21" => "Drain durable work and hold production for administration",
             "17" => {
                 "Initialize first receipt journal for an existing host (never reset lost history)"
             }
@@ -141,7 +143,7 @@ pub fn group(choice: &str) -> Option<Group> {
         "2" => ("Set up", &["11", "8", "6", "17"]),
         "3" => ("Pair / connect", &["2", "12", "5"]),
         "4" => ("Credentials", &["9", "10", "14", "15", "13"]),
-        "5" => ("Maintenance", &["16", "3", "4", "18", "19", "20"]),
+        "5" => ("Maintenance", &["21", "16", "3", "4", "18", "19", "20"]),
         _ => return None,
     };
     Some(Group { title, operations })
