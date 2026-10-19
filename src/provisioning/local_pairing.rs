@@ -15,7 +15,7 @@ use core::fmt;
 use super::{EnrollmentPolicy, Identity, PinnedPeer, Principal};
 
 /// Maximum encoded public pairing record or commissioning challenge.
-const CAPACITY: usize = 224;
+const CAPACITY: usize = PairingRecord::MAX_ENCODED_LEN;
 
 /// Refusal before exposing or changing local pairing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,9 +69,12 @@ pub struct PairingRecord {
     local: [u8; 32],
     policy: Option<EnrollmentPolicy>,
     enabled: bool,
+    recovery_owner: Option<[u8; 32]>,
 }
 
 impl PairingRecord {
+    /// Maximum canonical record size, including one recovery credential.
+    pub const MAX_ENCODED_LEN: usize = 251;
     /// Explicit first setup only. Missing/corrupt previously initialized storage
     /// never authorizes calling this automatically.
     pub fn unpaired(identity: &Identity, store: [u8; 32]) -> Result<Self, PairingError> {
@@ -84,6 +87,7 @@ impl PairingRecord {
             local: *identity.peer().principal().fingerprint(),
             policy: None,
             enabled: false,
+            recovery_owner: None,
         })
     }
 
@@ -117,6 +121,12 @@ impl PairingRecord {
         self.enabled
     }
 
+    /// Optional preauthorized recovery credential; grants no service access.
+    #[must_use]
+    pub const fn recovery_owner(&self) -> Option<&[u8; 32]> {
+        self.recovery_owner.as_ref()
+    }
+
     /// Complete record commitment for serialized compare-and-swap, not rollback proof.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
@@ -133,7 +143,15 @@ impl PairingRecord {
             bytes: output,
             pos: 0,
         };
-        out.raw(&[0x89, 1])?;
+        // Preserve commitments of deployed records with no recovery credential.
+        out.raw(&[
+            if self.recovery_owner.is_some() {
+                0x8a
+            } else {
+                0x89
+            },
+            1,
+        ])?;
         out.bytes(&self.store)?;
         out.uint(self.revision)?;
         out.bytes(&self.local)?;
@@ -148,6 +166,9 @@ impl PairingRecord {
             out.bytes(&[0; 32])?;
         }
         out.raw(&[if self.enabled { 0xf5 } else { 0xf4 }])?;
+        if let Some(owner) = &self.recovery_owner {
+            out.bytes(owner)?;
+        }
         Ok(out.pos)
     }
 
@@ -155,7 +176,12 @@ impl PairingRecord {
     /// representation; the caller still authenticates storage and physical custody.
     pub fn decode(input: &[u8]) -> Result<Self, PairingError> {
         let mut read = Reader::new(input)?;
-        read.exact(&[0x89, 1])?;
+        let recovery = match read.take(1)?[0] {
+            0x89 => false,
+            0x8a => true,
+            _ => return Err(PairingError::Record),
+        };
+        read.exact(&[1])?;
         let store = read.bytes()?;
         let revision = read.uint()?;
         let local = read.bytes()?;
@@ -169,6 +195,11 @@ impl PairingRecord {
         let owner = read.bytes::<32>()?;
         let permissions = read.bytes::<32>()?;
         let enabled = read.boolean()?;
+        let recovery_owner = if recovery {
+            Some(read.bytes::<32>()?)
+        } else {
+            None
+        };
         read.finish()?;
         let policy = match public {
             Some(public) => {
@@ -191,6 +222,7 @@ impl PairingRecord {
                     || kid != 0
                     || owner != [0; 32]
                     || permissions != [0; 32]
+                    || recovery_owner.is_some()
                 {
                     return Err(PairingError::Record);
                 }
@@ -200,12 +232,21 @@ impl PairingRecord {
         if store == [0; 32] || local == [0; 32] || revision == 0 {
             return Err(PairingError::Record);
         }
+        if recovery_owner.as_ref().is_some_and(|backup| {
+            *backup == [0; 32]
+                || policy
+                    .as_ref()
+                    .is_none_or(|policy| policy.owner() == backup)
+        }) {
+            return Err(PairingError::Record);
+        }
         Ok(Self {
             store,
             revision,
             local,
             policy,
             enabled,
+            recovery_owner,
         })
     }
 }
@@ -293,6 +334,7 @@ pub struct PairingUpdate {
     policy: EnrollmentPolicy,
     revoke: bool,
     current_owner: Option<[u8; 32]>,
+    recovery_action: u8,
 }
 
 impl PairingUpdate {
@@ -304,6 +346,7 @@ impl PairingUpdate {
             policy,
             revoke,
             current_owner: None,
+            recovery_action: 0,
         }
     }
 
@@ -323,7 +366,63 @@ impl PairingUpdate {
             policy,
             revoke: false,
             current_owner: Some(current_owner),
+            recovery_action: 0,
         })
+    }
+
+    /// Set or remove the recovery credential after current-owner approval and,
+    /// when installing one, proof of possession by that distinct credential.
+    /// Both proofs must cover this exact challenge, policy and recovery owner.
+    pub fn set_recovery(
+        challenge: PairingChallenge,
+        policy: EnrollmentPolicy,
+        recovery_owner: Option<[u8; 32]>,
+    ) -> Result<Self, PairingError> {
+        if recovery_owner
+            .as_ref()
+            .is_some_and(|owner| *owner == [0; 32] || owner == policy.owner())
+        {
+            return Err(PairingError::Owner);
+        }
+        Ok(Self {
+            challenge,
+            policy,
+            revoke: false,
+            current_owner: recovery_owner,
+            recovery_action: 1,
+        })
+    }
+
+    /// Recover through the previously authorized credential and a destination
+    /// owner proof. Both approvals must cover the same complete live challenge
+    /// and destination policy. This metadata itself authenticates neither proof.
+    pub fn recover(
+        challenge: PairingChallenge,
+        recovery_owner: [u8; 32],
+        policy: EnrollmentPolicy,
+    ) -> Result<Self, PairingError> {
+        if recovery_owner == [0; 32] || &recovery_owner == policy.owner() {
+            return Err(PairingError::Owner);
+        }
+        Ok(Self {
+            challenge,
+            policy,
+            revoke: false,
+            current_owner: Some(recovery_owner),
+            recovery_action: 2,
+        })
+    }
+
+    /// Whether this changes recovery authorization without changing service policy.
+    #[must_use]
+    pub const fn is_recovery_configuration(&self) -> bool {
+        self.recovery_action == 1
+    }
+
+    /// Whether this consumes the installed recovery credential.
+    #[must_use]
+    pub const fn is_recovery(&self) -> bool {
+        self.recovery_action == 2
     }
 
     /// Public device challenge bound by the operator approval.
@@ -346,18 +445,24 @@ impl PairingUpdate {
     /// The policy names the destination owner. This metadata is not a proof.
     #[must_use]
     pub const fn current_owner(&self) -> Option<&[u8; 32]> {
-        self.current_owner.as_ref()
+        if self.recovery_action == 0 {
+            self.current_owner.as_ref()
+        } else {
+            None
+        }
     }
 
     /// Encode at most 384 bytes of canonical application CBOR v1.
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, PairingError> {
-        let mut challenge = [0; CAPACITY];
+        let mut challenge = [0; 224];
         let len = self.challenge.encode(&mut challenge)?;
         let mut out = Writer {
             bytes: output,
             pos: 0,
         };
-        if self.current_owner.is_some() {
+        if self.recovery_action != 0 {
+            out.raw(&[0x88, 1, self.recovery_action + 2])?;
+        } else if self.current_owner.is_some() {
             out.raw(&[0x88, 1, 2])?;
         } else {
             out.raw(&[0x87, 1, u8::from(self.revoke)])?;
@@ -369,6 +474,8 @@ impl PairingUpdate {
         out.bytes(self.policy.resource_policy())?;
         if let Some(owner) = &self.current_owner {
             out.bytes(owner)?;
+        } else if self.recovery_action == 1 {
+            out.raw(&[0xf6])?;
         }
         Ok(out.pos)
     }
@@ -384,10 +491,8 @@ impl PairingUpdate {
         };
         let array = read.take(1)?[0];
         read.exact(&[1])?;
-        let (revoke, transfer) = match (array, read.uint()?) {
-            (0x87, 0) => (false, false),
-            (0x87, 1) => (true, false),
-            (0x88, 2) => (false, true),
+        let action = match (array, read.uint()?) {
+            (0x87, action @ 0..=1) | (0x88, action @ 2..=4) => action,
             _ => return Err(PairingError::Record),
         };
         read.exact(&[0x58])?;
@@ -400,7 +505,14 @@ impl PairingUpdate {
         let kid = read.uint()?.try_into().map_err(|_| PairingError::Record)?;
         let owner = read.bytes()?;
         let permissions = read.bytes()?;
-        let current_owner = if transfer { Some(read.bytes()?) } else { None };
+        let current_owner = if action == 3 && read.peek() == Some(0xf6) {
+            read.exact(&[0xf6])?;
+            None
+        } else if action >= 2 {
+            Some(read.bytes()?)
+        } else {
+            None
+        };
         read.finish()?;
         let policy = EnrollmentPolicy::new(
             PinnedPeer::from_public_key(&peer, kid).map_err(|_| PairingError::Record)?,
@@ -408,9 +520,11 @@ impl PairingUpdate {
             permissions,
         )
         .map_err(|_| PairingError::Record)?;
-        match current_owner {
-            Some(owner) => Self::transfer(challenge, owner, policy),
-            None => Ok(Self::new(challenge, policy, revoke)),
+        match action {
+            2 => Self::transfer(challenge, current_owner.ok_or(PairingError::Owner)?, policy),
+            3 => Self::set_recovery(challenge, policy, current_owner),
+            4 => Self::recover(challenge, current_owner.ok_or(PairingError::Owner)?, policy),
+            _ => Ok(Self::new(challenge, policy, action == 1)),
         }
     }
 
@@ -421,6 +535,26 @@ impl PairingUpdate {
         now_ms: u64,
         commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), E>,
     ) -> Result<(), PairingCommitError<E>> {
+        if self.recovery_action == 1 {
+            return state.set_recovery(
+                &self.challenge,
+                &self.policy,
+                self.current_owner,
+                now_ms,
+                commit,
+            );
+        }
+        if self.recovery_action == 2 {
+            return state.recover(
+                &self.challenge,
+                self.current_owner
+                    .as_ref()
+                    .ok_or(PairingCommitError::State(PairingError::Owner))?,
+                self.policy.clone(),
+                now_ms,
+                commit,
+            );
+        }
         if let Some(owner) = &self.current_owner {
             return state.transfer(&self.challenge, owner, self.policy.clone(), now_ms, commit);
         }
@@ -613,6 +747,69 @@ impl LocalPairing {
         let mut next = self.record.clone();
         next.policy = Some(policy);
         next.enabled = true;
+        next.recovery_owner = None;
+        self.commit(next, commit)
+    }
+
+    /// Configure one recovery credential with authenticated owner approval and
+    /// backup proof of possession. The exact existing service policy must match;
+    /// this operation cannot activate revoked access or change its permissions.
+    pub fn set_recovery<E>(
+        &mut self,
+        challenge: &PairingChallenge,
+        policy: &EnrollmentPolicy,
+        recovery_owner: Option<[u8; 32]>,
+        now_ms: u64,
+        commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), E>,
+    ) -> Result<(), PairingCommitError<E>> {
+        self.check(challenge, now_ms)
+            .map_err(PairingCommitError::State)?;
+        if self.record.policy.as_ref().is_none_or(|old| {
+            old.owner() != policy.owner()
+                || old.peer().principal() != policy.peer().principal()
+                || old.resource_policy() != policy.resource_policy()
+        }) || recovery_owner
+            .as_ref()
+            .is_some_and(|owner| *owner == [0; 32] || owner == policy.owner())
+        {
+            return Err(PairingCommitError::State(PairingError::Owner));
+        }
+        let mut next = self.record.clone();
+        next.recovery_owner = recovery_owner;
+        self.commit(next, commit)
+    }
+
+    /// Consume a preauthorized recovery credential and destination owner proof.
+    /// The authenticated host must verify both exact approvals. The storage
+    /// callback must refuse unresolved durable effects before committing a new
+    /// grant. Recovery preserves device identity and clears backup authorization.
+    pub fn recover<E>(
+        &mut self,
+        challenge: &PairingChallenge,
+        recovery_owner: &[u8; 32],
+        policy: EnrollmentPolicy,
+        now_ms: u64,
+        commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), E>,
+    ) -> Result<(), PairingCommitError<E>> {
+        self.check(challenge, now_ms)
+            .map_err(PairingCommitError::State)?;
+        if self.record.recovery_owner.as_ref() != Some(recovery_owner)
+            || recovery_owner == policy.owner()
+            || self
+                .record
+                .policy
+                .as_ref()
+                .is_none_or(|old| old.owner() == policy.owner())
+        {
+            return Err(PairingCommitError::State(PairingError::Owner));
+        }
+        if challenge.device.public_x() == policy.peer().public_x() {
+            return Err(PairingCommitError::State(PairingError::Binding));
+        }
+        let mut next = self.record.clone();
+        next.policy = Some(policy);
+        next.enabled = true;
+        next.recovery_owner = None;
         self.commit(next, commit)
     }
 

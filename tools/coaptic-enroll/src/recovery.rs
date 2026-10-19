@@ -8,6 +8,44 @@ use coaptic::provisioning::{
     EnrollmentPolicy, LocalPairing, PairingChallenge, PairingRecord, PinnedPeer,
 };
 
+/// Validated reciprocal transition held only in memory until the device confirms
+/// its update. Its challenge is consumed before any device mutation, so waiting
+/// for the device reply cannot expire an otherwise valid host transition.
+pub struct PreparedHostPairing {
+    prior: PairingRecord,
+    next: PairingRecord,
+}
+
+impl PreparedHostPairing {
+    pub fn prepare(
+        state: &mut LocalPairing,
+        challenge: &PairingChallenge,
+        policy: EnrollmentPolicy,
+        now_ms: u64,
+    ) -> Result<Self, Error> {
+        if state.checkpoint().policy().is_some() {
+            return Err(Error::Input);
+        }
+        let prior = state.checkpoint().clone();
+        state
+            .pair(challenge, policy, now_ms, |_, _| Ok::<_, Error>(()))
+            .map_err(|_| Error::Expired)?;
+        Ok(Self {
+            prior,
+            next: state.checkpoint().clone(),
+        })
+    }
+
+    /// Persist only after validating the device's exact committed response.
+    /// The caller keeps its exclusive host-store lock across prepare and commit.
+    pub fn commit(
+        self,
+        commit: impl FnOnce(&PairingRecord, &PairingRecord) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        commit(&self.prior, &self.next)
+    }
+}
+
 /// One immutable device snapshot and the exact unpaired destination host record.
 pub struct PeerRecovery {
     device: PinnedPeer,
