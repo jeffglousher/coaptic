@@ -93,6 +93,11 @@ platform adapters and qualification. The companion also provides a
 
 ## Provision and recover
 
+Use the guided Rust [commissioning CLI](tools/coaptic-enroll/README.md) on Windows,
+Linux or macOS for inspection, identity setup, pairing and recovery. Its default
+PIV provider supports touch-required and explicit touchless development credentials.
+The tool documents the native smart-card and credential-store prerequisites.
+
 Provision a unique device identity and authenticate the peer/owner binding.
 The optional `edhoc` feature establishes fresh OSCORE sessions from installed
 trust. Normal reconnects restore durable identity and permissions, then establish
