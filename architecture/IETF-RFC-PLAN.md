@@ -341,19 +341,25 @@ code, not an unstarted backlog. Later changes update their specific ledgers.
 Merged #608 completes #520 nonzero/selection/validator interactions and #521
 caller-owned diagnostics without additional App storage. Companion #87 corrects
 #486 connection-level GCM failure policy with finite exact control, wrong-key
-refusal and fresh-recovery captures; the core pins that merged companion. These
-implementation slices are delivered; their separate qualification owners remain. #340 no longer describes the App as
+refusal and fresh-recovery captures. Companion #88 completes the synchronized
+diagnostic host/export adapter and the finite 52-group protocol inventory; the
+selected Q5/Q6 campaigns are recorded in the qualification plan. These slices are
+delivered; independent and physical qualification retain their separate owners.
+#340 no longer describes the App as
 limited to one security association; its remaining deployment accounting belongs
 with #333/#341 rather than a second association implementation.
 
 The [qualification plan](requirements/VALIDATION-PLAN.md) separates the remaining
-literal scenarios (#199), independent peers/addressing (#200), finite host/parser
-campaigns and diagnostic adapters (#202), physical custody/persistence (#333),
+literal scenarios (#199), independent peers/addressing (#200), completed finite
+host/parser campaigns and diagnostic adapters (#202), physical custody/persistence (#333),
 and controlled measurements (#341). These are actual remaining proof, not CI
 requirements and not implied by cross-compilation or layout tests. #365 owns the
 installed authorization/recovery boundary and its unresolved counterexamples.
-The Linux hook pilot #522 needs an actual Linux verifier/hook execution lane;
-Windows tests cannot establish it.
+Companion #89 delivers the observation-only Rust ingress classifier, XDP program
+and owned-interface loader for #522. Portable tests, Linux loader cross-checks
+and BPF target type-checking pass. Linked-object, verifier and live-hook proof
+still require an actual Linux execution lane. Windows tests and cross-compilation
+cannot establish those results.
 
 Publication #132 is an owner decision after a concrete candidate, package review
 and requested release qualification. No development issue, project status or
