@@ -558,6 +558,21 @@ impl<S: Storage + PendingCons> Engine<S> {
         self.storage.lookup_pending_con(message_id, endpoint)
     }
 
+    /// Find local ownership of a CON, including an unsent reservation.
+    ///
+    /// Use for local cancellation or replacement only. Unlike
+    /// [`Self::lookup_pending_con`], this is not evidence that a packet has
+    /// reached the transport and must not authorize an ACK, RST or response.
+    #[must_use]
+    pub fn lookup_owned_con(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
+        (0..self.capacities().tx_datagram_slots)
+            .map(SlotId::from_index)
+            .find(|&id| {
+                self.pending_con(id)
+                    .is_some_and(|row| row.message_id() == message_id && row.endpoint() == endpoint)
+            })
+    }
+
     /// Clear pending and RTO for the matching TX slot. The slot stays occupied.
     ///
     /// The caller releases the returned slot. `None` on miss.
@@ -2083,6 +2098,37 @@ impl<S: Storage + BodySlots> Engine<S> {
     #[inline]
     pub fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.storage.next_q_block2(id)
+    }
+
+    // The async App retains exclusive Engine ownership between this selection
+    // and commit. Only compact range metadata crosses the transport await.
+    pub(crate) fn peek_q_block2(&self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        let mut transfer = self
+            .storage
+            .tx_body_transfer(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != BlockRole::OutgoingQBlock2 {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let (block, offset, len) = transfer.issue_q_outgoing()?;
+        Ok(OutgoingBlock::new(
+            id,
+            block,
+            offset,
+            len,
+            transfer.is_complete(),
+        ))
+    }
+
+    pub(crate) fn commit_q_block2(
+        &mut self,
+        expected: OutgoingBlock,
+    ) -> Result<(), BlockTransferError> {
+        if self.peek_q_block2(expected.id())? != expected {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        self.storage.next_q_block2(expected.id())?;
+        Ok(())
     }
 
     /// Advance an outgoing Q-Block2 window using the peer Continue NUM.

@@ -1,7 +1,7 @@
 use super::{
     CompletedCacheMatch, DATAGRAM_CAPACITY, MessageFailure, Operation, OptionRole, PollError,
-    Retry, Wire, has_unsupported_critical, request, request_metadata, request_peer_error,
-    same_mid_namespace, send,
+    Retry, Wire, completion_time, completion_time_async, has_unsupported_critical, request,
+    request_metadata, request_peer_error, same_mid_namespace, send, send_async,
 };
 use crate::message::{Message as CoapMessage, ParsedMessage, Type, decode};
 use crate::provisioning::{ConnectionId, Error, Message, PeerError, PeerErrorCode};
@@ -69,6 +69,18 @@ impl ErrorRequest {
         }
     }
 
+    pub(super) fn next_timeout_after(&self, now: u64) -> Option<u64> {
+        [
+            Some(self.expires),
+            self.retry.next_retry,
+            self.retry.wait_until,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|due| *due > now)
+        .min()
+    }
+
     pub(super) fn classify(
         &self,
         bytes: &[u8],
@@ -130,6 +142,7 @@ impl ErrorRequest {
         true
     }
 
+    #[coaptic_io::dual_io(flush_protocol_async, bound(crate::app::async_server::ProtocolIo), calls(send => send_async, completion_time => completion_time_async))]
     pub(super) fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,
@@ -164,11 +177,18 @@ impl ErrorRequest {
                 return Ok(false);
             }
             let mut next = self.retry;
+            // Refuse a known invalid schedule before any wire effect. Async
+            // acceptance may advance time, so validate its actual commit too.
             if next.sent(now).is_err() {
                 self.settled = true;
                 return Err(PollError::Clock);
             }
             send(io, endpoint, self.wire.as_slice())?;
+            next = self.retry;
+            if next.sent(completion_time(io, now)).is_err() {
+                self.settled = true;
+                return Err(PollError::Clock);
+            }
             self.retry = next;
             return Ok(true);
         }
@@ -234,6 +254,10 @@ impl ErrorReceipt {
         }
     }
 
+    pub(super) fn next_timeout_after(&self, now: u64) -> Option<u64> {
+        (self.expires > now).then_some(self.expires)
+    }
+
     pub(in crate::provisioning) fn classify(&self, bytes: &[u8], now: u64) -> CompletedCacheMatch {
         if now >= self.expires || bytes.len() < 4 {
             return CompletedCacheMatch::NoMatch;
@@ -257,6 +281,7 @@ impl ErrorReceipt {
         true
     }
 
+    #[coaptic_io::dual_io(flush_protocol_async, bound(crate::app::async_server::ProtocolIo), calls(send => send_async, completion_time => completion_time_async))]
     pub(in crate::provisioning) fn flush<T: DatagramIo>(
         &mut self,
         io: &mut T,

@@ -115,6 +115,7 @@ dependencies = [
  "aes",
  "blake3",
  "ccm",
+ "coaptic-io",
  "defmt-or-log",
  "getrandom",
  "hkdf",
@@ -122,6 +123,15 @@ dependencies = [
  "sha2",
  "subtle",
  "uuid",
+]
+
+[[package]]
+name = "coaptic-io"
+version = "0.0.10"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

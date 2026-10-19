@@ -1,12 +1,42 @@
-//! Host UDP adapter for Coaptic's advanced async Engine I/O boundary.
+//! Host UDP and monotonic timer adapters for Coaptic's native async App APIs.
 //!
 //! The OS readiness reactor uses host allocation. Packet storage stays bounded:
 //! the Engine owns its pools and the caller supplies receive scratch. This does
-//! not drive App routing, protocol timers, retransmission or security policy.
+//! The same transport works with Engine I/O and App request/progress/wait APIs.
 
 use async_io::Async;
 use coaptic::{Endpoint, storage::AsyncDatagramIo};
 use std::{io, net::UdpSocket};
+
+/// Shared monotonic epoch for App timestamps and absolute async timers.
+#[derive(Clone, Copy)]
+pub struct Clock(std::time::Instant);
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self(std::time::Instant::now())
+    }
+}
+
+impl Clock {
+    /// Milliseconds since this epoch; refuse conversion overflow.
+    pub fn now_ms(self) -> io::Result<u64> {
+        u64::try_from(self.0.elapsed().as_millis()).map_err(|_| io::ErrorKind::InvalidData.into())
+    }
+}
+
+impl coaptic::platform::AsyncTimer for Clock {
+    async fn wait_until(&mut self, deadline_ms: u64) {
+        if let Some(deadline) = self
+            .0
+            .checked_add(std::time::Duration::from_millis(deadline_ms))
+        {
+            async_io::Timer::at(deadline).await;
+        } else {
+            core::future::pending::<()>().await;
+        }
+    }
+}
 
 /// Readiness-driven UDP with reusable caller-owned truncation-detection scratch.
 ///
@@ -35,9 +65,11 @@ impl<S: AsMut<[u8]>> Udp<S> {
     }
 }
 
-impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
+impl<S: AsMut<[u8]>> coaptic::storage::DatagramTransport for Udp<S> {
     type Error = io::Error;
+}
 
+impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
     async fn recv(&mut self, buf: &mut [u8]) -> io::Result<(usize, Endpoint)> {
         let required = buf
             .len()
@@ -65,6 +97,9 @@ impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
             .await
     }
 }
+
+#[cfg(test)]
+mod app_tests;
 
 #[cfg(test)]
 mod tests {

@@ -91,7 +91,7 @@ impl AppIds {
         }
     }
 
-    pub(super) fn next_for<E, S, T: crate::storage::DatagramIo>(
+    pub(super) fn next_for<E, S, T: crate::storage::DatagramTransport>(
         &mut self,
         engine: &crate::storage::Engine<S>,
         io: &mut T,

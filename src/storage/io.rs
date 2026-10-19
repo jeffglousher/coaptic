@@ -24,20 +24,24 @@ use super::Storage;
 /// bounded polling latency, implementations must bound the time spent in both
 /// receive and send (for example, use nonblocking sockets). The caller must
 /// also bound application callbacks and the interval between polls.
-pub trait DatagramIo {
-    /// Transport-specific failure. Not a CoAP code.
-    type Error;
-
+pub trait DatagramIo: DatagramTransport {
     /// Receive one datagram into `buf`.
     ///
-    /// `Ok(None)` is idle. `Ok(Some((n, endpoint)))` fills `buf[..n]` and
-    /// names the remote peer. `n` must not exceed `buf.len()`. Success must
-    /// represent the complete datagram: refuse oversized packets rather than
-    /// returning a truncated prefix.
+    /// `Ok(None)` is idle. Success must contain the complete packet; refuse
+    /// truncation and report at most `buf.len()` bytes.
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error>;
 
     /// Send one complete datagram to `dest`; success must report `bytes.len()`.
     fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error>;
+}
+
+/// Shared transport identity and entropy for synchronous and asynchronous I/O.
+///
+/// Implement once for a transport supporting either or both execution modes.
+/// Configuration and request identities do not require synchronous network I/O.
+pub trait DatagramTransport {
+    /// Transport-specific failure. Not a CoAP code.
+    type Error;
 
     /// Optional platform entropy, used only by App's explicit stateful binding.
     /// Fill every byte cryptographically securely in bounded time; return false
@@ -64,7 +68,7 @@ pub enum DatagramIoError<E> {
         /// Byte count reported by the transport.
         actual: usize,
     },
-    /// Error from [`DatagramIo::Error`].
+    /// Error from [`DatagramTransport::Error`].
     Io(E),
 }
 
@@ -216,9 +220,12 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 /// Use [`UdpSocketIo`] with caller-supplied scratch to avoid that temporary
 /// allocation when receiving larger datagrams.
 #[cfg(feature = "std")]
-impl DatagramIo for std::net::UdpSocket {
+impl crate::storage::DatagramTransport for std::net::UdpSocket {
     type Error = std::io::Error;
+}
 
+#[cfg(feature = "std")]
+impl DatagramIo for std::net::UdpSocket {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         const STACK_BYTES: usize =
             <super::profiles::Default as super::MemoryProfile>::RX_DATAGRAM_BYTES + 1;
@@ -298,9 +305,12 @@ impl<S: AsMut<[u8]>> UdpSocketIo<S> {
 }
 
 #[cfg(feature = "std")]
-impl<S: AsMut<[u8]>> DatagramIo for UdpSocketIo<S> {
+impl<S: AsMut<[u8]>> crate::storage::DatagramTransport for UdpSocketIo<S> {
     type Error = std::io::Error;
+}
 
+#[cfg(feature = "std")]
+impl<S: AsMut<[u8]>> DatagramIo for UdpSocketIo<S> {
     fn recv(&mut self, buf: &mut [u8]) -> std::io::Result<Option<(usize, Endpoint)>> {
         recv_udp(&self.socket, buf, self.scratch.as_mut())
     }
@@ -358,9 +368,11 @@ mod tests {
         last_send: Option<(Endpoint, [u8; 64], usize)>,
     }
 
-    impl DatagramIo for Loopback {
+    impl crate::storage::DatagramTransport for Loopback {
         type Error = &'static str;
+    }
 
+    impl DatagramIo for Loopback {
         fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             let Some((ep, bytes, n)) = self.inbox.take() else {
                 return Ok(None);
@@ -462,8 +474,11 @@ mod tests {
     #[test]
     fn send_length_failure_retains_datagram_for_complete_retry() {
         struct Count(usize);
-        impl DatagramIo for Count {
+        impl crate::storage::DatagramTransport for Count {
             type Error = &'static str;
+        }
+
+        impl DatagramIo for Count {
             fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
                 Ok(None)
             }
@@ -510,8 +525,11 @@ mod tests {
         let tx = engine.acquire_tx().expect("tx");
         engine.write_tx(tx, &wire[..n], dest).expect("write_tx");
         struct FailSend;
-        impl DatagramIo for FailSend {
+        impl crate::storage::DatagramTransport for FailSend {
             type Error = &'static str;
+        }
+
+        impl DatagramIo for FailSend {
             fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
                 Ok(None)
             }

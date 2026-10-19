@@ -85,8 +85,11 @@ struct Io {
     sends: usize,
 }
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
-impl DatagramIo for Io {
+impl coaptic::storage::DatagramTransport for Io {
     type Error = core::convert::Infallible;
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some(frame) = self.incoming.take() else {
             return Ok(None);

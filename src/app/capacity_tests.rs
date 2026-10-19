@@ -43,8 +43,11 @@ impl Default for Io {
     }
 }
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 2], 5683);
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = &'static str;
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((wire, len)) = self.incoming.take() else {
             return Ok(None);

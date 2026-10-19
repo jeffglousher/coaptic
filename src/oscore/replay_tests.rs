@@ -52,9 +52,11 @@ impl<'a> DurableIo<'a> {
     }
 }
 
-impl DatagramIo for DurableIo<'_> {
+impl crate::storage::DatagramTransport for DurableIo<'_> {
     type Error = &'static str;
+}
 
+impl DatagramIo for DurableIo<'_> {
     fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         assert!(self.events.durable.get().is_some());
         self.events.receives.set(self.events.receives.get() + 1);

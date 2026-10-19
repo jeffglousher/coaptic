@@ -144,9 +144,11 @@ struct Loopback {
     last_send: Option<(Endpoint, [u8; 256], usize)>,
 }
 
-impl DatagramIo for Loopback {
+impl crate::storage::DatagramTransport for Loopback {
     type Error = &'static str;
+}
 
+impl DatagramIo for Loopback {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.inbox.take() else {
             return Ok(None);
@@ -179,9 +181,11 @@ struct RecordIo {
     sent_n: usize,
 }
 
-impl DatagramIo for RecordIo {
+impl crate::storage::DatagramTransport for RecordIo {
     type Error = &'static str;
+}
 
+impl DatagramIo for RecordIo {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.inbox.take() else {
             return Ok(None);
@@ -2852,9 +2856,11 @@ impl Default for WideLoopback {
     }
 }
 
-impl DatagramIo for WideLoopback {
+impl crate::storage::DatagramTransport for WideLoopback {
     type Error = &'static str;
+}
 
+impl DatagramIo for WideLoopback {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.inbox.take() else {
             return Ok(None);
@@ -3776,9 +3782,11 @@ struct Echo {
     pending: Option<(Endpoint, [u8; 256], usize)>,
 }
 
-impl DatagramIo for Echo {
+impl crate::storage::DatagramTransport for Echo {
     type Error = &'static str;
+}
 
+impl DatagramIo for Echo {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.pending.take() else {
             return Ok(None);
@@ -4194,9 +4202,11 @@ struct Pipe {
     len: usize,
 }
 
-impl DatagramIo for Pipe {
+impl crate::storage::DatagramTransport for Pipe {
     type Error = &'static str;
+}
 
+impl DatagramIo for Pipe {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         if self.len == 0 {
             return Ok(None);
@@ -5401,8 +5411,11 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         pipe: Pipe,
         requests: usize,
     }
-    impl DatagramIo for CheckedPipe {
+    impl crate::storage::DatagramTransport for CheckedPipe {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for CheckedPipe {
         fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.pipe.recv(buf)
         }
@@ -5530,8 +5543,11 @@ fn block1_and_qblock1_preserve_query_and_accept_on_every_upload_block() {
             }
         }
     }
-    impl DatagramIo for CheckedUpload {
+    impl crate::storage::DatagramTransport for CheckedUpload {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for CheckedUpload {
         fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.pipe.recv(buf)
         }
@@ -6017,8 +6033,11 @@ fn deadline_terminates_observe_after_the_initial_response() {
 #[test]
 fn deadline_progresses_when_receive_fails() {
     struct BadReceive;
-    impl DatagramIo for BadReceive {
+    impl crate::storage::DatagramTransport for BadReceive {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for BadReceive {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Err("receive failure")
         }
@@ -6050,9 +6069,11 @@ struct ReceiveFaultIo<T> {
     fail_send: bool,
 }
 
-impl<T: DatagramIo<Error = &'static str>> DatagramIo for ReceiveFaultIo<T> {
+impl<T: DatagramIo<Error = &'static str>> crate::storage::DatagramTransport for ReceiveFaultIo<T> {
     type Error = &'static str;
+}
 
+impl<T: DatagramIo<Error = &'static str>> DatagramIo for ReceiveFaultIo<T> {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         if self.fail_receive {
             Err("receive failure")
@@ -7252,8 +7273,11 @@ fn failed_upload_send_retires_partial_window_and_preserves_other_call() {
         fail_at: usize,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(None)
         }
@@ -8038,8 +8062,11 @@ fn echo_policy_receives_malformed_values_without_body_or_handler_effects() {
 #[test]
 fn app_security_is_required_before_entropy_storage_or_transport_work() {
     struct UntouchedIo;
-    impl DatagramIo for UntouchedIo {
+    impl crate::storage::DatagramTransport for UntouchedIo {
         type Error = ();
+    }
+
+    impl DatagramIo for UntouchedIo {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
             panic!("security refusal must not receive");
         }
@@ -8758,8 +8785,11 @@ fn failed_observe_cancellation_retires_local_state_and_reports_uncertainty() {
         inner: RecordIo,
         fail: bool,
     }
-    impl DatagramIo for CancelIo {
+    impl crate::storage::DatagramTransport for CancelIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for CancelIo {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.inner.recv(bytes)
         }
@@ -9219,8 +9249,11 @@ fn failed_classic_continuations_retire_calls_and_bodies_immediately() {
         fail: bool,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(self.inbox.take().map(|(peer, wire, n)| {
                 bytes[..n].copy_from_slice(&wire[..n]);
@@ -9343,8 +9376,11 @@ fn failed_qblock2_window_continuations_retire_partial_representation() {
         fail: bool,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(self.inbox.take().map(|(peer, wire, n)| {
                 bytes[..n].copy_from_slice(&wire[..n]);
@@ -10201,8 +10237,11 @@ fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
         fail: bool,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.pipe.recv(out)
         }
@@ -10611,8 +10650,11 @@ fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_othe
         fail_at: usize,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.pipe.recv(out)
         }
@@ -10791,8 +10833,11 @@ fn qblock2_timed_recovery_send_failure_retires_call_without_harming_other_call()
         fail: bool,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.pipe.recv(out)
         }
@@ -11332,8 +11377,11 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         sent: [Option<([u8; 64], usize)>; 12],
         count: usize,
     }
-    impl DatagramIo for WindowIo {
+    impl crate::storage::DatagramTransport for WindowIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for WindowIo {
         fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             let Some((peer, wire, n)) = self.inbox.take() else {
                 return Ok(None);
@@ -13634,8 +13682,11 @@ fn failed_deferred_ack_retains_work_and_completion_send_failure_keeps_handle() {
         io: RecordIo,
         fail: bool,
     }
-    impl DatagramIo for Failable {
+    impl crate::storage::DatagramTransport for Failable {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for Failable {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.io.recv(bytes)
         }
@@ -13746,8 +13797,11 @@ fn deferred_send_retry_uses_fresh_oscore_sequence_even_for_changed_intent() {
         io: RecordIo,
         fail: bool,
     }
-    impl DatagramIo for Failable {
+    impl crate::storage::DatagramTransport for Failable {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for Failable {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             self.io.recv(bytes)
         }

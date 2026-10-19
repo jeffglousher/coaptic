@@ -27,9 +27,11 @@ struct Io {
     receives: usize,
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = u8;
+}
 
+impl DatagramIo for Io {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         self.receives += 1;
         Ok(self.incoming.pop_front().map(|(endpoint, bytes)| {

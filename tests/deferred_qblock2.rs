@@ -112,8 +112,11 @@ impl Io {
         Some(frame)
     }
 }
-impl DatagramIo for Io {
+impl coaptic::storage::DatagramTransport for Io {
     type Error = &'static str;
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some(frame) = self.incoming.take() else {
             return Ok(None);

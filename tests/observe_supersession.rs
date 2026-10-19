@@ -94,8 +94,11 @@ struct Io {
     last: Frame,
     sends: usize,
 }
-impl DatagramIo for Io {
+impl coaptic::storage::DatagramTransport for Io {
     type Error = core::convert::Infallible;
+}
+
+impl DatagramIo for Io {
     fn recv(&mut self, out: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         Ok(self.incoming.take().map(|f| {
             out[..f.len].copy_from_slice(&f.bytes[..f.len]);

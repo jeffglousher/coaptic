@@ -63,9 +63,11 @@ struct Loopback {
     last_send: Option<(Endpoint, [u8; 256], usize)>,
 }
 
-impl DatagramIo for Loopback {
+impl crate::storage::DatagramTransport for Loopback {
     type Error = &'static str;
+}
 
+impl DatagramIo for Loopback {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.inbox.take() else {
             return Ok(None);
@@ -1397,9 +1399,11 @@ struct WideLoopback {
     last_send: Option<(Endpoint, [u8; WIRE], usize)>,
 }
 
-impl DatagramIo for WideLoopback {
+impl crate::storage::DatagramTransport for WideLoopback {
     type Error = &'static str;
+}
 
+impl DatagramIo for WideLoopback {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((ep, bytes, n)) = self.inbox.take() else {
             return Ok(None);
@@ -2501,8 +2505,11 @@ fn failed_client_sends_reclaim_bindings_without_reusing_sender_sequence() {
         short: bool,
         last_token: Option<Token>,
     }
-    impl DatagramIo for FailSend {
+    impl crate::storage::DatagramTransport for FailSend {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FailSend {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(None)
         }
@@ -2594,8 +2601,11 @@ fn protected_partial_upload_failure_releases_all_request_state() {
         nth: usize,
         token: Option<Token>,
     }
-    impl DatagramIo for FailNth {
+    impl crate::storage::DatagramTransport for FailNth {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FailNth {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(None)
         }
@@ -3136,8 +3146,11 @@ fn protected_continuation_failures_release_bindings_without_sequence_reuse() {
         fail: bool,
         short: bool,
     }
-    impl DatagramIo for FaultIo {
+    impl crate::storage::DatagramTransport for FaultIo {
         type Error = &'static str;
+    }
+
+    impl DatagramIo for FaultIo {
         fn recv(&mut self, bytes: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
             Ok(self.inbox.take().map(|(peer, wire, n)| {
                 bytes[..n].copy_from_slice(&wire[..n]);
@@ -3541,8 +3554,11 @@ struct QWire {
     inbox: Option<(Endpoint, std::vec::Vec<u8>)>,
     sent: std::vec::Vec<std::vec::Vec<u8>>,
 }
-impl DatagramIo for QWire {
+impl crate::storage::DatagramTransport for QWire {
     type Error = &'static str;
+}
+
+impl DatagramIo for QWire {
     fn recv(&mut self, buf: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         let Some((peer, bytes)) = self.inbox.take() else {
             return Ok(None);

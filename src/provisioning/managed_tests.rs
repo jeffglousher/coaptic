@@ -28,9 +28,11 @@ struct Io {
     network: Rc<RefCell<Network>>,
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = u8;
+}
 
+impl DatagramIo for Io {
     fn recv(&mut self, output: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
         let mut network = self.network.borrow_mut();
         network.receives += 1;
@@ -1770,4 +1772,540 @@ fn subscription_scheduling_resumes_after_recovery_and_reports_changed_grant() {
         client.poll_subscription(&mut desired, now),
         Err(ManagedError::StaleHandle)
     ));
+}
+
+#[cfg(test)]
+mod native_async {
+    use super::*;
+    use crate::app::AppWake;
+    use crate::platform::AsyncTimer;
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    struct NativeIo {
+        io: Io,
+        blocked: Rc<Cell<bool>>,
+    }
+    impl DatagramTransport for NativeIo {
+        type Error = u8;
+    }
+    impl AsyncDatagramIo for NativeIo {
+        async fn recv(&mut self, bytes: &mut [u8]) -> Result<(usize, Endpoint), u8> {
+            core::future::poll_fn(|_| match self.io.recv(bytes) {
+                Ok(Some(packet)) => Poll::Ready(Ok(packet)),
+                Ok(None) => Poll::Pending,
+                Err(error) => Poll::Ready(Err(error)),
+            })
+            .await
+        }
+        async fn send(&mut self, endpoint: Endpoint, bytes: &[u8]) -> Result<usize, u8> {
+            core::future::poll_fn(|_| {
+                if self.blocked.get() {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(self.io.send(endpoint, bytes))
+                }
+            })
+            .await
+        }
+    }
+    struct Timer {
+        ready: Rc<Cell<bool>>,
+        deadline: Rc<Cell<u64>>,
+    }
+    impl Timer {
+        fn new() -> Self {
+            Self {
+                ready: Rc::new(Cell::new(false)),
+                deadline: Rc::new(Cell::new(0)),
+            }
+        }
+    }
+    impl AsyncTimer for Timer {
+        async fn wait_until(&mut self, deadline: u64) {
+            self.deadline.set(deadline);
+            core::future::poll_fn(|_| {
+                if self.ready.get() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await
+        }
+    }
+    fn ready<T>(future: impl Future<Output = T>) -> T {
+        match pin!(future)
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("expected bounded immediate progress"),
+        }
+    }
+    type NativeOwner<'a> = ManagedConnection<'a, NativeIo, profiles::Constrained, 2>;
+    fn pair_native<'a>(
+        a: &'a Identity,
+        b: &'a Identity,
+    ) -> (NativeOwner<'a>, NativeOwner<'a>, Rc<RefCell<Network>>) {
+        let network = Rc::new(RefCell::new(Network::default()));
+        let make = |identity, peer, endpoint, local, store| {
+            NativeOwner::new(
+                identity,
+                trust(identity, peer, store),
+                endpoint,
+                NativeIo {
+                    io: Io {
+                        local,
+                        network: network.clone(),
+                    },
+                    blocked: Rc::new(Cell::new(false)),
+                },
+                entropy,
+                PolicyValidity::OfflineProtectedAnchor,
+                0,
+            )
+            .unwrap()
+        };
+        (
+            make(a, b, SERVER, CLIENT, 1),
+            make(b, a, CLIENT, SERVER, 2),
+            network,
+        )
+    }
+    fn receive(owner: &mut NativeOwner<'_>, now: u64, timer: &mut Timer) {
+        let wake = ready(owner.wait_async(now, timer, core::future::pending())).unwrap();
+        assert!(matches!(wake, AppWake::Ingress | AppWake::Ready));
+    }
+    fn connect_native(
+        client: &mut NativeOwner<'_>,
+        server: &mut NativeOwner<'_>,
+        net: &Rc<RefCell<Network>>,
+    ) -> u64 {
+        client.connect(0).unwrap();
+        let mut timer = Timer::new();
+        for now in 0..20 {
+            if !net.borrow().a.is_empty() {
+                receive(client, now, &mut timer);
+            }
+            ready(client.progress_with_async(
+                now,
+                &mut || Ok::<_, ()>(now),
+                &mut timer,
+                1000,
+                idle,
+            ))
+            .unwrap();
+            if !net.borrow().b.is_empty() {
+                receive(server, now, &mut timer);
+            }
+            ready(server.progress_with_async(
+                now,
+                &mut || Ok::<_, ()>(now),
+                &mut timer,
+                1000,
+                idle,
+            ))
+            .unwrap();
+            if client.is_connected()
+                && server.is_connected()
+                && !client.recovery.as_ref().unwrap().has_candidate()
+                && !server.recovery.as_ref().unwrap().has_candidate()
+            {
+                return now + 1;
+            }
+        }
+        panic!("native async EDHOC did not complete");
+    }
+
+    #[test]
+    fn native_async_managed_edhoc_request_deferred_observe_and_recovery() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, mut server, net) = pair_native(&a, &b);
+        server.observable_manual("status").unwrap();
+        let now = connect_native(&mut client, &mut server, &net);
+        let mut timer = Timer::new();
+        let mut clock = || Ok::<_, ()>(now);
+        let call = ready(client.request_async(
+            Method::Post,
+            "actuator",
+            b"set=4",
+            None,
+            now,
+            &mut clock,
+            &mut timer,
+            1000,
+        ))
+        .unwrap();
+        receive(&mut server, now, &mut timer);
+        let mut deferred = None;
+        let mut effects = 0;
+        ready(server.progress_with_async(
+            now,
+            &mut clock,
+            &mut timer,
+            1000,
+            |principal, request, handle| {
+                assert_eq!(principal, &a.peer().principal());
+                assert_eq!(request.payload(), b"set=4");
+                deferred = handle;
+                Response::deferred()
+            },
+        ))
+        .unwrap();
+        receive(&mut client, now, &mut timer);
+        ready(client.progress_async(now, &mut clock, &mut timer, 1000)).unwrap();
+        let handle = deferred.unwrap();
+        server
+            .with_authorized_effect(handle, now, |_| effects += 1)
+            .unwrap();
+        ready(server.complete_async(
+            handle,
+            Response::content(BODY),
+            now,
+            &mut clock,
+            &mut timer,
+            1000,
+        ))
+        .unwrap();
+        receive(&mut client, now, &mut timer);
+        ready(client.progress_async(now, &mut clock, &mut timer, 1000)).unwrap();
+        let mut bytes = [0; 300];
+        assert_eq!(
+            client
+                .take_response_into(call, &mut bytes, now)
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .payload(),
+            BODY
+        );
+        assert_eq!(effects, 1);
+        // Consume the response acknowledgement before registration.
+        receive(&mut server, now, &mut timer);
+        ready(server.progress_async(now, &mut clock, &mut timer, 1000)).unwrap();
+        let mut subscription = ManagedSubscription::new("status");
+        assert!(
+            ready(client.poll_subscription_async(
+                &mut subscription,
+                now,
+                &mut clock,
+                &mut timer,
+                1000
+            ))
+            .unwrap()
+        );
+        receive(&mut server, now, &mut timer);
+        ready(
+            server.progress_with_async(now, &mut clock, &mut timer, 1000, |_, _, _| {
+                Response::content(b"initial").observe(0)
+            }),
+        )
+        .unwrap();
+        receive(&mut client, now, &mut timer);
+        ready(client.progress_async(now, &mut clock, &mut timer, 1000)).unwrap();
+        assert_eq!(
+            client
+                .take_subscription_response_into(&mut subscription, &mut bytes, now)
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .payload(),
+            b"initial"
+        );
+        assert_eq!(
+            ready(server.notify_async(
+                &["status"],
+                Response::content(b"changed"),
+                now,
+                &mut clock,
+                &mut timer,
+                1000
+            ))
+            .unwrap(),
+            1
+        );
+        receive(&mut client, now, &mut timer);
+        ready(client.progress_async(now, &mut clock, &mut timer, 1000)).unwrap();
+        assert_eq!(
+            client
+                .take_subscription_response_into(&mut subscription, &mut bytes, now)
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .payload(),
+            b"changed"
+        );
+        client.stop_subscription(&mut subscription, now).unwrap();
+        // Start a new authenticated epoch; existing handles cannot cross it.
+        client.connect(now + 1).unwrap();
+        for step in now + 1..now + 20 {
+            if !net.borrow().a.is_empty() {
+                receive(&mut client, step, &mut timer);
+            }
+            ready(client.progress_async(step, &mut || Ok::<_, ()>(step), &mut timer, 1000))
+                .unwrap();
+            if !net.borrow().b.is_empty() {
+                receive(&mut server, step, &mut timer);
+            }
+            ready(server.progress_async(step, &mut || Ok::<_, ()>(step), &mut timer, 1000))
+                .unwrap();
+            if client
+                .recovery
+                .as_ref()
+                .unwrap()
+                .active_connection_id()
+                .is_some()
+                && !client.recovery.as_ref().unwrap().has_candidate()
+            {
+                break;
+            }
+        }
+        assert!(matches!(
+            client.cancel(call, client.last_now),
+            Err(ManagedError::StaleHandle)
+        ));
+    }
+
+    #[test]
+    fn native_async_managed_independent_owner_and_future_ceilings() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, _, _) = pair_native(&a, &b);
+        let owner = core::mem::size_of_val(&client);
+        let mut timer = Timer::new();
+        let mut clock = || Ok::<_, ()>(0);
+        let progress = client.progress_async(0, &mut clock, &mut timer, 1000);
+        let future = core::mem::size_of_val(&progress);
+        std::println!(
+            "Managed Constrained routes8 calls4 deferred2 security_requests4 associations1 recovery_caches2 blockwise=false: owner={owner} future={future}"
+        );
+        assert!(
+            owner <= 36 * 1024,
+            "independent managed owner ceiling: {owner}"
+        );
+        assert!(
+            future <= 24 * 1024,
+            "independent managed future ceiling: {future}"
+        );
+    }
+
+    #[test]
+    fn native_async_managed_cancel_restores_bootstrap_mode_and_policy_deadline_wins() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, _, net) = pair_native(&a, &b);
+        client.connect(0).unwrap();
+        let blocked = state_io(client.state.as_mut().unwrap())
+            .raw
+            .as_ref()
+            .unwrap()
+            .blocked
+            .clone();
+        blocked.set(true);
+        let mut timer = Timer::new();
+        let mut clock = || Ok::<_, ()>(0);
+        let observed_deadline = timer.deadline.clone();
+        let recovery_deadline = client
+            .recovery
+            .as_ref()
+            .unwrap()
+            .next_timeout_after(0)
+            .unwrap();
+        {
+            let mut future = pin!(client.progress_async(0, &mut clock, &mut timer, u64::MAX));
+            assert!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        assert!(!state_io(client.state.as_mut().unwrap()).bootstrap_mode);
+        assert_eq!(observed_deadline.get(), recovery_deadline);
+        assert!(net.borrow().sent.is_empty());
+        client.validity = PolicyValidity::OnlineUntil {
+            accepted_ms: 0,
+            deadline_ms: 50,
+        };
+        let fired = timer.ready.clone();
+        let deadline = timer.deadline.clone();
+        let now = Cell::new(0);
+        let mut clock = || Ok::<_, ()>(now.get());
+        {
+            let mut future = pin!(client.progress_async(0, &mut clock, &mut timer, 100));
+            assert!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            assert_eq!(deadline.get(), 50);
+            now.set(50);
+            fired.set(true);
+            assert!(matches!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(ManagedAsyncError::State(ManagedError::PolicyExpired)))
+            ));
+        }
+        assert!(client.is_blocked());
+        assert!(net.borrow().sent.is_empty());
+        assert!(!state_io(client.state.as_mut().unwrap()).bootstrap_mode);
+    }
+
+    #[test]
+    fn native_async_preserves_accepted_clock_failure_before_final_clock_failure() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, _, net) = pair_native(&a, &b);
+        client.connect(0).unwrap();
+        let mut timer = Timer::new();
+        let mut samples = [Ok(100), Err(11u8), Err(12)].into_iter();
+        let result =
+            ready(client.progress_async(100, &mut || samples.next().unwrap(), &mut timer, 1000));
+        assert!(matches!(
+            result,
+            Err(ManagedAsyncError::Recovery(RecoveryError::Bootstrap(
+                crate::provisioning::PollError::Io(crate::app::AsyncIoError::ClockAfterSend(11))
+            )))
+        ));
+        assert_eq!(net.borrow().sent.len(), 1);
+        assert!(client.is_blocked());
+        assert!(!state_io(client.state.as_mut().unwrap()).bootstrap_mode);
+    }
+
+    #[test]
+    fn native_async_final_clock_cannot_regress_below_accepted_sample() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, _, net) = pair_native(&a, &b);
+        client.connect(0).unwrap();
+        let mut timer = Timer::new();
+        let mut samples = [100, 200, 150].into_iter();
+        let result = ready(client.progress_async(
+            100,
+            &mut || Ok::<_, ()>(samples.next().unwrap()),
+            &mut timer,
+            1000,
+        ));
+        assert!(matches!(
+            result,
+            Err(ManagedAsyncError::State(ManagedError::Clock))
+        ));
+        assert_eq!(client.last_now, 200);
+        assert_eq!(net.borrow().sent.len(), 1);
+        assert!(client.is_blocked());
+    }
+
+    #[test]
+    fn native_async_cancel_after_ack_preserves_clock_watermark() {
+        reset_mid_seeds();
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, mut server, net) = pair_native(&a, &b);
+        connect_native(&mut client, &mut server, &net);
+        let mut timer = Timer::new();
+        ready(client.request_async(
+            Method::Get,
+            "separate",
+            &[],
+            None,
+            100,
+            &mut || Ok::<_, ()>(100),
+            &mut timer,
+            1000,
+        ))
+        .unwrap();
+        receive(&mut server, 100, &mut timer);
+        let sent_before = net.borrow().sent.len();
+        let blocked = state_io(server.state.as_mut().unwrap())
+            .raw
+            .as_ref()
+            .unwrap()
+            .blocked
+            .clone();
+        let mut clock = || {
+            if net.borrow().sent.len() > sent_before {
+                blocked.set(true);
+                Ok::<_, ()>(200)
+            } else {
+                Ok(100)
+            }
+        };
+        {
+            let mut future =
+                pin!(
+                    server.progress_with_async(100, &mut clock, &mut timer, 1000, |_, _, _| {
+                        Response::content(b"later").separate()
+                    })
+                );
+            assert!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        assert_eq!(net.borrow().sent.len(), sent_before + 1);
+        assert_eq!(server.last_now, 200);
+        assert!(matches!(
+            ready(server.progress_async(150, &mut || Ok::<_, ()>(150), &mut timer, 1000)),
+            Err(ManagedAsyncError::State(ManagedError::Clock))
+        ));
+        assert!(server.is_blocked());
+        assert_eq!(net.borrow().sent.len(), sent_before + 1);
+    }
+
+    #[test]
+    fn native_async_wait_refuses_blocked_or_revoked_owner_before_receive() {
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        for revoked in [false, true] {
+            let (mut client, _, net) = pair_native(&a, &b);
+            if revoked {
+                client.revoke(|_, _, _| Ok::<_, ()>(())).unwrap();
+            } else {
+                assert!(
+                    client
+                        .refresh(0, |_| Err::<(PeerTrust, PolicyValidity), _>(()))
+                        .is_err()
+                );
+            }
+            net.borrow_mut().a.push_back((std::vec![0], SERVER));
+            let mut timer = Timer::new();
+            let error =
+                ready(client.wait_async(1, &mut timer, core::future::pending())).unwrap_err();
+            assert!(matches!(
+                error,
+                ManagedError::Trust(TrustError::Blocked | TrustError::Unauthorized)
+            ));
+            assert_eq!(net.borrow().receives, 0);
+            assert_eq!(net.borrow().a.len(), 1);
+            assert!(net.borrow().sent.is_empty());
+            assert_eq!(timer.deadline.get(), 0);
+            // Explicit verified policy refresh restores listening under a fresh grant.
+            client
+                .refresh(2, |_| {
+                    Ok::<_, ()>((trust(&a, &b, 1), PolicyValidity::OfflineProtectedAnchor))
+                })
+                .unwrap();
+            assert!(matches!(
+                ready(client.wait_async(2, &mut timer, core::future::pending())).unwrap(),
+                AppWake::Ingress
+            ));
+            assert_eq!(net.borrow().receives, 1);
+            assert!(net.borrow().a.is_empty());
+        }
+    }
 }

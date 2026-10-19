@@ -64,9 +64,11 @@ struct Io {
     short: bool,
 }
 
-impl DatagramIo for Io {
+impl crate::storage::DatagramTransport for Io {
     type Error = u8;
+}
 
+impl DatagramIo for Io {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         panic!("shared admission must never receive from the listener")
     }
@@ -433,9 +435,11 @@ fn failed_peer_cannot_starve_another_handoff_and_retry_keeps_exact_bytes() {
         io: Io,
         short: bool,
     }
-    impl DatagramIo for PeerFailure {
+    impl crate::storage::DatagramTransport for PeerFailure {
         type Error = u8;
+    }
 
+    impl DatagramIo for PeerFailure {
         fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
             panic!("admission must not receive")
         }
@@ -1134,8 +1138,11 @@ fn shared_listener_polls_edhoc_then_protected_application_in_the_same_rx_pool() 
         inbox: Option<(Endpoint, Vec<u8>)>,
         output: Vec<u8>,
     }
-    impl DatagramIo for SharedIo {
+    impl crate::storage::DatagramTransport for SharedIo {
         type Error = u8;
+    }
+
+    impl DatagramIo for SharedIo {
         fn recv(&mut self, buffer: &mut [u8]) -> Result<Option<(usize, Endpoint)>, u8> {
             let Some((peer, bytes)) = self.inbox.take() else {
                 return Ok(None);

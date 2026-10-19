@@ -9,6 +9,11 @@ enum State {
     Stopped,
 }
 
+struct RegistrationAttempt {
+    anchor: TrustAnchor,
+    refresh: Option<ManagedCall>,
+}
+
 /// One bounded desired GET subscription, owned by the application.
 ///
 /// Recreate from application configuration after a process/device restart. Run
@@ -37,7 +42,7 @@ impl ManagedSubscription {
     }
 }
 
-impl<T: DatagramIo, P, const DEFERRED: usize, const CACHES: usize, const ROUTES: usize>
+impl<T: DatagramTransport, P, const DEFERRED: usize, const CACHES: usize, const ROUTES: usize>
     ManagedConnection<'_, T, P, DEFERRED, CACHES, ROUTES>
 where
     P: MemoryProfile + MemoryLayout<false> + AppAssembled<false>,
@@ -117,52 +122,14 @@ where
         &mut self,
         subscription: &mut ManagedSubscription,
         now_ms: u64,
-    ) -> Result<bool, ManagedError<T::Error>> {
-        self.time(now_ms)?;
-        if subscription.is_stopped() {
+    ) -> Result<bool, ManagedError<T::Error>>
+    where
+        T: DatagramIo,
+    {
+        let Some(RegistrationAttempt { anchor, refresh }) =
+            self.prepare_subscription(subscription, now_ms)?
+        else {
             return Ok(false);
-        }
-        self.ensure_grant()?;
-        if !self.is_connected() {
-            return Ok(false);
-        }
-        let anchor = self.grant.as_ref().expect("connected grant").anchor();
-        let mut refresh = None;
-        match subscription.state {
-            State::Stopped => return Ok(false),
-            State::New => {}
-            State::Waiting {
-                anchor: original,
-                retry_at,
-            } => {
-                if original != anchor {
-                    return Err(ManagedError::StaleHandle);
-                }
-                if now_ms < retry_at {
-                    return Ok(false);
-                }
-            }
-            State::Active { call, refresh_at } => {
-                if call.anchor != anchor {
-                    return Err(ManagedError::StaleHandle);
-                }
-                if self.check_handle(call.anchor, call.epoch).is_ok() {
-                    if now_ms < refresh_at {
-                        return Ok(false);
-                    }
-                    refresh = Some(call);
-                }
-            }
-        }
-        subscription.state = match refresh {
-            Some(call) => State::Active {
-                call,
-                refresh_at: now_ms.saturating_add(1000),
-            },
-            None => State::Waiting {
-                anchor,
-                retry_at: now_ms.saturating_add(1000),
-            },
         };
         let call = if let Some(call) = refresh {
             if self
@@ -201,6 +168,113 @@ where
             refresh_at: now_ms.saturating_add(30_000),
         };
         Ok(true)
+    }
+
+    fn prepare_subscription(
+        &mut self,
+        subscription: &mut ManagedSubscription,
+        now_ms: u64,
+    ) -> Result<Option<RegistrationAttempt>, ManagedError<T::Error>> {
+        self.time(now_ms)?;
+        if subscription.is_stopped() {
+            return Ok(None);
+        }
+        self.ensure_grant()?;
+        if !self.is_connected() {
+            return Ok(None);
+        }
+        let anchor = self.grant.as_ref().expect("connected grant").anchor();
+        let mut refresh = None;
+        match subscription.state {
+            State::Stopped => return Ok(None),
+            State::New => {}
+            State::Waiting {
+                anchor: original,
+                retry_at,
+            } => {
+                if original != anchor {
+                    return Err(ManagedError::StaleHandle);
+                }
+                if now_ms < retry_at {
+                    return Ok(None);
+                }
+            }
+            State::Active { call, refresh_at } => {
+                if call.anchor != anchor {
+                    return Err(ManagedError::StaleHandle);
+                }
+                if self.check_handle(call.anchor, call.epoch).is_ok() {
+                    if now_ms < refresh_at {
+                        return Ok(None);
+                    }
+                    refresh = Some(call);
+                }
+            }
+        }
+        subscription.state = match refresh {
+            Some(call) => State::Active {
+                call,
+                refresh_at: now_ms.saturating_add(1000),
+            },
+            None => State::Waiting {
+                anchor,
+                retry_at: now_ms.saturating_add(1000),
+            },
+        };
+        Ok(Some(RegistrationAttempt { anchor, refresh }))
+    }
+
+    /// Register or refresh desired interest with native async transport.
+    pub async fn poll_subscription_async<C>(
+        &mut self,
+        subscription: &mut ManagedSubscription,
+        now_ms: u64,
+        clock: &mut impl FnMut() -> Result<u64, C>,
+        timer: &mut impl crate::platform::AsyncTimer,
+        deadline_ms: u64,
+    ) -> Result<bool, ManagedAsyncError<T::Error, C>>
+    where
+        T: AsyncDatagramIo,
+    {
+        let Some(RegistrationAttempt { anchor, refresh }) = self
+            .prepare_subscription(subscription, now_ms)
+            .map_err(ManagedAsyncError::State)?
+        else {
+            return Ok(false);
+        };
+        let result = self
+            .request_inner_async(
+                Method::Get,
+                subscription.path,
+                &[],
+                None,
+                now_ms,
+                true,
+                refresh.map(|call| call.call),
+                clock,
+                timer,
+                deadline_ms,
+            )
+            .await;
+        match result {
+            Ok(call) => {
+                subscription.state = State::Active {
+                    call,
+                    refresh_at: self.last_now.saturating_add(30_000),
+                };
+                Ok(true)
+            }
+            Err(error) => {
+                if let Some(call) = refresh {
+                    let _ = self.cancel(call, self.last_now);
+                }
+                subscription.state = State::Waiting {
+                    anchor,
+                    retry_at: self.last_now.saturating_add(1000),
+                };
+                Err(error)
+            }
+        }
     }
 
     /// Collect a notification and schedule freshness recovery without copying it

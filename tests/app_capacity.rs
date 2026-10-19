@@ -4,9 +4,11 @@ use coaptic::{App, profiles};
 
 struct Idle;
 
-impl DatagramIo for Idle {
+impl coaptic::storage::DatagramTransport for Idle {
     type Error = core::convert::Infallible;
+}
 
+impl DatagramIo for Idle {
     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
         Ok(None)
     }

@@ -82,7 +82,10 @@ cargo +1.89.0 check --locked -p coaptic --no-default-features
 cargo +1.89.0 check --locked -p coaptic --all-features
 ```
 
-Only `coaptic` is published. Harnesses and peers stay out of the crate. Inspect
+`coaptic` uses the compile-time `coaptic-io` procedural macro crate to generate
+native async counterparts from shared protocol bodies. A registry release must
+publish that dependency before `coaptic`; it adds no device runtime dependency.
+Harnesses and peers stay out of the published crates. Inspect
 packaged files and license notices, complete maintainer/external review, and agree
 on the final release snapshot before publishing. Package preparation does not
 authorize publication.

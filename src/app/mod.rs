@@ -46,8 +46,10 @@
 //! }
 //!
 //! # struct NullIo;
-//! # impl DatagramIo for NullIo {
+//! # impl coaptic::storage::DatagramTransport for NullIo {
 //! #     type Error = &'static str;
+//! # }
+//! # impl DatagramIo for NullIo {
 //! #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
 //! #         Ok(None)
 //! #     }
@@ -122,10 +124,50 @@ mod request;
 pub mod resources;
 mod response;
 mod routing;
+mod send;
+use async_server::{complete_deferred_observe_async, dispatch_rx_async, send_notification_async};
+use send::finish_protocol as finish_send_async;
+
+pub(crate) fn completion_time<T: crate::storage::DatagramTransport>(_io: &T, now_ms: u64) -> u64 {
+    now_ms
+}
+
+fn commit_q_window_send<S: Storage + BodySlots, E>(
+    _engine: &mut Engine<S>,
+    _issued: OutgoingBlock,
+) -> Result<(), Error<E>> {
+    Ok(())
+}
+
+fn send_may_have_reached_peer<T: crate::storage::DatagramTransport>(
+    _io: &T,
+    error: &Error<T::Error>,
+) -> bool {
+    matches!(
+        error,
+        Error::Io(DatagramIoError::Io(_) | DatagramIoError::SendLength { .. })
+    )
+}
+
+fn send_retransmit_packet<S: AppStorage, T: DatagramIo, const C: usize, const R: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    _inbox: &mut client::ClientInbox<C>,
+    _lives: &mut client::ClientLives<C>,
+    _oscore: &mut oscore::Field<R>,
+    tx: SlotId,
+) -> Result<(), Error<T::Error>> {
+    engine.send_tx(io, tx)?;
+    Ok(())
+}
+pub(crate) mod async_server;
+pub use async_server::AsyncIoError;
 mod site;
 mod usage;
+mod wake;
 
 pub use usage::AppUsage;
+pub use wake::AppWake;
 
 #[cfg(test)]
 mod lifecycle_soak;
@@ -134,6 +176,9 @@ mod tests;
 
 #[cfg(test)]
 mod capacity_tests;
+
+#[cfg(test)]
+mod reservation_tests;
 
 #[cfg(all(test, feature = "oscore"))]
 mod oscore_install_tests;
@@ -160,7 +205,7 @@ pub const DEFAULT_CLIENT_CALLS: usize = 4;
 
 pub use associations::Association;
 pub use client::{
-    Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
+    AsyncCallError, Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
     RESPONSE_OPTION_COUNT, ResponseBufferError,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
@@ -353,7 +398,7 @@ impl DeferredSelection {
 
 fn deferred_reply_metadata(
     response: &Response<'_>,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     now_ms: u64,
 ) -> Result<client::ReplyMeta, ResponseError> {
     let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
@@ -481,7 +526,7 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         }
         Ok(())
     }
-    fn candidate<T: DatagramIo>(
+    fn candidate<T: crate::storage::DatagramTransport>(
         &mut self,
         ids: &mut AppIds,
         io: &mut T,
@@ -570,7 +615,7 @@ fn retire_deferred_observe<S: AppStorage>(
         return Err(crate::storage::SlotError::Pinned);
     }
     if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+        && let Some(tx) = engine.lookup_owned_con(mid, interest.endpoint())
     {
         engine.release_tx(tx)?;
     }
@@ -580,6 +625,7 @@ fn retire_deferred_observe<S: AppStorage>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(complete_deferred_observe_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, send_may_have_reached_peer => async_server::send_may_have_reached_peer_async, finish_send => finish_send_async))]
 fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -694,10 +740,7 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         // handle, but do not retain a hold for a TX that finish_send released.
         if let Some((id, interest)) = installed {
             let _ = engine.storage_mut().set_observe_interest(id, interest);
-            if matches!(
-                &error,
-                Error::Io(DatagramIoError::Io(_) | DatagramIoError::SendLength { .. })
-            ) {
+            if send_may_have_reached_peer(io, &error) {
                 row.observe.as_mut().expect("Observe completion").failed_mid = Some((
                     mid,
                     now_ms.saturating_add(u64::from(Transmission::EXCHANGE_LIFETIME_MS)),
@@ -706,7 +749,15 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
         }
         return Err(error);
     }
+    let now_ms = completion_time(io, now_ms);
     if register {
+        if let Some((id, mut interest)) = installed {
+            interest.record_notify(now_ms, mid, ty == Type::Confirmable);
+            engine
+                .storage_mut()
+                .set_observe_interest(id, interest)
+                .map_err(|_| Error::CommitAfterSend)?;
+        }
         row.observe.as_mut().expect("registered Observe").failed_mid = None;
         if ty == Type::NonConfirmable {
             let _ = engine.refresh_observe_max_age(
@@ -727,7 +778,11 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
 
 // Stage bytes and all bounded snapshot ownership before installing a relation or sending.
 #[allow(clippy::too_many_arguments)]
-fn prepare_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize>(
+fn prepare_deferred_observe<
+    S: AppStorage,
+    T: crate::storage::DatagramTransport,
+    const REQUESTS: usize,
+>(
     engine: &mut Engine<S>,
     oscore: &mut oscore::Field<REQUESTS>,
     row: &mut DeferredRow,
@@ -1136,9 +1191,19 @@ impl<
     /// scratch space and no additional stored timer metadata on either backend.
     #[must_use]
     pub fn next_timeout(&self) -> Option<u64> {
-        let mut next = self.lives.next_timeout(&self.engine, &self.inbox);
+        self.next_timeout_after(None)
+    }
+
+    // Exclude work already being handled, while retaining every later candidate
+    // rather than filtering only the final minimum (which can hide another Call).
+    pub(crate) fn next_timeout_after(&self, after: Option<u64>) -> Option<u64> {
+        let mut next = self
+            .lives
+            .next_timeout_after(&self.engine, &self.inbox, after);
         let mut consider = |due: u64| {
-            next = Some(next.map_or(due, |old| old.min(due)));
+            if after.is_none_or(|after| due > after) {
+                next = Some(next.map_or(due, |old| old.min(due)));
+            }
         };
         let capacities = self.engine.capacities();
         for index in 0..capacities.tx_datagram_slots {
@@ -1151,6 +1216,14 @@ impl<
             }
         }
         for index in 0..capacities.observe_entries {
+            if after.is_some()
+                && let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) = self
+                    .engine
+                    .observe_interest(SlotId::from_index(index))
+                    .and_then(|row| row.notify_hold())
+            {
+                consider(until_ms);
+            }
             if let Some(lifetime) = self
                 .engine
                 .observe_interest(SlotId::from_index(index))
@@ -1538,8 +1611,10 @@ impl<
     /// # use coaptic::storage::DatagramIo;
     /// # use coaptic::{App, Endpoint, profiles};
     /// # struct NullIo;
-    /// # impl DatagramIo for NullIo {
+    /// # impl coaptic::storage::DatagramTransport for NullIo {
     /// #     type Error = &'static str;
+    /// # }
+    /// # impl DatagramIo for NullIo {
     /// #     fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
     /// #         Ok(None)
     /// #     }
@@ -2073,147 +2148,17 @@ where
         response: Response<'_>,
         now_ms: u64,
     ) -> Result<(), Error<T::Error>> {
-        self.deferred.expire(&mut self.engine, now_ms);
-        let index = self
-            .deferred
-            .rows
-            .iter()
-            .position(|row| {
-                row.is_some_and(|row| {
-                    row.handle == handle && !row.completed && now_ms < row.deadline_ms
-                })
-            })
-            .ok_or(Error::DeferredUnknown)?;
-        response.validate().map_err(Error::Response)?;
-        if response.is_deferred() {
-            return Err(Error::DeferredUnknown);
-        }
-        let response = response.with_fresh_piv();
-        let row = self.deferred.rows[index].expect("matched row");
-        if row.observe.is_some() {
-            complete_deferred_observe(
-                &mut self.engine,
-                &mut self.io,
-                &mut self.ids,
-                &mut self.oscore,
-                now_ms,
-                self.deferred.rows[index].as_mut().expect("matched row"),
-                &response,
-            )?;
-            if self.deferred.rows[index].is_some_and(|row| row.snapshot.is_some()) {
-                self.deferred.rows[index]
-                    .as_mut()
-                    .expect("completed Observe snapshot")
-                    .completed = true;
-            } else {
-                self.deferred.rows[index] = None;
-            }
-            return Ok(());
-        }
-        if row.meta.q_block2.is_some()
-            && row.snapshot.is_some()
-            && (!response.code().is_success() || response.code() == Code::VALID)
-        {
-            // A partial representation may already be visible remotely. Keep
-            // that snapshot retryable; an error or Valid response cannot turn
-            // its old bytes into a different completed deferred response.
-            return Err(Error::Block(BlockTransferError::IdentityMismatch));
-        }
-        let metadata =
-            deferred_reply_metadata(&response, row.meta, now_ms).map_err(Error::Response)?;
-        if row.meta.q_block2.is_some()
-            && row
-                .snapshot
-                .is_some_and(|(_, retained)| !retained.same_header(&metadata))
-        {
-            return Err(Error::Block(BlockTransferError::IdentityMismatch));
-        }
-        let outcome = if row.meta.q_block2.is_some()
-            && response.code().is_success()
-            && response.code() != Code::VALID
-        {
-            complete_deferred_q(
-                &mut self.engine,
-                &mut self.io,
-                &mut self.ids,
-                now_ms,
-                row.meta,
-                &response,
-                &row.q_selectors,
-                &mut self.oscore,
-                &mut self.dedup_closed,
-            )
-        } else {
-            send_separate(
-                &mut self.engine,
-                &mut self.io,
-                &mut self.ids,
-                now_ms,
-                SendResponse {
-                    q_block2: None,
-                    q_request: None,
-                    ..row.meta
-                },
-                &response,
-                &mut self.oscore,
-                &mut self.dedup_closed,
-                true,
-            )
-        };
-        let body = response_body_for(&self.engine, BlockKey::new(row.meta.token, row.meta.dest));
-        if let Some(body) = body {
-            let retained = if row.meta.q_block2.is_some() {
-                row.snapshot.map_or(metadata, |(_, retained)| retained)
-            } else {
-                metadata
-            };
-            self.deferred.rows[index]
-                .as_mut()
-                .expect("matched row")
-                .snapshot = Some((body, retained));
-        }
-        outcome?;
-        if body.is_some() {
-            self.deferred.rows[index]
-                .as_mut()
-                .expect("matched row")
-                .completed = true;
-        } else {
-            self.deferred.rows[index] = None;
-        }
-        Ok(())
-    }
-
-    /// Retire a deferred local handle without claiming remote cancellation.
-    ///
-    /// Caller owns accepted application work and must decide whether it can be
-    /// cancelled. A previously sent empty ACK remains only proof of reception.
-    pub fn cancel_deferred(&mut self, handle: DeferredReply) -> bool {
-        let Some(row) = self
-            .deferred
-            .rows
-            .iter_mut()
-            .find(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
-        else {
-            return false;
-        };
-        if retire_deferred_observe(&mut self.engine, row.expect("matched row")).is_err() {
-            return false;
-        }
-        if let Some(body) = row.and_then(|row| row.snapshot.map(|(body, _)| body)) {
-            let _ = self.engine.release_tx_body(body);
-        }
-        *row = None;
-        true
-    }
-
-    #[cfg(feature = "edhoc")]
-    pub(crate) fn deferred_pending(&self, handle: DeferredReply, now_ms: u64) -> bool {
-        self.deferred
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.handle == handle && !row.completed && now_ms < row.deadline_ms)
+        complete_engine(
+            &mut self.engine,
+            &mut self.io,
+            &mut self.ids,
+            &mut self.oscore,
+            &mut self.deferred,
+            &mut self.dedup_closed,
+            handle,
+            response,
+            now_ms,
+        )
     }
 
     /// Send the current representation to server-side observers of `path`.
@@ -2297,35 +2242,131 @@ where
             &self.deferred,
         )
     }
-
-    /// Mark observers of `path` due. [`Self::poll`] encodes via
-    /// [`ObserveSource`] when progress surfaces the row.
-    ///
-    /// Returns how many rows were marked. Use [`Self::notify`] when you
-    /// already have the [`Response`].
-    ///
-    /// For an outstanding CON notification, signals coalesce until its next
-    /// retransmission deadline. A new source response replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
-    /// the same TX slot, retry count and backoff. Without a signal, retries use
-    /// identical bytes. Terminal responses end the relation while retaining CON
-    /// delivery; a Content-Format change terminates it with 4.06.
-    /// Block2 replacements reuse the retained body slot and stage a new first block.
-    /// Terminal bodies retain their error and selection after the row ends, until
-    /// completion, replacement registration or EXCHANGE_LIFETIME expiry.
-    /// Staging refusal does not consume the signal or extend the retry budget.
-    ///
-    /// Superseded ACKs do not complete or prolong the current chain. Up to four
-    /// superseded MIDs remain on the Observe row so an exact-peer RST can cancel
-    /// that chain. Current ACK, cancellation, re-registration or final timeout
-    /// clears this history; it is not a history across registrations. The row's
-    /// storage is included in fixed profiles and allocated heap-budget checks.
-    pub fn signal(&mut self, path: &[&str]) -> usize {
-        let resource = self.site.observe_resource(path);
-        self.engine.signal_observe_resource(resource)
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(complete_engine_async, bound(crate::app::async_server::ProtocolIo), calls(complete_deferred_observe => complete_deferred_observe_async, complete_deferred_q => complete_deferred_q_async, send_separate => send_separate_async))]
+fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS>,
+    deferred: &mut DeferredTable<DEFERRED>,
+    dedup_closed: &mut Option<DedupClosed>,
+    handle: DeferredReply,
+    response: Response<'_>,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>> {
+    deferred.expire(engine, now_ms);
+    let index = deferred
+        .rows
+        .iter()
+        .position(|row| {
+            row.is_some_and(|row| {
+                row.handle == handle && !row.completed && now_ms < row.deadline_ms
+            })
+        })
+        .ok_or(Error::DeferredUnknown)?;
+    response.validate().map_err(Error::Response)?;
+    if response.is_deferred() {
+        return Err(Error::DeferredUnknown);
+    }
+    let response = response.with_fresh_piv();
+    let row = deferred.rows[index].expect("matched row");
+    if row.observe.is_some() {
+        complete_deferred_observe(
+            engine,
+            io,
+            ids,
+            oscore,
+            now_ms,
+            deferred.rows[index].as_mut().expect("matched row"),
+            &response,
+        )?;
+        if deferred.rows[index].is_some_and(|row| row.snapshot.is_some()) {
+            deferred.rows[index]
+                .as_mut()
+                .expect("completed Observe snapshot")
+                .completed = true;
+        } else {
+            deferred.rows[index] = None;
+        }
+        return Ok(());
+    }
+    if row.meta.q_block2.is_some()
+        && row.snapshot.is_some()
+        && (!response.code().is_success() || response.code() == Code::VALID)
+    {
+        // A partial representation may already be visible remotely. Keep
+        // that snapshot retryable; an error or Valid response cannot turn
+        // its old bytes into a different completed deferred response.
+        return Err(Error::Block(BlockTransferError::IdentityMismatch));
+    }
+    let metadata = deferred_reply_metadata(&response, row.meta, now_ms).map_err(Error::Response)?;
+    if row.meta.q_block2.is_some()
+        && row
+            .snapshot
+            .is_some_and(|(_, retained)| !retained.same_header(&metadata))
+    {
+        return Err(Error::Block(BlockTransferError::IdentityMismatch));
+    }
+    let outcome = if row.meta.q_block2.is_some()
+        && response.code().is_success()
+        && response.code() != Code::VALID
+    {
+        complete_deferred_q(
+            engine,
+            io,
+            ids,
+            now_ms,
+            row.meta,
+            &response,
+            &row.q_selectors,
+            &mut deferred.rows[index].as_mut().expect("matched row").snapshot,
+            metadata,
+            oscore,
+            dedup_closed,
+        )
+    } else {
+        send_separate(
+            engine,
+            io,
+            ids,
+            now_ms,
+            SendResponse {
+                q_block2: None,
+                q_request: None,
+                ..row.meta
+            },
+            &response,
+            oscore,
+            dedup_closed,
+            true,
+        )
+    };
+    let body = response_body_for(engine, BlockKey::new(row.meta.token, row.meta.dest));
+    if let Some(body) = body {
+        let retained = if row.meta.q_block2.is_some() {
+            row.snapshot.map_or(metadata, |(_, retained)| retained)
+        } else {
+            metadata
+        };
+        deferred.rows[index].as_mut().expect("matched row").snapshot = Some((body, retained));
+    }
+    outcome?;
+    if body.is_some() {
+        deferred.rows[index]
+            .as_mut()
+            .expect("matched row")
+            .completed = true;
+    } else {
+        deferred.rows[index] = None;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(poll_engine_async, bound(crate::app::async_server::ProtocolIo), calls(refresh_progress_deadlines => async_server::refresh_progress_deadlines_async, send_retransmit_packet => async_server::send_retransmit_packet_async, send_qblock_recover => async_server::send_qblock_recover_async, dispatch_rx => dispatch_rx_async, send_notification => send_notification_async, client::pace_qblock1 => client::pace_qblock1_async), methods(recv_from => receive_retained_async), renames(progress_before_dispatch => progress_before_dispatch_async, next_qblock_recovery => next_qblock_recovery_async))]
 fn poll_engine<
     Mem,
     T,
@@ -2376,24 +2417,10 @@ where
     }
     expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
-    let (mut received, recv_error) = match engine.recv_from(io) {
+    let (received, recv_error) = match engine.recv_from(io) {
         Ok(id) => (id, None),
         Err(e) => (None, Some(e)),
     };
-    if let (Some(rx), Some(intercept)) = (received, ingress.as_mut()) {
-        let peer = engine
-            .rx_endpoint(rx)
-            .expect("received endpoint")
-            .physical();
-        let consumed = {
-            let bytes = engine.access_rx(rx)?;
-            intercept(bytes.as_bytes(), peer)
-        };
-        if consumed {
-            engine.release_rx(rx)?;
-            received = None;
-        }
-    }
     let progress = engine.progress_before_dispatch(now_ms, |rx| !inbox.holds_datagram(rx));
     let mut replacement_error = None;
     if let Some(retransmit) = progress.retransmit() {
@@ -2405,7 +2432,7 @@ where
                 // Staging refusal still makes the due attempt with retained bytes;
                 // no unprotected fallback and no retry-budget reset.
                 if engine.pending_con(pending.tx_slot()).is_some() {
-                    engine.send_tx(io, pending.tx_slot())?;
+                    send_retransmit_packet(engine, io, inbox, lives, oscore, pending.tx_slot())?;
                 }
                 replacement_error = replacement.err();
             }
@@ -2438,27 +2465,41 @@ where
         .filter(|rx| !inbox.holds_datagram(*rx))
         .or(received)
     {
-        dispatch_rx(
-            engine,
-            io,
-            site,
-            inbox,
-            lives,
-            ids,
-            oscore,
-            oscore_checkpoint,
-            &mut checkpoint_commit,
-            echo_policy,
-            dedup_closed,
-            full_responses,
-            deferred,
-            deferred_lifetime_ms,
-            dispatch
-                .as_mut()
-                .map(|dispatch| &mut **dispatch as &mut AppDispatch<'_>),
-            now_ms,
-            rx,
-        )?;
+        let consumed = if let Some(intercept) = ingress.as_mut() {
+            let peer = engine
+                .rx_endpoint(rx)
+                .expect("retained endpoint")
+                .physical();
+            let bytes = engine.access_rx(rx)?;
+            intercept(bytes.as_bytes(), peer)
+        } else {
+            false
+        };
+        if consumed {
+            engine.release_rx(rx)?;
+        } else {
+            dispatch_rx(
+                engine,
+                io,
+                site,
+                inbox,
+                lives,
+                ids,
+                oscore,
+                oscore_checkpoint,
+                &mut checkpoint_commit,
+                echo_policy,
+                dedup_closed,
+                full_responses,
+                deferred,
+                deferred_lifetime_ms,
+                dispatch
+                    .as_mut()
+                    .map(|dispatch| &mut **dispatch as &mut AppDispatch<'_>),
+                now_ms,
+                rx,
+            )?;
+        }
     }
 
     // Claim after ingress. Replacement registrations start with no pending
@@ -2520,6 +2561,7 @@ where
             dedup_closed,
         )?;
     }
+    refresh_progress_deadlines(engine, io);
     client::pace_qblock1(engine, io, inbox, lives, ids, oscore, now_ms)?;
     if let Some(error) = recv_error {
         return Err(error.into());
@@ -2703,6 +2745,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_qblock_recover_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_response => send_response_async, client::recover_qblock2 => client::recover_qblock2_async, oscore::send_qblock1_recover => oscore::send_qblock1_recover_async), methods(send_tx => send_owned_packet_async))]
 fn send_qblock_recover<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -2837,6 +2880,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
 fn dispatch_rx<
     Mem,
     T,
@@ -2954,7 +2998,7 @@ where
             // relation. A pinned packet refuses with both owners intact.
             if let Some(interest) = engine.superseded_observe_notify(parsed.message_id(), peer)
                 && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-                && let Some(tx) = engine.lookup_pending_con(mid, peer)
+                && let Some(tx) = engine.lookup_owned_con(mid, peer)
                 && let Err(error) = engine.release_tx(tx)
             {
                 let _ = engine.release_rx(rx);
@@ -3290,6 +3334,15 @@ where
     }
 
     let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
+    let body_owner = async_server::BodyOwner::incoming(
+        engine,
+        match assembled {
+            InboundBody::Complete(id) => Some(id),
+            _ => None,
+        },
+    );
+    let engine = &mut *body_owner.engine;
+
     match assembled {
         InboundBody::Continue => {
             let outcome = send_response(
@@ -3508,7 +3561,7 @@ where
     {
         let row = deferred.rows[index].expect("matched snapshot");
         let (body, retained) = row.snapshot.expect("completed snapshot");
-        let outcome = (|| {
+        let outcome = 'reply: {
             if DeferredSelection::from_parts(
                 &parsed,
                 match assembled {
@@ -3546,7 +3599,10 @@ where
                 };
                 let meta = if ty == Type::NonConfirmable {
                     SendResponse {
-                        mid: ids.next_for(engine, io, now_ms)?,
+                        mid: match ids.next_for(engine, io, now_ms) {
+                            Ok(mid) => mid,
+                            Err(e) => break 'reply Err(e),
+                        },
                         ..meta
                     }
                 } else {
@@ -3587,7 +3643,10 @@ where
                 let mid = if ty == Type::Acknowledgement {
                     meta.mid
                 } else {
-                    ids.next_for(engine, io, now_ms)?
+                    match ids.next_for(engine, io, now_ms) {
+                        Ok(mid) => mid,
+                        Err(e) => break 'reply Err(e),
+                    }
                 };
                 issue_classic(
                     engine,
@@ -3603,7 +3662,7 @@ where
                     oscore,
                 )
             }
-        })();
+        };
         if let InboundBody::Complete(id) = assembled {
             let _ = engine.release_rx_body(id);
         }
@@ -3909,7 +3968,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .lookup_observe(key)
             .and_then(|id| engine.observe_interest(id))
             && let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-            && let Some(tx) = engine.lookup_pending_con(mid, peer)
+            && let Some(tx) = engine.lookup_owned_con(mid, peer)
         {
             engine.release_tx(tx)?;
         }
@@ -3969,7 +4028,7 @@ fn supersede_notification<S, T, const N: usize, const REQUESTS: usize, const DEF
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
-    T: DatagramIo,
+    T: crate::storage::DatagramTransport,
 {
     let interest = (0..engine.capacities().observe_entries).find_map(|index| {
         let row = engine.observe_interest(SlotId::from_index(index))?;
@@ -4184,6 +4243,7 @@ fn stage_observe_replacement<E, const REQUESTS: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(notify_engine_async, bound(crate::app::async_server::ProtocolIo), calls(send_notification => send_notification_async))]
 fn notify_engine<S, T, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -4385,6 +4445,15 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
     let mut found = None;
     let mut ambiguous = false;
     let mut accept = |route: Endpoint| {
+        // Observe and Exchange ownership can be prepared before transport
+        // acceptance. Neither may turn an unsent reservation into wire authority.
+        if engine
+            .lookup_owned_con(mid, route)
+            .and_then(|id| engine.pending_con(id))
+            .is_some_and(|pending| !pending.rto().is_started())
+        {
+            return;
+        }
         if route.physical() == peer.physical() {
             if found.is_some_and(|previous| previous != route) {
                 ambiguous = true;
@@ -4431,6 +4500,7 @@ fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: u
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_notification_io_async, bound(crate::app::async_server::ProtocolIo), calls(completion_time => async_server::completion_time_async, start_notify_block2 => start_notify_block2_async, finish_send => finish_send_async))]
 fn send_notification<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -4534,6 +4604,7 @@ where
         }
     };
     outcome?;
+    let now_ms = completion_time(io, now_ms);
     if !notify.code().is_success() {
         let _ = engine.take_observe(interest.key());
         return Ok(true);
@@ -4548,10 +4619,11 @@ where
     Ok(true)
 }
 
+#[coaptic_io::dual_io(start_notify_block2_async, bound(crate::app::async_server::ProtocolIo), calls(issue_observe_preferred => issue_observe_preferred_async, issue_classic => issue_classic_async))]
 fn start_notify_block2<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     pending: Option<(u64, MessageId, u32)>,
@@ -4575,6 +4647,8 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
+    let mut body_owner = async_server::BodyOwner::outgoing(engine, id);
+    let engine = &mut *body_owner.engine;
     if let Some(mut transfer) = engine.tx_body_transfer(id) {
         transfer.remember_notification(response.code(), response.format(), response.max_age_secs());
         transfer.retain_observe_selection(
@@ -4614,16 +4688,18 @@ where
     if outcome.is_err() {
         let _ = engine.release_tx_body(id);
     }
+    body_owner.disarm();
     outcome
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_separate_async, bound(crate::app::async_server::ProtocolIo), calls(send_response => send_response_async, start_outgoing => start_outgoing_async, continue_outgoing => continue_outgoing_async, send_empty_ack => send_empty_ack_async, finish_send => finish_send_async))]
 fn send_separate<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     oscore_ctx: &mut oscore::Field<REQUESTS>,
     dedup_closed: &mut Option<DedupClosed>,
@@ -4683,9 +4759,6 @@ where
 
     let ty = match meta.ty {
         Type::Confirmable => {
-            if !acknowledged {
-                send_empty_ack(engine, io, meta.dest, meta.mid)?;
-            }
             remember_empty_ack(
                 engine,
                 meta.dest,
@@ -4694,6 +4767,9 @@ where
                 meta.request,
                 dedup_closed,
             );
+            if !acknowledged {
+                send_empty_ack(engine, io, meta.dest, meta.mid)?;
+            }
             Type::Confirmable
         }
         Type::NonConfirmable => Type::NonConfirmable,
@@ -4768,11 +4844,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_response_async, bound(crate::app::async_server::ProtocolIo), calls(start_outgoing => start_outgoing_async, continue_outgoing => continue_outgoing_async, send_pinned_tx => send_pinned_tx_async, send_empty_ack => send_empty_ack_async, finish_send => finish_send_async))]
 fn send_response<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     now_ms: u64,
     oscore_ctx: &mut oscore::Field<REQUESTS>,
@@ -4786,7 +4863,6 @@ where
     if meta.no_response.suppresses(response.code()) {
         return match meta.ty {
             Type::Confirmable => {
-                send_empty_ack(engine, io, meta.dest, meta.mid)?;
                 remember_empty_ack(
                     engine,
                     meta.dest,
@@ -4795,6 +4871,7 @@ where
                     meta.request,
                     dedup_closed,
                 );
+                send_empty_ack(engine, io, meta.dest, meta.mid)?;
                 Ok(())
             }
             Type::NonConfirmable | Type::Acknowledgement | Type::Reset => Ok(()),
@@ -4977,7 +5054,7 @@ fn retire_suppressed_observe<
         return Err(crate::storage::SlotError::Pinned);
     }
     if let Some(mid) = interest.notify_hold().and_then(|hold| hold.con_mid())
-        && let Some(tx) = engine.lookup_pending_con(mid, interest.endpoint())
+        && let Some(tx) = engine.lookup_owned_con(mid, interest.endpoint())
     {
         engine.release_tx(tx)?;
     }
@@ -5015,12 +5092,13 @@ fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) 
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(start_outgoing_async, bound(crate::app::async_server::ProtocolIo), calls(issue_borrowed_classic => issue_borrowed_classic_async, issue_observe_preferred => issue_observe_preferred_async, issue_classic => issue_classic_async, issue_q_selection => issue_q_selection_async, issue_q_window => issue_q_window_async))]
 fn start_outgoing<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     key: BlockKey,
@@ -5073,6 +5151,8 @@ where
         }
         Err(e) => return Err(Error::Block(e)),
     };
+    let mut body_owner = async_server::BodyOwner::outgoing(engine, id);
+    let engine = &mut *body_owner.engine;
     let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0)
         || meta
             .q_request
@@ -5138,6 +5218,7 @@ where
     if outcome.is_err() || selective {
         let _ = engine.release_tx_body(id);
     }
+    body_owner.disarm();
     outcome
 }
 
@@ -5147,10 +5228,11 @@ where
 /// borrow ends during this call; only encoded TX bytes survive for replay.
 /// Observe, deferred replies and Q-Block continue to own complete snapshots.
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_borrowed_classic_async, bound(crate::app::async_server::ProtocolIo), calls(send_pinned_tx => send_pinned_tx_async, finish_send => finish_send_async))]
 fn issue_borrowed_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     key: BlockKey,
@@ -5263,12 +5345,13 @@ fn retained_body_matches<S: Storage + BodySlots>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(continue_outgoing_async, bound(crate::app::async_server::ProtocolIo), calls(issue_classic => issue_classic_async, issue_q_selection => issue_q_selection_async, issue_q_window => issue_q_window_async))]
 fn continue_outgoing<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     id: SlotId,
@@ -5385,10 +5468,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_observe_preferred_async, bound(crate::app::async_server::ProtocolIo), calls(issue_classic => issue_classic_async))]
 fn issue_observe_preferred<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     id: SlotId,
@@ -5429,10 +5513,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_classic_async, bound(crate::app::async_server::ProtocolIo), calls(send_pinned_tx => send_pinned_tx_async, finish_send => finish_send_async))]
 fn issue_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     mid: MessageId,
@@ -5519,12 +5604,13 @@ where
 // RFC 9177 section 4.4: M=0 asks for exactly NUM; a non-aligned
 // M=1 asks for NUM through the end of its MAX_PAYLOADS_SET. Reissuing
 // selections never advances or acknowledges a retained transfer's window.
+#[coaptic_io::dual_io(q_response_mid_async, bound(crate::app::async_server::ProtocolIo), calls(send_empty_ack => send_empty_ack_async))]
 fn q_response_mid<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     first_ty: Type,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<MessageId, Error<T::Error>>
@@ -5554,14 +5640,17 @@ where
 // A requested SZX selects byte ranges; it never mutates a transfer window or
 // releases the snapshot after a last block, so later recovery can reselect it.
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(complete_deferred_q_async, bound(crate::app::async_server::ProtocolIo), calls(issue_deferred_q => issue_deferred_q_async))]
 fn complete_deferred_q<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     selectors: &DeferredQSelectors,
+    snapshot: &mut Option<(SlotId, client::ReplyMeta)>,
+    metadata: client::ReplyMeta,
     oscore: &mut oscore::Field<REQUESTS>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
@@ -5577,7 +5666,8 @@ where
     if response.etag_bytes().is_none() {
         return Err(Error::Block(BlockTransferError::MissingIdentity));
     }
-    let body = if let Some(body) = response_body_for(engine, key) {
+    let existing = response_body_for(engine, key);
+    let body = if let Some(body) = existing {
         let transfer = engine
             .tx_body_transfer(body)
             .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
@@ -5597,6 +5687,10 @@ where
             )
             .map_err(Error::Block)?
     };
+    // The deferred row owns the immutable representation before any send can
+    // suspend. Cancellation after a partial window must retain those same bytes
+    // and headers until retry, explicit cancellation, or deadline cleanup.
+    *snapshot = Some((body, snapshot.map_or(metadata, |(_, retained)| retained)));
     let meta = SendResponse {
         mid: ids.next_for(engine, io, now_ms)?,
         ..meta
@@ -5657,12 +5751,13 @@ fn plan_deferred_q(
     Ok(plan)
 }
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_deferred_q_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, finish_send => finish_send_async))]
 fn issue_deferred_q<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     first_ty: Type,
     body: SlotId,
@@ -5744,12 +5839,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_q_selection_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async))]
 fn issue_q_selection<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
@@ -5801,12 +5897,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(issue_q_window_async, bound(crate::app::async_server::ProtocolIo), calls(q_response_mid => q_response_mid_async, send_issued => send_issued_async, commit_q_window_send => async_server::commit_q_window_send_async), renames(next_q_block2 => peek_q_block2))]
 fn issue_q_window<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     first_ty: Type,
     id: SlotId,
@@ -5833,6 +5930,7 @@ where
         send_issued(
             engine, io, meta, response, ty, mid, issued, true, None, oscore_ctx,
         )?;
+        commit_q_window_send(engine, issued)?;
         extra = extra.saturating_add(1);
         if issued.complete() {
             let _ = engine.release_tx_body(id);
@@ -5842,10 +5940,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_issued_async, bound(crate::app::async_server::ProtocolIo), calls(finish_send => finish_send_async))]
 fn send_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     mid: MessageId,
@@ -5867,7 +5966,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn encode_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
-    meta: SendResponse,
+    meta: SendResponse<'_>,
     response: &Response<'_>,
     ty: Type,
     mid: MessageId,
@@ -5877,7 +5976,7 @@ fn encode_issued<S, T, const REQUESTS: usize>(
 ) -> Result<SlotId, Error<T::Error>>
 where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
-    T: DatagramIo,
+    T: crate::storage::DatagramTransport,
 {
     let mut chunk = [0u8; 1024];
     let n = copy_issued(engine, issued, &mut chunk).map_err(Error::Block)?;
@@ -6144,6 +6243,7 @@ fn request_may_rerun_on_duplicate(code: Code) -> bool {
     matches!(code, Code::GET | Code::PUT | Code::DELETE | Code::IPATCH)
 }
 
+#[coaptic_io::dual_io(replay_con_request_async, bound(crate::app::async_server::ProtocolIo), calls(replay_closed => replay_closed_async, send_replay_bytes => send_replay_bytes_async, send_empty_ack => send_empty_ack_async), methods(send_tx => send_tx_async))]
 fn replay_con_request<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6192,6 +6292,7 @@ where
 
 /// POST / PATCH / FETCH: insert failure after the first response is
 /// fail-closed (empty ACK), not Miss.
+#[coaptic_io::dual_io(replay_closed_async, bound(crate::app::async_server::ProtocolIo), calls(send_empty_ack => send_empty_ack_async))]
 fn replay_closed<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6228,6 +6329,7 @@ where
     Replay::Hit(send_empty_ack(engine, io, peer, parsed.message_id()))
 }
 
+#[coaptic_io::dual_io(send_replay_bytes_async, bound(crate::app::async_server::ProtocolIo), methods(send_tx => send_owned_packet_async))]
 fn send_replay_bytes<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6251,6 +6353,7 @@ where
     Ok(())
 }
 
+#[coaptic_io::dual_io(send_pinned_tx_async, bound(crate::app::async_server::ProtocolIo), methods(send_tx => send_tx_async))]
 fn send_pinned_tx<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6505,35 +6608,11 @@ where
     S: Storage + DatagramSlots + PendingCons,
     T: DatagramIo,
 {
-    if let Err(e) = engine.set_tx_endpoint(tx, dest) {
-        let _ = engine.release_tx(tx);
-        return Err(Error::Slot(e));
-    }
-    if let Some((now_ms, mid, jitter)) = pending {
-        if engine
-            .record_pending_con(tx, dest, mid, now_ms, jitter)
-            .is_none()
-        {
-            let _ = engine.release_tx(tx);
-            return Err(Error::Saturated);
-        }
-        match engine.send_tx(io, tx) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                let _ = engine.take_pending_con(mid, dest);
-                let _ = engine.release_tx(tx);
-                Err(e.into())
-            }
-        }
-    } else {
-        let send = engine.send_tx(io, tx);
-        let _ = engine.release_tx(tx);
-        send?;
-        Ok(())
-    }
+    send::finish(engine, io, tx, dest, pending)
 }
 
 #[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(oscore_inbound_error_async, bound(crate::app::async_server::ProtocolIo), calls(send_response => send_response_async))]
 fn oscore_inbound_error<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6655,6 +6734,7 @@ fn copy_rx<S: Storage + DatagramSlots, E>(
     Ok(n)
 }
 
+#[coaptic_io::dual_io(send_empty_ack_async, bound(crate::app::async_server::ProtocolIo), calls(send_empty => send_empty_async))]
 pub(crate) fn send_empty_ack<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6668,6 +6748,7 @@ where
     send_empty(engine, io, dest, Message::empty_ack(mid))
 }
 
+#[coaptic_io::dual_io(send_empty_rst_async, bound(crate::app::async_server::ProtocolIo), calls(send_empty => send_empty_async))]
 fn send_empty_rst<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6681,6 +6762,7 @@ where
     send_empty(engine, io, dest, Message::empty_rst(mid))
 }
 
+#[coaptic_io::dual_io(send_empty_async, bound(crate::app::async_server::ProtocolIo), methods(send_tx => send_owned_packet_async))]
 fn send_empty<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -6711,6 +6793,9 @@ where
 /// Failure of [`App::poll`] or [`Outgoing::send`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error<E> {
+    /// A complete datagram was accepted but its protocol state commit failed.
+    /// Transmission occurred; do not automatically repeat application effects.
+    CommitAfterSend,
     /// Fresh identity or randomized transmission schedule could not be obtained.
     Identity(IdentityError),
     /// Deferred handle is unknown, expired, already completed or invalid.
@@ -6813,6 +6898,7 @@ where
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::CommitAfterSend => f.write_str("datagram accepted but protocol commit failed"),
             Self::Identity(error) => write!(f, "{error}"),
             Self::DeferredUnknown => f.write_str("deferred response handle is unavailable"),
             Self::Io(e) => write!(f, "{e}"),
@@ -6875,6 +6961,7 @@ where
             Self::Slot(e) => Some(e),
             Self::Message(e) => Some(e),
             Self::Saturated
+            | Self::CommitAfterSend
             | Self::DeadlineElapsed
             | Self::DeferredUnknown
             | Self::Backoff { .. } => None,
@@ -6901,3 +6988,78 @@ where
         }
     }
 }
+
+impl<
+    P,
+    T: crate::storage::DatagramTransport,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: AppStorage,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+    const ASSOCIATIONS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+where
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+{
+    /// Retire a deferred local handle without claiming remote cancellation.
+    ///
+    /// Caller owns accepted application work and must decide whether it can be
+    /// cancelled. A previously sent empty ACK remains only proof of reception.
+    pub fn cancel_deferred(&mut self, handle: DeferredReply) -> bool {
+        let Some(row) = self
+            .deferred
+            .rows
+            .iter_mut()
+            .find(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
+        else {
+            return false;
+        };
+        if retire_deferred_observe(&mut self.engine, row.expect("matched row")).is_err() {
+            return false;
+        }
+        if let Some(body) = row.and_then(|row| row.snapshot.map(|(body, _)| body)) {
+            let _ = self.engine.release_tx_body(body);
+        }
+        *row = None;
+        true
+    }
+
+    #[cfg(feature = "edhoc")]
+    pub(crate) fn deferred_pending(&self, handle: DeferredReply, now_ms: u64) -> bool {
+        self.deferred
+            .rows
+            .iter()
+            .flatten()
+            .any(|row| row.handle == handle && !row.completed && now_ms < row.deadline_ms)
+    }
+
+    /// Mark observers of `path` due. [`Self::poll`] encodes via
+    /// [`ObserveSource`] when progress surfaces the row.
+    ///
+    /// Returns how many rows were marked. Use [`Self::notify`] when you
+    /// already have the [`Response`].
+    ///
+    /// For an outstanding CON notification, signals coalesce until its next
+    /// retransmission deadline. A new source response replaces that packet with a fresh MID (and OSCORE Partial IV), retaining
+    /// the same TX slot, retry count and backoff. Without a signal, retries use
+    /// identical bytes. Terminal responses end the relation while retaining CON
+    /// delivery; a Content-Format change terminates it with 4.06.
+    /// Block2 replacements reuse the retained body slot and stage a new first block.
+    /// Terminal bodies retain their error and selection after the row ends, until
+    /// completion, replacement registration or EXCHANGE_LIFETIME expiry.
+    /// Staging refusal does not consume the signal or extend the retry budget.
+    ///
+    /// Superseded ACKs do not complete or prolong the current chain. Up to four
+    /// superseded MIDs remain on the Observe row so an exact-peer RST can cancel
+    /// that chain. Current ACK, cancellation, re-registration or final timeout
+    /// clears this history; it is not a history across registrations. The row's
+    /// storage is included in fixed profiles and allocated heap-budget checks.
+    pub fn signal(&mut self, path: &[&str]) -> usize {
+        let resource = self.site.observe_resource(path);
+        self.engine.signal_observe_resource(resource)
+    }
+}
+
+fn refresh_progress_deadlines<S: Storage, T>(_: &Engine<S>, _: &mut T) {}
