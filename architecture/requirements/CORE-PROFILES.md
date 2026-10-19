@@ -78,7 +78,7 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
   extended token-length encodings and rejects reserved/malformed lengths.
   [Codec tests](../../tests/extended_tokens.rs) distinguish syntax from owned
   capacity, check wire boundaries/maximum and prove shared options/payload behavior.
-- **Section 2.3:** [terminal probe](../../src/app/client_probe.rs) sends canonical
+- **Section 2.2.2:** [terminal probe](../../src/app/client_probe.rs) sends canonical
   CON GET/If-None-Match through ordinary bounded client ownership. Results preserve
   echoed success, permanent 4.00 length refusal, temporary 5.03 refusal, Reset and
   unknown outcomes. Caller-owned evidence expires after a selected 1800–86400
@@ -86,7 +86,7 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
   cover sync/async, cancellation, classification and lifetime; the module test
   covers reused address/association epochs. Reset remains unauthenticated UDP
   control evidence, not cryptographic proof.
-- **Section 2.3 capacity handling:** [App](../../src/app/mod.rs) echoes the complete
+- **Section 2.2.2 capacity handling:** [App](../../src/app/mod.rs) echoes the complete
   borrowed token in 4.00 without manufacturing a maximum-token buffer or dispatching
   the handler. [OSCORE refusal](../../src/app/oscore.rs) authenticates and persists
   replay state first, then uses existing scratch. [Eight App tests](../../tests/extended_token_app.rs)
