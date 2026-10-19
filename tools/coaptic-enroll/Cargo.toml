@@ -18,6 +18,7 @@ webauthn-tests = ["webauthn", "webauthn-authenticator-rs/softpasskey"]
 development-piv = ["dep:yubikey", "dep:x509-cert", "dep:p256", "dep:p384", "dep:rsa", "dep:sha2"]
 
 [dependencies]
+coaptic-receipts = { path = "../coaptic-receipts" }
 coaptic-console-core = { path = "../coaptic-console-core" }
 coaptic = { path = "../..", default-features = false, features = ["std", "edhoc"] }
 # Read verified public UV/backup flags and the initial counter after registration.

@@ -32,10 +32,21 @@ pub fn run(
             return Err("unexpected arguments".into());
         }
         store.initialize(&identity)?;
+        pairing::initialize_receipts(&device_directory, &identity)?;
         println!("Pairing store initialized; no peer is authorized.");
         return Ok(());
     }
     let mut state = store.restore(&identity)?;
+    if command == "receipts-init" {
+        if args.next().is_some() {
+            return Err("unexpected arguments".into());
+        }
+        pairing::initialize_receipts(&device_directory, &identity)?;
+        println!(
+            "New receipt journal initialized. Existing or missing-after-use journals must never be reset."
+        );
+        return Ok(());
+    }
     if command == "pairing-info" {
         if args.next().is_some() {
             return Err("unexpected arguments".into());
@@ -86,6 +97,7 @@ pub fn run(
         // Keep the pairing store locked for this entire runtime. Management
         // refuses until this process and every session/application owner stop.
         return peer::run(
+            &device_directory,
             &identity,
             &state,
             local.to_str().ok_or("invalid address")?,

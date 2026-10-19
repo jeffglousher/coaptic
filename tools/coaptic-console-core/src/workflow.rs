@@ -72,6 +72,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
         "14" => ("piv-touch-test", &[]),
         "15" => ("development-piv-test", &[]),
         "16" => ("serial-restart", &["Serial port"]),
+        "17" => ("receipts-init", &["Existing host identity name"]),
         _ => return None,
     };
     Some(Operation {
@@ -93,6 +94,9 @@ pub fn operation(choice: &str) -> Option<Operation> {
             "14" => "Test the touch-required credential",
             "15" => "Test the touchless development credential",
             "16" => "Restart device, retaining identity and pairing",
+            "17" => {
+                "Initialize first receipt journal for an existing host (never reset lost history)"
+            }
             _ => unreachable!(),
         },
         fields,
@@ -112,7 +116,7 @@ pub struct Group {
 pub fn group(choice: &str) -> Option<Group> {
     let (title, operations): (&str, &[&str]) = match choice {
         "1" => ("Inspect", &["1"]),
-        "2" => ("Set up", &["11", "8", "6"]),
+        "2" => ("Set up", &["11", "8", "6", "17"]),
         "3" => ("Pair / connect", &["2", "12", "5"]),
         "4" => ("Credentials", &["9", "10", "14", "15", "13"]),
         "5" => ("Maintenance", &["16", "3", "4"]),

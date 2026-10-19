@@ -1,0 +1,22 @@
+[package]
+name = "coaptic-receipts"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Bounded durable telemetry effects and receipts for Coaptic host services"
+
+[workspace]
+
+[dependencies]
+coaptic = { path = "../..", default-features = false, features = ["std", "edhoc"] }
+blake3 = "=1.8.7"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
