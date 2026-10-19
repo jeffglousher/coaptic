@@ -273,9 +273,11 @@ fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]
             if i + 1 == bytes.len() {
                 return Err(ParseError::PayloadMarkerWithoutPayload);
             }
-            return Ok((&bytes[start..i], &bytes[i + 1..]));
+            let options = bytes.get(start..i).ok_or(ParseError::TruncatedOption)?;
+            return Ok((options, &bytes[i + 1..]));
         }
         let _ = read_option(bytes, &mut i, &mut prev)?;
     }
-    Ok((&bytes[start..], &[]))
+    let options = bytes.get(start..).ok_or(ParseError::TruncatedOption)?;
+    Ok((options, &[]))
 }
