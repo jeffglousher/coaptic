@@ -232,7 +232,11 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
     } else {
         (usize::from(tkl), 0)
     };
-    let rest = &rest[prefix..];
+    // Keep the prefix bound check beside the subtraction for the BPF verifier;
+    // LLVM otherwise folds it into an earlier total-length check.
+    #[cfg(target_arch = "bpf")]
+    let prefix = core::hint::black_box(prefix);
+    let rest = rest.get(prefix..).ok_or(ParseError::TruncatedToken)?;
     if rest.len() < tkl_usize {
         return Err(ParseError::TruncatedToken);
     }
