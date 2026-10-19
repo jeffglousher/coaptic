@@ -1142,8 +1142,12 @@ impl<
         };
         let capacities = self.engine.capacities();
         for index in 0..capacities.tx_datagram_slots {
-            if let Some(pending) = self.engine.pending_con(SlotId::from_index(index)) {
-                consider(pending.rto().next_timeout_ms());
+            if let Some(due) = self
+                .engine
+                .pending_con(SlotId::from_index(index))
+                .and_then(|pending| pending.rto().next_timeout_ms())
+            {
+                consider(due);
             }
         }
         for index in 0..capacities.observe_entries {

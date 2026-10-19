@@ -271,7 +271,10 @@ impl<const SLOTS: usize, const BYTES: usize> DatagramPool<SLOTS, BYTES> {
     pub fn lookup_pending(&self, message_id: MessageId, endpoint: Endpoint) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
-            if self.pending_mid(id) == Some(message_id) && self.endpoint(id) == Some(endpoint) {
+            if self.pending_mid(id) == Some(message_id)
+                && self.endpoint(id) == Some(endpoint)
+                && self.pending_rto(id).is_some_and(PendingRto::is_started)
+            {
                 Some(id)
             } else {
                 None

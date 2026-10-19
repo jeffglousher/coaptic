@@ -1506,7 +1506,7 @@ fn engine_pending_con_first_timeout_due() {
             assert_eq!(pending.rto().attempts(), 1);
             assert_eq!(pending.rto().timeout_ms(), timeout.saturating_mul(2));
             assert_eq!(
-                pending.rto().next_timeout_ms(),
+                pending.rto().next_timeout_ms().unwrap(),
                 u64::from(timeout) + u64::from(timeout.saturating_mul(2))
             );
         }
@@ -1529,7 +1529,7 @@ fn engine_pending_con_backoff_increases() {
                 assert_eq!(pending.tx_slot(), tx);
                 assert_eq!(pending.rto().attempts(), attempt);
                 assert_eq!(pending.rto().timeout_ms(), timeout);
-                now = pending.rto().next_timeout_ms();
+                now = pending.rto().next_timeout_ms().unwrap();
             }
             Retransmit::GiveUp(_) => panic!("backoff still has attempts"),
         }
@@ -1564,7 +1564,7 @@ fn engine_pending_con_max_retransmit_give_up() {
             Retransmit::Due(pending) => {
                 assert_eq!(pending.tx_slot(), tx);
                 timeout = pending.rto().timeout_ms();
-                now = pending.rto().next_timeout_ms() - u64::from(timeout);
+                now = pending.rto().next_timeout_ms().unwrap() - u64::from(timeout);
             }
             Retransmit::GiveUp(_) => panic!("give-up before MAX_RETRANSMIT"),
         }
@@ -3722,7 +3722,7 @@ fn engine_metrics_progress_retransmit_give_up() {
         match engine.poll_retransmit(now).expect("due") {
             Retransmit::Due(pending) => {
                 timeout = pending.rto().timeout_ms();
-                now = pending.rto().next_timeout_ms() - u64::from(timeout);
+                now = pending.rto().next_timeout_ms().unwrap() - u64::from(timeout);
             }
             Retransmit::GiveUp(_) => panic!("give-up before MAX_RETRANSMIT"),
         }
@@ -4192,7 +4192,7 @@ mod alloc_backend {
         let mut now = u64::from(Transmission::ACK_TIMEOUT_MS);
         for _ in 0..Transmission::MAX_RETRANSMIT {
             match engine.poll_retransmit(now).expect("due") {
-                Retransmit::Due(pending) => now = pending.rto().next_timeout_ms(),
+                Retransmit::Due(pending) => now = pending.rto().next_timeout_ms().unwrap(),
                 Retransmit::GiveUp(_) => panic!("give-up before max"),
             }
         }
@@ -5339,6 +5339,20 @@ fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
         }
     }
     impl PendingCons for Custom {
+        fn reserve_pending_con(
+            &mut self,
+            _: SlotId,
+            _: Endpoint,
+            _: MessageId,
+        ) -> Option<PendingCon> {
+            panic!("unexpected mutation")
+        }
+        fn commit_pending_con(&mut self, _: PendingCon, _: u64, _: u32) -> Option<PendingCon> {
+            panic!("unexpected mutation")
+        }
+        fn cancel_pending_con(&mut self, _: PendingCon) -> bool {
+            panic!("unexpected mutation")
+        }
         fn record_pending_con(
             &mut self,
             _: SlotId,
@@ -5595,7 +5609,10 @@ where
         Retransmit::GiveUp(_) => panic!("first timeout cannot give up"),
     };
     assert_eq!(committed.rto().attempts(), 1);
-    assert_eq!(committed.rto().next_timeout_ms(), now + 1000 + 2 * now);
+    assert_eq!(
+        committed.rto().next_timeout_ms().unwrap(),
+        now + 1000 + 2 * now
+    );
     assert_eq!(
         engine.storage_mut().commit_retransmit(expected, u64::MAX),
         None
@@ -5660,4 +5677,130 @@ fn allocated_two_phase_retransmit_preserves_selection_until_commit() {
         .build_alloc(Capacities::from_profile::<profiles::Default>())
         .unwrap();
     two_phase_retransmit_contract(engine);
+}
+
+fn initial_con_reservation_contract<S>(mut engine: Engine<S>)
+where
+    S: Storage + DatagramSlots + super::PendingCons,
+{
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let first_mid = MessageId::new(801);
+    let second_mid = MessageId::new(802);
+    let first = engine.acquire_tx().unwrap();
+    let second = engine.acquire_tx().unwrap();
+    for (id, mid) in [(first, first_mid), (second, second_mid)] {
+        engine
+            .encode_tx(id, &Message::new(Type::Confirmable, Code::GET, mid))
+            .unwrap();
+    }
+    let reserved = engine
+        .storage_mut()
+        .reserve_pending_con(first, peer, first_mid)
+        .unwrap();
+    assert!(!reserved.rto().is_started());
+    assert_eq!(reserved.rto().next_timeout_ms(), None);
+    assert!(!reserved.rto().is_due(u64::MAX));
+    assert_eq!(engine.storage_mut().peek_retransmit(u64::MAX), None);
+    assert_eq!(
+        engine.storage_mut().commit_retransmit(reserved, u64::MAX),
+        None
+    );
+    assert_eq!(
+        engine
+            .storage_mut()
+            .reserve_pending_con(first, peer, first_mid),
+        Some(reserved)
+    );
+    assert_eq!(
+        engine
+            .storage_mut()
+            .reserve_pending_con(first, peer, second_mid),
+        None
+    );
+    assert_eq!(
+        engine
+            .storage_mut()
+            .reserve_pending_con(second, peer, second_mid),
+        None
+    );
+    assert_eq!(
+        engine.record_pending_con(second, peer, second_mid, 0, 0),
+        None
+    );
+    assert_eq!(
+        engine.record_pending_con(first, peer, first_mid, 0, 0),
+        None
+    );
+    assert_eq!(engine.lookup_pending_con(first_mid, peer), None);
+    let rx = engine.acquire_rx().unwrap();
+    let mut bytes = [0; 8];
+    for message in [empty_ack(first_mid), empty_rst(first_mid)] {
+        let len = encode(&message, &mut bytes).unwrap();
+        engine.write_rx(rx, &bytes[..len], peer).unwrap();
+        assert_eq!(engine.match_empty_ack_rst_rx(rx).unwrap(), None);
+        assert_eq!(engine.pending_con(first), Some(reserved));
+    }
+    // Dropping an async attempt releases only its admission ownership.
+    assert!(engine.storage_mut().cancel_pending_con(reserved));
+    assert!(!engine.storage_mut().cancel_pending_con(reserved));
+    assert_eq!(
+        engine.storage_mut().commit_pending_con(reserved, 10_000, 0),
+        None
+    );
+    assert_eq!(engine.tx_occupied(), 2);
+    assert_eq!(engine.decode_tx(first).unwrap().message_id(), first_mid);
+    let next = engine
+        .storage_mut()
+        .reserve_pending_con(second, peer, second_mid)
+        .unwrap();
+    let sent = engine
+        .storage_mut()
+        .commit_pending_con(next, 10_000, 0)
+        .unwrap();
+    assert!(sent.rto().is_started());
+    let due = 10_000 + u64::from(Transmission::ACK_TIMEOUT_MS);
+    assert_eq!(sent.rto().next_timeout_ms(), Some(due));
+    assert_eq!(sent.rto().attempts(), 0);
+    assert_eq!(
+        engine.storage_mut().commit_pending_con(next, 20_000, 0),
+        None
+    );
+    assert!(!engine.storage_mut().cancel_pending_con(next));
+    assert!(!engine.storage_mut().cancel_pending_con(sent));
+    assert_eq!(engine.storage_mut().peek_retransmit(due - 1), None);
+    assert_eq!(engine.storage_mut().peek_retransmit(due), Some(sent));
+    let len = encode(&empty_ack(second_mid), &mut bytes).unwrap();
+    engine.write_rx(rx, &bytes[..len], peer).unwrap();
+    assert_eq!(engine.match_empty_ack_rst_rx(rx).unwrap(), Some(second));
+    assert_eq!(
+        engine.storage_mut().commit_pending_con(next, 20_000, 0),
+        None
+    );
+    assert_eq!(engine.pending_con(second), None);
+    // Ordinary synchronous callers still start immediately after reservation removal.
+    assert_eq!(
+        engine.record_pending_con(first, peer, first_mid, 20_000, 0),
+        Some(first)
+    );
+    assert_eq!(
+        engine.pending_con(first).unwrap().rto().next_timeout_ms(),
+        Some(20_000 + u64::from(Transmission::ACK_TIMEOUT_MS))
+    );
+    assert_eq!(core::mem::size_of::<PendingRto>(), 16);
+}
+
+#[test]
+fn fixed_initial_con_reservation_counts_nstart_without_starting_rto() {
+    initial_con_reservation_contract(build_default());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_initial_con_reservation_counts_nstart_without_starting_rto() {
+    let engine = EngineBuilder::new()
+        .profile::<profiles::Default>()
+        .block_wise(false)
+        .build_alloc(Capacities::from_profile::<profiles::Default>())
+        .unwrap();
+    initial_con_reservation_contract(engine);
 }

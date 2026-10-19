@@ -157,7 +157,7 @@ fn cycle<S: Storage + DatagramSlots + PendingCons>(mut engine: Engine<S>, pin_fi
                 assert_eq!(due.rto().attempts(), attempt);
                 assert_eq!(due.rto().timeout_ms(), before.rto().timeout_ms() * 2);
                 assert_eq!(
-                    due.rto().next_timeout_ms(),
+                    due.rto().next_timeout_ms().unwrap(),
                     now + u64::from(due.rto().timeout_ms())
                 );
                 assert_eq!(engine.pending_con(id), Some(due));

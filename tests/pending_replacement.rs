@@ -79,7 +79,7 @@ fn exercise<S: Storage + DatagramSlots + PendingCons>(mut engine: Engine<S>) {
         .with_payload(b"complete staging body");
         assert!(coaptic::message::encode(&message, &mut short).is_err());
         unchanged(&engine, initial);
-        let due = initial.rto().next_timeout_ms();
+        let due = initial.rto().next_timeout_ms().unwrap();
         assert!(engine.poll_retransmit(due - 1).is_none());
         let Some(Retransmit::Due(current)) = engine.poll_retransmit(due) else {
             panic!("due retry")
@@ -168,7 +168,7 @@ fn exercise<S: Storage + DatagramSlots + PendingCons>(mut engine: Engine<S>) {
         assert_eq!(engine.storage().tx_endpoint(other), Some(OTHER));
         let mut pending = replacement;
         for attempt in 2..=4 {
-            let deadline = pending.rto().next_timeout_ms();
+            let deadline = pending.rto().next_timeout_ms().unwrap();
             assert!(engine.poll_retransmit(deadline - 1).is_none());
             let Some(Retransmit::Due(next)) = engine.poll_retransmit(deadline) else {
                 panic!("retry")
@@ -179,7 +179,7 @@ fn exercise<S: Storage + DatagramSlots + PendingCons>(mut engine: Engine<S>) {
             pending = next;
         }
         assert_eq!(
-            engine.poll_retransmit(pending.rto().next_timeout_ms()),
+            engine.poll_retransmit(pending.rto().next_timeout_ms().unwrap()),
             Some(Retransmit::GiveUp(pending))
         );
         assert_eq!(
