@@ -1,5 +1,6 @@
 //! Bounded table of [`MethodRouter`](super::MethodRouter) routes.
 
+use crate::link_format::Metadata;
 use crate::message::{Code, ContentFormat};
 use crate::storage::ObserveResource;
 
@@ -17,6 +18,10 @@ pub enum RouteError {
     Path(PathError),
     /// No slot remains for a new path. Existing paths may still be replaced.
     Full,
+    /// No route exists at the supplied metadata path.
+    NotFound,
+    /// Discovery metadata is malformed. Existing metadata is unchanged.
+    Metadata(crate::link_format::Error),
 }
 
 /// Bytes budgeted for one RFC 6690 link plus a comma (`</short>,`).
@@ -114,6 +119,7 @@ const WELL_KNOWN: &[&str] = &[".well-known", "core"];
 struct Entry {
     path: Path<'static>,
     methods: MethodRouter,
+    metadata: Option<&'static Metadata<'static>>,
 }
 
 /// Fixed table of path → method router.
@@ -124,6 +130,10 @@ struct Entry {
 /// and not a shared application bag. `/.well-known/core` uses
 /// [`LinkFormatScratch`] ([`link_format_capacity`]).
 /// Use [`Self::try_route`] for recoverable registration at a resource boundary.
+/// Each route retains one nullable pointer for discovery metadata (one machine
+/// word). The descriptor, attribute slices and text are borrowed static data;
+/// include their placement in application flash/RAM accounting. No metadata
+/// payload buffer is added to the Site or its discovery scratch.
 pub struct Site<const N: usize = DEFAULT_ROUTES> {
     entries: [Option<Entry>; N],
     len: usize,
@@ -220,6 +230,32 @@ impl<const N: usize> Site<N> {
         self.try_route(path, methods)
     }
 
+    /// Attach or clear borrowed discovery metadata on an existing route.
+    ///
+    /// Invalid paths/metadata or an absent route leave the Site unchanged.
+    /// Replacing the handler on the same path preserves metadata; removing the
+    /// route discards it. `observable` advertises a hint only and does not install
+    /// an Observe handler. The serialized catalog still must fit dispatch scratch;
+    /// overflow yields 5.00 instead of truncating or omitting attributes.
+    pub fn set_discovery_metadata(
+        &mut self,
+        path: impl IntoPath,
+        metadata: Option<&'static Metadata<'static>>,
+    ) -> Result<&mut Self, RouteError> {
+        let path = path_from_into(path).map_err(RouteError::Path)?;
+        if let Some(metadata) = metadata {
+            metadata.encoded_len().map_err(RouteError::Metadata)?;
+        }
+        let entry = self
+            .entries
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.path.matches(path.segments()))
+            .ok_or(RouteError::NotFound)?;
+        entry.metadata = metadata;
+        Ok(self)
+    }
+
     fn insert_route(
         &mut self,
         path: Path<'static>,
@@ -239,7 +275,11 @@ impl<const N: usize> Site<N> {
             .iter()
             .position(Option::is_none)
             .ok_or(RouteError::Full)?;
-        self.entries[index] = Some(Entry { path, methods });
+        self.entries[index] = Some(Entry {
+            path,
+            methods,
+            metadata: None,
+        });
         self.len += 1;
         Ok(self)
     }
@@ -295,7 +335,9 @@ impl<const N: usize> Site<N> {
     /// `catalog` is scratch for `/.well-known/core` when the list exceeds
     /// [`INLINE_PAYLOAD`]. Unused for ordinary routes. Pass
     /// [`LinkFormatScratch`] (or any slice of
-    /// [`link_format_capacity`], capped at [`RESPONSE_BODY`]).
+    /// [`link_format_capacity`]). A standalone caller may supply larger scratch
+    /// for richer metadata; at most [`RESPONSE_BODY`] bytes are used. App's
+    /// configured [`LinkFormatScratch`] budget is unchanged.
     /// Links encode decoded path segments as URI references without changing
     /// their boundaries (RFC 6690 section 2 and RFC 7252 section 6.5).
     /// Unsupported unicast discovery query filters are ignored.
@@ -374,7 +416,7 @@ fn path_is_well_known(path: &[&str]) -> bool {
 }
 
 fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Response<'a> {
-    let cap = link_format_capacity::<N>().min(storage.len());
+    let cap = RESPONSE_BODY.min(storage.len());
     let buf = &mut storage[..cap];
     let mut n = 0usize;
     let mut first = true;
@@ -390,12 +432,22 @@ fn link_format<'a, const N: usize>(site: &Site<N>, storage: &'a mut [u8]) -> Res
         if !write_link(buf, &mut n, entry.path.segments()) {
             return Response::internal_error();
         }
+        if let Some(metadata) = entry.metadata {
+            match metadata.write_into(&mut buf[n..]) {
+                Ok(written) => n += written,
+                Err(_) => return Response::internal_error(),
+            }
+        }
     }
     Response::new(Code::CONTENT)
         .payload_copy_full(&buf[..n])
         .content_format(ContentFormat::LINK_FORMAT)
         .etag(&catalog_etag(&buf[..n]))
 }
+
+#[cfg(test)]
+#[path = "site_metadata_tests.rs"]
+mod metadata_tests;
 
 /// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
 fn catalog_etag(body: &[u8]) -> [u8; 4] {
