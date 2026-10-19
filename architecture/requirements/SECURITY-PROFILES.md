@@ -153,7 +153,20 @@ transitions, producer drain/hold and explicit lost-receipt integration are
 delivered in core #623 / companion #103 with focused host/UDP proof. Their
 installed telemetry execution remains open. Missing/unverifiable journals refuse
 rather than authorizing new effects; revocation must not wait for an unreachable
-peer.
+peer. The current installed core 7bb32c9 / companion11288b4 image passes protected
+echo but Inspect reports missing enrolled `coaptic_pair/pending_v1` history.
+That record is distinct from earlier static telemetry custody. Dependent grants
+remain refused until authentic prior custody is restored/reconciled or an
+independently reviewed legacy first-use provenance contract is established;
+absence alone never authorizes initialization. Core #625 makes the custody state
+visible in CLI inspection.
+
+The finite native-EDHOC/CoAP-envelope option extension is also complete in
+companion #108: eleven directions pass, including exact duplicate ownership,
+critical-option silence/Reset/4.02 and fresh protected recovery. The
+[bootstrap option ledger](RFC7252-EDHOC-OPTIONS.md) identifies exact sources,
+capture and independent-backend boundaries. This does not convert the Python
+transport envelope into a separate native CoAP stack.
 
 [#333](https://github.com/jeffglousher/coaptic/issues/333) remains physical
 qualification: actual power cuts at persistence boundaries, entropy/custody,
