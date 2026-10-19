@@ -141,7 +141,10 @@ struct Peer {
     context: Option<coaptic::oscore::SecurityContext>,
 }
 impl Peer {
-    fn new<S: AppStorage>(server: &mut Server<S>, protected: bool) -> Self {
+    fn new<S: AppStorage<Token = coaptic::message::Token>>(
+        server: &mut Server<S>,
+        protected: bool,
+    ) -> Self {
         #[cfg(feature = "oscore")]
         {
             let make = |sender, recipient| {
@@ -219,7 +222,10 @@ impl Peer {
         frame
     }
 }
-fn campaign<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn campaign<S: AppStorage<Token = coaptic::message::Token>>(
+    mut server: Server<S>,
+    protected: bool,
+) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
         // Reuse completed rows; a valid repeated ETag list remains a bounded selection.
@@ -335,7 +341,7 @@ fn deferred_fetch_allocated_exact_budget_retains_selection() {
     }
 }
 
-fn bounds<S: AppStorage>(mut server: Server<S>, protected: bool) {
+fn bounds<S: AppStorage<Token = coaptic::message::Token>>(mut server: Server<S>, protected: bool) {
     let mut peer = Peer::new(&mut server, protected);
     without_allocating(|| {
         // Header/token/options/marker occupy 22 bytes in the retained 512-byte selection.

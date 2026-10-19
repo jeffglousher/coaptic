@@ -5,6 +5,7 @@ use crate::storage::{self, DatagramIo, Endpoint, MemoryProfile};
 
 struct Eight;
 impl MemoryProfile for Eight {
+    type Token = crate::message::Token;
     const RX_DATAGRAM_SLOTS: usize = 8;
     const RX_DATAGRAM_BYTES: usize = 256;
     const TX_DATAGRAM_SLOTS: usize = 8;
@@ -65,7 +66,7 @@ impl DatagramIo for Io {
 
 type Client<S, const C: usize> = App<Eight, Io, DEFAULT_ROUTES, false, S, 0, C>;
 
-fn expiry<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
+fn expiry<const C: usize, S: AppStorage<Token = crate::message::Token>>(mut app: Client<S, C>) {
     let empty = app.resource_usage();
     assert_eq!(empty.client_requests.capacity, C);
     assert_eq!(empty.client_requests.occupied, 0);
@@ -116,7 +117,9 @@ fn expiry<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
     app.get("recovered").non().to(PEER).send(11).unwrap();
 }
 
-fn completions<const C: usize, S: AppStorage>(mut app: Client<S, C>) {
+fn completions<const C: usize, S: AppStorage<Token = crate::message::Token>>(
+    mut app: Client<S, C>,
+) {
     let mut calls = [None; C];
     for call in &mut calls {
         let current = app.get("value").to(PEER).send(0).unwrap();
@@ -250,7 +253,7 @@ fn client_capacity_resizes_inline_metadata_and_preserves_default() {
 
 #[test]
 fn client_capacity_full_response_short_output_preserves_slot_and_bytes() {
-    fn run<S: AppStorage>(mut app: Client<S, 1>) {
+    fn run<S: AppStorage<Token = crate::message::Token>>(mut app: Client<S, 1>) {
         let call = app.get("value").to(PEER).send(0).unwrap();
         let mid = decode(&app.transport().wire[..app.transport().len])
             .unwrap()

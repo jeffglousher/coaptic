@@ -155,9 +155,9 @@ fn send_may_have_reached_peer<T: crate::storage::DatagramTransport>(
 fn send_retransmit_packet<S: AppStorage, T: DatagramIo, const C: usize, const R: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    _inbox: &mut client::ClientInbox<C>,
-    _lives: &mut client::ClientLives<C>,
-    _oscore: &mut oscore::Field<R>,
+    _inbox: &mut client::ClientInbox<C, S::Token>,
+    _lives: &mut client::ClientLives<C, S::Token>,
+    _oscore: &mut oscore::Field<R, S::Token>,
     tx: SlotId,
 ) -> Result<(), Error<T::Error>> {
     engine.send_tx(io, tx)?;
@@ -191,7 +191,7 @@ use core::marker::PhantomData;
 use crate::error::{BlockTransferError, BuildError, EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo, EncodedUint, Message, MessageId, NoResponse, Opt,
-    OptionsBuilder, ParsedMessage, Transmission, Type, decode, encode, encode_uint,
+    OptionsBuilder, OwnedToken, ParsedMessage, Transmission, Type, encode, encode_uint,
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
@@ -209,7 +209,8 @@ pub const DEFAULT_CLIENT_CALLS: usize = 4;
 pub use associations::Association;
 pub use client::{
     AsyncCallError, Call, CallFailure, OBSERVE_REQUEST_BYTES, Outgoing, RESPONSE_OPTION_BYTES,
-    RESPONSE_OPTION_COUNT, ResponseBufferError,
+    RESPONSE_OPTION_COUNT, ResponseBufferError, TokenProbe, TokenProbeCall, TokenSupport,
+    TokenSupportLifetimeError, TokenSupportOutcome,
 };
 pub use echo::{EchoCheck, EchoDecision, EchoPolicy};
 use identity::{AppIds, Source as IdentitySource};
@@ -299,12 +300,13 @@ pub struct DeferredReply {
 
 type AppIngress<'a> = dyn FnMut(&[u8], Endpoint) -> bool + 'a;
 
-type AppDispatch<'a> = dyn FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static> + 'a;
+type AppDispatch<'a, K> =
+    dyn FnMut(Request<'_, K>, Option<DeferredReply>) -> Response<'static, K> + 'a;
 
 #[derive(Clone, Copy)]
-struct DeferredRow {
+struct DeferredRow<K: OwnedToken = crate::message::Token> {
     handle: DeferredReply,
-    meta: SendResponse<'static>,
+    meta: SendResponse<'static, K>,
     deadline_ms: u64,
     selection: DeferredSelection,
     q_selectors: DeferredQSelectors,
@@ -328,7 +330,7 @@ struct DeferredQSelectors {
     len: usize,
 }
 impl DeferredQSelectors {
-    fn from_request(parsed: &ParsedMessage<'_>) -> Option<Self> {
+    fn from_request(parsed: &ParsedMessage<'_, impl OwnedToken>) -> Option<Self> {
         let mut result = Self {
             values: [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
             len: 0,
@@ -357,7 +359,7 @@ struct DeferredSelection {
 }
 impl DeferredSelection {
     #[cfg(test)]
-    fn from_request(parsed: &ParsedMessage<'_>) -> Result<Self, EncodeError> {
+    fn from_request(parsed: &ParsedMessage<'_, impl OwnedToken>) -> Result<Self, EncodeError> {
         Self::from_parts(parsed, parsed.payload())
     }
     fn stored(self) -> crate::storage::ObserveSelection {
@@ -366,7 +368,10 @@ impl DeferredSelection {
             len: self.len as u16,
         }
     }
-    fn from_parts(parsed: &ParsedMessage<'_>, payload: &[u8]) -> Result<Self, EncodeError> {
+    fn from_parts(
+        parsed: &ParsedMessage<'_, impl OwnedToken>,
+        payload: &[u8],
+    ) -> Result<Self, EncodeError> {
         let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
         for option in parsed.options().filter(|option| {
             (parsed.code() == Code::FETCH && option.number() == crate::message::OptionNumber::ETAG)
@@ -399,9 +404,9 @@ impl DeferredSelection {
     }
 }
 
-fn deferred_reply_metadata(
-    response: &Response<'_>,
-    meta: SendResponse<'_>,
+fn deferred_reply_metadata<K: OwnedToken>(
+    response: &Response<'_, K>,
+    meta: SendResponse<'_, K>,
     now_ms: u64,
 ) -> Result<client::ReplyMeta, ResponseError> {
     let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
@@ -435,23 +440,24 @@ fn deferred_reply_metadata(
         .with_options(options.as_slice());
     let mut bytes = [0; client::RESPONSE_OPTION_BYTES];
     let n = encode(&message, &mut bytes).map_err(|_| ResponseError::DeferredMetadataBounds)?;
-    let parsed = decode(&bytes[..n]).map_err(|_| ResponseError::DeferredMetadataBounds)?;
+    let parsed = crate::message::decode_with_token::<K>(&bytes[..n])
+        .map_err(|_| ResponseError::DeferredMetadataBounds)?;
     client::ReplyMeta::from_parsed(&parsed, meta.dest, now_ms)
         .map_err(|_| ResponseError::DeferredMetadataBounds)
 }
 
-struct DeferredTable<const DEFERRED: usize> {
-    rows: [Option<DeferredRow>; DEFERRED],
+struct DeferredTable<const DEFERRED: usize, K: OwnedToken = crate::message::Token> {
+    rows: [Option<DeferredRow<K>>; DEFERRED],
     generation: u64,
 }
-impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
+impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
     const fn new() -> Self {
         Self {
             rows: [None; DEFERRED],
             generation: 0,
         }
     }
-    fn expire<S: AppStorage>(&mut self, engine: &mut Engine<S>, now_ms: u64) {
+    fn expire<S: AppStorage<Token = K>>(&mut self, engine: &mut Engine<S>, now_ms: u64) {
         for row in &mut self.rows {
             let Some(value) = *row else {
                 continue;
@@ -485,15 +491,15 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
             }
         }
     }
-    fn blocks_observe(&self, key: ObserveKey) -> bool {
+    fn blocks_observe(&self, key: ObserveKey<K>) -> bool {
         self.rows.iter().flatten().any(|row| {
             row.observe.is_some() && ObserveKey::new(row.meta.token, row.meta.dest) == key
         })
     }
-    fn supersede_observe<S: AppStorage>(
+    fn supersede_observe<S: AppStorage<Token = K>>(
         &mut self,
         engine: &mut Engine<S>,
-        key: ObserveKey,
+        key: ObserveKey<K>,
     ) -> Result<(), crate::storage::SlotError> {
         for row in &mut self.rows {
             if let Some(value) = *row
@@ -506,7 +512,7 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         }
         Ok(())
     }
-    fn reject_observe_attempt<S: AppStorage>(
+    fn reject_observe_attempt<S: AppStorage<Token = K>>(
         &mut self,
         engine: &mut Engine<S>,
         mid: MessageId,
@@ -540,14 +546,14 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
         let Some(generation) = self.generation.checked_add(1) else {
             return Ok(None);
         };
-        let nonce = ids.token(&mut |bytes| io.fill_random(bytes))?;
+        let nonce = ids.nonce(&mut |bytes| io.fill_random(bytes))?;
         self.generation = generation;
         Ok(Some(DeferredReply { nonce, generation }))
     }
     fn insert(
         &mut self,
         handle: DeferredReply,
-        meta: SendResponse<'static>,
+        meta: SendResponse<'static, K>,
         deadline_ms: u64,
         selection: DeferredSelection,
         q_selectors: DeferredQSelectors,
@@ -575,8 +581,8 @@ impl<const DEFERRED: usize> DeferredTable<DEFERRED> {
 // Raw Engine replacement remains the advanced caller's ownership boundary.
 fn deferred_observe_owner<S: AppStorage>(
     engine: &Engine<S>,
-    row: DeferredRow,
-) -> Option<ObserveInterest> {
+    row: DeferredRow<S::Token>,
+) -> Option<ObserveInterest<S::Token>> {
     let observe = row.observe?;
     let (seq, format) = observe.attempted?;
     let interest = engine
@@ -596,7 +602,7 @@ fn deferred_observe_owner<S: AppStorage>(
 }
 fn retire_deferred_observe<S: AppStorage>(
     engine: &mut Engine<S>,
-    row: DeferredRow,
+    row: DeferredRow<S::Token>,
 ) -> Result<(), crate::storage::SlotError> {
     let Some(interest) = deferred_observe_owner(engine, row) else {
         // A prepared large response can fail before a relation is installed,
@@ -633,10 +639,10 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    row: &mut DeferredRow,
-    response: &Response<'_>,
+    row: &mut DeferredRow<S::Token>,
+    response: &Response<'_, S::Token>,
 ) -> Result<(), Error<T::Error>> {
     if row.meta.no_response.suppresses(response.code()) {
         retire_deferred_observe(engine, *row)?;
@@ -789,10 +795,10 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    row: &mut DeferredRow,
-    response: &Response<'_>,
+    row: &mut DeferredRow<S::Token>,
+    response: &Response<'_, S::Token>,
 ) -> Result<(), Error<T::Error>> {
     let observed = row.observe.expect("Observe completion");
     if observed.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
@@ -932,9 +938,9 @@ fn prepare_deferred_observe<
     const REQUESTS: usize,
 >(
     engine: &mut Engine<S>,
-    oscore: &mut oscore::Field<REQUESTS>,
-    row: &mut DeferredRow,
-    response: &Response<'_>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
+    row: &mut DeferredRow<S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
     now_ms: u64,
@@ -1096,7 +1102,7 @@ pub struct App<
     T = (),
     const N: usize = DEFAULT_ROUTES,
     const BLOCK_WISE: bool = false,
-    S: AppStorage = AppStore<P, BLOCK_WISE>,
+    S: AppStorage<Token = P::Token> = AppStore<P, BLOCK_WISE>,
     const DEFERRED: usize = 0,
     const CALLS: usize = { DEFAULT_CLIENT_CALLS },
     const REQUESTS: usize = 4,
@@ -1106,10 +1112,10 @@ pub struct App<
 {
     engine: Engine<S>,
     io: T,
-    site: Site<N>,
+    site: Site<N, S::Token>,
     ids: AppIds,
-    inbox: client::ClientInbox<CALLS>,
-    lives: client::ClientLives<CALLS>,
+    inbox: client::ClientInbox<CALLS, S::Token>,
+    lives: client::ClientLives<CALLS, S::Token>,
     echo_policy: Option<EchoPolicy>,
     full_responses: bool,
     deferred_lifetime_ms: u64,
@@ -1118,12 +1124,12 @@ pub struct App<
     /// `due_ms` (fail-closed).
     dedup_closed: Option<DedupClosed>,
     /// Caller-owned OSCORE context (`()` without the `oscore` feature).
-    oscore: oscore::Store<REQUESTS, ASSOCIATIONS>,
+    oscore: oscore::Store<REQUESTS, ASSOCIATIONS, S::Token>,
     oscore_checkpoint: oscore::CheckpointState,
     /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
     /// Present when `BLOCK_WISE`; zero-sized otherwise.
     assembled: AssembledField<P, BLOCK_WISE>,
-    deferred: DeferredTable<DEFERRED>,
+    deferred: DeferredTable<DEFERRED, S::Token>,
 }
 
 /// Builder: [`App::profile`] → [`block_wise`](Self::block_wise) →
@@ -1144,12 +1150,13 @@ pub struct AppBuilder<
     const REQUESTS: usize = 4,
     const ASSOCIATIONS: usize = 1,
 > {
-    site: Site<N>,
+    site: Site<N, P::Token>,
     echo_policy: Option<EchoPolicy>,
     full_responses: bool,
     deferred_lifetime_ms: u64,
     identity: Option<IdentitySource>,
-    oscore: oscore::Store<REQUESTS, ASSOCIATIONS>,
+    token_length: Option<usize>,
+    oscore: oscore::Store<REQUESTS, ASSOCIATIONS, P::Token>,
     oscore_checkpoint: oscore::CheckpointState,
     allow_unprotected: bool,
     _p: PhantomData<P>,
@@ -1161,7 +1168,7 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -1200,7 +1207,7 @@ impl<
     pub fn association_context(
         &self,
         association: Association,
-    ) -> Option<&crate::oscore::BoundedSecurityContext<REQUESTS>> {
+    ) -> Option<&crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>> {
         self.oscore
             .rows
             .iter()
@@ -1215,7 +1222,7 @@ impl<
     pub fn association_context_mut(
         &mut self,
         association: Association,
-    ) -> Option<&mut crate::oscore::BoundedSecurityContext<REQUESTS>> {
+    ) -> Option<&mut crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>> {
         self.oscore_checkpoint.invalidate();
         self.oscore
             .rows
@@ -1229,7 +1236,7 @@ impl<
     /// association identity, slot state and alignment. Zero without `oscore`. Excludes temporary stack and caller
     /// persistence/runtime storage; allocated packet pools do not move this field.
     pub const fn security_metadata_bytes(&self) -> usize {
-        core::mem::size_of::<oscore::Store<REQUESTS, ASSOCIATIONS>>()
+        core::mem::size_of::<oscore::Store<REQUESTS, ASSOCIATIONS, S::Token>>()
     }
 
     /// Number of live client Calls/completions selected at build time.
@@ -1243,8 +1250,8 @@ impl<
     /// temporary stack space. Allocator-backed packet storage does not move
     /// these tables to the heap.
     pub const fn client_metadata_bytes(&self) -> usize {
-        core::mem::size_of::<client::ClientInbox<CALLS>>()
-            + core::mem::size_of::<client::ClientLives<CALLS>>()
+        core::mem::size_of::<client::ClientInbox<CALLS, S::Token>>()
+            + core::mem::size_of::<client::ClientLives<CALLS, S::Token>>()
     }
 
     /// Bind `methods` on Uri-Path `path`.
@@ -1252,13 +1259,13 @@ impl<
     /// `path` is [`IntoPath`]: `&["sensors", "temp"]` or `"sensors/temp"`.
     /// Panics on invalid paths or a new path at capacity; use [`Self::try_route`]
     /// for recoverable refusal.
-    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter) -> &mut Self {
+    pub fn route(&mut self, path: impl IntoPath, methods: MethodRouter<S::Token>) -> &mut Self {
         self.site.route(path, methods);
         self
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
-    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter) -> &mut Self {
+    pub fn route_path(&mut self, path: &'static str, methods: MethodRouter<S::Token>) -> &mut Self {
         self.site.route_path(path, methods);
         self
     }
@@ -1270,7 +1277,7 @@ impl<
     pub fn try_route(
         &mut self,
         path: impl IntoPath,
-        methods: MethodRouter,
+        methods: MethodRouter<S::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.site.try_route(path, methods)?;
         Ok(self)
@@ -1280,7 +1287,7 @@ impl<
     pub fn try_route_path(
         &mut self,
         path: &'static str,
-        methods: MethodRouter,
+        methods: MethodRouter<S::Token>,
     ) -> Result<&mut Self, RouteError> {
         self.try_route(path, methods)
     }
@@ -1350,7 +1357,7 @@ impl<
     /// Direct Site mutation bypasses App lifecycle checks. Prefer
     /// [`Self::remove_route`] for removal and discard caller-held identities
     /// of removed routes before any slot reuse.
-    pub fn site(&mut self) -> &mut Site<N> {
+    pub fn site(&mut self) -> &mut Site<N, S::Token> {
         &mut self.site
     }
 
@@ -1626,7 +1633,7 @@ impl<
     #[cfg(feature = "oscore")]
     pub fn set_oscore(
         &mut self,
-        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS>>,
+        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>>,
     ) -> Result<&mut Self, OscoreInstallError> {
         if candidate.is_none() {
             return Err(OscoreInstallError::MissingCandidate);
@@ -1645,12 +1652,12 @@ impl<
     }
 
     #[cfg(feature = "edhoc")]
-    pub(crate) fn check_association_install(
+    pub(crate) fn check_association_install<U: OwnedToken>(
         &self,
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
-        context: &crate::oscore::BoundedSecurityContext<REQUESTS>,
+        context: &crate::oscore::BoundedSecurityContext<REQUESTS, U>,
     ) -> Result<(), OscoreInstallError> {
         self.oscore
             .check_install(endpoint, owner, epoch, context)
@@ -1666,7 +1673,7 @@ impl<
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
-        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS>>,
+        candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>>,
     ) -> Result<Association, OscoreInstallError> {
         let association = self.oscore.install(endpoint, owner, epoch, candidate)?;
         self.oscore_checkpoint.invalidate();
@@ -1681,7 +1688,7 @@ impl<
     pub fn remove_association(
         &mut self,
         association: Association,
-    ) -> Result<crate::oscore::BoundedSecurityContext<REQUESTS>, OscoreInstallError> {
+    ) -> Result<crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>, OscoreInstallError> {
         let index = self
             .oscore
             .rows
@@ -1793,7 +1800,7 @@ impl<
     /// Borrow the attached OSCORE context, if any.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub fn oscore(&self) -> Option<&crate::oscore::BoundedSecurityContext<REQUESTS>> {
+    pub fn oscore(&self) -> Option<&crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>> {
         self.oscore.as_ref()
     }
 
@@ -1803,7 +1810,9 @@ impl<
     /// [`Self::set_oscore`]. Do not replace keys or reset sender/replay state
     /// while App-owned protocol work remains live.
     #[cfg(feature = "oscore")]
-    pub fn oscore_mut(&mut self) -> Option<&mut crate::oscore::BoundedSecurityContext<REQUESTS>> {
+    pub fn oscore_mut(
+        &mut self,
+    ) -> Option<&mut crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>> {
         self.oscore_checkpoint.invalidate();
         self.oscore.as_mut()
     }
@@ -1951,7 +1960,7 @@ impl<
     T,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,
@@ -2106,7 +2115,10 @@ where
     pub fn poll_with(
         &mut self,
         now_ms: u64,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<T::Error>> {
         poll_engine(
             &mut self.engine,
@@ -2203,7 +2215,10 @@ where
         &mut self,
         now_ms: u64,
         mut checkpoint: impl FnMut(crate::oscore::ReplayCheckpoint) -> bool,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<T::Error>> {
         self.oscore_checkpoint.require();
         poll_engine(
@@ -2237,7 +2252,10 @@ where
         &mut self,
         now_ms: u64,
         mut checkpoint: impl FnMut(Option<Association>, crate::oscore::ReplayCheckpoint) -> bool,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<T::Error>> {
         self.oscore_checkpoint.require();
         poll_engine(
@@ -2271,7 +2289,10 @@ where
         now_ms: u64,
         mut ingress: impl FnMut(&[u8], Endpoint) -> bool,
         mut checkpoint: impl FnMut(Option<Association>, crate::oscore::ReplayCheckpoint) -> bool,
-        mut dispatch: impl FnMut(Request<'_>, Option<DeferredReply>) -> Response<'static>,
+        mut dispatch: impl FnMut(
+            Request<'_, S::Token>,
+            Option<DeferredReply>,
+        ) -> Response<'static, S::Token>,
     ) -> Result<(), Error<T::Error>> {
         self.oscore_checkpoint.require();
         poll_engine(
@@ -2361,7 +2382,7 @@ where
     pub fn complete(
         &mut self,
         handle: DeferredReply,
-        response: Response<'_>,
+        response: Response<'_, S::Token>,
         now_ms: u64,
     ) -> Result<(), Error<T::Error>> {
         complete_engine(
@@ -2408,7 +2429,7 @@ where
         &mut self,
         now_ms: u64,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, S::Token>,
     ) -> Result<usize, Error<T::Error>> {
         let resource = self.site.observe_resource(path);
         notify_engine(
@@ -2443,7 +2464,7 @@ where
         &mut self,
         now_ms: u64,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, S::Token>,
     ) -> Result<usize, Error<T::Error>> {
         let resource = self.site.observe_resource(path);
         notify_engine(
@@ -2466,11 +2487,11 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
-    deferred: &mut DeferredTable<DEFERRED>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
+    deferred: &mut DeferredTable<DEFERRED, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
     handle: DeferredReply,
-    response: Response<'_>,
+    response: Response<'_, S::Token>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>> {
     deferred.expire(engine, now_ms);
@@ -2593,19 +2614,19 @@ fn poll_engine<
 >(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    site: &Site<N>,
+    site: &Site<N, Mem::Token>,
     ids: &mut AppIds,
-    inbox: &mut client::ClientInbox<CALLS>,
-    lives: &mut client::ClientLives<CALLS>,
-    oscore: &mut oscore::Field<REQUESTS>,
+    inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
+    lives: &mut client::ClientLives<CALLS, Mem::Token>,
+    oscore: &mut oscore::Field<REQUESTS, Mem::Token>,
     oscore_checkpoint: &mut oscore::CheckpointState,
     mut checkpoint_commit: Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
-    deferred: &mut DeferredTable<DEFERRED>,
+    deferred: &mut DeferredTable<DEFERRED, Mem::Token>,
     deferred_lifetime_ms: u64,
-    mut dispatch: Option<&mut AppDispatch<'_>>,
+    mut dispatch: Option<&mut AppDispatch<'_, Mem::Token>>,
     now_ms: u64,
     mut ingress: Option<&mut AppIngress<'_>>,
 ) -> Result<(), Error<T::Error>>
@@ -2712,7 +2733,7 @@ where
                 deferred_lifetime_ms,
                 dispatch
                     .as_mut()
-                    .map(|dispatch| &mut **dispatch as &mut AppDispatch<'_>),
+                    .map(|dispatch| &mut **dispatch as &mut AppDispatch<'_, Mem::Token>),
                 now_ms,
                 rx,
             )?;
@@ -2830,7 +2851,7 @@ fn progress_q_observe<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
@@ -2918,7 +2939,7 @@ fn assemble_inbound_body<Mem>(
     engine: &mut Engine<Mem>,
     rx: SlotId,
     now_ms: u64,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     oscore_request: oscore::Request,
 ) -> InboundBody
 where
@@ -3015,7 +3036,7 @@ where
 fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
     engine: &Engine<Mem>,
     rx: SlotId,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, Mem::Token>,
     duplicate: bool,
 ) -> InboundBody {
     let next = if parsed.ty() == Type::NonConfirmable {
@@ -3056,7 +3077,7 @@ fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
 pub(crate) fn write_unprotected_rx<Mem, E>(
     engine: &mut Engine<Mem>,
     rx: SlotId,
-    inner: &ParsedMessage<'_>,
+    inner: &ParsedMessage<'_, Mem::Token>,
     peer: Endpoint,
 ) -> Result<(), Error<E>>
 where
@@ -3082,12 +3103,12 @@ where
 fn send_qblock_recover<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    inbox: &mut client::ClientInbox<CALLS>,
-    lives: &mut client::ClientLives<CALLS>,
+    inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
+    lives: &mut client::ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
-    recover: QBlockRecover,
+    recover: QBlockRecover<Mem::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -3155,9 +3176,9 @@ where
 
 /// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
 /// attached context, or a malformed Block / Q-Block2 value.
-fn bad_option_request<const REQUESTS: usize>(
-    parsed: &ParsedMessage<'_>,
-    oscore: &oscore::Field<REQUESTS>,
+fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
+    parsed: &ParsedMessage<'_, K>,
+    oscore: &oscore::Field<REQUESTS, K>,
 ) -> bool {
     let mut tags = parsed.request_tag();
     let first = tags.next();
@@ -3191,14 +3212,14 @@ fn bad_option_request<const REQUESTS: usize>(
         || matches!(parsed.block1(), Some(Err(_)))
 }
 
-fn mixes_block_and_qblock(parsed: &ParsedMessage<'_>) -> bool {
+fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
     // RFC 9177 §4.1. Same-side Block and Q-Block are 4.02. A mix across
     // Inner and Outer is not visible on one of these messages.
     (parsed.block1().is_some() || parsed.block2().is_some())
         && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some())
 }
 
-fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
+fn valid_q_selections(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
     let mut previous: Option<BlockValue> = None;
     for value in parsed.q_block2() {
         let Ok(value) = value else {
@@ -3213,7 +3234,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
+#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_token_capacity_refusal => send_token_capacity_refusal_async, oscore::send_token_capacity_refusal => oscore::send_token_capacity_refusal_async, admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
 fn dispatch_rx<
     Mem,
     T,
@@ -3224,19 +3245,19 @@ fn dispatch_rx<
 >(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    site: &Site<N>,
-    inbox: &mut client::ClientInbox<CALLS>,
-    lives: &mut client::ClientLives<CALLS>,
+    site: &Site<N, Mem::Token>,
+    inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
+    lives: &mut client::ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, Mem::Token>,
     oscore_checkpoint: &mut oscore::CheckpointState,
     checkpoint_commit: &mut Option<&mut oscore::CheckpointCommit<'_>>,
     echo_policy: Option<EchoPolicy>,
     dedup_closed: &mut Option<DedupClosed>,
     full_responses: bool,
-    deferred: &mut DeferredTable<DEFERRED>,
+    deferred: &mut DeferredTable<DEFERRED, Mem::Token>,
     deferred_lifetime_ms: u64,
-    dispatch: Option<&mut AppDispatch<'_>>,
+    dispatch: Option<&mut AppDispatch<'_, Mem::Token>>,
     now_ms: u64,
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
@@ -3258,9 +3279,48 @@ where
         }
     };
 
-    let parsed = match decode(&scratch.as_ref()[..n]) {
+    let parsed = match crate::message::decode_with_token::<Mem::Token>(&scratch.as_ref()[..n]) {
         Ok(parsed) => parsed,
-        Err(_) => {
+        Err(crate::message::TokenDecodeError::Capacity(_)) => {
+            // The shared decoder validated the complete wire syntax before the
+            // owned token copy failed. Refuse while its original bytes remain
+            // borrowed from this RX scratch; never truncate the identity.
+            let request = crate::message::extended::decode(&scratch.as_ref()[..n])
+                .expect("validated extended token datagram");
+            let protected = request
+                .options()
+                .any(|option| option.number() == crate::message::OptionNumber::OSCORE);
+            let outcome = if protected {
+                #[cfg(feature = "oscore")]
+                {
+                    oscore::send_token_capacity_refusal(
+                        engine,
+                        io,
+                        ids,
+                        now_ms,
+                        peer,
+                        &scratch.as_ref()[..n],
+                        oscore,
+                        oscore_checkpoint,
+                        checkpoint_commit,
+                        dedup_closed,
+                    )
+                }
+                #[cfg(not(feature = "oscore"))]
+                {
+                    Ok(())
+                }
+            } else if oscore::is_active(oscore) {
+                // Attached contexts and association-only policy reject application
+                // traffic without OSCORE before any capacity response is emitted.
+                Ok(())
+            } else {
+                send_token_capacity_refusal(engine, io, ids, request, peer, now_ms)
+            };
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+        Err(crate::message::TokenDecodeError::Malformed(_)) => {
             Metrics::inc(&mut engine.metrics_mut().rx_error);
             let _ = engine.release_rx(rx);
             return Ok(());
@@ -4317,7 +4377,7 @@ where
 }
 
 #[derive(Clone, Copy)]
-struct ObservePlan {
+struct ObservePlan<K: OwnedToken = crate::message::Token> {
     selection: Option<crate::storage::ObserveSelection>,
     register: bool,
     registration_supported: bool,
@@ -4327,11 +4387,11 @@ struct ObservePlan {
     deregister: bool,
     delete: bool,
     has_source: bool,
-    token: crate::message::Token,
+    token: K,
     resource: ObserveResource,
 }
 
-impl ObservePlan {
+impl<K: OwnedToken> ObservePlan<K> {
     fn idle() -> Self {
         Self {
             register: false,
@@ -4343,12 +4403,12 @@ impl ObservePlan {
             deregister: false,
             delete: false,
             has_source: false,
-            token: crate::message::Token::EMPTY,
+            token: K::EMPTY,
             resource: ObserveResource::NONE,
         }
     }
 
-    fn from_request<const N: usize>(site: &Site<N>, request: &Request<'_>) -> Self {
+    fn from_request<const N: usize>(site: &Site<N, K>, request: &Request<'_, K>) -> Self {
         let selected = matches!(
             site.observe_source(site.observe_resource(request.path())),
             Some(routing::SnapshotSource::Selected(_))
@@ -4408,10 +4468,10 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     engine: &mut Engine<S>,
     now_ms: u64,
     peer: Endpoint,
-    mut response: Response<'a>,
-    plan: ObservePlan,
+    mut response: Response<'a, S::Token>,
+    plan: ObservePlan<S::Token>,
     oscore_req: oscore::Request,
-) -> Result<Response<'a>, crate::storage::SlotError> {
+) -> Result<Response<'a, S::Token>, crate::storage::SlotError> {
     let key = ObserveKey::new(plan.token, peer);
 
     let opted = response.observe_seq().is_some() || plan.has_source;
@@ -4475,10 +4535,10 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
 fn supersede_notification<S, T, const N: usize, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    site: &Site<N>,
+    site: &Site<N, S::Token>,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
-    deferred: &DeferredTable<DEFERRED>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
+    deferred: &DeferredTable<DEFERRED, S::Token>,
     now_ms: u64,
     pending: crate::storage::PendingCon,
 ) -> Result<(), Error<T::Error>>
@@ -4662,11 +4722,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stage_observe_replacement<E, const REQUESTS: usize>(
-    oscore: &mut oscore::Field<REQUESTS>,
-    interest: ObserveInterest,
+fn stage_observe_replacement<K: OwnedToken, E, const REQUESTS: usize>(
+    oscore: &mut oscore::Field<REQUESTS, K>,
+    interest: ObserveInterest<K>,
     mid: MessageId,
-    response: &Response<'_>,
+    response: &Response<'_, K>,
     block: Option<BlockValue>,
     payload: &[u8],
     wire: &mut [u8],
@@ -4714,12 +4774,12 @@ fn notify_engine<S, T, const REQUESTS: usize, const DEFERRED: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
     resource: ObserveResource,
-    response: &Response<'_>,
+    response: &Response<'_, S::Token>,
     confirmable: bool,
-    deferred: &DeferredTable<DEFERRED>,
+    deferred: &DeferredTable<DEFERRED, S::Token>,
 ) -> Result<usize, Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
@@ -4903,7 +4963,7 @@ fn pending_has_observe_hold<S: Storage + ObserveSlots>(
 // only a unique retained outgoing MID at the physical endpoint.
 fn control_route<S: Storage + PendingCons + ObserveSlots + Exchanges, const D: usize>(
     engine: &Engine<S>,
-    deferred: &DeferredTable<D>,
+    deferred: &DeferredTable<D, S::Token>,
     peer: Endpoint,
     mid: MessageId,
     now_ms: u64,
@@ -4971,10 +5031,10 @@ fn send_notification<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     now_ms: u64,
-    interest: ObserveInterest,
-    response: &Response<'_>,
+    interest: ObserveInterest<S::Token>,
+    response: &Response<'_, S::Token>,
     seq: u32,
 ) -> Result<bool, Error<T::Error>>
 where
@@ -5037,7 +5097,10 @@ where
         oscore: oscore_req,
         request: interest
             .selection()
-            .and_then(|selection| decode(&selection.bytes[..usize::from(selection.len)]).ok())
+            .and_then(|selection| {
+                crate::message::extended::decode(&selection.bytes[..usize::from(selection.len)])
+                    .ok()
+            })
             .map_or(Code::GET, |parsed| parsed.code()),
     };
 
@@ -5119,11 +5182,11 @@ where
 fn start_notify_block2<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
@@ -5195,9 +5258,9 @@ fn send_separate<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
     acknowledged: bool,
 ) -> Result<(), Error<T::Error>>
@@ -5345,10 +5408,10 @@ fn send_response<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     now_ms: u64,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -5494,11 +5557,11 @@ where
     }
 }
 
-fn response_block_key<E>(
-    token: crate::message::Token,
+fn response_block_key<K: OwnedToken, E>(
+    token: K,
     endpoint: Endpoint,
-    response: &Response<'_>,
-) -> Result<BlockKey, Error<E>> {
+    response: &Response<'_, K>,
+) -> Result<BlockKey<K>, Error<E>> {
     let key = BlockKey::new(token, endpoint);
     match response.etag_bytes() {
         Some(tag) => Ok(key.with_identity(
@@ -5514,7 +5577,7 @@ fn response_block_key<E>(
 // terminal transfer too. Preflight every owner before releasing any of them.
 fn retire_terminal_response<S: Storage + BodySlots + PendingCons + DatagramSlots>(
     engine: &mut Engine<S>,
-    token: crate::message::Token,
+    token: S::Token,
     peer: Endpoint,
 ) -> Result<(), crate::storage::SlotError> {
     let Some(body) = response_body_for(engine, BlockKey::new(token, peer)) else {
@@ -5556,7 +5619,7 @@ fn retire_suppressed_observe<
     S: Storage + BodySlots + ObserveSlots + PendingCons + DatagramSlots,
 >(
     engine: &mut Engine<S>,
-    interest: ObserveInterest,
+    interest: ObserveInterest<S::Token>,
 ) -> Result<(), crate::storage::SlotError> {
     let body = response_body_for(engine, BlockKey::new(interest.token(), interest.endpoint()));
     if body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
@@ -5576,7 +5639,7 @@ fn retire_suppressed_observe<
 
 fn release_observe_response_body<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
-    interest: ObserveInterest,
+    interest: ObserveInterest<S::Token>,
 ) {
     if !interest.key().is_client()
         && let Some(id) =
@@ -5586,7 +5649,10 @@ fn release_observe_response_body<S: Storage + BodySlots>(
     }
 }
 
-fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) -> Option<SlotId> {
+fn response_body_for<S: Storage + BodySlots>(
+    engine: &Engine<S>,
+    key: BlockKey<S::Token>,
+) -> Option<SlotId> {
     (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
         let id = SlotId::from_index(index);
         let transfer = engine.tx_body_transfer(id)?;
@@ -5602,7 +5668,7 @@ fn response_body_for<S: Storage + BodySlots>(engine: &Engine<S>, key: BlockKey) 
 
 fn retain_q_observe_selection<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
-    key: BlockKey,
+    key: BlockKey<S::Token>,
     selection: Option<crate::storage::ObserveSelection>,
 ) -> Result<(), crate::storage::SlotError> {
     if let Some(id) = response_body_for(engine, key)
@@ -5617,7 +5683,7 @@ fn retain_q_observe_selection<S: Storage + BodySlots>(
 
 fn record_q_observe_sent<S: Storage + BodySlots + ObserveSlots>(
     engine: &mut Engine<S>,
-    key: BlockKey,
+    key: BlockKey<S::Token>,
     now_ms: u64,
 ) {
     if let Some(body) = response_body_for(engine, key)
@@ -5636,12 +5702,12 @@ fn record_q_observe_sent<S: Storage + BodySlots + ObserveSlots>(
 #[allow(clippy::too_many_arguments)]
 fn encode_q_observe_first<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
     body: SlotId,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<SlotId, Error<T::Error>>
 where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
@@ -5677,11 +5743,11 @@ fn issue_q_observe_followup<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     body: SlotId,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -5774,11 +5840,11 @@ fn start_outgoing<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
-    key: BlockKey,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    key: BlockKey<S::Token>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
     allow_borrowed: bool,
 ) -> Result<(), Error<T::Error>>
@@ -5936,12 +6002,12 @@ where
 fn issue_borrowed_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
-    key: BlockKey,
+    key: BlockKey<S::Token>,
     now_ms: u64,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6055,11 +6121,11 @@ fn continue_outgoing<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6176,13 +6242,13 @@ where
 fn issue_observe_preferred<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     id: SlotId,
     pending: Option<(u64, MessageId, u32)>,
     mut replay: Option<(u64, &mut Option<DedupClosed>)>,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     maximum: u8,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6221,15 +6287,15 @@ where
 fn issue_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
     id: SlotId,
     pending: Option<(u64, MessageId, u32)>,
     retain_incomplete: bool,
     replay: Option<(u64, &mut Option<DedupClosed>)>,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -6314,7 +6380,7 @@ fn q_response_mid<S, T>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
+    meta: SendResponse<'_, S::Token>,
     first_ty: Type,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<MessageId, Error<T::Error>>
@@ -6350,12 +6416,12 @@ fn complete_deferred_q<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     selectors: &DeferredQSelectors,
     snapshot: &mut Option<(SlotId, client::ReplyMeta)>,
     metadata: client::ReplyMeta,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6461,12 +6527,12 @@ fn issue_deferred_q<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     first_ty: Type,
     body: SlotId,
     plan: Option<DeferredQPlan>,
-    oscore: &mut oscore::Field<REQUESTS>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6558,11 +6624,11 @@ fn issue_q_selection<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6625,11 +6691,11 @@ fn issue_q_window<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     first_ty: Type,
     id: SlotId,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -6715,14 +6781,14 @@ where
 fn send_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
     issued: OutgoingBlock,
     q_block: bool,
     pending: Option<(u64, MessageId, u32)>,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -6737,13 +6803,13 @@ where
 #[allow(clippy::too_many_arguments)]
 fn encode_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
     issued: OutgoingBlock,
     q_block: bool,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<SlotId, Error<T::Error>>
 where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
@@ -6815,12 +6881,12 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     tx: SlotId,
     ty: Type,
     mid: MessageId,
-    token: crate::message::Token,
-    response: &Response<'_>,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
     payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockOpt>,
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
@@ -6909,10 +6975,10 @@ fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     tx: SlotId,
     ty: Type,
     mid: MessageId,
-    token: crate::message::Token,
-    response: &Response<'_>,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
     payload: &[u8],
-    oscore_ctx: &mut oscore::Field<REQUESTS>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
@@ -6972,11 +7038,11 @@ pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E, const REQUE
     tx: SlotId,
     ty: Type,
     mid: MessageId,
-    token: crate::message::Token,
-    oscore_ctx: &oscore::Field<REQUESTS>,
+    token: S::Token,
+    oscore_ctx: &oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
-    let response: Response<'_> =
+    let response: Response<'_, S::Token> =
         Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
     response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
@@ -7020,7 +7086,7 @@ fn replay_con_request<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     peer: Endpoint,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, S::Token>,
     now_ms: u64,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Replay<T::Error>
@@ -7069,7 +7135,7 @@ fn replay_closed<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     peer: Endpoint,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, S::Token>,
     now_ms: u64,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Replay<T::Error>
@@ -7388,7 +7454,7 @@ fn oscore_inbound_error<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     ids: &mut AppIds,
-    parsed: &crate::message::ParsedMessage<'_>,
+    parsed: &crate::message::ParsedMessage<'_, S::Token>,
     peer: Endpoint,
     now_ms: u64,
     err: oscore::InboundError,
@@ -7432,7 +7498,7 @@ where
                 .title("Unauthorized")
                 .max_age(0),
             now_ms,
-            &mut oscore::empty_field::<4>(),
+            &mut oscore::empty_field::<4, S::Token>(),
             dedup_closed,
         )
     }
@@ -7443,7 +7509,7 @@ where
     }
 }
 
-fn unauthorized_echo(decision: EchoDecision) -> Response<'static> {
+fn unauthorized_echo<K: OwnedToken>(decision: EchoDecision) -> Response<'static, K> {
     let response = Response::problem(Code::UNAUTHORIZED)
         .title("Unauthorized")
         .max_age(0);
@@ -7468,15 +7534,15 @@ struct BlockOpt {
 }
 
 #[derive(Clone, Copy)]
-struct SendResponse<'a> {
+struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     dest: Endpoint,
     ty: Type,
     mid: MessageId,
-    token: crate::message::Token,
+    token: K,
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
-    q_request: Option<ParsedMessage<'a>>,
+    q_request: Option<ParsedMessage<'a, K>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockOpt>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
@@ -7538,7 +7604,7 @@ fn send_empty<S, T>(
     engine: &mut Engine<S>,
     io: &mut T,
     dest: Endpoint,
-    msg: Message<'static>,
+    msg: Message<'static, impl OwnedToken>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + DedupSlots,
@@ -7558,6 +7624,84 @@ where
     let send = engine.send_tx(io, tx);
     let _ = engine.release_tx(tx);
     send?;
+    Ok(())
+}
+
+// RFC 8974 capacity refusal: called only after a syntactically valid request exceeds S::Token capacity.
+#[coaptic_io::dual_io(send_token_capacity_refusal_async, bound(crate::app::async_server::ProtocolIo), methods(send_tx => send_owned_packet_async), calls(send_empty_ack => send_empty_ack_async))]
+fn send_token_capacity_refusal<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut AppIds,
+    request: crate::message::extended::Datagram<'_>,
+    peer: Endpoint,
+    now_ms: u64,
+) -> Result<(), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + DedupSlots,
+    T: DatagramIo,
+{
+    if !request.code().is_request()
+        || !matches!(request.ty(), Type::Confirmable | Type::NonConfirmable)
+        || request
+            .options()
+            .any(|option| option.number() == crate::message::OptionNumber::OSCORE)
+    {
+        return Ok(());
+    }
+    // RFC 7967 error suppression remains effective even before token ownership.
+    Metrics::inc(&mut engine.metrics_mut().token_capacity_refused);
+    let suppressed = request.options().any(|option| {
+        option.number() == crate::message::OptionNumber::NO_RESPONSE
+            && option.value().len() == 1
+            && option.value()[0] & 8 != 0
+    });
+    if suppressed {
+        return if request.ty() == Type::Confirmable {
+            send_empty_ack(engine, io, peer, request.message_id())
+        } else {
+            Ok(())
+        };
+    }
+    let (ty, id) = if request.ty() == Type::Confirmable {
+        (Type::Acknowledgement, request.message_id())
+    } else {
+        (Type::NonConfirmable, ids.next_for(engine, io, now_ms)?)
+    };
+    let tx = admission::control_tx(engine).ok_or(Error::Saturated)?;
+    let encoded = engine
+        .access_tx_mut(tx)
+        .map_err(Error::Slot)
+        .and_then(|mut access| {
+            crate::message::extended::Message {
+                ty,
+                code: Code::BAD_REQUEST,
+                id,
+                token: request.token(),
+                options: &[],
+                payload: &[],
+            }
+            .encode(access.bytes_mut())
+            .map_err(|error| Error::Message(error.into()))
+        });
+    let n = match encoded {
+        Ok(n) => n,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Err(error);
+        }
+    };
+    if let Err(error) = engine
+        .storage_mut()
+        .set_tx_len(tx, n)
+        .and_then(|()| engine.set_tx_endpoint(tx, peer))
+    {
+        let _ = engine.release_tx(tx);
+        return Err(Error::Slot(error));
+    }
+    let outcome = engine.send_tx(io, tx);
+    let _ = engine.release_tx(tx);
+    outcome?;
     Ok(())
 }
 
@@ -7765,7 +7909,7 @@ impl<
     T: crate::storage::DatagramTransport,
     const N: usize,
     const BLOCK_WISE: bool,
-    S: AppStorage,
+    S: AppStorage<Token = P::Token>,
     const DEFERRED: usize,
     const CALLS: usize,
     const REQUESTS: usize,

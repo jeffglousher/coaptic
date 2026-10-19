@@ -161,7 +161,10 @@ fn context(sender: &[u8], recipient: &[u8]) -> coaptic::oscore::SecurityContext 
     .unwrap()
 }
 
-fn campaign<C: AppStorage, S: AppStorage>(
+fn campaign<
+    C: AppStorage<Token = coaptic::message::Token>,
+    S: AppStorage<Token = coaptic::message::Token>,
+>(
     mut client: Peer<C>,
     mut server: Peer<S>,
     protected: bool,

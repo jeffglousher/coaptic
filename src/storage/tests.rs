@@ -62,7 +62,7 @@ fn build_default_bodies() -> Engine<Memory<profiles::Default, WithBodies<profile
         .expect("default block-wise build")
 }
 
-fn fill_until_saturated<S: Storage>(engine: &mut Engine<S>, slots: usize) {
+fn fill_until_saturated<S: Storage<Token = Token>>(engine: &mut Engine<S>, slots: usize) {
     for _ in 0..slots {
         assert!(engine.acquire_rx().is_some());
     }
@@ -70,7 +70,7 @@ fn fill_until_saturated<S: Storage>(engine: &mut Engine<S>, slots: usize) {
     assert_eq!(engine.rx_occupied(), slots);
 }
 
-fn reuse_after_release<S: Storage>(engine: &mut Engine<S>, slots: usize) {
+fn reuse_after_release<S: Storage<Token = Token>>(engine: &mut Engine<S>, slots: usize) {
     let mut first = None;
     for i in 0..slots {
         let id = engine.acquire_rx().expect("slot before saturation");
@@ -86,7 +86,7 @@ fn reuse_after_release<S: Storage>(engine: &mut Engine<S>, slots: usize) {
     assert!(engine.acquire_rx().is_none());
 }
 
-fn cursor_skips_released_zero<S: Storage>(engine: &mut Engine<S>) {
+fn cursor_skips_released_zero<S: Storage<Token = Token>>(engine: &mut Engine<S>) {
     let first = engine.acquire_rx().expect("first acquire");
     assert_eq!(first.index(), 0);
     assert_eq!(engine.rx_cursor(), 1);
@@ -96,7 +96,7 @@ fn cursor_skips_released_zero<S: Storage>(engine: &mut Engine<S>) {
     assert_ne!(second, first);
 }
 
-fn pool_suite<S: Storage>(engine: &mut Engine<S>, rx_slots: usize) {
+fn pool_suite<S: Storage<Token = Token>>(engine: &mut Engine<S>, rx_slots: usize) {
     fill_until_saturated(engine, rx_slots);
     while engine.rx_occupied() > 0 {
         // Drain by walking possible ids.
@@ -2541,7 +2541,7 @@ fn block_key() -> BlockKey {
 ///
 /// Representative sizes only. The full SZX × 1..=25 sweep lives in
 /// `tests/block_sweep.rs` and is not implemented here.
-fn assemble_classic_block1<S: Storage + BodySlots>(
+fn assemble_classic_block1<S: Storage<Token = Token> + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey,
     body: &[u8],
@@ -2551,7 +2551,7 @@ fn assemble_classic_block1<S: Storage + BodySlots>(
 }
 
 /// Chop `body` into classic Block2 pieces of `size` and apply them.
-fn assemble_classic_block2<S: Storage + BodySlots>(
+fn assemble_classic_block2<S: Storage<Token = Token> + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey,
     body: &[u8],
@@ -2560,7 +2560,7 @@ fn assemble_classic_block2<S: Storage + BodySlots>(
     assemble_classic_incoming(engine, key, body, size, false)
 }
 
-fn assemble_classic_incoming<S: Storage + BodySlots>(
+fn assemble_classic_incoming<S: Storage<Token = Token> + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey,
     body: &[u8],
@@ -4402,7 +4402,9 @@ fn classic_block1_changed_tokens_preserve_exact_operation_identity() {
     }
 }
 
-fn classic_block1_token_suite<S: Storage + DatagramSlots + BodySlots>(mut engine: Engine<S>) {
+fn classic_block1_token_suite<S: Storage<Token = Token> + DatagramSlots + BodySlots>(
+    mut engine: Engine<S>,
+) {
     #[derive(Clone, Copy)]
     struct Packet<'a> {
         peer: Endpoint,
@@ -4414,7 +4416,7 @@ fn classic_block1_token_suite<S: Storage + DatagramSlots + BodySlots>(mut engine
         num: u32,
         payload: &'a [u8],
     }
-    fn apply<S: Storage + DatagramSlots + BodySlots>(
+    fn apply<S: Storage<Token = Token> + DatagramSlots + BodySlots>(
         engine: &mut Engine<S>,
         packet: Packet<'_>,
     ) -> Result<super::BlockProgress, BlockTransferError> {
@@ -4740,7 +4742,9 @@ fn request_binding_boundary_refuses_before_allocating_body() {
 
 #[test]
 fn classic_wire_size_estimates_can_change_or_disappear() {
-    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+        build: fn() -> Engine<S>,
+    ) {
         for upload in [false, true] {
             for first_hint in [None, Some(0), Some(1), Some(16), Some(24), Some(u32::MAX)] {
                 for last_hint in [None, Some(0), Some(1), Some(24), Some(u32::MAX)] {
@@ -4815,7 +4819,9 @@ fn classic_wire_size_estimates_can_change_or_disappear() {
 
 #[test]
 fn q_wire_size_is_mandatory_stable_and_refusal_preserves_body() {
-    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+        build: fn() -> Engine<S>,
+    ) {
         use crate::message::OptionsBuilder;
         for changed_token in [false, true] {
             for upload in [false, true] {
@@ -5093,7 +5099,9 @@ fn observe_role_keys_and_client_refusal_are_distinct() {
 
 #[test]
 fn incoming_request_and_response_bodies_with_the_same_key_are_isolated() {
-    fn exercise<S: super::Storage + DatagramSlots + BodySlots>(build: fn() -> Engine<S>) {
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+        build: fn() -> Engine<S>,
+    ) {
         for upload_first in [false, true] {
             for q_upload in [false, true] {
                 for q_download in [false, true] {
@@ -5411,6 +5419,32 @@ fn custom_observe_backend_refuses_atomic_replacement_without_accessing_state() {
     struct Custom {
         untouched: u8,
     }
+    // This sentinel backend proves the default atomic operation refuses
+    // before reading any storage, including the shared pool interface.
+    impl Storage for Custom {
+        type Token = Token;
+        fn capacities(&self) -> super::Capacities {
+            panic!("unexpected access")
+        }
+        fn rx_datagram(&mut self) -> &mut dyn SlotPool {
+            panic!("unexpected access")
+        }
+        fn tx_datagram(&mut self) -> &mut dyn SlotPool {
+            panic!("unexpected access")
+        }
+        fn dedup(&mut self) -> &mut dyn SlotPool {
+            panic!("unexpected access")
+        }
+        fn observe(&mut self) -> &mut dyn SlotPool {
+            panic!("unexpected access")
+        }
+        fn rx_body(&mut self) -> Option<&mut dyn SlotPool> {
+            panic!("unexpected access")
+        }
+        fn tx_body(&mut self) -> Option<&mut dyn SlotPool> {
+            panic!("unexpected access")
+        }
+    }
     impl ObserveSlots for Custom {
         fn insert_observe(&mut self, _: ObserveInterest) -> Option<SlotId> {
             panic!("unexpected mutation")
@@ -5591,7 +5625,7 @@ fn classic_if_none_match_invalid_encoding_refuses_before_body_admission() {
     }
 }
 
-fn check_storage_usage<S: Storage>(mut engine: Engine<S>) {
+fn check_storage_usage<S: Storage<Token = Token>>(mut engine: Engine<S>) {
     let empty = engine.storage_usage();
     let metrics = engine.metrics();
     let rx = engine.acquire_rx().unwrap();
@@ -5658,14 +5692,14 @@ fn storage_usage_allocated() {
         if bodies {
             c = c.with_block_wise::<profiles::Constrained>();
         }
-        let storage = super::AllocMemory::try_new(c, 64 * 1024).unwrap();
+        let storage = super::AllocMemory::<crate::message::Token>::try_new(c, 64 * 1024).unwrap();
         check_storage_usage(Engine::from_storage(storage));
     }
 }
 
 fn two_phase_retransmit_contract<S>(mut engine: Engine<S>)
 where
-    S: Storage + DatagramSlots + super::PendingCons,
+    S: Storage<Token = Token> + DatagramSlots + super::PendingCons,
 {
     let first_peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let second_peer = Endpoint::v4([192, 0, 2, 2], 5683);
@@ -5774,7 +5808,7 @@ fn allocated_two_phase_retransmit_preserves_selection_until_commit() {
 
 fn initial_con_reservation_contract<S>(mut engine: Engine<S>)
 where
-    S: Storage + DatagramSlots + super::PendingCons,
+    S: Storage<Token = Token> + DatagramSlots + super::PendingCons,
 {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let first_mid = MessageId::new(801);

@@ -225,9 +225,9 @@ where
         deadline_ms: u64,
         mut dispatch: impl FnMut(
             &Principal,
-            Request<'_>,
+            Request<'_, P::Token>,
             Option<ManagedDeferredReply>,
-        ) -> Response<'static>,
+        ) -> Response<'static, P::Token>,
     ) -> Result<(), ManagedAsyncError<T::Error, C>> {
         let mut now_ms = now_ms;
         self.prepare(now_ms).map_err(ManagedAsyncError::State)?;
@@ -330,7 +330,7 @@ where
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
-    ) -> Result<ManagedCall, ManagedAsyncError<T::Error, C>> {
+    ) -> Result<ManagedCall<P::Token>, ManagedAsyncError<T::Error, C>> {
         self.request_inner_async(
             method,
             path,
@@ -354,7 +354,7 @@ where
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
-    ) -> Result<ManagedCall, ManagedAsyncError<T::Error, C>> {
+    ) -> Result<ManagedCall<P::Token>, ManagedAsyncError<T::Error, C>> {
         self.request_inner_async(
             Method::Get,
             path,
@@ -379,11 +379,11 @@ where
         format: Option<ContentFormat>,
         now_ms: u64,
         observe: bool,
-        reregister: Option<Call>,
+        reregister: Option<Call<P::Token>>,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
         deadline_ms: u64,
-    ) -> Result<ManagedCall, ManagedAsyncError<T::Error, C>> {
+    ) -> Result<ManagedCall<P::Token>, ManagedAsyncError<T::Error, C>> {
         self.time(now_ms).map_err(ManagedAsyncError::State)?;
         self.ensure_grant().map_err(ManagedAsyncError::State)?;
         if self
@@ -434,7 +434,7 @@ where
     pub async fn complete_async<C>(
         &mut self,
         handle: ManagedDeferredReply,
-        response: Response<'_>,
+        response: Response<'_, P::Token>,
         now_ms: u64,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,
@@ -472,7 +472,7 @@ where
     pub async fn notify_async<C>(
         &mut self,
         path: &[&str],
-        response: Response<'static>,
+        response: Response<'static, P::Token>,
         now_ms: u64,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl AsyncTimer,

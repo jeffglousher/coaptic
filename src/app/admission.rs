@@ -33,7 +33,7 @@ pub(super) fn control_tx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
 
 pub(super) fn refuse_new_request<S: AppStorage>(
     engine: &mut Engine<S>,
-    parsed: &ParsedMessage<'_>,
+    parsed: &ParsedMessage<'_, S::Token>,
     peer: Endpoint,
 ) -> bool {
     // Existing body continuations and cancellation release or advance already
@@ -78,9 +78,9 @@ pub(super) fn send_control_response<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    response: &Response<'_>,
-    oscore: &mut oscore::Field<REQUESTS>,
+    meta: SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
@@ -148,8 +148,8 @@ pub(super) fn send_refusal<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_>,
-    oscore: &mut oscore::Field<REQUESTS>,
+    meta: SendResponse<'_, S::Token>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
