@@ -11041,7 +11041,10 @@ fn download_followups_retain_conditions_and_fetch_selection() {
                         &[]
                     }
                 );
-                assert_eq!(next.etag().next(), (mode == 0).then_some(&b"cached"[..]));
+                assert_eq!(
+                    next.etag().next(),
+                    (mode == 0 && method != Code::GET).then_some(&b"cached"[..])
+                );
                 assert_eq!(next.content_format(), Some(Ok(ContentFormat::JSON)));
                 assert_eq!(next.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
                 let mut path = next.uri_path();

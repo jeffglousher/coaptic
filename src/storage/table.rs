@@ -473,7 +473,7 @@ pub struct ObserveInterest<T: OwnedToken = Token> {
     resource: ObserveResource,
     content_format: Option<crate::message::ContentFormat>,
     // SZX in bits 0..2, presence in bit 7, Q mode in bit 6;
-    // No-Response error bits in 3..4.
+    // No-Response error bits in 3..4, unbound initial Valid format in bit 5.
     response_policy: u8,
     seq: u32,
     pending: bool,
@@ -560,7 +560,8 @@ impl<T: OwnedToken> ObserveInterest<T> {
         Self { resource, ..self }
     }
 
-    /// Content-Format of the initial representation, retained for notifications.
+    /// Content-Format retained for notifications. `None` also covers an unknown
+    /// cached representation format after an initial Valid response.
     #[must_use]
     pub const fn content_format(self) -> Option<crate::message::ContentFormat> {
         self.content_format
@@ -574,8 +575,29 @@ impl<T: OwnedToken> ObserveInterest<T> {
     ) -> Self {
         Self {
             content_format,
+            response_policy: self.response_policy & !0x20,
             ..self
         }
+    }
+
+    pub(crate) const fn format_unbound(self) -> bool {
+        self.response_policy & 0x20 != 0
+    }
+
+    pub(crate) const fn with_unbound_format(mut self) -> Self {
+        self.content_format = None;
+        self.response_policy |= 0x20;
+        self
+    }
+
+    pub(crate) fn content_format_matches(
+        self,
+        code: crate::message::Code,
+        format: Option<crate::message::ContentFormat>,
+    ) -> bool {
+        self.format_unbound()
+            || (code == crate::message::Code::VALID && format.is_none())
+            || self.content_format == format
     }
 
     /// App-owned early Block2 negotiation; raw Engine interests default to none.
@@ -588,7 +610,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
     }
 
     pub(crate) const fn with_block2_max_szx(mut self, szx: Option<u8>) -> Self {
-        self.response_policy = (self.response_policy & 24)
+        self.response_policy = (self.response_policy & (24 | 0x20))
             | match szx {
                 Some(value) => 0x80 | (value & 7),
                 None => 0,
@@ -1292,4 +1314,53 @@ where
             .expect("committed unpinned body");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    use crate::message::{Code, ContentFormat, NoResponse};
+
+    fn interest() -> ObserveInterest {
+        ObserveInterest::new(Token::EMPTY, Endpoint::v4([127, 0, 0, 1], 5683))
+    }
+
+    #[test]
+    fn initial_valid_format_binding_preserves_other_policies() {
+        let row = interest()
+            .with_unbound_format()
+            .with_no_response(NoResponse::new(24))
+            .with_block2_max_szx(Some(2))
+            .with_q_block2(true);
+        assert!(row.format_unbound());
+        assert!(row.content_format_matches(Code::CONTENT, Some(ContentFormat::TEXT_PLAIN)));
+        assert_eq!(row.block2_max_szx(), Some(2));
+        assert!(row.q_block2());
+        assert!(row.suppresses(Code::NOT_FOUND));
+
+        let known = row.with_content_format(Some(ContentFormat::TEXT_PLAIN));
+        assert!(!known.format_unbound());
+        assert!(known.q_block2());
+        assert_eq!(known.block2_max_szx(), Some(2));
+        assert!(known.suppresses(Code::NOT_FOUND));
+        assert!(known.content_format_matches(Code::VALID, None));
+        assert!(known.content_format_matches(Code::CONTENT, Some(ContentFormat::TEXT_PLAIN)));
+        assert!(!known.content_format_matches(Code::CONTENT, None));
+        assert!(!known.content_format_matches(Code::VALID, Some(ContentFormat::new(42))));
+
+        let unbound = row.with_block2_max_szx(None);
+        assert!(unbound.format_unbound());
+        assert_eq!(unbound.block2_max_szx(), None);
+        assert!(unbound.suppresses(Code::NOT_FOUND));
+    }
+
+    #[test]
+    fn known_absent_format_is_not_initial_valid_unknown_format() {
+        let row = interest().with_unbound_format().with_content_format(None);
+        assert!(!row.format_unbound());
+        assert_eq!(row.content_format(), None);
+        assert!(row.content_format_matches(Code::VALID, None));
+        assert!(row.content_format_matches(Code::CONTENT, None));
+        assert!(!row.content_format_matches(Code::CONTENT, Some(ContentFormat::TEXT_PLAIN)));
+    }
 }

@@ -201,6 +201,7 @@ pub(super) struct BodyOwner<'a, S: Storage + BodySlots> {
     pub(super) engine: &'a mut Engine<S>,
     body: Option<SlotId>,
     incoming: bool,
+    before_release: Option<fn(&mut Engine<S>, SlotId)>,
 }
 
 impl<'a, S: Storage + BodySlots> BodyOwner<'a, S> {
@@ -209,6 +210,7 @@ impl<'a, S: Storage + BodySlots> BodyOwner<'a, S> {
             engine,
             body,
             incoming: true,
+            before_release: None,
         }
     }
     pub(super) fn outgoing(engine: &'a mut Engine<S>, body: SlotId) -> Self {
@@ -216,7 +218,12 @@ impl<'a, S: Storage + BodySlots> BodyOwner<'a, S> {
             engine,
             body: Some(body),
             incoming: false,
+            before_release: None,
         }
+    }
+    pub(super) fn with_before_release(mut self, hook: Option<fn(&mut Engine<S>, SlotId)>) -> Self {
+        self.before_release = hook;
+        self
     }
     pub(super) fn disarm(&mut self) {
         self.body = None;
@@ -275,6 +282,9 @@ impl<S: AppStorage> Drop for DeferredObserveOwner<'_, S> {
 impl<S: Storage + BodySlots> Drop for BodyOwner<'_, S> {
     fn drop(&mut self) {
         if let Some(body) = self.body {
+            if let Some(hook) = self.before_release {
+                hook(self.engine, body);
+            }
             if self.incoming {
                 let _ = self.engine.release_rx_body(body);
             } else {

@@ -1647,11 +1647,7 @@ fn initial_valid_observe_retains_classic_and_q_notification_preferences() {
                             .with_options(&options),
                     ),
                 );
-                let valid = || {
-                    Response::new(Code::VALID)
-                        .etag(b"v1")
-                        .content_format(ContentFormat::TEXT_PLAIN)
-                };
+                let valid = || Response::new(Code::VALID).etag(b"v1");
                 let mut handle = None;
                 s.poll_with(0, |_, candidate| {
                     if deferred {
@@ -1690,5 +1686,110 @@ fn initial_valid_observe_retains_classic_and_q_notification_preferences() {
                 assert!(message.observe().is_some());
             }
         }
+    }
+}
+
+#[test]
+fn valid_without_format_preserves_known_absence_and_accept_constraints() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for case in 0..4 {
+            let mut s = fixed();
+            let mut p = Peer::new(&mut s, protected);
+            let accept = ContentFormat::TEXT_PLAIN.encode();
+            let options = [
+                Opt::etag(b"v1"),
+                Opt::observe_register(),
+                Opt::uri_path("obs"),
+                Opt::accept(&accept),
+            ];
+            s.transport_mut().incoming = Some(
+                p.encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(460))
+                        .with_token(key().token())
+                        .with_options(&options[..if case == 3 { 4 } else { 3 }]),
+                ),
+            );
+            s.poll_with(0, |_, _| match case {
+                1 => response(b"initial"),
+                2 => Response::content(b"untyped"),
+                _ => Response::new(Code::VALID).etag(b"v1"),
+            })
+            .unwrap();
+            assert!(s.transport_mut().take().is_some());
+            s.notify(5000, &["obs"], Response::new(Code::VALID).etag(b"v1"))
+                .unwrap();
+            let frame = p.open(s.transport_mut().take().unwrap());
+            assert_eq!(
+                decode(&frame.bytes[..frame.len]).unwrap().code(),
+                Code::VALID
+            );
+
+            if case == 0 {
+                s.notify(10000, &["obs"], response(b"first Content"))
+                    .unwrap();
+                let frame = p.open(s.transport_mut().take().unwrap());
+                assert_eq!(
+                    decode(&frame.bytes[..frame.len]).unwrap().code(),
+                    Code::CONTENT
+                );
+            }
+            let format = if case == 2 {
+                ContentFormat::TEXT_PLAIN
+            } else {
+                ContentFormat::CBOR
+            };
+            s.notify(15000, &["obs"], response(b"changed").content_format(format))
+                .unwrap();
+            let frame = p.open(s.transport_mut().take().unwrap());
+            let message = decode(&frame.bytes[..frame.len]).unwrap();
+            assert_eq!(message.code(), Code::NOT_ACCEPTABLE);
+            assert!(message.observe().is_none());
+            assert!(s.engine().lookup_observe(key()).is_none());
+        }
+    }
+}
+
+#[test]
+fn first_content_format_binds_on_ambiguous_send_but_not_admission_refusal() {
+    for ambiguous in [false, true] {
+        let mut s = fixed();
+        let mut p = Peer::new(&mut s, false);
+        s.transport_mut().incoming = Some(request(&mut p, 470, Type::NonConfirmable, 0));
+        s.poll_with(0, |_, _| Response::new(Code::VALID).etag(b"v1"))
+            .unwrap();
+        assert!(s.transport_mut().take().is_some());
+        let mut held = Vec::new();
+        if ambiguous {
+            s.transport_mut().fail_send = true;
+        } else {
+            while let Some(id) = s.engine_mut().acquire_tx() {
+                held.push(id);
+            }
+        }
+        assert!(s.notify(5000, &["obs"], response(b"first")).is_err());
+        if ambiguous {
+            assert!(s.transport_mut().take().is_some());
+            s.transport_mut().fail_send = false;
+        } else {
+            assert!(s.transport_mut().take().is_none());
+            for id in held {
+                s.engine_mut().release_tx(id).unwrap();
+            }
+        }
+        s.notify(
+            10000,
+            &["obs"],
+            response(b"next").content_format(ContentFormat::CBOR),
+        )
+        .unwrap();
+        let frame = s.transport_mut().take().unwrap();
+        assert_eq!(
+            decode(&frame.bytes[..frame.len]).unwrap().code(),
+            if ambiguous {
+                Code::NOT_ACCEPTABLE
+            } else {
+                Code::CONTENT
+            }
+        );
     }
 }
