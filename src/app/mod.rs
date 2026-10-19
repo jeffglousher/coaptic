@@ -5205,9 +5205,20 @@ where
     };
 
     if meta.q_block2.is_some() {
-        let sent_before = engine.metrics().tx_ok;
+        let mut visible = false;
         let outcome = start_outgoing(
-            engine, io, ids, now_ms, meta, &notify, ty, key, oscore, &mut None, false,
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            &notify,
+            ty,
+            key,
+            oscore,
+            &mut None,
+            false,
+            Some(&mut visible),
         );
         let ambiguous = match &outcome {
             Err(error) => {
@@ -5215,7 +5226,7 @@ where
             }
             Ok(()) => false,
         };
-        if outcome.is_ok() || engine.metrics().tx_ok != sent_before || ambiguous {
+        if outcome.is_ok() || visible || ambiguous {
             bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
         }
         outcome?;
@@ -5262,7 +5273,6 @@ where
             oscore_req,
         )
     };
-    let sent_before = engine.metrics().tx_ok;
     let outcome = match encoded {
         Ok(()) => finish_send(engine, io, tx, dest, pending),
         Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
@@ -5280,7 +5290,7 @@ where
         }
         Ok(()) => false,
     };
-    if outcome.is_ok() || engine.metrics().tx_ok != sent_before || ambiguous {
+    if outcome.is_ok() || ambiguous {
         bind_observe_format(engine, interest, &notify).map_err(|_| Error::CommitAfterSend)?;
     }
     outcome?;
@@ -5478,6 +5488,7 @@ where
             oscore_ctx,
             dedup_closed,
             false,
+            None,
         );
     }
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
@@ -5518,6 +5529,7 @@ where
                 oscore_ctx,
                 dedup_closed,
                 false,
+                None,
             )
         }
         Err(e) => {
@@ -5626,6 +5638,7 @@ where
             oscore_ctx,
             dedup_closed,
             true,
+            None,
         );
     }
 
@@ -5676,6 +5689,7 @@ where
                 oscore_ctx,
                 dedup_closed,
                 true,
+                None,
             )
         }
         Err(e) => {
@@ -6017,6 +6031,7 @@ fn start_outgoing<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
     allow_borrowed: bool,
+    visible: Option<&mut bool>,
 ) -> Result<(), Error<T::Error>>
 where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
@@ -6146,6 +6161,13 @@ where
             oscore_ctx,
         )
     };
+    // Preserve packet commitment before error cleanup releases its Q body.
+    // This caller-owned witness is protocol state, independent of diagnostics.
+    if let Some(visible) = visible {
+        *visible |= engine
+            .tx_body_transfer(id)
+            .is_some_and(|transfer| transfer.q_observe_last_mid().is_some());
+    }
     // Selective requests are independent exchanges. A fresh handler body is
     // only a temporary snapshot; retaining it would leave an unadvanced window
     // occupying a body slot forever. Existing full-transfer state is handled
