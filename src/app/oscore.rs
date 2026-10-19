@@ -544,7 +544,7 @@ where
     };
     let mut nums = [0; 16];
     let n = recover.copy_missing_nums(&mut nums);
-    let response = super::Response::missing_blocks(nums.into_iter().take(n));
+    let response: super::Response<'_> = super::Response::missing_blocks(nums.into_iter().take(n));
     let format = ContentFormat::MISSING_BLOCKS.encode();
     let options = [Opt::content_format(&format)];
     let message = Message::new(

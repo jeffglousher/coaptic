@@ -6,6 +6,8 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// App requires at least two RX and two TX packet slots for admission headroom.
+    PacketHeadroom,
     /// A requested heap array or the aggregate allocation size is unrepresentable.
     CapacityOverflow,
     /// Heap storage requests exceed the caller's byte budget, before allocation.
@@ -44,6 +46,9 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::PacketHeadroom => {
+                f.write_str("App requires at least two RX and two TX packet slots")
+            }
             Self::CapacityOverflow => f.write_str("storage capacity exceeds addressable memory"),
             Self::HeapBudgetExceeded { required, limit } => {
                 write!(

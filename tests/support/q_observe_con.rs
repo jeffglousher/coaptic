@@ -137,6 +137,149 @@ impl coaptic::platform::AsyncTimer for Timer {
     }
 }
 
+#[cfg(feature = "oscore")]
+fn protected_admission<S: AppStorage>(mut server: Server<S>) {
+    let mut peer = Peer::new(&mut server, true);
+    let held = core::array::from_fn::<_, 3, _>(|_| server.engine_mut().acquire_tx().unwrap());
+    let options = [Opt::uri_path("obs")];
+    let message = Message::new(Type::Confirmable, Code::GET, MessageId::new(801))
+        .with_token(Token::new(b"pressure").unwrap())
+        .with_options(&options);
+    server.transport_mut().incoming = Some(peer.encode(&message));
+    let mut effects = 0;
+    assert!(
+        server
+            .poll_with_oscore_checkpoint_and_dispatch(
+                0,
+                |_| false,
+                |_, _| {
+                    effects += 1;
+                    response(b"effect")
+                }
+            )
+            .is_err()
+    );
+    assert!(server.transport_mut().take().is_none());
+    assert_eq!(server.metrics().admission_refusal_sent, 0);
+    let mut checkpoints = 0;
+    server
+        .poll_with_oscore_checkpoint_and_dispatch(
+            1,
+            |_| {
+                checkpoints += 1;
+                true
+            },
+            |_, _| {
+                effects += 1;
+                response(b"effect")
+            },
+        )
+        .unwrap();
+    assert!(checkpoints >= 2);
+    let opened = peer.open(server.transport_mut().take().unwrap());
+    assert_eq!(
+        decode(&opened.bytes[..opened.len]).unwrap().code(),
+        Code::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(effects, 0);
+    assert_eq!(server.metrics().admission_refusal_sent, 1);
+    assert_eq!(server.engine_mut().tx_occupied(), 3);
+    assert_eq!(server.engine_mut().rx_occupied(), 0);
+    let unauthenticated = Message::new(Type::Confirmable, Code::GET, MessageId::new(803))
+        .with_token(Token::new(b"pressure").unwrap())
+        .with_options(&options);
+    let mut tampered = peer.encode(&unauthenticated);
+    tampered.bytes[tampered.len - 1] ^= 1;
+    server.transport_mut().incoming = Some(tampered);
+    server.poll_with_oscore_checkpoint(2, |_| true).unwrap();
+    assert!(server.transport_mut().take().is_none());
+    assert_eq!(server.metrics().admission_refusal_sent, 1);
+    for slot in held {
+        server.engine_mut().release_tx(slot).unwrap();
+    }
+    let fresh = Message::new(Type::Confirmable, Code::GET, MessageId::new(802))
+        .with_token(Token::new(b"pressure").unwrap())
+        .with_options(&options);
+    server.transport_mut().incoming = Some(peer.encode(&fresh));
+    server
+        .poll_with_oscore_checkpoint_and_dispatch(
+            3,
+            |_| true,
+            |_, _| {
+                effects += 1;
+                response(b"effect")
+            },
+        )
+        .unwrap();
+    assert_eq!(effects, 1);
+    let opened = peer.open(server.transport_mut().take().unwrap());
+    assert_eq!(
+        decode(&opened.bytes[..opened.len]).unwrap().payload(),
+        b"effect"
+    );
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn admission_protected_refusal_obeys_checkpoint_and_authentication() {
+    protected_admission(fixed());
+}
+
+#[cfg(all(feature = "alloc", feature = "oscore"))]
+#[test]
+fn admission_allocated_protected_refusal_has_same_contract() {
+    let resources = Resources::<Buffers>::new()
+        .routes::<1>()
+        .block_wise::<true>()
+        .deferred::<2>();
+    let server = App::with_resources(resources.allocated(usize::MAX))
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .route("obs", coaptic::get(handler).observe(source))
+        .bind(Io::default())
+        .unwrap();
+    protected_admission(server);
+}
+
+#[test]
+fn admission_async_cancelled_refusal_releases_control_slot() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        let mut server = fixed();
+        let mut peer = Peer::new(&mut server, protected);
+        let held = core::array::from_fn::<_, 3, _>(|_| server.engine_mut().acquire_tx().unwrap());
+        let options = [Opt::uri_path("obs")];
+        let message = Message::new(Type::Confirmable, Code::GET, MessageId::new(900))
+            .with_token(Token::new(b"pressure").unwrap())
+            .with_options(&options);
+        let frame = peer.encode(&message);
+        let rx = server.engine_mut().acquire_rx().unwrap();
+        server
+            .engine_mut()
+            .write_rx(rx, &frame.bytes[..frame.len], frame.peer)
+            .unwrap();
+        let mut clock = || Ok::<u64, ()>(0);
+        let mut timer = Timer;
+        BLOCK_SEND.with(|value| value.set(true));
+        {
+            let mut work = core::pin::pin!(server.progress_async(0, &mut clock, &mut timer, 1000));
+            assert!(
+                work.as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        BLOCK_SEND.with(|value| value.set(false));
+        assert_eq!(server.engine_mut().tx_occupied(), 3);
+        assert_eq!(server.engine_mut().rx_occupied(), 0);
+        assert!(server.transport_mut().take().is_none());
+        assert_eq!(server.metrics().admission_refusal_sent, 0);
+        assert_eq!(server.metrics().admission_refusal_unsent, 1);
+        for slot in held {
+            server.engine_mut().release_tx(slot).unwrap();
+        }
+    }
+}
+
 #[test]
 fn con_q_observe_cancelled_continuation_retries_same_block_without_skipping() {
     for protected in [false, cfg!(feature = "oscore")] {
@@ -175,5 +318,65 @@ fn con_q_observe_cancelled_continuation_retries_same_block_without_skipping() {
             ));
         }
         assert_eq!(chunk(&mut s, &p, 1, false).1, epoch);
+    }
+}
+
+#[test]
+fn admission_continue_and_refusal_replay_exact_ciphertext_without_packet_pin() {
+    for protected in [false, cfg!(feature = "oscore")] {
+        for refuse in [false, true] {
+            let mut server = fixed();
+            let mut peer = Peer::new(&mut server, protected);
+            let block = BlockValue::new(0, true, 0).unwrap().encode();
+            let options = [Opt::uri_path("obs"), Opt::block1(&block)];
+            let message = Message::new(Type::Confirmable, Code::PUT, MessageId::new(910))
+                .with_token(Token::new(b"upload").unwrap())
+                .with_options(&options)
+                .with_payload(&[1; 16]);
+            let frame = peer.encode(&message);
+            let held = if refuse {
+                Some(core::array::from_fn::<_, 3, _>(|_| {
+                    server.engine_mut().acquire_tx().unwrap()
+                }))
+            } else {
+                None
+            };
+            server.transport_mut().incoming = Some(frame);
+            server
+                .poll_with(0, |_, _| {
+                    panic!("no upload completion or overload side effects")
+                })
+                .unwrap();
+            let first = server.transport_mut().take().unwrap();
+            assert_eq!(
+                server.engine_mut().tx_occupied(),
+                if refuse { 3 } else { 0 }
+            );
+            // The peer lost the response, so it retries the exact original request.
+            server.transport_mut().incoming = Some(frame);
+            server
+                .poll_with(1, |_, _| panic!("duplicate cannot dispatch"))
+                .unwrap();
+            let replay = server.transport_mut().take().unwrap();
+            assert_eq!(&first.bytes[..first.len], &replay.bytes[..replay.len]);
+            assert_eq!(
+                server.engine_mut().tx_occupied(),
+                if refuse { 3 } else { 0 }
+            );
+            let opened = peer.open(replay);
+            assert_eq!(
+                decode(&opened.bytes[..opened.len]).unwrap().code(),
+                if refuse {
+                    Code::SERVICE_UNAVAILABLE
+                } else {
+                    Code::CONTINUE
+                }
+            );
+            if let Some(held) = held {
+                for slot in held {
+                    server.engine_mut().release_tx(slot).unwrap();
+                }
+            }
+        }
     }
 }

@@ -171,6 +171,7 @@ impl<S: Storage> Engine<S> {
         match self.storage.rx_datagram().acquire() {
             Some(id) => Some(id),
             None => {
+                Metrics::inc(&mut self.metrics.hard_rx_exhausted);
                 Metrics::inc(&mut self.metrics.saturated);
                 None
             }
@@ -197,6 +198,7 @@ impl<S: Storage> Engine<S> {
         match self.storage.tx_datagram().acquire() {
             Some(id) => Some(id),
             None => {
+                Metrics::inc(&mut self.metrics.hard_tx_exhausted);
                 Metrics::inc(&mut self.metrics.saturated);
                 None
             }
@@ -2779,6 +2781,50 @@ impl RxBlockOpt {
             Self::Block2 | Self::QBlock2 => parsed.etag().next(),
         };
         BodyTag::from_first(first).map_err(BlockTransferError::from)
+    }
+}
+
+impl<S: Storage + BodySlots> Engine<S> {
+    /// Recognize an already admitted upload without changing its bytes or binding.
+    /// Admission may let this packet advance existing work, but the ordinary
+    /// receive path still validates its range and payload before applying it.
+    pub(crate) fn admitted_upload(&self, parsed: &ParsedMessage<'_>, peer: Endpoint) -> bool {
+        let (which, role) = if parsed.q_block1().is_some() {
+            (RxBlockOpt::QBlock1, BlockRole::IncomingQBlock1)
+        } else if parsed.block1().is_some() {
+            (RxBlockOpt::Block1, BlockRole::IncomingBlock1)
+        } else {
+            return false;
+        };
+        let Some(Ok(block)) = which.read_block(parsed) else {
+            return false;
+        };
+        let Ok(identity) = which.read_identity(parsed) else {
+            return false;
+        };
+        let Ok(candidate) = RequestBinding::from_message(parsed, block.num()) else {
+            return false;
+        };
+        let key = BlockKey::new(parsed.token(), peer).with_identity(identity);
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        (0..self.capacities().rx_body_slots.unwrap_or(0)).any(|index| {
+            let Some(transfer) = self.storage.rx_body_transfer(SlotId::from_index(index)) else {
+                return false;
+            };
+            let Some(stored) = transfer.request_binding else {
+                return false;
+            };
+            let matches = if untagged_classic {
+                transfer.role() == role
+                    && transfer.endpoint() == peer
+                    && transfer.identity().is_absent()
+                    && stored.same_options(candidate)
+                    && !(block.num() == 0 && key != transfer.key())
+            } else {
+                same_body_identity(transfer, key, role)
+            };
+            matches && stored.retain_condition(candidate).is_ok()
+        })
     }
 }
 

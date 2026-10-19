@@ -170,8 +170,10 @@ impl<
     ///
     /// Ordinary responses keep one bounded RX datagram occupied until collection;
     /// Block2 retains its existing RX body. Untaken replies apply backpressure.
-    /// This removes the legacy 128-byte snapshot / 4096-byte hold restrictions,
-    /// while the selected storage still bounds every representation.
+    /// Each active or uncollected Call reserves one logical RX credit, including
+    /// blockwise Calls. At most `rx_datagram_slots - 1` such Calls are admitted;
+    /// the remaining packet receives control traffic and overload refusals.
+    /// Collection or cancellation releases the credit. Observe refreshes reuse it.
     #[must_use]
     pub const fn full_responses(mut self) -> Self {
         self.full_responses = true;
@@ -428,6 +430,9 @@ where
         c: crate::storage::Capacities,
     ) -> Result<(), BuildError> {
         c.validate_for_build(BLOCK_WISE)?;
+        if c.rx_datagram_slots < 2 || c.tx_datagram_slots < 2 {
+            return Err(BuildError::PacketHeadroom);
+        }
         // Check the actual borrowed slices: custom storage need not use the
         // default associated constants. This is App admission, not Engine policy.
         {
@@ -455,6 +460,8 @@ where
     }
 
     /// Bind the profile's fixed memory, with or without body pools.
+    /// At least two RX and two TX packets are required: one of each remains
+    /// available for ingress and transient control/refusal traffic.
     ///
     /// Deep configuration uses [`Self::bind_storage`] / `Self::bind_alloc`
     /// without changing request builders, response types or the reactor.

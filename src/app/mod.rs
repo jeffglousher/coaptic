@@ -114,6 +114,7 @@
 //! [`SlotId`]. Engine remains the advanced escape hatch
 //! ([`App::engine_mut`]) for explicit slots, custom RST / remaining 4.xx,
 //! and codecs not exposed by the App transfer API, such as BERT.
+mod admission;
 mod associations;
 mod builder;
 mod client;
@@ -990,7 +991,7 @@ fn prepare_deferred_observe<
             return Err(Error::Block(BlockTransferError::IdentityMismatch));
         }
     } else {
-        let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
+        let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
         let preference = row
             .meta
             .block2
@@ -1881,6 +1882,16 @@ impl<
         let (security, revoked) = (None, 0);
         AppUsage {
             storage: self.engine.storage_usage(),
+            ordinary_tx_capacity: self
+                .engine
+                .capacities()
+                .tx_datagram_slots
+                .saturating_sub(admission::TX_HEADROOM),
+            full_response_capacity: self
+                .engine
+                .capacities()
+                .rx_datagram_slots
+                .saturating_sub(admission::RX_HEADROOM),
             routes: PoolUsage {
                 occupied: self.site.len(),
                 capacity: N,
@@ -3202,7 +3213,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
+#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
 fn dispatch_rx<
     Mem,
     T,
@@ -3635,6 +3646,26 @@ where
         return outcome;
     }
 
+    if admission::refuse_new_request(engine, &parsed, peer) {
+        let outcome = admission::send_refusal(
+            engine,
+            io,
+            ids,
+            now_ms,
+            SendResponse {
+                block1: None,
+                block2: None,
+                q_block2: None,
+                q_request: None,
+                ..meta
+            },
+            oscore,
+            dedup_closed,
+        );
+        let _ = engine.release_rx(rx);
+        return outcome;
+    }
+
     if let Some(policy) = echo_policy {
         let decision = policy(EchoCheck {
             echo: Echo::from_message(&parsed),
@@ -4016,6 +4047,56 @@ where
         }
         let _ = engine.release_rx(rx);
         deferred.expire(engine, now_ms);
+        return outcome;
+    }
+
+    // Continuations may use control headroom; their handler still needs capacity.
+    if admission::refuse_dispatch(engine) {
+        // Authenticated cancellation can release its relation under pressure,
+        // even when the accompanying fresh representation cannot be admitted.
+        let cancel = Request::from_decoded(parsed, peer, None)
+            .ok()
+            .is_some_and(|request| ObservePlan::from_request(site, &request).deregister);
+        if cancel {
+            let key = ObserveKey::new(parsed.token(), peer);
+            let cleanup = (|| -> Result<(), crate::storage::SlotError> {
+                retire_terminal_response(engine, parsed.token(), peer)?;
+                deferred.supersede_observe(engine, key)?;
+                if let Some(interest) = engine
+                    .lookup_observe(key)
+                    .and_then(|id| engine.observe_interest(id))
+                {
+                    retire_suppressed_observe(engine, interest)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = cleanup {
+                if let InboundBody::Complete(id) = assembled {
+                    let _ = engine.release_rx_body(id);
+                }
+                let _ = engine.release_rx(rx);
+                return Err(error.into());
+            }
+        }
+        let outcome = admission::send_refusal(
+            engine,
+            io,
+            ids,
+            now_ms,
+            SendResponse {
+                block1: None,
+                block2: None,
+                q_block2: None,
+                q_request: None,
+                ..meta
+            },
+            oscore,
+            dedup_closed,
+        );
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
+        }
+        let _ = engine.release_rx(rx);
         return outcome;
     }
 
@@ -4981,7 +5062,7 @@ where
         }
         return Ok(true);
     }
-    let Some(tx) = engine.acquire_tx() else {
+    let Some(tx) = acquire_tx_or_evict(engine) else {
         return Err(Error::Saturated);
     };
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
@@ -5259,7 +5340,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_response_async, bound(crate::app::async_server::ProtocolIo), calls(start_outgoing => start_outgoing_async, continue_outgoing => continue_outgoing_async, send_pinned_tx => send_pinned_tx_async, send_empty_ack => send_empty_ack_async, finish_send => finish_send_async))]
+#[coaptic_io::dual_io(send_response_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_control_response => admission::send_control_response_async, start_outgoing => start_outgoing_async, continue_outgoing => continue_outgoing_async, send_pinned_tx => send_pinned_tx_async, send_empty_ack => send_empty_ack_async, finish_send => finish_send_async))]
 fn send_response<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
@@ -5291,6 +5372,19 @@ where
             }
             Type::NonConfirmable | Type::Acknowledgement | Type::Reset => Ok(()),
         };
+    }
+
+    if response.code() == Code::CONTINUE || response.code() == Code::REQUEST_ENTITY_INCOMPLETE {
+        return admission::send_control_response(
+            engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            oscore_ctx,
+            dedup_closed,
+        );
     }
 
     let ty = match meta.ty {
@@ -5896,7 +5990,7 @@ where
     let tx = if block.is_some() {
         acquire_tx_or_evict(engine)
     } else {
-        engine.acquire_tx()
+        admission::ordinary_tx(engine)
     }
     .ok_or(Error::Saturated)?;
     if let Err(error) = encode_response(
@@ -6149,7 +6243,7 @@ where
         Ok(issued) => issued,
         Err(BlockTransferError::Gap) => {
             let _ = engine.release_tx_body(id);
-            let tx = engine.acquire_tx().ok_or(Error::Saturated)?;
+            let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
             let error = Response::bad_request();
             if let Err(e) = encode_response(
                 engine,
@@ -6882,7 +6976,8 @@ pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E, const REQUE
     oscore_ctx: &oscore::Field<REQUESTS>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
-    let response = Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
+    let response: Response<'_> =
+        Response::problem(Code::INTERNAL_SERVER_ERROR).title("Options full");
     response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
     let mut opts = OptionsBuilder::<4>::new();
@@ -7017,7 +7112,7 @@ where
     S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
-    let Some(tx) = acquire_tx_or_evict(engine) else {
+    let Some(tx) = admission::control_tx(engine) else {
         return Err(Error::Saturated);
     };
     if let Err(e) = engine.write_tx(tx, bytes, dest) {
@@ -7203,13 +7298,12 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
 fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
     engine: &mut Engine<S>,
 ) -> Option<SlotId> {
-    // This actor owns the pool. Reclaim an evictable reply before attempting
-    // admission so a successful cache eviction is not counted as saturation.
-    // A genuinely full pool still makes exactly one failing acquisition.
-    if engine.tx_occupied() == engine.capacities().tx_datagram_slots {
-        let _ = evict_one_dedup_pin(engine);
+    for _ in 0..=admission::TX_HEADROOM {
+        if admission::free_tx(engine) > admission::TX_HEADROOM || !evict_one_dedup_pin(engine) {
+            break;
+        }
     }
-    engine.acquire_tx()
+    admission::ordinary_tx(engine)
 }
 
 fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
@@ -7450,7 +7544,7 @@ where
     S: Storage + DatagramSlots + DedupSlots,
     T: DatagramIo,
 {
-    let Some(tx) = acquire_tx_or_evict(engine) else {
+    let Some(tx) = admission::control_tx(engine) else {
         return Err(Error::Saturated);
     };
     if let Err(e) = engine.encode_tx(tx, &msg) {
