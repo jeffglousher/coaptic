@@ -10764,6 +10764,100 @@ fn qblock1_missing_reissue_send_failures_retire_partial_output_and_preserve_othe
 }
 
 #[test]
+fn con_qblock2_observe_crosses_windows_without_pull_and_keeps_duplicate_blocks() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .full_responses()
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let call = app
+        .get("obs")
+        .observe()
+        .q_block2()
+        .to(peer)
+        .send(0)
+        .unwrap();
+    let request_mid = last_wide(&app).message_id();
+    let format = encode_uint(42);
+    let options = [Opt::observe_register(), Opt::content_format(&format)];
+    let initial = Message::new(Type::Acknowledgement, Code::CONTENT, request_mid)
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(b"initial");
+    let mut wire = [0; WIRE];
+    let n = encode(&initial, &mut wire).unwrap();
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    let mut output = [0; 704];
+    assert_eq!(
+        app.take_response_into(call, &mut output)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .payload(),
+        b"initial"
+    );
+
+    for epoch in 1..=2 {
+        for num in 0..22 {
+            let block = BlockValue::new(num, num < 21, 1).unwrap().encode();
+            let size = encode_uint(704);
+            let observed = encode_uint(epoch);
+            let etag = [epoch as u8];
+            let options = [
+                Opt::etag(&etag),
+                Opt::observe(&observed),
+                Opt::content_format(&format),
+                Opt::size2(&size),
+                Opt::q_block2(&block),
+            ];
+            let payload = [epoch as u8; 32];
+            let mid = MessageId::new((100 + epoch * 32 + num) as u16);
+            let response = Message::new(Type::Confirmable, Code::CONTENT, mid)
+                .with_token(call.token())
+                .with_options(&options)
+                .with_payload(&payload);
+            let n = encode(&response, &mut wire).unwrap();
+            // Repeat blocks at and after both ten-block boundaries, then the
+            // final block while the complete body is still in the inbox.
+            for _ in 0..if matches!(num, 9 | 10 | 19 | 21) {
+                2
+            } else {
+                1
+            } {
+                app.transport_mut().send_n = 0;
+                app.transport_mut().inbox = Some((peer, wire, n));
+                app.poll(u64::from(epoch * 100 + num)).unwrap();
+                assert_eq!(app.transport().send_n, 1, "only the exact CON ACK");
+                let ack = last_wide(&app);
+                assert_eq!(ack.ty(), Type::Acknowledgement);
+                assert_eq!(ack.code(), Code::EMPTY);
+                assert_eq!(ack.message_id(), mid);
+                assert!(ack.q_block2().next().is_none());
+                if num < 21 {
+                    assert!(
+                        app.take_response(call).is_none(),
+                        "no partial/failure reply"
+                    );
+                }
+            }
+        }
+        let reply = app
+            .take_response_into(call, &mut output)
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.payload(), &[epoch as u8; 704]);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+    assert!(app.cancel(call));
+}
+
+#[test]
 fn qblock2_timed_recovery_preserves_request_identity_and_selects_only_holes() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     for non in [false, true] {

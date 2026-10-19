@@ -4020,7 +4020,11 @@ where
                     }
                 }
                 let _ = engine.note_q_receive(progress.id(), now_ms);
-                let outcome = if needs_q_continue(engine, progress.id()) {
+                // CON payloads advance through their individual ACKs (RFC 9177
+                // appendix A.2). A window pull races the sender's next CON train.
+                let outcome = if parsed.ty() != Type::Confirmable
+                    && needs_q_continue(engine, progress.id())
+                {
                     take_exchange(engine, parsed, peer);
                     send_q_block2_continue(
                         engine,
@@ -4050,6 +4054,10 @@ where
                 }
                 let _ = engine.release_rx(rx);
                 return outcome;
+            }
+            Err(BlockTransferError::Duplicate | BlockTransferError::AlreadyComplete) => {
+                let _ = engine.release_rx(rx);
+                return Ok(());
             }
             Err(e) => {
                 fail_call(
