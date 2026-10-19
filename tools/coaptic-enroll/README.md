@@ -14,7 +14,9 @@ Help works before credential storage or a device is available.
 
 `inspect` shows local credential-record presence, host names and serial ports
 without contacting devices or asking for a key touch. Add `--host NAME` for
-verified identity and pairing details, or `--port PORT` for live device state.
+verified identity and pairing details, or `--port PORT` for live device state,
+including authenticated pending-work custody. Missing or unverifiable pending
+history never authorizes creating an empty replacement.
 Only the selected port is contacted, with a ten-second response limit. A failed
 target does not suppress the other results; the command exits unsuccessfully
 if a selected target cannot be inspected. Inventory is not a live credential test.
@@ -39,7 +41,9 @@ For first setup:
    never been provisioned. Missing or corrupt existing state requires recovery.
 3. Register an existing P-256 PIV credential using its serial number, slot and
    public PEM. Registration proves possession; it does not generate or replace keys.
-4. Pair the device with the host address and chosen permissions. Review the exact
+4. Pair the device with the host address and chosen permissions: read-only, echo
+   only, or echo plus durable telemetry. Direct commands default to telemetry;
+   `--read-only` and `--echo-only` select the other policies. Review the exact
    transaction, then approve with the registered credential.
 5. Connect the protected peer using the host and device addresses. Restart restores
    persistent identity and authorization and establishes a fresh session.
@@ -77,6 +81,21 @@ input and operation definitions live in `coaptic-console-core` and also use neit
 If a serial operation times out, inspect device and host state before retrying.
 Recovery reconciles a committed device update whose reply was lost. Reinitializing
 an existing identity is not a recovery operation.
+
+Before changing a telemetry grant, keep its authorized host serving receipts and
+run `serial-quiesce PORT`. The device retries the existing operation for at most
+30 seconds and refuses if it cannot finish. Success holds new production for
+60 seconds; an administrative challenge extends the hold through approval.
+Stop the serving host after successful quiescence, then change pairing. This
+releases its store locks without racing the next effect. Revocation remains
+immediate and preserves unresolved work; restoring authority does not erase it.
+Use `serial-quiesce --help` for the precise boundaries.
+
+For an explicit lost-receipt qualification, `peer ... --qualify-lost-receipt`
+requires an approved telemetry grant and exits with code 75 after synchronizing
+the first new durable effect, before sending its receipt. Preserve the same
+journal and restart normally to recover that effect's receipt. This mode is
+never selected by ordinary peer operation.
 
 If networking stops after a fatal session error while USB inspection still works,
 use the guide's Restart device operation. It retains identity and pairing; it does

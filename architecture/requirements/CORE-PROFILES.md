@@ -94,8 +94,9 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
   ciphertext, failed checkpoint and fresh recovery. Unprotected over-capacity
   requests cannot bypass attached-context/association-required policy.
 - **Ownership:** [storage tests](../../tests/extended_token_storage.rs) prove full
-  exchange/Observe/body identity and compact defaults. Reliable CSM negotiation,
-  stateless state encodings and independent extended-token peers are not proved.
+  exchange/Observe/body identity and compact defaults. Reliable CSM negotiation and
+  stateless state encodings remain unsupported. Companion #91 records independent
+  unprotected extended-token peers; independent protected-capacity proof stays #200.
 
 ## RFC 8516: overload and retry
 
@@ -140,13 +141,12 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
   Authentication/replay errors share one category; silent drops are not counted
   by this recorder. Sampled maxima are not exact lifetime high-water marks.
   Counters wrap; callers choose whether to record both a poll error and its later
-  Call failure. Export adapters and overhead campaigns remain #202/#341.
-- **Closure recommendation:** close the adopted UDP implementation in #516 and
-  admission implementation in #586. Close #519's delivered metadata/URI slice
-  with independent proof retained under #200 and directory roles explicitly
-  outside MVP scope. #521's finite diagnostic contract can close with focused
-  validation of the accompanying implementation. Keep #340's deployment-accounting obligation
-  explicit; do not describe completed association/readiness mechanisms as missing.
+  Call failure. The host export adapter is delivered in companion #88; overhead remains #341.
+- **Disposition:** #516, #519, #521 and #586 are closed for their delivered
+  implementations and relevant proof. Directory roles are outside the selected
+  endpoint scope. #200 owns remaining finite independent integrations; #340 owns
+  named deployment peaks and valid-peer progress. Completed association/readiness
+  mechanisms are not a second implementation backlog.
 
 Retained local results in the reviewed implementation PRs support the named
 checks; exact executed source/toolchain identities belong with that evidence.
