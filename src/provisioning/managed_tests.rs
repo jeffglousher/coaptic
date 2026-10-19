@@ -260,6 +260,94 @@ fn connect(client: &mut Owner<'_>, server: &mut Owner<'_>, now: u64) -> u64 {
 }
 
 #[test]
+fn managed_scheduling_queries_do_not_drive_io_or_advance_time() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, _, network) = pair(&a, &b);
+    assert_eq!(client.next_timeout(), None);
+    assert_eq!(client.next_poll_at(0), None);
+    client.connect(10).unwrap();
+    assert_eq!(client.next_timeout(), Some(10));
+    assert_eq!(client.next_poll_at(20), Some(20));
+    assert_eq!(client.last_now, 10);
+    assert_eq!(network.borrow().receives, 0);
+    assert!(network.borrow().sent.is_empty());
+    client.poll(10).unwrap();
+    assert!(client.next_timeout().unwrap() > 10);
+    assert_eq!(client.next_poll_at(10), client.next_timeout());
+}
+
+#[test]
+fn managed_scheduling_expires_policy_and_clock_before_io_then_stops_waking() {
+    for rollback in [false, true] {
+        let a = identity(1, 1);
+        let b = identity(2, 2);
+        let (mut client, _, network) = pair(&a, &b);
+        client.validity = PolicyValidity::OnlineUntil {
+            accepted_ms: 0,
+            deadline_ms: 50,
+        };
+        client.poll(10).unwrap();
+        assert_eq!(client.next_timeout(), Some(50));
+        let receives = network.borrow().receives;
+        let now = if rollback { 9 } else { 50 };
+        assert_eq!(client.next_poll_at(now), Some(now));
+        assert!(matches!(
+            client.poll(now),
+            Err(ManagedError::Clock | ManagedError::PolicyExpired)
+        ));
+        assert_eq!(network.borrow().receives, receives);
+        assert!(client.is_blocked());
+        assert_eq!(client.next_timeout(), None);
+        assert_eq!(client.next_poll_at(now), None);
+    }
+}
+
+#[test]
+fn managed_scheduling_omits_paused_app_timers_but_keeps_queued_ingress_ready() {
+    reset_mid_seeds();
+    let a = identity(1, 1);
+    let b = identity(2, 2);
+    let (mut client, mut server, network) = pair(&a, &b);
+    let now = connect(&mut client, &mut server, 0) + 1;
+    client
+        .request(Method::Post, "work", &[], None, now)
+        .unwrap();
+    let mut deferred = None;
+    server
+        .poll_with(now, |_, _, handle| {
+            deferred = handle;
+            Response::deferred()
+        })
+        .unwrap();
+    assert!(deferred.is_some());
+    client.poll(now).unwrap();
+    let due = match server.state.as_ref().unwrap() {
+        State::Established(app) => app.next_timeout().unwrap(),
+        _ => unreachable!(),
+    };
+    assert!(server.next_timeout().unwrap() <= due);
+    server.connect(due - 1).unwrap();
+    server.poll_with(due, idle).unwrap();
+    assert!(server.recovery.as_ref().unwrap().has_candidate());
+    assert!(server.next_timeout().unwrap() > due);
+    assert!(server.next_poll_at(due).unwrap() > due);
+    state_io(server.state.as_mut().unwrap()).queued = Some((0, OTHER));
+    let receives = network.borrow().receives;
+    assert_eq!(server.next_poll_at(due), Some(due));
+    assert_eq!(network.borrow().receives, receives);
+    state_io(server.state.as_mut().unwrap()).queued = None;
+    server
+        .recovery
+        .as_mut()
+        .unwrap()
+        .discard_candidate(due)
+        .unwrap();
+    assert_eq!(server.next_poll_at(due), Some(due));
+}
+
+#[test]
 fn final_error_after_handoff_cannot_revoke_the_installed_managed_app() {
     reset_mid_seeds();
     let a = identity(1, 1);
