@@ -80,6 +80,8 @@ pub fn run(
     println!("Pairing restored; waiting for peer at {remote}.");
     let mut reported = false;
     let mut call = None;
+    let mut probe_due = 0;
+    let mut probe_attempts = 0;
     let mut output = [0; 128];
     let mut retry_at = 30_000;
     let mut subscription_received = 0;
@@ -167,15 +169,28 @@ pub fn run(
                 super::super::hex(peer.principal().fingerprint())
             );
             reported = true;
-            if let Some(probe) = probe {
-                let (method, path, payload, format) = match probe {
-                    Probe::Connect => continue,
-                    Probe::Identity => (Method::Get, "identity", &[][..], None),
-                    Probe::Echo | Probe::DeniedEcho => {
-                        (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
-                    }
-                };
-                call = Some(connection.request(method, path, payload, format, now)?);
+        }
+        if connection.is_connected()
+            && call.is_none()
+            && now >= probe_due
+            && let Some(probe) = probe.filter(|probe| !matches!(probe, Probe::Connect))
+        {
+            let (method, path, payload, format) = match probe {
+                Probe::Connect => unreachable!(),
+                Probe::Identity => (Method::Get, "identity", &[][..], None),
+                Probe::Echo | Probe::DeniedEcho => {
+                    (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
+                }
+            };
+            match connection.request(method, path, payload, format, now) {
+                Ok(request) => {
+                    call = Some(request);
+                    probe_attempts += 1;
+                }
+                Err(ManagedError::Application(coaptic::app::Error::Backoff { until_ms })) => {
+                    probe_due = until_ms;
+                }
+                Err(error) => return Err(error.into()),
             }
         }
         if let Some(current) = call {
@@ -197,7 +212,19 @@ pub fn run(
                         }
                     };
                     if !valid {
-                        return Err("protected response differs".into());
+                        let max_age = response.max_age_secs().unwrap_or(60);
+                        if let Some(next) =
+                            probe_retry_at(response.code(), max_age, now, probe_attempts)
+                        {
+                            println!(
+                                "Protected probe received code {} (Max-Age {max_age}s); retrying this idempotent probe in the same session.",
+                                response.code()
+                            );
+                            call = None;
+                            probe_due = next;
+                            continue;
+                        }
+                        return Err(format!("protected response differs: code {}, Max-Age {max_age}s, payload {} bytes, attempt {probe_attempts}", response.code(), response.payload().len()).into());
                     }
                     println!("Protected probe passed (code {}).", response.code());
                     return Ok(());
@@ -255,4 +282,37 @@ pub fn run(
 
 fn entropy(bytes: &mut [u8]) -> bool {
     getrandom::fill(bytes).is_ok()
+}
+
+// Only the fixed identity/echo probes call this policy, never durable telemetry.
+fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> Option<u64> {
+    if !matches!(code, Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE) || attempts >= 3 {
+        return None;
+    }
+    let next = now_ms.saturating_add(u64::from(max_age_secs).saturating_mul(1000).max(1));
+    (next < 30_000).then_some(next)
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    #[test]
+    fn retry_respects_overload_deadline_and_attempt_bound() {
+        assert_eq!(
+            probe_retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 1),
+            Some(1100)
+        );
+        assert_eq!(
+            probe_retry_at(Code::TOO_MANY_REQUESTS, 0, 100, 2),
+            Some(101)
+        );
+        assert_eq!(probe_retry_at(Code::SERVICE_UNAVAILABLE, 60, 100, 1), None);
+        assert_eq!(
+            probe_retry_at(Code::SERVICE_UNAVAILABLE, 1, 29_000, 1),
+            None
+        );
+        assert_eq!(probe_retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 3), None);
+        assert_eq!(probe_retry_at(Code::FORBIDDEN, 0, 100, 1), None);
+    }
 }
