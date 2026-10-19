@@ -132,7 +132,10 @@ fn snapshot(c: &SecurityContext) -> ([u8; 16], u64, Option<u64>, (u64, u32)) {
         c.replay_checkpoint().parts(),
     )
 }
-fn busy<S: AppStorage>(app: &mut TestApp<S>, candidate: &mut Option<SecurityContext>) {
+fn busy<S: AppStorage<Token = coaptic::message::Token>>(
+    app: &mut TestApp<S>,
+    candidate: &mut Option<SecurityContext>,
+) {
     let old = snapshot(app.oscore().unwrap());
     let staged = snapshot(candidate.as_ref().unwrap());
     let io = (
@@ -168,7 +171,7 @@ fn pool<S: Storage>(s: &mut S, which: usize) -> &mut dyn SlotPool {
         _ => unreachable!(),
     }
 }
-fn storage_campaign<S: AppStorage>(mut app: TestApp<S>) {
+fn storage_campaign<S: AppStorage<Token = coaptic::message::Token>>(mut app: TestApp<S>) {
     assert!(matches!(
         app.set_oscore(&mut None),
         Err(OscoreInstallError::MissingCandidate)
@@ -267,7 +270,7 @@ fn oscore_install_allocated_exact_budget_has_same_refusal_and_recovery() {
         .unwrap();
     storage_campaign(app);
 }
-fn protected_campaign<S: AppStorage>(mut client: TestApp<S>) {
+fn protected_campaign<S: AppStorage<Token = coaptic::message::Token>>(mut client: TestApp<S>) {
     client.set_oscore(&mut Some(context(false, 24))).unwrap();
     let mut server = fixed();
     server.set_oscore(&mut Some(context(true, 35))).unwrap();
@@ -362,7 +365,7 @@ fn oscore_install_error_diagnostics_are_compact_and_contain_no_context() {
     );
 }
 
-fn observe_campaign<S: AppStorage>(mut client: TestApp<S>) {
+fn observe_campaign<S: AppStorage<Token = coaptic::message::Token>>(mut client: TestApp<S>) {
     client.set_oscore(&mut Some(context(false, 24))).unwrap();
     let mut server = fixed();
     server.set_oscore(&mut Some(context(true, 24))).unwrap();
@@ -463,7 +466,7 @@ fn oscore_install_retained_binding_and_checkpoint_refusal_are_unchanged() {
     .unwrap();
     assert_eq!(commits, 2);
 }
-fn deferred_campaign<S: AppStorage>(mut server: TestApp<S>) {
+fn deferred_campaign<S: AppStorage<Token = coaptic::message::Token>>(mut server: TestApp<S>) {
     server.set_oscore(&mut Some(context(true, 24))).unwrap();
     let mut client = fixed();
     client.set_oscore(&mut Some(context(false, 24))).unwrap();

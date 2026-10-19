@@ -43,6 +43,8 @@ use crate::message::{BlockValue, MessageId};
 ///
 /// Numbers for the shipped profiles: [`crate::profiles`].
 pub trait MemoryProfile {
+    /// Owned token representation used by every token-bearing pool.
+    type Token: crate::message::OwnedToken;
     /// Incoming Datagram Pool occupancy.
     const RX_DATAGRAM_SLOTS: usize;
     /// Bytes in each RX datagram slot.
@@ -92,7 +94,7 @@ pub trait MemoryProfile {
 /// [`Memory<P>`] — not an enum padded to the WithBodies layout.
 pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
     /// Engine storage for this `block_wise` flag.
-    type Store: Storage
+    type Store: Storage<Token = Self::Token>
         + DatagramSlots
         + PendingCons
         + ObserveSlots
@@ -105,8 +107,13 @@ pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
 impl<P> MemoryLayout<false> for P
 where
     P: MemoryProfile,
-    Memory<P>:
-        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Memory<P>: Storage<Token = P::Token>
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + Exchanges
+        + DedupSlots,
 {
     type Store = Memory<P>;
 }
@@ -114,8 +121,13 @@ where
 impl<P> MemoryLayout<true> for P
 where
     P: MemoryProfile,
-    Memory<P, WithBodies<P>>:
-        Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Memory<P, WithBodies<P>>: Storage<Token = P::Token>
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + Exchanges
+        + DedupSlots,
 {
     type Store = Memory<P, WithBodies<P>>;
 }
@@ -320,6 +332,7 @@ macro_rules! impl_common_storage {
 }
 
 impl<P: MemoryProfile> Storage for Memory<P> {
+    type Token = P::Token;
     fn capacities(&self) -> Capacities {
         Capacities::from_profile::<P>()
     }
@@ -336,6 +349,7 @@ impl<P: MemoryProfile> Storage for Memory<P> {
 }
 
 impl<P: MemoryProfile> Storage for Memory<P, WithBodies<P>> {
+    type Token = P::Token;
     fn capacities(&self) -> Capacities {
         Capacities::from_profile::<P>().with_block_wise::<P>()
     }
@@ -598,34 +612,36 @@ where
 
 impl<P: MemoryProfile, B> Exchanges for Memory<P, B>
 where
-    P::Exchange: ExchangeStore,
+    P::Exchange: ExchangeStore<P::Token>,
+    Self: Storage<Token = P::Token>,
 {
-    fn insert_exchange(&mut self, entry: ExchangeEntry) -> Option<SlotId> {
+    fn insert_exchange(&mut self, entry: ExchangeEntry<P::Token>) -> Option<SlotId> {
         self.exchange.insert(entry)
     }
 
-    fn lookup_exchange(&self, key: ExchangeKey) -> Option<SlotId> {
+    fn lookup_exchange(&self, key: ExchangeKey<P::Token>) -> Option<SlotId> {
         self.exchange.lookup(key)
     }
 
-    fn take_exchange(&mut self, key: ExchangeKey) -> Option<ExchangeEntry> {
+    fn take_exchange(&mut self, key: ExchangeKey<P::Token>) -> Option<ExchangeEntry<P::Token>> {
         self.exchange.take(key)
     }
 
-    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry> {
+    fn exchange_entry(&self, id: SlotId) -> Option<ExchangeEntry<P::Token>> {
         self.exchange.entry(id)
     }
 }
 
 impl<P: MemoryProfile, B> ObserveSlots for Memory<P, B>
 where
-    P::Observe: ObserveStore,
+    P::Observe: ObserveStore<P::Token>,
+    Self: Storage<Token = P::Token>,
 {
     fn replace_observe_con(
         &mut self,
         pending: PendingCon,
-        original: ObserveInterest,
-        replacement: ObserveInterest,
+        original: ObserveInterest<P::Token>,
+        replacement: ObserveInterest<P::Token>,
         bytes: &[u8],
     ) -> Result<(), super::PendingReplaceError>
     where
@@ -646,30 +662,30 @@ where
             .expect("validated occupied Observe row");
         Ok(())
     }
-    fn insert_observe(&mut self, interest: ObserveInterest) -> Option<SlotId> {
+    fn insert_observe(&mut self, interest: ObserveInterest<P::Token>) -> Option<SlotId> {
         self.observe.insert(interest)
     }
 
-    fn lookup_observe(&self, key: ObserveKey) -> Option<SlotId> {
+    fn lookup_observe(&self, key: ObserveKey<P::Token>) -> Option<SlotId> {
         self.observe.lookup(key)
     }
 
-    fn remove_observe(&mut self, key: ObserveKey) -> bool {
+    fn remove_observe(&mut self, key: ObserveKey<P::Token>) -> bool {
         self.observe.remove(key)
     }
 
-    fn take_observe(&mut self, key: ObserveKey) -> Option<ObserveInterest> {
+    fn take_observe(&mut self, key: ObserveKey<P::Token>) -> Option<ObserveInterest<P::Token>> {
         self.observe.take(key)
     }
 
-    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest> {
+    fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<P::Token>> {
         self.observe.entry(id)
     }
 
     fn set_observe_interest(
         &mut self,
         id: SlotId,
-        interest: ObserveInterest,
+        interest: ObserveInterest<P::Token>,
     ) -> Result<(), SlotError> {
         self.observe.set_entry(id, interest)
     }
@@ -684,33 +700,33 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         None
     }
 
-    fn rx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer> {
+    fn rx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer<P::Token>> {
         None
     }
 
     fn set_rx_body_transfer(
         &mut self,
         _id: SlotId,
-        _transfer: BlockTransfer,
+        _transfer: BlockTransfer<P::Token>,
     ) -> Result<(), SlotError> {
         Err(SlotError::InvalidSlot)
     }
 
-    fn tx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer> {
+    fn tx_body_transfer(&self, _id: SlotId) -> Option<BlockTransfer<P::Token>> {
         None
     }
 
-    fn lookup_rx_body(&self, _key: BlockKey) -> Option<SlotId> {
+    fn lookup_rx_body(&self, _key: BlockKey<P::Token>) -> Option<SlotId> {
         None
     }
 
-    fn lookup_tx_body(&self, _key: BlockKey) -> Option<SlotId> {
+    fn lookup_tx_body(&self, _key: BlockKey<P::Token>) -> Option<SlotId> {
         None
     }
 
     fn admit_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size1: Option<u32>,
@@ -729,7 +745,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn apply_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size1: Option<u32>,
@@ -739,7 +755,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn admit_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size2: Option<u32>,
@@ -758,7 +774,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn apply_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size2: Option<u32>,
@@ -768,7 +784,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn admit_q_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size1: Option<u32>,
@@ -787,7 +803,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn apply_q_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size1: Option<u32>,
@@ -797,7 +813,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn admit_q_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size2: Option<u32>,
@@ -816,7 +832,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn apply_q_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _block: BlockValue,
         _payload: &[u8],
         _size2: Option<u32>,
@@ -826,7 +842,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn start_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _body: &[u8],
         _szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -851,7 +867,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn start_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _body: &[u8],
         _szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -872,7 +888,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn start_q_block1(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _body: &[u8],
         _szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -893,7 +909,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn start_q_block2(
         &mut self,
-        _key: BlockKey,
+        _key: BlockKey<P::Token>,
         _body: &[u8],
         _szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -923,18 +939,18 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
 impl<P: MemoryProfile> BodySlots for Memory<P, WithBodies<P>>
 where
-    P::RxBody: BodyOps,
-    P::TxBody: BodyOps,
+    P::RxBody: BodyOps<P::Token>,
+    P::TxBody: BodyOps<P::Token>,
 {
     #[allow(clippy::too_many_arguments)]
     fn replace_observe_body(
         &mut self,
         pending: super::PendingCon,
-        original: ObserveInterest,
-        replacement: ObserveInterest,
+        original: ObserveInterest<Self::Token>,
+        replacement: ObserveInterest<Self::Token>,
         bytes: &[u8],
         previous: Option<SlotId>,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<Self::Token>,
         payload: &[u8],
     ) -> Result<(), super::PendingReplaceError>
     where
@@ -960,41 +976,41 @@ where
         self.bodies.tx.payload(id)
     }
 
-    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<P::Token>> {
         self.bodies.rx.transfer(id)
     }
 
     fn set_rx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<P::Token>,
     ) -> Result<(), SlotError> {
         self.bodies.rx.set_transfer(id, transfer)
     }
 
-    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer> {
+    fn tx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<P::Token>> {
         self.bodies.tx.transfer(id)
     }
 
     fn set_tx_body_transfer(
         &mut self,
         id: SlotId,
-        transfer: BlockTransfer,
+        transfer: BlockTransfer<P::Token>,
     ) -> Result<(), SlotError> {
         self.bodies.tx.set_transfer(id, transfer)
     }
 
-    fn lookup_rx_body(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup_rx_body(&self, key: BlockKey<P::Token>) -> Option<SlotId> {
         self.bodies.rx.lookup(key)
     }
 
-    fn lookup_tx_body(&self, key: BlockKey) -> Option<SlotId> {
+    fn lookup_tx_body(&self, key: BlockKey<P::Token>) -> Option<SlotId> {
         self.bodies.tx.lookup(key)
     }
 
     fn admit_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1017,7 +1033,7 @@ where
 
     fn apply_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1029,7 +1045,7 @@ where
 
     fn admit_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1052,7 +1068,7 @@ where
 
     fn apply_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1064,7 +1080,7 @@ where
 
     fn admit_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1087,7 +1103,7 @@ where
 
     fn apply_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size1: Option<u32>,
@@ -1099,7 +1115,7 @@ where
 
     fn admit_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1122,7 +1138,7 @@ where
 
     fn apply_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         block: BlockValue,
         payload: &[u8],
         size2: Option<u32>,
@@ -1134,7 +1150,7 @@ where
 
     fn start_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1165,7 +1181,7 @@ where
 
     fn start_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1190,7 +1206,7 @@ where
 
     fn start_q_block1(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
@@ -1215,7 +1231,7 @@ where
 
     fn start_q_block2(
         &mut self,
-        key: BlockKey,
+        key: BlockKey<P::Token>,
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {

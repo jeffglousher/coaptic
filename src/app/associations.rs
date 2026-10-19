@@ -1,5 +1,6 @@
 //! Bounded association ownership; packet and body pools remain shared by App.
 
+use crate::message::{OwnedToken, Token};
 use crate::storage::Endpoint;
 
 #[cfg(feature = "oscore")]
@@ -35,20 +36,21 @@ impl Association {
 }
 
 #[cfg(feature = "oscore")]
-pub(super) struct Entry<const REQUESTS: usize> {
-    pub context: BoundedSecurityContext<REQUESTS>,
+pub(super) struct Entry<const REQUESTS: usize, K: OwnedToken = Token> {
+    pub context: BoundedSecurityContext<REQUESTS, K>,
     pub association: Option<Association>,
     pub revoked: bool,
 }
 
-pub(crate) struct Store<const REQUESTS: usize, const ASSOCIATIONS: usize> {
+pub(crate) struct Store<const REQUESTS: usize, const ASSOCIATIONS: usize, K: OwnedToken = Token> {
     #[cfg(feature = "oscore")]
-    pub(super) rows: [Option<Entry<REQUESTS>>; ASSOCIATIONS],
+    pub(super) rows: [Option<Entry<REQUESTS, K>>; ASSOCIATIONS],
     #[cfg(feature = "oscore")]
     pub(super) generation: u32,
+    marker: core::marker::PhantomData<K>,
 }
 
-impl<const R: usize, const A: usize> Store<R, A> {
+impl<const R: usize, const A: usize, K: OwnedToken> Store<R, A, K> {
     #[cfg(feature = "oscore")]
     pub fn is_some(&self) -> bool {
         self.generation != 0 || self.rows.iter().any(Option::is_some)
@@ -59,6 +61,7 @@ impl<const R: usize, const A: usize> Store<R, A> {
             rows: [const { None }; A],
             #[cfg(feature = "oscore")]
             generation: 0,
+            marker: core::marker::PhantomData,
         }
     }
 
@@ -68,7 +71,7 @@ impl<const R: usize, const A: usize> Store<R, A> {
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
-        candidate: &mut Option<BoundedSecurityContext<R>>,
+        candidate: &mut Option<BoundedSecurityContext<R, K>>,
     ) -> Result<Association, super::OscoreInstallError> {
         let context = candidate
             .as_ref()
@@ -89,12 +92,12 @@ impl<const R: usize, const A: usize> Store<R, A> {
     }
 
     #[cfg(feature = "oscore")]
-    pub fn check_install(
+    pub fn check_install<U: OwnedToken>(
         &self,
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
-        context: &BoundedSecurityContext<R>,
+        context: &BoundedSecurityContext<R, U>,
     ) -> Result<(usize, u32), super::OscoreInstallError> {
         use super::OscoreInstallError as E;
         if self
@@ -128,7 +131,7 @@ impl<const R: usize, const A: usize> Store<R, A> {
     }
 
     #[cfg(feature = "oscore")]
-    pub fn set_primary(&mut self, context: BoundedSecurityContext<R>) {
+    pub fn set_primary(&mut self, context: BoundedSecurityContext<R, K>) {
         assert!(A > 0, "OSCORE requires association capacity");
         self.rows[0] = Some(Entry {
             context,
@@ -138,7 +141,7 @@ impl<const R: usize, const A: usize> Store<R, A> {
     }
 
     #[cfg(feature = "oscore")]
-    pub fn as_ref(&self) -> Option<&BoundedSecurityContext<R>> {
+    pub fn as_ref(&self) -> Option<&BoundedSecurityContext<R, K>> {
         self.rows
             .first()?
             .as_ref()
@@ -147,7 +150,7 @@ impl<const R: usize, const A: usize> Store<R, A> {
     }
 
     #[cfg(feature = "oscore")]
-    pub fn as_mut(&mut self) -> Option<&mut BoundedSecurityContext<R>> {
+    pub fn as_mut(&mut self) -> Option<&mut BoundedSecurityContext<R, K>> {
         self.rows
             .first_mut()?
             .as_mut()
@@ -156,18 +159,18 @@ impl<const R: usize, const A: usize> Store<R, A> {
     }
 }
 
-pub(crate) trait ContextStorage<const REQUESTS: usize> {
+pub(crate) trait ContextStorage<const REQUESTS: usize, K: OwnedToken = Token> {
     #[cfg(feature = "oscore")]
-    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<REQUESTS>>;
+    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<REQUESTS, K>>;
     #[cfg(feature = "oscore")]
-    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<REQUESTS>>;
+    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<REQUESTS, K>>;
     #[cfg(feature = "oscore")]
     fn resolve(&self, peer: Endpoint) -> Result<Endpoint, crate::oscore::Error>;
     #[cfg(feature = "oscore")]
     fn inbound_route(
         &self,
         peer: Endpoint,
-        parsed: &crate::message::ParsedMessage<'_>,
+        parsed: &crate::message::ParsedMessage<'_, K>,
     ) -> Result<Endpoint, crate::oscore::Error>;
     #[cfg(feature = "oscore")]
     fn has_live_requests(&self) -> bool;
@@ -178,9 +181,9 @@ pub(crate) trait ContextStorage<const REQUESTS: usize> {
     fn is_some(&self) -> bool;
 }
 
-impl<const R: usize, const A: usize> ContextStorage<R> for Store<R, A> {
+impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Store<R, A, K> {
     #[cfg(feature = "oscore")]
-    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<R>> {
+    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<R, K>> {
         self.rows
             .iter()
             .flatten()
@@ -190,7 +193,7 @@ impl<const R: usize, const A: usize> ContextStorage<R> for Store<R, A> {
             .map(|row| &row.context)
     }
     #[cfg(feature = "oscore")]
-    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<R>> {
+    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<R, K>> {
         self.rows
             .iter_mut()
             .flatten()
@@ -220,7 +223,7 @@ impl<const R: usize, const A: usize> ContextStorage<R> for Store<R, A> {
     fn inbound_route(
         &self,
         peer: Endpoint,
-        parsed: &crate::message::ParsedMessage<'_>,
+        parsed: &crate::message::ParsedMessage<'_, K>,
     ) -> Result<Endpoint, crate::oscore::Error> {
         use crate::oscore::{Error, OscoreHeader};
         if !self.is_some() && self.generation == 0 {
@@ -299,11 +302,11 @@ impl<const R: usize, const A: usize> ContextStorage<R> for Store<R, A> {
 }
 
 #[cfg(feature = "oscore")]
-impl<const R: usize> ContextStorage<R> for Option<BoundedSecurityContext<R>> {
-    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<R>> {
+impl<const R: usize, K: OwnedToken> ContextStorage<R, K> for Option<BoundedSecurityContext<R, K>> {
+    fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<R, K>> {
         (namespace == 0).then_some(self.as_ref()).flatten()
     }
-    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<R>> {
+    fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<R, K>> {
         if namespace == 0 { self.as_mut() } else { None }
     }
     fn resolve(&self, peer: Endpoint) -> Result<Endpoint, crate::oscore::Error> {
@@ -312,7 +315,7 @@ impl<const R: usize> ContextStorage<R> for Option<BoundedSecurityContext<R>> {
     fn inbound_route(
         &self,
         peer: Endpoint,
-        _: &crate::message::ParsedMessage<'_>,
+        _: &crate::message::ParsedMessage<'_, K>,
     ) -> Result<Endpoint, crate::oscore::Error> {
         Ok(peer)
     }

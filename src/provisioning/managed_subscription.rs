@@ -2,16 +2,22 @@
 use super::*;
 
 #[derive(Debug)]
-enum State {
+enum State<K: crate::message::OwnedToken> {
     New,
-    Waiting { anchor: TrustAnchor, retry_at: u64 },
-    Active { call: ManagedCall, refresh_at: u64 },
+    Waiting {
+        anchor: TrustAnchor,
+        retry_at: u64,
+    },
+    Active {
+        call: ManagedCall<K>,
+        refresh_at: u64,
+    },
     Stopped,
 }
 
-struct RegistrationAttempt {
+struct RegistrationAttempt<K: crate::message::OwnedToken> {
     anchor: TrustAnchor,
-    refresh: Option<ManagedCall>,
+    refresh: Option<ManagedCall<K>>,
 }
 
 /// One bounded desired GET subscription, owned by the application.
@@ -22,11 +28,11 @@ struct RegistrationAttempt {
 /// grant requires a new explicit subscription; no old intent crosses that boundary.
 /// This stores no payload and adds no table to `ManagedConnection` or `App`.
 #[derive(Debug)]
-pub struct ManagedSubscription {
+pub struct ManagedSubscription<K: crate::message::OwnedToken = crate::message::Token> {
     path: &'static str,
-    state: State,
+    state: State<K>,
 }
-impl ManagedSubscription {
+impl<K: crate::message::OwnedToken> ManagedSubscription<K> {
     /// Desired static path; syntax and current permission are checked on polling.
     #[must_use]
     pub const fn new(path: &'static str) -> Self {
@@ -65,7 +71,7 @@ where
     #[must_use]
     pub fn next_subscription_poll_at(
         &self,
-        subscription: &ManagedSubscription,
+        subscription: &ManagedSubscription<P::Token>,
         now_ms: u64,
     ) -> Option<u64> {
         if subscription.is_stopped() || self.is_blocked() {
@@ -120,7 +126,7 @@ where
     /// drive EDHOC or consume responses. Call `poll`/`poll_with` first.
     pub fn poll_subscription(
         &mut self,
-        subscription: &mut ManagedSubscription,
+        subscription: &mut ManagedSubscription<P::Token>,
         now_ms: u64,
     ) -> Result<bool, ManagedError<T::Error>>
     where
@@ -172,9 +178,9 @@ where
 
     fn prepare_subscription(
         &mut self,
-        subscription: &mut ManagedSubscription,
+        subscription: &mut ManagedSubscription<P::Token>,
         now_ms: u64,
-    ) -> Result<Option<RegistrationAttempt>, ManagedError<T::Error>> {
+    ) -> Result<Option<RegistrationAttempt<P::Token>>, ManagedError<T::Error>> {
         self.time(now_ms)?;
         if subscription.is_stopped() {
             return Ok(None);
@@ -227,7 +233,7 @@ where
     /// Register or refresh desired interest with native async transport.
     pub async fn poll_subscription_async<C>(
         &mut self,
-        subscription: &mut ManagedSubscription,
+        subscription: &mut ManagedSubscription<P::Token>,
         now_ms: u64,
         clock: &mut impl FnMut() -> Result<u64, C>,
         timer: &mut impl crate::platform::AsyncTimer,
@@ -280,12 +286,13 @@ where
     /// Collect a notification and schedule freshness recovery without copying it
     /// into subscription state. Terminal/local failures retry after 30 seconds.
     /// An insufficient output buffer leaves the response and schedule unchanged.
+    #[allow(clippy::type_complexity)]
     pub fn take_subscription_response_into<'s>(
         &'s mut self,
-        subscription: &mut ManagedSubscription,
+        subscription: &mut ManagedSubscription<P::Token>,
         output: &'s mut [u8],
         now_ms: u64,
-    ) -> Result<Option<Result<Response<'s>, CallFailure>>, ManagedError<T::Error>> {
+    ) -> Result<Option<Result<Response<'s, P::Token>, CallFailure>>, ManagedError<T::Error>> {
         let State::Active { call, .. } = subscription.state else {
             return Ok(None);
         };
@@ -324,7 +331,7 @@ where
     /// use normal reactive cancellation. No new registration occurs after this.
     pub fn stop_subscription(
         &mut self,
-        subscription: &mut ManagedSubscription,
+        subscription: &mut ManagedSubscription<P::Token>,
         now_ms: u64,
     ) -> Result<(), ManagedError<T::Error>> {
         let previous = core::mem::replace(&mut subscription.state, State::Stopped);

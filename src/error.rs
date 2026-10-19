@@ -6,6 +6,8 @@ use crate::storage::SlotError;
 /// Failure to construct an [`Engine`](crate::storage::Engine).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildError {
+    /// Requested outgoing token length is outside the configured capacity.
+    TokenLength,
     /// App requires at least two RX and two TX packet slots for admission headroom.
     PacketHeadroom,
     /// A requested heap array or the aggregate allocation size is unrepresentable.
@@ -46,6 +48,9 @@ pub enum BuildError {
 impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::TokenLength => f.write_str(
+                "outgoing token length must be at least 8 and fit the configured token capacity",
+            ),
             Self::PacketHeadroom => {
                 f.write_str("App requires at least two RX and two TX packet slots")
             }
@@ -260,6 +265,8 @@ pub enum SlotMessageError {
     Slot(SlotError),
     /// Occupied bytes are not a well-formed CoAP datagram.
     Parse(ParseError),
+    /// Valid wire token exceeds configured owned capacity.
+    TokenCapacity(crate::message::extended::CapacityError),
     /// Encoding failed (buffer too small, empty-message rules, or options).
     Encode(EncodeError),
 }
@@ -269,6 +276,11 @@ impl core::fmt::Display for SlotMessageError {
         match self {
             Self::Slot(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
+            Self::TokenCapacity(e) => write!(
+                f,
+                "token requires {} bytes, capacity is {}",
+                e.required, e.available
+            ),
             Self::Encode(e) => write!(f, "{e}"),
         }
     }
@@ -298,6 +310,7 @@ impl std::error::Error for SlotMessageError {
         match self {
             Self::Slot(e) => Some(e),
             Self::Parse(e) => Some(e),
+            Self::TokenCapacity(_) => None,
             Self::Encode(e) => Some(e),
         }
     }
@@ -348,6 +361,8 @@ pub enum BlockTransferError {
     Value(ValueError),
     /// Occupied datagram is not a well-formed CoAP message.
     Parse(ParseError),
+    /// Valid wire token exceeds configured owned capacity.
+    TokenCapacity(crate::message::extended::CapacityError),
     /// Encoding a Block1 / Block2 datagram failed.
     Encode(EncodeError),
 }
@@ -378,6 +393,11 @@ impl core::fmt::Display for BlockTransferError {
             Self::PayloadLength => f.write_str("block payload length is not valid for NUM/M/SZX"),
             Self::Value(e) => write!(f, "{e}"),
             Self::Parse(e) => write!(f, "{e}"),
+            Self::TokenCapacity(e) => write!(
+                f,
+                "token requires {} bytes, capacity is {}",
+                e.required, e.available
+            ),
             Self::Encode(e) => write!(f, "{e}"),
         }
     }
@@ -414,8 +434,27 @@ impl std::error::Error for BlockTransferError {
             Self::Slot(e) => Some(e),
             Self::Value(e) => Some(e),
             Self::Parse(e) => Some(e),
+            Self::TokenCapacity(_) => None,
             Self::Encode(e) => Some(e),
             _ => None,
+        }
+    }
+}
+
+impl From<crate::message::TokenDecodeError> for SlotMessageError {
+    fn from(error: crate::message::TokenDecodeError) -> Self {
+        match error {
+            crate::message::TokenDecodeError::Malformed(error) => Self::Parse(error),
+            crate::message::TokenDecodeError::Capacity(error) => Self::TokenCapacity(error),
+        }
+    }
+}
+
+impl From<crate::message::TokenDecodeError> for BlockTransferError {
+    fn from(error: crate::message::TokenDecodeError) -> Self {
+        match error {
+            crate::message::TokenDecodeError::Malformed(error) => Self::Parse(error),
+            crate::message::TokenDecodeError::Capacity(error) => Self::TokenCapacity(error),
         }
     }
 }

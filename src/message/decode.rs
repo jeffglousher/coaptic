@@ -179,6 +179,22 @@ pub fn decode_with_token<T: OwnedToken>(
     })
 }
 
+// OSCORE excludes the outer token from authentication. Capacity refusal can
+// authenticate options/payload with an empty local token, then echo the original
+// borrowed token on its response. Never use this view to dispatch application work.
+#[cfg(feature = "oscore")]
+pub(crate) fn decode_without_token<T: OwnedToken>(
+    buf: &[u8],
+) -> Result<ParsedMessage<'_, T>, ParseError> {
+    let parts = decode_parts(buf, true)?;
+    Ok(ParsedMessage {
+        header: parts.header,
+        token: T::EMPTY,
+        options: parts.options,
+        payload: parts.payload,
+    })
+}
+
 pub(super) struct Parts<'a> {
     pub header: Header,
     pub token: &'a [u8],

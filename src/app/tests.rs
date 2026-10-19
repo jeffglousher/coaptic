@@ -10342,6 +10342,7 @@ fn qblock1_confirmable_continuation_failures_release_only_the_upload() {
 fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
     struct LargeUpload;
     impl MemoryProfile for LargeUpload {
+        type Token = crate::message::Token;
         const RX_DATAGRAM_SLOTS: usize = 4;
         const RX_DATAGRAM_BYTES: usize = WIRE;
         const TX_DATAGRAM_SLOTS: usize = 4;
@@ -11289,6 +11290,7 @@ fn established_observe_does_not_accept_ack_as_an_unsolicited_notification() {
 // A larger Engine pool must not turn App's fixed hold into silent truncation.
 struct LargeDownload;
 impl MemoryProfile for LargeDownload {
+    type Token = crate::message::Token;
     const RX_DATAGRAM_SLOTS: usize = 4;
     const RX_DATAGRAM_BYTES: usize = WIRE;
     const TX_DATAGRAM_SLOTS: usize = 4;
@@ -11313,11 +11315,11 @@ impl MemoryProfile for LargeDownload {
 #[test]
 fn client_assembled_body_boundary_refusal_cleanup_and_reuse() {
     fn exercise<
-        P: MemoryProfile
+        P: MemoryProfile<Token = Token>
             + MemoryLayout<true, Store = crate::storage::Memory<P, crate::storage::WithBodies<P>>>,
     >()
     where
-        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage,
+        crate::storage::Memory<P, crate::storage::WithBodies<P>>: super::AppStorage<Token = Token>,
     {
         let peer = Endpoint::v4([192, 0, 2, 1], 5683);
         let body: [u8; 4097] = core::array::from_fn(|index| (index % 251) as u8);
@@ -13084,7 +13086,7 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
     assert!(app.take_response_into(call, &mut output).unwrap().is_none());
 }
 
-fn exercise_client_without_block_storage<S: super::AppStorage>(
+fn exercise_client_without_block_storage<S: super::AppStorage<Token = Token>>(
     mut app: App<profiles::Default, WideLoopback, DEFAULT_ROUTES, false, S>,
     protected: bool,
 ) {

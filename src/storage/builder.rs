@@ -187,6 +187,18 @@ impl EngineBuilder<Present, Present, Present, Present, Present> {
         let storage = AllocMemory::from_capacities(capacities, block_wise)?;
         Ok(Engine::from_storage(storage))
     }
+
+    /// Allocate with an explicit owned token representation.
+    #[cfg(feature = "alloc")]
+    pub fn build_alloc_with_token<T: crate::message::OwnedToken>(
+        self,
+        capacities: Capacities,
+    ) -> Result<Engine<AllocMemory<T>>, BuildError> {
+        let block_wise = self.block_wise.expect("typestate: block_wise was set");
+        check(&self.expected, &capacities, block_wise)?;
+        let storage = AllocMemory::<T>::from_capacities(capacities, block_wise)?;
+        Ok(Engine::from_storage(storage))
+    }
 }
 
 fn check(expected: &Expected, storage: &Capacities, block_wise: bool) -> Result<(), BuildError> {
