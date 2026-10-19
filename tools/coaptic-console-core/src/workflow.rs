@@ -2,6 +2,7 @@
 
 pub struct Operation {
     pub command: &'static str,
+    pub description: &'static str,
     pub fields: &'static [&'static str],
     pub approval: bool,
     pub connect: bool,
@@ -10,7 +11,7 @@ pub struct Operation {
 
 pub fn operation(choice: &str) -> Option<Operation> {
     let (command, fields): (&str, &[&str]) = match choice {
-        "1" => ("serial-info", &["Serial port"]),
+        "1" => ("inspect", &[]),
         "2" => (
             "serial-pair",
             &[
@@ -75,11 +76,49 @@ pub fn operation(choice: &str) -> Option<Operation> {
     };
     Some(Operation {
         command,
+        description: match choice {
+            "1" => "Inspect local credentials, identities and selected device/host",
+            "2" => "Pair device with this host",
+            "3" => "Revoke the device pairing",
+            "4" => "Transfer device ownership to a verified new owner",
+            "5" => "Recover this host's existing device pairing",
+            "6" => "Initialize an empty device identity",
+            "7" => "Inspect host identity",
+            "8" => "Create a host identity",
+            "9" => "Register an existing touch-required YubiKey credential",
+            "10" => "Register an existing touchless development YubiKey credential",
+            "11" => "Prepare native credential storage",
+            "12" => "Connect to a protected peer",
+            "13" => "Register a Windows verified authenticator",
+            "14" => "Test the touch-required credential",
+            "15" => "Test the touchless development credential",
+            "16" => "Restart device, retaining identity and pairing",
+            _ => unreachable!(),
+        },
         fields,
         approval: matches!(choice, "2" | "3" | "4" | "5"),
         connect: choice == "12",
         permissions: matches!(choice, "2" | "4"),
     })
+}
+
+/// A small menu group; operation IDs refer to [`operation`].
+pub struct Group {
+    pub title: &'static str,
+    pub operations: &'static [&'static str],
+}
+
+/// Inspect is a direct overview; remaining entries collect one focused operation.
+pub fn group(choice: &str) -> Option<Group> {
+    let (title, operations): (&str, &[&str]) = match choice {
+        "1" => ("Inspect", &["1"]),
+        "2" => ("Set up", &["11", "8", "6"]),
+        "3" => ("Pair / connect", &["2", "12", "5"]),
+        "4" => ("Credentials", &["9", "10", "14", "15", "13"]),
+        "5" => ("Maintenance", &["16", "3", "4"]),
+        _ => return None,
+    };
+    Some(Group { title, operations })
 }
 
 #[cfg(test)]

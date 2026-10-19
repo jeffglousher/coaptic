@@ -49,6 +49,7 @@ fn transferred() -> (Identity, Identity, LocalPairing, LocalPairing) {
     (device, host, remote, local)
 }
 
+#[cfg(feature = "webauthn-tests")]
 #[test]
 fn lost_device_reply_recovers_only_the_host_with_fresh_new_owner_approval() {
     use webauthn_authenticator_rs::{WebauthnAuthenticator, softpasskey::SoftPasskey};

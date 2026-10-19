@@ -3,7 +3,7 @@ use coaptic_enroll::{
     development_piv::DevelopmentOperator,
     store::{self, RecordStore},
 };
-use openssl::{bn::BigNumContext, ec::PointConversionForm, nid::Nid, pkey::PKey};
+use p256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -60,17 +60,11 @@ pub fn run(
         if args.next().is_some() || std::fs::metadata(&path)?.len() > 16384 {
             return Err("unexpected arguments or oversized public key".into());
         }
-        let key = PKey::public_key_from_pem(&std::fs::read(path)?)?.ec_key()?;
-        if key.group().curve_name() != Some(Nid::X9_62_PRIME256V1) {
-            return Err("development PIV key must be P-256".into());
-        }
-        let mut context = BigNumContext::new()?;
-        let public = key.public_key().to_bytes(
-            key.group(),
-            PointConversionForm::UNCOMPRESSED,
-            &mut context,
-        )?;
-        let pending = DevelopmentOperator::registration_with_touch(serial, slot, &public, touch)?;
+        let pem = std::fs::read_to_string(path)?;
+        let key = p256::PublicKey::from_public_key_pem(&pem)?;
+        let public = key.to_encoded_point(false);
+        let pending =
+            DevelopmentOperator::registration_with_touch(serial, slot, public.as_bytes(), touch)?;
         if touch {
             println!("Touch the YubiKey to register the touch-required credential.");
         }

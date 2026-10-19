@@ -5,14 +5,9 @@
 //! be passed to `ApprovedRequest::approve`, the production FIDO2 path.
 
 use crate::{Error, Request, TIMEOUT};
-use openssl::{
-    bn::BigNumContext,
-    ec::{EcGroup, EcKey, EcPoint},
-    ecdsa::EcdsaSig,
-    nid::Nid,
-    pkey::Public,
-};
+use p256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,16 +22,11 @@ pub struct DevelopmentOperator {
     revision: u64,
 }
 
-fn public_key(bytes: &[u8]) -> Result<EcKey<Public>, Error> {
+fn public_key(bytes: &[u8]) -> Result<VerifyingKey, Error> {
     if bytes.len() != 65 || bytes[0] != 4 {
         return Err(Error::Input);
     }
-    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).map_err(|_| Error::Input)?;
-    let mut context = BigNumContext::new().map_err(|_| Error::Input)?;
-    let point = EcPoint::from_bytes(&group, bytes, &mut context).map_err(|_| Error::Input)?;
-    let key = EcKey::from_public_key(&group, &point).map_err(|_| Error::Input)?;
-    key.check_key().map_err(|_| Error::Input)?;
-    Ok(key)
+    VerifyingKey::from_sec1_bytes(bytes).map_err(|_| Error::Input)
 }
 
 impl DevelopmentOperator {
@@ -146,15 +136,10 @@ impl DevelopmentOperator {
         if signature.len() > 72 {
             return Err(Error::Authentication);
         }
-        let signature = EcdsaSig::from_der(signature).map_err(|_| Error::Authentication)?;
-        let key = public_key(&self.public_key)?;
-        if !signature
-            .verify(digest, &key)
-            .map_err(|_| Error::Authentication)?
-        {
-            return Err(Error::Authentication);
-        }
-        Ok(())
+        let signature = Signature::from_der(signature).map_err(|_| Error::Authentication)?;
+        public_key(&self.public_key)?
+            .verify_prehash(digest, &signature)
+            .map_err(|_| Error::Authentication)
     }
 }
 
@@ -177,7 +162,7 @@ fn challenge(
     transcript.extend_from_slice(&operator.revision.to_be_bytes());
     transcript.extend_from_slice(commitment);
     transcript.extend_from_slice(&nonce);
-    Ok(openssl::sha::sha256(&transcript))
+    Ok(Sha256::digest(&transcript).into())
 }
 
 pub struct PendingRegistration {
@@ -294,6 +279,21 @@ fn check_policy(
     use x509_cert::der::{Decode, Encode};
     let der = piv::attest(key, slot).map_err(|_| Error::Authentication)?;
     let cert = x509_cert::Certificate::from_der(&der).map_err(|_| Error::Authentication)?;
+    let issuer = yubikey::Certificate::read(key, piv::SlotId::Attestation)
+        .map_err(|_| Error::Authentication)?
+        .cert
+        .to_der()
+        .map_err(|_| Error::Authentication)?;
+    let issuer = x509_cert::Certificate::from_der(&issuer).map_err(|_| Error::Authentication)?;
+    verify_attestation(&cert, &issuer, public, touch)
+}
+
+fn verify_attestation(
+    cert: &x509_cert::Certificate,
+    issuer: &x509_cert::Certificate,
+    public: &[u8],
+    touch: bool,
+) -> Result<(), Error> {
     if cert
         .tbs_certificate
         .subject_public_key_info
@@ -317,21 +317,64 @@ fn check_policy(
     {
         return Err(Error::Authentication);
     }
-    let issuer = yubikey::Certificate::read(key, piv::SlotId::Attestation)
-        .map_err(|_| Error::Authentication)?
-        .cert
-        .to_der()
-        .map_err(|_| Error::Authentication)?;
-    let issuer = openssl::x509::X509::from_der(&issuer).map_err(|_| Error::Authentication)?;
-    let cert = openssl::x509::X509::from_der(&der).map_err(|_| Error::Authentication)?;
-    let issuer_key = issuer.public_key().map_err(|_| Error::Authentication)?;
-    if !cert
-        .verify(&issuer_key)
-        .map_err(|_| Error::Authentication)?
-    {
+    verify_attestation_signature(cert, issuer)
+}
+
+// PIV attestation uses SHA-256 with either RSA PKCS#1 v1.5 or ECDSA.
+// The issuer is read from the selected token; this does not assert a CA chain.
+fn verify_attestation_signature(
+    cert: &x509_cert::Certificate,
+    issuer: &x509_cert::Certificate,
+) -> Result<(), Error> {
+    use p256::pkcs8::DecodePublicKey;
+    use x509_cert::der::Encode;
+    if cert.signature_algorithm != cert.tbs_certificate.signature {
         return Err(Error::Authentication);
     }
-    Ok(())
+    let signed = cert
+        .tbs_certificate
+        .to_der()
+        .map_err(|_| Error::Authentication)?;
+    let digest = Sha256::digest(&signed);
+    let signature = cert.signature.as_bytes().ok_or(Error::Authentication)?;
+    let spki = issuer
+        .tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(|_| Error::Authentication)?;
+    match cert.signature_algorithm.oid.to_string().as_str() {
+        "1.2.840.113549.1.1.11" => {
+            // SHA256-with-RSA permits conventional NULL or absent parameters.
+            if cert
+                .signature_algorithm
+                .parameters
+                .as_ref()
+                .is_some_and(|p| p != &x509_cert::der::asn1::Any::null())
+            {
+                return Err(Error::Authentication);
+            }
+            rsa::RsaPublicKey::from_public_key_der(&spki)
+                .map_err(|_| Error::Authentication)?
+                .verify(rsa::Pkcs1v15Sign::new::<Sha256>(), &digest, signature)
+                .map_err(|_| Error::Authentication)
+        }
+        "1.2.840.10045.4.3.2" if cert.signature_algorithm.parameters.is_none() => {
+            if let Ok(key) = VerifyingKey::from_public_key_der(&spki) {
+                let signature =
+                    Signature::from_der(signature).map_err(|_| Error::Authentication)?;
+                key.verify_prehash(&digest, &signature)
+                    .map_err(|_| Error::Authentication)
+            } else {
+                let key = p384::ecdsa::VerifyingKey::from_public_key_der(&spki)
+                    .map_err(|_| Error::Authentication)?;
+                let signature = p384::ecdsa::Signature::from_der(signature)
+                    .map_err(|_| Error::Authentication)?;
+                key.verify_prehash(&digest, &signature)
+                    .map_err(|_| Error::Authentication)
+            }
+        }
+        _ => Err(Error::Authentication),
+    }
 }
 
 pub fn sign(serial: u32, slot: u8, digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
@@ -347,27 +390,23 @@ pub fn sign(serial: u32, slot: u8, digest: &[u8; 32]) -> Result<Vec<u8>, Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PublicIdentity, store};
+    use crate::PublicIdentity;
+    #[cfg(feature = "webauthn")]
+    use crate::store;
     use coaptic::provisioning::{EnrollmentAnchor, Identity};
-    use openssl::{ec::PointConversionForm, pkey::Private};
+    use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 
-    fn fixture() -> (DevelopmentOperator, EcKey<Private>) {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
-        let key = EcKey::generate(&group).unwrap();
-        let public = key
-            .public_key()
-            .to_bytes(
-                &group,
-                PointConversionForm::UNCOMPRESSED,
-                &mut BigNumContext::new().unwrap(),
-            )
-            .unwrap();
-        let pending = DevelopmentOperator::registration(123, 0x82, &public).unwrap();
-        let signature = EcdsaSig::sign(pending.digest(), &key)
-            .unwrap()
-            .to_der()
-            .unwrap();
-        (pending.finish(&signature).unwrap(), key)
+    fn sign_fixture(key: &SigningKey, digest: &[u8]) -> Vec<u8> {
+        let signature: Signature = key.sign_prehash(digest).unwrap();
+        signature.to_der().as_bytes().to_vec()
+    }
+
+    fn fixture() -> (DevelopmentOperator, SigningKey) {
+        let key = SigningKey::from_slice(&[7; 32]).unwrap();
+        let public = key.verifying_key().to_encoded_point(false);
+        let pending = DevelopmentOperator::registration(123, 0x82, public.as_bytes()).unwrap();
+        let proof = sign_fixture(&key, pending.digest());
+        (pending.finish(&proof).unwrap(), key)
     }
 
     fn request(operator: &DevelopmentOperator) -> Request {
@@ -392,10 +431,7 @@ mod tests {
         let original = request(&operator);
         let commitment = original.commitment().unwrap();
         let pending = operator.begin(original).unwrap();
-        let signature = EcdsaSig::sign(pending.digest(), &key)
-            .unwrap()
-            .to_der()
-            .unwrap();
+        let signature = sign_fixture(&key, pending.digest());
         let approval = pending
             .finish(&signature, |old, next| {
                 assert_eq!(old.revision + 1, next.revision);
@@ -409,10 +445,7 @@ mod tests {
             })
             .unwrap();
         let pending = operator.begin(request(&operator)).unwrap();
-        let signature = EcdsaSig::sign(pending.digest(), &key)
-            .unwrap()
-            .to_der()
-            .unwrap();
+        let signature = sign_fixture(&key, pending.digest());
         assert!(matches!(
             pending.finish(&signature, |_, _| Err(())),
             Err(Error::Persistence)
@@ -446,10 +479,7 @@ mod tests {
         let request =
             Request::for_transfer(&challenge, operator.owner().unwrap(), &destination).unwrap();
         let pending = operator.begin(request.clone()).unwrap();
-        let signature = EcdsaSig::sign(pending.digest(), &key)
-            .unwrap()
-            .to_der()
-            .unwrap();
+        let signature = sign_fixture(&key, pending.digest());
         let mut changed = request;
         changed.next_owner = [8; 32];
         assert!(matches!(
@@ -481,10 +511,7 @@ mod tests {
     fn refuses_replay_changed_request_and_profile_confusion() {
         let (operator, key) = fixture();
         let pending = operator.begin(request(&operator)).unwrap();
-        let signature = EcdsaSig::sign(pending.digest(), &key)
-            .unwrap()
-            .to_der()
-            .unwrap();
+        let signature = sign_fixture(&key, pending.digest());
         let mut changed = request(&operator);
         changed.permissions[0] ^= 1;
         let different = operator.begin(changed).unwrap();
@@ -507,6 +534,7 @@ mod tests {
             invalid.begin(request(&operator)),
             Err(Error::Input)
         ));
+        #[cfg(feature = "webauthn")]
         assert!(store::decode::<crate::Operator>(&store::encode(&operator).unwrap()).is_err());
         let mut wrong_owner = request(&operator);
         wrong_owner.owner = [7; 32];
@@ -521,5 +549,125 @@ mod tests {
                 .finish(&signature, |_, _| panic!()),
             Err(Error::Authentication)
         ));
+    }
+    fn fixture_hex(text: &str) -> Vec<u8> {
+        text.as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn verifies_openssl_attestation_fixtures_and_refuses_policy_or_signature_changes() {
+        use x509_cert::der::{Decode, asn1::BitString};
+        // Independently signed with Python cryptography/OpenSSL, using synthetic
+        // RSA-2048, P-256 and P-384 issuer keys and the same P-256 subject key.
+        for (algorithm, certificate, issuer_spki) in [
+            (
+                "RSA2048",
+                concat!(
+                    "308201ef3081d8a003020102020101300d06092a864886f70d01010b050030123110300e06035504030c0752534132303438",
+                    "301e170d3230303130313030303030305a170d3430303130313030303030305a301a3118301606035504030c0f436f617074",
+                    "696320666978747572653059301306072a8648ce3d020106082a8648ce3d030107034200043ed113b7883b4c590638379db0",
+                    "c21cda16742ed0255048bf433391d374bc21d19099209accc4c8a224c843afa4f4c68a090d04da5e9889dae2f8eefce82a37",
+                    "40a31430123010060a2b0601040182c40a030804020102300d06092a864886f70d01010b0500038201010072d84ee0c8ccc2",
+                    "e59a1a12b8db1346fc53202b2863ae2cb29570077b59b7c2233836500a062da772e6c2adef62bd19132120c223aeacb5b96b",
+                    "0e92ce73aa4f470311b214029a963929327013e1d3c494ff98df626657cd8fe6f2dce42be67ecfca354c5bee3e67f4500f67",
+                    "6bc294ee05343b9c30336a4a0e627413a43ff970b197e196675308678bffcdb1a1e273cb1d0ccc24ca40c8d3f235a8931fa6",
+                    "a9adbf9a6dcaba935452e2f28991cc2940608d91f5a2fd83bad27b769c1196d9e0b200661932ad7bd9f721e43aa9606e33b0",
+                    "ec017e3f39735cf07d9983e605283d60745a0463c7e3c148f4c332c4612769760d7e96daf093c4e0347679ff55f482a283",
+                ),
+                concat!(
+                    "30820122300d06092a864886f70d01010105000382010f003082010a0282010100c9578689cde6a6cff3c5114cd986aa349c",
+                    "f13e2671bdd4b865a0b76a87f964a7f94945c8636d0e0b8d1666e34db51f784b84ad80bbf410d4a61b381c0cf759ba090f1b",
+                    "0c19830c62e007c574384d2f899689826861221bf9a037bcf7001506d8b9112731c3f89326cfc770754695ab38b150d54fd8",
+                    "cc07e683076ad3e2946ed269ee7b01a2fb08d6bfc19219b2d7ade886354210c1d4f8afb1ae7841d9cbf7a0e056c8ee4a906c",
+                    "822dd7d1e95bf32d7da0165a361522811c29cb8d54a9335436d073e080fa7a91afe4e68594515634458939b8c7c1af208abc",
+                    "e9a7bda2a49068d6703c33ce84b47944a8bc38eca69e8defd0c4ab298c4966937609bc998c4be30203010001",
+                ),
+            ),
+            (
+                "P256",
+                concat!(
+                    "3082012b3081d2a003020102020101300a06082a8648ce3d040302300f310d300b06035504030c0450323536301e170d3230",
+                    "303130313030303030305a170d3430303130313030303030305a301a3118301606035504030c0f436f617074696320666978",
+                    "747572653059301306072a8648ce3d020106082a8648ce3d030107034200043ed113b7883b4c590638379db0c21cda16742e",
+                    "d0255048bf433391d374bc21d19099209accc4c8a224c843afa4f4c68a090d04da5e9889dae2f8eefce82a3740a314301230",
+                    "10060a2b0601040182c40a030804020102300a06082a8648ce3d0403020348003045022100f1c8e731a61f2a16b76e6f294e",
+                    "a1cc2bdf8f6d95f401829f35afc53e1ab1712f0220751f2bc7eff3ba6f515eed6c61727644402bde4208e1d671c063cfe2dd",
+                    "ef95fa",
+                ),
+                concat!(
+                    "3059301306072a8648ce3d020106082a8648ce3d03010703420004741dd5bda817d95e4626537320e5d55179983028b2f82c",
+                    "99d500c5ee8624e3c40770b46a9c385fdc567383554887b1548eeb912c35ba5ca71995ff22cd4481d3",
+                ),
+            ),
+            (
+                "P384",
+                concat!(
+                    "3082014a3081d2a003020102020101300a06082a8648ce3d040302300f310d300b06035504030c0450333834301e170d3230",
+                    "303130313030303030305a170d3430303130313030303030305a301a3118301606035504030c0f436f617074696320666978",
+                    "747572653059301306072a8648ce3d020106082a8648ce3d030107034200043ed113b7883b4c590638379db0c21cda16742e",
+                    "d0255048bf433391d374bc21d19099209accc4c8a224c843afa4f4c68a090d04da5e9889dae2f8eefce82a3740a314301230",
+                    "10060a2b0601040182c40a030804020102300a06082a8648ce3d040302036700306402301d871a2fc6679d63add306f39c76",
+                    "093a0752678917857ce242416d0f9d06df0a315c5d4f2f366e9c6fbc8de4d3257c910230073fdd3683dd9d87da5620b8fd70",
+                    "d6ba120ad9b227ae15dbad9d57eecad517f6203cba74d23048c13417f71f62be2394",
+                ),
+                concat!(
+                    "3076301006072a8648ce3d020106052b8104002203620004a567ba97b67aea5bafdaf5002ffcc6ab9632bff9f01f873f6267",
+                    "bcd1f0f11c139ee5f441abd99f1baaf1ca1e3b5cbce7de1b38b3989f3318644e4147af164ecc5185595046932ec086329be0",
+                    "57857d66776bcb8272218a7d6423a12736f429cc",
+                ),
+            ),
+        ] {
+            let cert = x509_cert::Certificate::from_der(&fixture_hex(certificate)).unwrap();
+            let mut issuer = cert.clone();
+            issuer.tbs_certificate.subject_public_key_info =
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_der(&fixture_hex(issuer_spki))
+                    .unwrap();
+            let public = cert
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_bytes()
+                .unwrap();
+            assert!(
+                verify_attestation(&cert, &issuer, public, true).is_ok(),
+                "{algorithm}"
+            );
+            assert!(verify_attestation(&cert, &issuer, public, false).is_err());
+            assert!(verify_attestation(&cert, &issuer, &[4; 65], true).is_err());
+            let mut changed = cert.clone();
+            let extensions = changed.tbs_certificate.extensions.as_mut().unwrap();
+            extensions.push(extensions[0].clone());
+            assert!(verify_attestation(&changed, &issuer, public, true).is_err());
+            let mut changed = cert.clone();
+            let mut signature = changed.signature.as_bytes().unwrap().to_vec();
+            *signature.last_mut().unwrap() ^= 1;
+            changed.signature = BitString::from_bytes(&signature).unwrap();
+            assert!(verify_attestation(&changed, &issuer, public, true).is_err());
+            let mut changed = cert.clone();
+            changed.signature_algorithm.oid = "1.2.840.113549.1.1.5".parse().unwrap();
+            changed.tbs_certificate.signature = changed.signature_algorithm.clone();
+            assert!(verify_attestation(&changed, &issuer, public, true).is_err());
+        }
+    }
+    #[test]
+    fn accepts_external_prehash_der_signatures_with_either_s_value() {
+        // OpenSSL-generated ECDSA over the supplied digest (no second hash).
+        let (operator, _) = fixture();
+        for encoded in [
+            "3044022077b20737a107a64c60dec3af092e573f1afe5b8b0ad7219f1f1ebae78ab47a3602206e57071ba062dec789bd1629ce687c2c8b4b8582b7ab5ec9370c73ce6cd8ceab",
+            "3045022077b20737a107a64c60dec3af092e573f1afe5b8b0ad7219f1f1ebae78ab47a3602210091a8f8e35f9d21397642e9d6319783d3319b752aef6c3fbbbcad56f48f8a56a6",
+        ] {
+            let signature = fixture_hex(encoded);
+            operator.verify(&[9; 32], &signature).unwrap();
+            assert!(operator.verify(&[8; 32], &signature).is_err());
+            let mut trailing = signature;
+            trailing.push(0);
+            assert!(operator.verify(&[9; 32], &trailing).is_err());
+        }
     }
 }

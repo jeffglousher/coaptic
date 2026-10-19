@@ -1,6 +1,6 @@
 //! Trusted local Windows operator registration and device-key provisioning.
 //! PINs are handled by Windows Security, never by this process or its logs.
-#[cfg(windows)]
+#[cfg(all(windows, feature = "webauthn"))]
 use coaptic_enroll::{
     Request, begin_registration, origin,
     store::{self, OperatorStore},
@@ -15,6 +15,7 @@ mod pairing_cli;
 mod serial_cli;
 
 mod guided;
+mod inspect;
 
 fn main() {
     if let Err(error) = run() {
@@ -35,8 +36,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         loop {
-            let Some(args) =
-                guided::collect(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?
+            let Some(args) = guided::collect(
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+                guided::Capabilities {
+                    webauthn: cfg!(all(windows, feature = "webauthn")),
+                    piv: cfg!(feature = "development-piv"),
+                },
+            )?
             else {
                 return Ok(());
             };
@@ -57,19 +64,49 @@ fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::err
         .ok_or("expected operator-init or operator-check REQUEST.cbor")?;
     if command == "--help" {
         println!(
-            "Run without arguments, or use guide, for guided commissioning.\ncustody-init prepares native credential storage.\nUse --piv-touch for hardware-enforced PIV touch approval."
-        );
-        println!(
-            "coaptic-enroll operator-init | operator-check REQUEST.cbor | device-init NAME KID | device-info NAME\npair DEVICE PEER [--read-only] [--development-no-touch] | revoke DEVICE [--development-no-touch]\ntransfer DEVICE NEW_PEER VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\npairing-init DEVICE | pairing-info DEVICE | peer DEVICE LOCAL_ADDRESS PEER_ADDRESS [--connect | --probe | --probe-shared | --probe-echo | --probe-denied]"
+            "Coaptic commissioning ? run without arguments for the guided menu.
+\
+Inspect: inspect [--port PORT] [--host NAME]
+\
+  Local inventory is immediate; only the selected port is contacted (10-second limit).
+\
+Setup: custody-init | device-init NAME KID | serial-init PORT KID
+\
+Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only] APPROVAL
+\
+Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
+\
+Maintain: serial-restart PORT | serial-recover PORT HOST APPROVAL
+\
+  serial-revoke PORT HOST APPROVAL
+\
+  serial-transfer PORT NEW_HOST HOST_ADDRESS VERIFIED_OWNER_HEX [--read-only] APPROVAL
+\
+Inspect individual records: serial-info PORT | device-info HOST | pairing-info HOST
+\
+Local pairing: pairing-init DEVICE | pair DEVICE PEER APPROVAL | revoke DEVICE APPROVAL
+\
+  transfer DEVICE NEW_PEER VERIFIED_OWNER_HEX [--read-only] APPROVAL"
         );
         #[cfg(feature = "development-piv")]
         println!(
-            "development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-check REQUEST.cbor | development-piv-test\npiv-touch-register SERIAL SLOT PUBLIC.pem | piv-touch-check REQUEST.cbor | piv-touch-test"
+            "Credentials: piv-touch-register SERIAL SLOT PUBLIC.pem | piv-touch-test
+\
+  development-piv-register SERIAL SLOT PUBLIC.pem | development-piv-test
+\
+  piv-touch-check REQUEST.cbor | development-piv-check REQUEST.cbor
+\
+APPROVAL: --piv-touch or --development-no-touch (explicit development use)"
         );
+        #[cfg(all(windows, feature = "webauthn"))]
         println!(
-            "serial-info PORT | serial-init PORT KID | serial-restart PORT\nserial-pair PORT HOST_NAME HOST_ADDRESS [--read-only] [--development-no-touch]\nserial-transfer PORT NEW_UNPAIRED_HOST HOST_ADDRESS VERIFIED_NEW_OWNER_HEX [--read-only] [--development-no-touch]\nserial-recover PORT UNPAIRED_HOST [--development-no-touch]\nserial-revoke PORT HOST_NAME [--development-no-touch]"
+            "Windows WebAuthn: operator-init | operator-check REQUEST.cbor
+APPROVAL: omit the PIV flag for Windows verified authentication."
         );
         return Ok(());
+    }
+    if command == "inspect" {
+        return inspect::run(args, &enrollment_directory()?);
     }
     #[cfg(feature = "development-piv")]
     let development = [
@@ -209,16 +246,16 @@ fn run_command(supplied: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::err
     operator_command(command, args, &directory)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(all(windows, feature = "webauthn")))]
 fn operator_command(
     _: std::ffi::OsString,
     _: impl Iterator<Item = std::ffi::OsString>,
     _: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Windows WebAuthn is unavailable on this OS; select an explicitly registered PIV approval profile".into())
+    Err("Windows WebAuthn is unavailable in this build; select an explicitly registered PIV approval profile".into())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "webauthn"))]
 fn operator_command(
     command: std::ffi::OsString,
     mut args: impl Iterator<Item = std::ffi::OsString>,
@@ -331,6 +368,15 @@ fn device_directory(
     directory: &std::path::Path,
     name: &std::ffi::OsStr,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let result = existing_device_directory(directory, name)?;
+    private_directory(&result)?;
+    Ok(result)
+}
+
+fn existing_device_directory(
+    directory: &std::path::Path,
+    name: &std::ffi::OsStr,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let name = name.to_str().ok_or("invalid device name")?;
     if name.is_empty()
         || name.len() > 32
@@ -343,10 +389,9 @@ fn device_directory(
         );
     }
     let result = directory.join("Devices").join(name);
-    if !result.is_dir() {
+    if !result.symlink_metadata()?.file_type().is_dir() {
         return Err("device is not provisioned".into());
     }
-    private_directory(&result)?;
     Ok(result)
 }
 

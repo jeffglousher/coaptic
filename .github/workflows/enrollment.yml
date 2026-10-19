@@ -62,6 +62,16 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --manifest-path ../coaptic-console-core/Cargo.toml --target thumbv6m-none-eabi
       - run: cargo test --locked --manifest-path ../coaptic-console-core/Cargo.toml
+      - run: cargo check --no-default-features --locked
+      - run: cargo test --all-targets --locked
+      - name: Default CLI excludes OpenSSL and native TLS
+        shell: pwsh
+        run: |
+          $tree = cargo tree --locked --edges normal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tree -match '\b(openssl|openssl-sys|native-tls) v') {
+            throw 'Default commissioning dependency tree contains native crypto/TLS backend'
+          }
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-targets --all-features --locked
       - name: Verify Linux Secret Service custody
@@ -92,7 +102,7 @@ jobs:
           security default-keychain -d user -s "$keychain"
           security unlock-keychain -p coaptic-ci-only "$keychain"
           cargo test --all-features --locked native_custody_roundtrip_and_missing_key_refusal -- --ignored
-      - run: cargo build --all-features --locked
+      - run: cargo build --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: coaptic-enroll-${{ matrix.os }}

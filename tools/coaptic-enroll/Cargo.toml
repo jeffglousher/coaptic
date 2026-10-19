@@ -11,20 +11,29 @@ description = "Local hardware-approved commissioning for Coaptic devices"
 [workspace]
 
 [features]
+default = ["development-piv"]
+webauthn = ["dep:webauthn-rs", "dep:webauthn-authenticator-rs", "dep:openssl"]
+webauthn-tests = ["webauthn", "webauthn-authenticator-rs/softpasskey"]
 # Explicit hardware-development profile. It never weakens the FIDO2 verifier.
-development-piv = ["dep:yubikey", "dep:x509-cert"]
+development-piv = ["dep:yubikey", "dep:x509-cert", "dep:p256", "dep:p384", "dep:rsa", "dep:sha2"]
 
 [dependencies]
 coaptic-console-core = { path = "../coaptic-console-core" }
 coaptic = { path = "../..", default-features = false, features = ["std", "edhoc"] }
 # Read verified public UV/backup flags and the initial counter after registration.
 # Unchecked credentials are never constructed by the production path.
-webauthn-rs = { version = "=0.5.5", default-features = false, features = ["danger-credential-internals"] }
-openssl = { version = "0.10", features = ["vendored"] }
+webauthn-rs = { version = "=0.5.5", optional = true, default-features = false, features = ["danger-credential-internals"] }
+openssl = { version = "0.10", optional = true, features = ["vendored"] }
+webauthn-authenticator-rs = { version = "=0.5.5", optional = true, default-features = false }
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+p256 = { version = "=0.13.2", optional = true, features = ["ecdsa", "pem"] }
+p384 = { version = "=0.13.1", optional = true, features = ["ecdsa"] }
+rsa = { version = "=0.9.10", optional = true }
+sha2 = { version = "=0.10.9", optional = true, features = ["oid"] }
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 ciborium = "0.2"
-getrandom = "=0.3.4"
+getrandom = { version = "=0.3.4", features = ["std"] }
 blake3 = "=1.8.7"
 zeroize = "1"
 serialport = { version = "=4.8.1", default-features = false }
@@ -38,12 +47,11 @@ keyring = { version = "=3.6.3", default-features = false, features = ["apple-nat
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
-webauthn-authenticator-rs = { version = "=0.5.5", default-features = false, features = ["win10"] }
+webauthn-authenticator-rs = { version = "=0.5.5", optional = true, default-features = false, features = ["win10"] }
 windows = { version = "=0.41.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Memory"] }
 
 [dev-dependencies]
 keyring = { version = "=3.6.3", default-features = false }
-webauthn-authenticator-rs = { version = "=0.5.5", default-features = false, features = ["softpasskey"] }
 
 [profile.dev]
 debug = 0
