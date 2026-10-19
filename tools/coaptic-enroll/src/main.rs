@@ -396,10 +396,95 @@ fn existing_device_directory(
 }
 
 #[cfg(windows)]
+fn process_user_sid() -> Result<String, Box<dyn std::error::Error>> {
+    use windows::Win32::{
+        Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE},
+        Security::{
+            Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY, TOKEN_USER,
+            TokenUser,
+        },
+        System::{
+            Memory::LocalFree,
+            Threading::{GetCurrentProcess, OpenProcessToken},
+        },
+    };
+    use windows::core::PWSTR;
+
+    struct Token(HANDLE);
+    impl Drop for Token {
+        fn drop(&mut self) {
+            // SAFETY: this wrapper owns the handle returned by OpenProcessToken.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+    struct SidString(PWSTR);
+    impl Drop for SidString {
+        fn drop(&mut self) {
+            // SAFETY: ConvertSidToStringSidW allocates with LocalAlloc.
+            unsafe { LocalFree(self.0.0 as isize) };
+        }
+    }
+
+    let mut handle = HANDLE::default();
+    // SAFETY: the process pseudo-handle is valid and handle is writable.
+    if !unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) }.as_bool() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let token = Token(handle);
+    let mut needed = 0;
+    // SAFETY: the first call queries the required buffer length only.
+    let queried = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut needed) };
+    let error = std::io::Error::last_os_error();
+    if !queried.as_bool() && error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER.0 as i32) {
+        return Err(error.into());
+    }
+    if queried.as_bool() || needed < std::mem::size_of::<TOKEN_USER>() as u32 {
+        return Err("invalid OS token user buffer length".into());
+    }
+    // TOKEN_USER contains a pointer, so byte-vector alignment is insufficient.
+    let mut buffer = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+    // SAFETY: buffer is aligned for TOKEN_USER and contains at least needed bytes.
+    if !unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+    }
+    .as_bool()
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: the successful query initialized TOKEN_USER and its SID in buffer.
+    let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+    let mut sid = PWSTR::null();
+    // SAFETY: the returned SID remains valid while buffer is alive.
+    if !unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid) }.as_bool() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let sid = SidString(sid);
+    // SAFETY: ConvertSidToStringSidW returned a NUL-terminated UTF-16 string.
+    Ok(unsafe { sid.0.to_string() }?)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn process_user_sid_reads_native_token() {
+    let sid = process_user_sid().expect("current process user SID");
+    assert!(sid.starts_with("S-1-"));
+    assert!(
+        sid[2..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'-')
+    );
+}
+
+#[cfg(windows)]
 fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::fs::MetadataExt;
-    use std::process::Command;
     use windows::Win32::{
         Foundation::PSID,
         Security::{
@@ -427,33 +512,7 @@ fn private_directory(directory: &std::path::Path) -> Result<(), Box<dyn std::err
         }
     }
     std::fs::create_dir_all(directory)?;
-    let system = std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .ok_or("SystemRoot unavailable")?
-        .join("System32");
-    let output = Command::new(system.join("whoami.exe"))
-        .args(["/user", "/fo", "csv", "/nh"])
-        .output()?;
-    if !output.status.success() {
-        return Err("cannot identify authenticated OS administrator".into());
-    }
-    // Only the SID is ASCII; the username can use the system OEM codepage.
-    let sid = std::str::from_utf8(
-        output
-            .stdout
-            .rsplit(|byte| *byte == b',')
-            .next()
-            .ok_or("missing OS user SID")?,
-    )?
-    .trim()
-    .trim_matches('"');
-    if !sid.starts_with("S-1-")
-        || !sid
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == 'S' || c == '-')
-    {
-        return Err("invalid OS user SID".into());
-    }
+    let sid = process_user_sid()?;
     // Replace the complete DACL: only this OS user and SYSTEM have access.
     let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)")
         .encode_utf16()

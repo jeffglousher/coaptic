@@ -51,7 +51,7 @@ sha2 = { version = "0.11.0", default-features = false, optional = true }
 defmt-or-log = { version = "0.2.3", default-features = false, optional = true }
 subtle = { version = "2.6.1", default-features = false, optional = true }
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh"], optional = true }
-blake3 = { version = "=1.8.7", default-features = false, optional = true }
+blake3 = { version = "=1.8.7", default-features = false, features = ["pure"], optional = true }
 uuid = { version = "=1.28.0", default-features = false, features = ["v8"], optional = true }
 
 [package.metadata.docs.rs]

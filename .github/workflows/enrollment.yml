@@ -6,7 +6,10 @@ on:
     paths:
       - 'tools/coaptic-enroll/**'
       - 'tools/coaptic-console-core/**'
+      - 'tools/coaptic-async-host/**'
       - 'src/provisioning/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/enrollment.yml'
   workflow_dispatch:
 
@@ -44,7 +47,7 @@ jobs:
           targets: thumbv6m-none-eabi
       - name: Install Linux native adapter dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libdbus-1-dev pkg-config gnome-keyring dbus-x11
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config gnome-keyring dbus-x11
       - name: Select native Windows Perl for vendored OpenSSL
         if: runner.os == 'Windows'
         shell: pwsh
@@ -62,15 +65,16 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --manifest-path ../coaptic-console-core/Cargo.toml --target thumbv6m-none-eabi
       - run: cargo test --locked --manifest-path ../coaptic-console-core/Cargo.toml
+      - run: cargo test --locked --manifest-path ../coaptic-async-host/Cargo.toml
       - run: cargo check --no-default-features --locked
       - run: cargo test --all-targets --locked
-      - name: Default CLI excludes OpenSSL and native TLS
+      - name: Default CLI excludes bundled native crypto and D-Bus clients
         shell: pwsh
         run: |
           $tree = cargo tree --locked --edges normal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($tree -match '\b(openssl|openssl-sys|native-tls) v') {
-            throw 'Default commissioning dependency tree contains native crypto/TLS backend'
+          if ($tree -match '\b(openssl|openssl-sys|native-tls|libdbus-sys|dbus) v') {
+            throw 'Default commissioning dependency tree contains a native crypto/TLS or D-Bus client'
           }
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-targets --all-features --locked
