@@ -96,7 +96,12 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
 - **Ownership:** [storage tests](../../tests/extended_token_storage.rs) prove full
   exchange/Observe/body identity and compact defaults. Reliable CSM negotiation and
   stateless state encodings remain unsupported. Companion #91 records independent
-  unprotected extended-token peers; independent protected-capacity proof stays #200.
+  unprotected extended-token peers. The protected native-libcoap32-byte success,
+  authenticated64-byte capacity refusal, tag-tamper/no-effect and fresh protected
+  recovery boundary passes at core 7bb32c9 / companion f6151265 in
+  [run39254030000](https://github.com/jeffglousher/coaptic-validation/actions/runs/39254030000).
+  The separate Observe fixture failures in that run remain retained; they do not
+  invalidate this completed row or establish broader token/backend support.
 
 ## RFC 8516: overload and retry
 
@@ -144,7 +149,7 @@ The [origin discovery ledger](RFC6690.md) gives exact original clause mappings.
   Call failure. The host export adapter is delivered in companion #88; overhead remains #341.
 - **Disposition:** #516, #519, #521 and #586 are closed for their delivered
   implementations and relevant proof. Directory roles are outside the selected
-  endpoint scope. #200 owns remaining finite independent integrations; #340 owns
+  endpoint scope. #200 records completed finite independent integrations and explicit peer limits; #340 owns
   named deployment peaks and valid-peer progress. Completed association/readiness
   mechanisms are not a second implementation backlog.
 

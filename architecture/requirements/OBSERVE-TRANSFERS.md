@@ -44,12 +44,28 @@ preconditions and non-GET validators, including FETCH selection, remain retained
 `download_followups_retain_conditions_and_fetch_selection` in
 [App tests](../../src/app/tests.rs) covers that distinction.
 
+The client receives CON Q bodies through exact empty acknowledgements rather
+than concurrent NON-style next-window pulls (RFC 9177 appendix A.2). Duplicate
+payloads with the same retained identity are ignored without replacing body or
+inbox ownership, as required by section 4.4. The two-epoch, 704-byte
+`con_qblock2_observe_crosses_windows_without_pull_and_keeps_duplicate_blocks`
+regression in [App tests](../../src/app/tests.rs) crosses both ten-block
+boundaries and repeats boundary/final blocks. Shared sync/async driving adds no
+state or capacity. Core #627 corrects the independent native counterexample.
+
+A changed-selector ordinary follow-up can receive 4.00 without retiring either
+registered selection. The [refusal/pacing regression](../../tests/observe_selection_refusal.rs)
+retains both relations, observes the same-endpoint NON hold, then delivers the
+second notification at the 3,000 ms deadline. A two-second fixture wait was not
+proof of relation loss; companion #112 corrects that wait without changing the
+server.
+
 ## Completion and independent gates
 
 The implementation gate is the applicable rows above, including their explicit capacity/refusal/recovery contracts. Source tests are relevant proof; they are not independent interoperability or current-device execution. No ordinary-response fallback closes an accepted registration row. Any future expansion of the retained selector/window capacities must account for the entire App, scratch, security and transport lifetimes rather than increasing a table in isolation.
 
-- [#199](https://github.com/jeffglousher/coaptic/issues/199) is complete for its selected literal inventory in companion #90. Mixed-peer fixture gaps remain #200. DTLS02 wrong-PSK alerts have a reviewed conflict disposition, never literal PASS; optional RPK contribution scenarios do not gate UDP/OSCORE.
-- [#200](https://github.com/jeffglousher/coaptic/issues/200) stays open for the finite remaining selected GET/FETCH and CON-Q Observe directions, one independent protected extended-token refusal boundary and four native-EDHOC/CoAP-envelope option-extension profiles. Companion #91 records15 supported metadata/URI/token/Observe cases; #95 records selected EDHOC establishment/errors; #98 records duplicate-effect fixture limitations; #100-102 complete the selected scoped/routed/network-error slice. [Companion capability inventory](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/capabilities.json) and [protected Observe harness](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/interop/oscore_observe.py) own directions; old captures retain their original sources.
+- [#199](https://github.com/jeffglousher/coaptic/issues/199) is complete for its selected literal inventory in companion #90. The finite mixed-peer directions are reconciled in companion #116 / #200, with explicit residual fixture limitations. DTLS02 wrong-PSK alerts have a reviewed conflict disposition, never literal PASS; optional RPK contribution scenarios do not gate UDP/OSCORE.
+- [#200](https://github.com/jeffglousher/coaptic/issues/200) is complete for its finite selected scope in companion #116. Four selected GET/FETCH and two CON-Q Observe directions pass, including exact complete bodies, selection/epoch identity, missing-block recovery, cancellation and fresh work. One protected extended-token direction and eleven native-EDHOC/CoAP-envelope option directions pass separately. The [secondary inventory](https://github.com/jeffglousher/coaptic-validation/blob/cdc5b81dede6d8a80145443dce07fced883e0a5b/tools/interop/independent-profiles.json) retains 18 exact selectors without changing the existing 181 process cases or evaluator. Every capture keeps its actual source pair; all original failures remain. An earlier reverse Windows server exit did not recur in the diagnostic pass and remains unexplained in [companion #115](https://github.com/jeffglousher/coaptic-validation/issues/115); no runtime policy change or process-stability claim follows. Companion #91/#95/#98/#100-102 retain their earlier finite directions, explicit peer limitations and network proof.
 - [#202](https://github.com/jeffglousher/coaptic/issues/202) is complete for the finite host campaigns and diagnostic export delivered by companion #88. Cross-compilation, emulation, host loopback and physical interruption remain distinct evidence.
-- [#522](https://github.com/jeffglousher/coaptic/issues/522) stays open outside the RFC gate. Companion #89 delivers the shared-decoder classifier and observation-only loader; #92 adds the finite manual Linux execution workflow. Core #622 now passes actual verifier acceptance and both kernel differential/live cycles at run39249773527; terminated-child startup, ordinary-loader and capability-refusal stages remain #522. Exact sources and original failures are retained.
-- [#341](https://github.com/jeffglousher/coaptic/issues/341) stays open for requested matching-source SmallDevice measurements, complete system peaks and equivalent protected competitor fixtures. Tests and linked object sizes do not establish throughput or peak stack/heap. Coding takes precedence over expansion of that campaign.
+- [#522](https://github.com/jeffglousher/coaptic/issues/522) is complete outside the RFC gate. Final run39254465762 at core244809e / companion7d34275 passes actual verification, two instrumented and one ordinary cycle (each 4,556 BPF executions plus 1,456 short-frame kernel refusals), counters, byte preservation, process/lifecycle recovery and actual capability refusal. The qualification plan records exact sources, accounting, limits and preserved original failures; this is not kernel authentication or a performance benefit.
+- [#341](https://github.com/jeffglousher/coaptic/issues/341) records the completed six-cell SmallDevice host quick check in companion #110, with exact sources, complete-operation timing and CPU/RSS boundaries. MCU comparisons, whole-system peaks and additional equivalent protected fixtures remain open. Object layout is not peak stack/heap; coding takes precedence over campaign expansion.
