@@ -199,8 +199,7 @@ impl<S: Storage> Drop for RxOwner<'_, S> {
 
 pub(super) struct BodyOwner<'a, S: Storage + BodySlots> {
     pub(super) engine: &'a mut Engine<S>,
-    body: Option<SlotId>,
-    incoming: bool,
+    body: Option<(SlotId, bool)>,
     before_release: Option<fn(&mut Engine<S>, SlotId)>,
 }
 
@@ -208,16 +207,14 @@ impl<'a, S: Storage + BodySlots> BodyOwner<'a, S> {
     pub(super) fn incoming(engine: &'a mut Engine<S>, body: Option<SlotId>) -> Self {
         Self {
             engine,
-            body,
-            incoming: true,
+            body: body.map(|id| (id, true)),
             before_release: None,
         }
     }
     pub(super) fn outgoing(engine: &'a mut Engine<S>, body: SlotId) -> Self {
         Self {
             engine,
-            body: Some(body),
-            incoming: false,
+            body: Some((body, false)),
             before_release: None,
         }
     }
@@ -281,11 +278,11 @@ impl<S: AppStorage> Drop for DeferredObserveOwner<'_, S> {
 
 impl<S: Storage + BodySlots> Drop for BodyOwner<'_, S> {
     fn drop(&mut self) {
-        if let Some(body) = self.body {
+        if let Some((body, incoming)) = self.body {
             if let Some(hook) = self.before_release {
                 hook(self.engine, body);
             }
-            if self.incoming {
+            if incoming {
                 let _ = self.engine.release_rx_body(body);
             } else {
                 let _ = self.engine.release_tx_body(body);
