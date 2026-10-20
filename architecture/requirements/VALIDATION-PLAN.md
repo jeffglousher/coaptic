@@ -32,9 +32,9 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | Q6 / #202 | Diagnostic host/export adapter consuming #521. | Delivered in companion #88: synchronized caller-owned recorder, sampled maxima, explicit reset/drop behavior and bounded CBOR v1 export. Nine focused host/service tests cover isolation and unchanged durability/replay outcomes; strict Clippy passes. No mandatory logger, exporter thread or allocation in core. Overhead remains unmeasured. |
 | Q7 / [#333](https://github.com/jeffglousher/coaptic/issues/333) | Reserved ESP32-S3 durable local pairing and installed service; companion `tools/esphome/rust`, `tools/durable-host`. | Source-matched cold power cycle, interrupted/ambiguous commits and lost administrative replies; same identity/owner/permissions or explicit fail-closed repair. Preserve original NVS and credentials. Software restart and an archive build are separate evidence. |
 | Q8 / #333 / [#365](https://github.com/jeffglousher/coaptic/issues/365) | Owner transfer, backup recovery, revocation and durable effect receipts on the installed two-peer workflow. | Execute old-owner refusal, affected queued-work cancellation, consumed-backup refusal, same-operation receipt after host/device restart and lost reply, then fresh authorized work. Recovery from a revoked tombstone with an unreconciled old-grant journal must refuse; explicit reconciliation is required and must not discard or relabel effects. |
-| Q9 / #333 | Actual entropy, key custody and storage backend. | Name platform entropy failure behavior, persistence/commit guarantees, custody and initialization peaks. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening and has no implied ordinary-NVS claim. |
+| Q9 / #333 | Actual entropy, key custody and storage backend. | RF-provider lifecycle closure remains an active implementation follow-up; the readiness guard is not complete entropy qualification. Name failure behavior, persistence/commit guarantees, custody and initialization peaks. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening. |
 | Q10 / [#340](https://github.com/jeffglousher/coaptic/issues/340) / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Whole deployment budget and useful progress under pressure. | Begin with `SmallDevice` / `Constrained`; name route, Call, deferred and security capacities. Distinguish whole-App layout, initialization peak, actual stack/heap and transport/security reservations without double counting. Execute admitted-peer progress/refusal/recovery with measured memory placement. |
-| Q11 / #341 | Controlled current-source comparison when requested. | Six-cell SmallDevice Windows quick check is complete in companion #110: exact-source 32-byte complete GET/CON, concurrency one, 20 warmups and 200 measured operations per cell, all successful. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. MCU comparisons, durable timing and complete deployment peaks remain open; no saturation or statistical-ranking claim follows. |
+| Q11 / #341 | Controlled current-source comparison when requested. | Current six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #125 builds the reverse MCU initiator, but its image is not installed or measured. Matched MCU/durable timing and complete peaks remain open. |
 | Q12 / [#522](https://github.com/jeffglousher/coaptic/issues/522) | Observation-only Rust eBPF ingress pilot on a named Linux hook. | Complete in run39254465762 at exact core244809e / companion7d34275: actual kernel acceptance, differential cycles, counters, byte preservation, lifecycle/process recovery and capability refusal. Named verifier/object/resource metrics are retained below. No kernel authentication, admission authority or measured performance benefit is implied. |
 
 The companion process manifest is an executable case inventory, not an RFC
@@ -124,55 +124,94 @@ Both have complete owned-network cleanup; the initial fixture/cleanup failure
 is retained. Q4's exact counter-fixture sources and limitation receipts are in
 [companion #98](https://github.com/jeffglousher/coaptic-validation/pull/98).
 
-Q7/Q8 current installed echo-only proof uses core
+Q7/Q8 retain the [published baseline](https://github.com/jeffglousher/coaptic-validation/tree/d6b84dbfaea6b0f16d9583e040853adc225d6393/tools/qualification/evidence/completion-20261020)
+at core `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953` / companion
+`ccb41104a138876f59527cfb2414f7bfa102e663` (tree equal merged #123 `971f4d7`).
+Independently reviewed NVS revision/page history and controlled-workflow custody
+resolved first use; absence and source chronology alone remain insufficient.
+Migration `ca1ce3422cf4baaa128f897b4ae3f537` created the verified one-time claim
+and authenticated 1,214-byte custody record. Permit-disabled normal run
+`012e92f1a2aa3724e65a7f4aa41b1c1b` preserved identity/key/owner/echo grant/revision 8.
+The bundle retains Inspect/echo, raw numeric API records, boot-scoped task margins,
+exact ELF layouts and overlapping heap-domain limits; private NVS remains sealed.
+
+Receipt-only repair is now merged in [core #631](https://github.com/jeffglousher/coaptic/pull/631)
+and [companion #124](https://github.com/jeffglousher/coaptic-validation/pull/124).
+The installed recovery image is core `68664c2a5004d9b370113af3c6cec60b1d571fd8` /
+suite `1990fcfcf75516c172dbd713f6bf9a819943fc6c` (tree equal #125 merge
+`7e47d12284a06fcd385fac24e497d7574ba604f2`), run
+`407105ebaaac4bd4da558ccd78bac5f4`: authenticated OTA 22.36s, unchanged identity
+and revision 8 echo grant, fresh CLI protected 45-byte echo from authenticated
+5.03/Max-Age 1 to same-session 2.05. ELF SHA256
+`59218eb016f7428ce307f8f27a8a324a1001a1076229e568530eeff0bca9f4be`
+independently confirms managed 29,184B inside future 49,560B; Runtime 104B also
+lives on the reserved 196,608B worker stack. These are nested layouts, not a sum.
+The new-source finite capture has 22 complete 12-task snapshots and observed
+worker high-water 176,248B; it excludes the older run's pre-OTA records.
+
+Installed queued-work receipt reconciliation, revocation/old-owner/consumed-backup
+refusal, lost replies, one/both-peer restart recovery and fresh work remain Q8
+proof obligations. A new read-only revision 9 persists across software restart,
+but its echo-refusal probe reaches a 30s deadline after initial 5.03; liveness is
+an active defect, not a passing refusal result. The native async driver classifies
+background Observe/GET cooldown Backoff as fatal; its focused fix/regression is
+active until target qualification. Echo-only restoration at revision 10 again
+passes fresh-session 5.03 to 2.05. Actual power cuts/interrupted management
+persistence remain unexecuted. RF-provider lifecycle
+closure remains active in Q9; the readiness guard does not qualify complete
+entropy or production custody. The original host journal is initialized, with
+no installed effect/receipt recovery claimed from the echo observation.
+
+Q10 adds finite native-async pressure proof at core
+`75548536d6ea417dc3f4a74c7fc9fc4e03ab5953`: Windows implementation
+`4a426bec054d78955e34e4bc57045a4576f8f3c3` has an exact
+[receipt](https://github.com/jeffglousher/coaptic-validation/blob/7ac82e297d15c1ab0c8e087a630ed78f7292652f/tools/qualification/evidence/cloud-startup/native-pressure-7554853.json);
+Linux suite `ea242dc5bdf430c779ec7c2086d336fba93955e2` passes
+[run39421315970](https://github.com/jeffglousher/coaptic-validation/actions/runs/39421315970).
+Both unprotected/ephemeral-OSCORE modes complete seventeen 2,000-byte replies,
+one small reply, local Call saturation/cancellation recovery, actual 5.03/Max-Age 1
+under 31/32 held server TX slots, cooldown, 16 malformed datagrams and fresh full
+recovery. Scoped App allocation/reallocation requests stay zero. Pools are
+startup-sized Service RX32/TX32×1,472B, four 16,384B bodies/direction, two routes,
+four Calls, zero deferred, four security bindings and one association.
+Requested pool layout is 282,640B/App; whole-process requested live Rust heap
+after binding/traffic is 699,590B Windows / 662,351B Linux without successful
+allocation-count growth in that interval. OS/process totals overlap component
+views; the 4MiB fixture stack reservation is not measured peak use. Startup,
+executor work between App polls and pending-future Drop are outside scoped App
+counts. Individual stack peaks, native/kernel attribution, initialization/rekey
+overlap and installed pressure proof remain open. No live growth API is added;
+future expansion must be explicitly selected and disabled by default. Earlier
+sync/native-async #119 evidence retains its own sources and limits.
+
+Q11 reruns the existing SmallDevice harness at core
 `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953` / companion
-`ccb41104a138876f59527cfb2414f7bfa102e663` (the reviewed tree merged by
-[companion #123](https://github.com/jeffglousher/coaptic-validation/pull/123)
-as `971f4d7612d7c727f17bb64d62936be195565a43`). Independently reviewed legacy
-first-use provenance resolved the missing enrolled-custody prerequisite:
-retained NVS revisions 1–8 and original page history, identity checks and
-controlled-workflow installation evidence establish unused custody within the
-declared ordinary-flash model. The [public witness](https://github.com/jeffglousher/coaptic-validation/blob/971f4d7612d7c727f17bb64d62936be195565a43/tools/qualification/evidence/legacy-custody/reviewed-provenance.json)
-retains assumptions and limits; absence or source chronology alone remains
-insufficient. Migration run `ca1ce3422cf4baaa128f897b4ae3f537` created a verified
-one-time claim and authenticated 1,214-byte custody record. Normal permit-disabled
-run `012e92f1a2aa3724e65a7f4aa41b1c1b` preserves the exact identity/key/owner/echo
-policy/revision 8 across three Inspect reads. Authenticated OTA took 22.08s;
-protected 45-byte echo recovered from 5.03/Max-Age 1 to same-session 2.05.
-Private NVS remains sealed; `completion-20261020/installed-legacy-nvs-review.json`
-and normal runtime receipts retain the local execution evidence.
+`ccb41104a138876f59527cfb2414f7bfa102e663`; the
+[published raw receipt](https://github.com/jeffglousher/coaptic-validation/blob/d6b84dbfaea6b0f16d9583e040853adc225d6393/tools/qualification/evidence/completion-20261020/smalldevice-windows-755485.json)
+retains every latency and tool/source/lock identity. All six cells pass 20 warmups
+and 200 complete 32-byte GET/CON operations at concurrency 1. Median/p95/max
+microseconds and verified operations/second are:
 
-Explicit first-use initialization created the original host receipt journal;
-no effect is yet committed in this new installed workflow. Receipt-only repair
-of unresolved old-grant work under a revoked tombstone is in a focused development
-batch, not yet merged or installed. The flow binds current-owner approval to
-the prior checkpoint and exact existing journal receipt; it creates no effect
-or grant. Initial repair authenticates the prior binding; completed retries
-authenticate the exact current-bound completion without claiming prior history.
-Installed queued-work revocation, lost-receipt/one-or-both-peer restart recovery,
-fresh work, actual power cuts and interrupted administrative persistence remain
-Q7/Q8 obligations. The RF-on readiness guard retains an RF-lifecycle precondition;
-it does not close comprehensive entropy or production-custody qualification in Q9.
-Earlier source-specific restart/Observe and #623/#103 UDP/drain proof remain valid
-for their recorded sources; they are not new execution of this installed image.
+- Coaptic SmallDevice unprotected: 53.3/67.4/95.7; 18,101/s.
+- Coaptic SmallDevice volatile OSCORE: 163.3/203.0/321.8; 5,994/s.
+- aiocoap 0.4.16 unprotected: 247.5/315.9/357.7; 3,861/s.
+- aiocoap 0.4.16 volatile OSCORE: 497.3/594.4/714.3; 1,948/s.
+- coap-rs 0.28.1 unprotected: 84.5/111.4/180.1; 10,921/s.
+- coap-lite 0.13.3 codec endpoint unprotected: 58.5/78.8/105.0; 15,775/s.
 
-Q10 includes a completed finite host slice at core
-`cdabea60b43db0a9ec110276b9122d45c85eab73` / companion
-`ea440271a007d3b64f0c849e410e837165d1f979`, retained in
-[companion #119](https://github.com/jeffglousher/coaptic-validation/pull/119).
-Both synchronous and native Tokio UDP paths use startup-sized `Service` pools.
-Each mode completes sixteen 2,000-byte blockwise replies, three local four-Call
-capacity refusals and consumption/cancellation recovery without observed App
-allocation or reallocation. The native async path actually suspends; its
-[receipt](https://github.com/jeffglousher/coaptic-validation/blob/f6c1f1fdbed0314a7d04bbf8f1ef7816efbf5b2d/tools/qualification/evidence/cloud-startup/native-async-cdabea60.json)
-names capacities, layouts and the observation boundary: App future construction,
-polls and explicit synchronous App operations, excluding startup, executor work
-between polls and pending-future Drop. Local refusal is not a wire-level overload
-response. Requested pool layouts, inline owners and the fixture's 4 MiB stack
-reservation are separate from deployment peaks. Whole-system peaks, installed
-pressure schedules and sustained cloud capacity remain open. Allocated storage
-does not grow after binding; any future live expansion must be explicit and
-disabled by default.
+This shared Windows/Ryzen 5800X3D sample overlapped ESPHome compilation; it is
+neither a quiet-host ranking nor a historical improvement claim. Whole fixed
+SmallDevice App is 13,128B including adapter/scratch, four routes/one populated,
+one Call, zero deferred, one association/four bindings, RX2/TX2×1,152B and no
+blockwise bodies. CPU windows include setup/warmup/spin; process RSS overlaps
+App/runtime/stack. Durable commits and MCU timing are not measured by these cells.
+[Companion #125](https://github.com/jeffglousher/coaptic-validation/pull/125)
+builds the synchronous reverse MCU 24-GET fixture at core 68664c2/suite 1990fcf,
+run `69ec4c6764cfc5455b7aaa3e41e17db8`, but this separate image is not installed.
+Its body-enabled Constrained configuration is not the paired/SmallDevice profile.
+The four-role matched MCU timing matrix still needs actual complete captures.
+Scoped Windows inbound permission for the exact host executable/reserved device
+requires human UAC; the user is unavailable and the firewall remains unchanged.
 
 Q12 is complete at core `244809ebcd852cfeaf912bd2f5ba5956b6495bfc` /
 companion `7d34275be771ee1b689c9005c2eb2745b74586e7`,
@@ -211,8 +250,9 @@ latency. The current classifier adds observation cost; no acceleration is shown.
 1. Preserve the delivered #486/#520/#521 fixes and completed Q1/Q5/Q6 slices.
    Implement concrete fixture or integration gaps in coherent batches, then commit
    a clean source snapshot before provenance-enforcing execution.
-2. Preserve completed finite Q2 directions and their retained limitations. Finish
-   installed Q8 effect ownership only after the authenticated-history prerequisite.
+2. Preserve completed finite Q2 directions and their retained limitations. The
+   selected device's authenticated-history prerequisite is resolved; finish actual
+   installed Q8 effects/reconciliation and the active read-only refusal defect.
    Reuse proof when its exact source and required boundary still match. Keep
    optional DTLS fixtures and their reviewed RFC conflicts separate from the MVP.
 3. Execute Q7–Q10 on a source-matched installed image. Hardware touch is only
