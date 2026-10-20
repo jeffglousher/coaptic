@@ -471,7 +471,12 @@ fn lost_receipt_checkpoint(stage: coaptic_receipts::Stage) -> std::io::Result<()
 }
 
 // Only the fixed identity/echo probes call this policy, never durable telemetry.
-fn probe_retry_at(code: Code, max_age_secs: u32, now_ms: u64, attempts: u8) -> Option<u64> {
+pub(super) fn probe_retry_at(
+    code: Code,
+    max_age_secs: u32,
+    now_ms: u64,
+    attempts: u8,
+) -> Option<u64> {
     if !matches!(code, Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE) || attempts >= 3 {
         return None;
     }

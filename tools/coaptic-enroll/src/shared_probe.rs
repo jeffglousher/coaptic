@@ -41,6 +41,13 @@ fn is_initiator(local: &[u8; 32], peer: &[u8; 32]) -> bool {
     local > peer
 }
 
+const APPLICATION_DEADLINE_MS: u64 = 15_000;
+
+fn retry_at(code: Code, max_age_secs: u32, elapsed_ms: u64, attempts: u8) -> Option<u64> {
+    super::peer::probe_retry_at(code, max_age_secs, elapsed_ms, attempts)
+        .filter(|next| *next < APPLICATION_DEADLINE_MS)
+}
+
 fn entropy(bytes: &mut [u8]) -> bool {
     getrandom::fill(bytes).is_ok()
 }
@@ -153,7 +160,9 @@ pub fn run(
     for (round, elapsed_us) in elapsed.iter_mut().enumerate() {
         let now = started.elapsed().as_millis() as u64;
         let began = Instant::now();
-        let hardware_call = app.get("identity").to_association(hardware).send(now)?;
+        let mut hardware_call = Some(app.get("identity").to_association(hardware).send(now)?);
+        let mut hardware_attempts = 1;
+        let mut hardware_due = 0;
         let software_call = if round == 0 {
             Some(app.get("identity").to_association(software).send(now)?)
         } else {
@@ -166,6 +175,25 @@ pub fn run(
                 return Err("pairing no longer permits probe".into());
             }
             let now = started.elapsed().as_millis() as u64;
+            let round_now = began.elapsed().as_millis() as u64;
+            if round_now >= APPLICATION_DEADLINE_MS {
+                return Err("shared probe application deadline".into());
+            }
+            if !hardware_done && hardware_call.is_none() && round_now >= hardware_due {
+                match app.get("identity").to_association(hardware).send(now) {
+                    Ok(call) => {
+                        hardware_call = Some(call);
+                        hardware_attempts += 1;
+                    }
+                    Err(coaptic::app::Error::Backoff { until_ms }) => {
+                        hardware_due = round_now.saturating_add(until_ms.saturating_sub(now));
+                        if hardware_due >= APPLICATION_DEADLINE_MS {
+                            return Err("shared probe cooldown exceeds application deadline".into());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             let mut ingress_error = None;
             app.poll_with_association_ingress(
                 now,
@@ -208,14 +236,36 @@ pub fn run(
                 .flush(app.transport_mut(), now)
                 .map_err(|e| format!("bootstrap flush: {e:?}"))?;
             second.poll(now)?;
-            if !hardware_done && let Some(response) = app.take_response(hardware_call) {
+            if !hardware_done
+                && let Some(call) = hardware_call
+                && let Some(response) = app.take_response(call)
+            {
                 let response = response.map_err(|e| format!("hardware call: {e:?}"))?;
-                if response.code() != Code::CONTENT || response.payload() != principal.fingerprint()
+                hardware_call = None;
+                if response.code() == Code::CONTENT && response.payload() == principal.fingerprint()
                 {
-                    return Err("hardware identity differs".into());
+                    hardware_done = true;
+                    *elapsed_us = began.elapsed().as_micros();
+                } else {
+                    let max_age = response.max_age_secs().unwrap_or(60);
+                    if let Some(next) = retry_at(
+                        response.code(),
+                        max_age,
+                        began.elapsed().as_millis() as u64,
+                        hardware_attempts,
+                    ) {
+                        println!(
+                            "Shared ESP32 identity received code {} (Max-Age {max_age}s); retrying in the same session.",
+                            response.code()
+                        );
+                        hardware_due = next;
+                    } else {
+                        return Err(format!(
+                            "hardware identity differs: code {}, Max-Age {max_age}s, attempt {hardware_attempts}",
+                            response.code()
+                        ).into());
+                    }
                 }
-                hardware_done = true;
-                *elapsed_us = began.elapsed().as_micros();
             }
             if !software_done
                 && let Some(response) =
@@ -293,6 +343,19 @@ mod tests {
         assert!(is_initiator(&greater, &lower));
         assert!(!is_initiator(&lower, &greater));
         assert!(!is_initiator(&lower, &lower));
+    }
+
+    #[test]
+    fn shared_probe_overload_retry_respects_round_deadline_and_attempt_bound() {
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 1), Some(1100));
+        assert_eq!(
+            retry_at(Code::TOO_MANY_REQUESTS, 0, 14_998, 2),
+            Some(14_999)
+        );
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 14_000, 1), None);
+        assert_eq!(retry_at(Code::TOO_MANY_REQUESTS, 0, 14_999, 2), None);
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 3), None);
+        assert_eq!(retry_at(Code::CONTENT, 0, 100, 1), None);
     }
 
     #[test]
