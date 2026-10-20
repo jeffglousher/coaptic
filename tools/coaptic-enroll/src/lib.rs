@@ -38,6 +38,10 @@ pub mod device;
 
 pub mod pairing;
 
+#[cfg(test)]
+#[path = "reconciliation_tests.rs"]
+mod reconciliation_tests;
+
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub mod native_custody;
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
@@ -196,6 +200,29 @@ pub struct Request {
     pub record_digest: [u8; 32],
     #[serde(with = "serde_bytes")]
     pub nonce: [u8; 32],
+    /// Exact prior grant and already committed receipt for explicit repair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation: Option<ReceiptReconciliation>,
+}
+
+/// Public metadata bound into a receipt-reconciliation approval.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptReconciliation {
+    #[serde(with = "serde_bytes")]
+    prior_commitment: [u8; 32],
+    #[serde(with = "serde_bytes")]
+    receipt: Vec<u8>,
+}
+
+impl ReceiptReconciliation {
+    pub const fn prior_commitment(&self) -> &[u8; 32] {
+        &self.prior_commitment
+    }
+
+    pub fn receipt(&self) -> Result<coaptic::provisioning::Receipt> {
+        coaptic::provisioning::Receipt::decode(&self.receipt).ok_or(Error::Input)
+    }
 }
 
 /// The operation approved by the operator, included in every proof commitment.
@@ -209,6 +236,7 @@ pub enum Action {
     ConfirmRecoveryCredential,
     RecoverOwner,
     AcceptRecoveredOwnership,
+    ReconcileReceipt,
 }
 
 fn no_owner(owner: &[u8; 32]) -> bool {
@@ -277,6 +305,7 @@ impl Request {
             revision: expected.parts().1,
             record_digest: expected.parts().2,
             nonce,
+            reconciliation: None,
         };
         value.validate()?;
         Ok(value)
@@ -320,6 +349,60 @@ impl Request {
         request.owner = current_owner;
         request.validate()?;
         Ok(request)
+    }
+
+    /// Bind current-owner approval to a retained effect without restoring access.
+    /// The privileged caller obtains the prior record and receipt from verified
+    /// device custody and an exclusively held existing journal, respectively.
+    pub fn for_receipt_reconciliation(
+        challenge: &coaptic::provisioning::PairingChallenge,
+        current: &coaptic::provisioning::PairingRecord,
+        prior: &coaptic::provisioning::PairingRecord,
+        receipt: coaptic::provisioning::Receipt,
+    ) -> Result<Self> {
+        current
+            .validate_reconciliation_prior(prior)
+            .map_err(|_| Error::Input)?;
+        if challenge.expected() != (*current.store(), current.revision(), current.commitment())
+            || challenge.device().principal().fingerprint() != current.local_principal()
+        {
+            return Err(Error::Input);
+        }
+        let policy = current.policy().ok_or(Error::Input)?;
+        if policy.resource_policy() != &pairing::permissions(true) {
+            return Err(Error::Input);
+        }
+        let mut request = Self::for_pairing(challenge, policy, Action::Pair)?;
+        request.action = Action::ReconcileReceipt;
+        request.reconciliation = Some(ReceiptReconciliation {
+            prior_commitment: prior.commitment(),
+            receipt: receipt.encode().to_vec(),
+        });
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Reject any change to the approved receipt or historical grant.
+    pub fn matches_receipt_reconciliation(
+        &self,
+        challenge: &coaptic::provisioning::PairingChallenge,
+        prior: &coaptic::provisioning::PairingRecord,
+        receipt: coaptic::provisioning::Receipt,
+    ) -> Result<()> {
+        self.matches_pairing(challenge)?;
+        let metadata = self.reconciliation.as_ref().ok_or(Error::Input)?;
+        let policy = prior.policy().ok_or(Error::Input)?;
+        if self.action != Action::ReconcileReceipt
+            || metadata.prior_commitment != prior.commitment()
+            || metadata.receipt()? != receipt
+            || self.owner != *policy.owner()
+            || self.peer.peer()?.principal() != policy.peer().principal()
+            || self.permissions != *policy.resource_policy()
+            || self.device.peer()?.principal().fingerprint() != prior.local_principal()
+        {
+            return Err(Error::Input);
+        }
+        Ok(())
     }
 
     /// The exact destination policy covered by this local request's approval.
@@ -380,6 +463,12 @@ impl Request {
         {
             return Err(Error::Input);
         }
+        match (&self.reconciliation, self.action) {
+            (Some(metadata), Action::ReconcileReceipt)
+                if metadata.prior_commitment != [0; 32] && metadata.receipt().is_ok() => {}
+            (None, action) if action != Action::ReconcileReceipt => {}
+            _ => return Err(Error::Input),
+        }
         EnrollmentPolicy::new(peer, self.owner, self.permissions).map_err(|_| Error::Input)?;
         Ok(())
     }
@@ -396,6 +485,7 @@ impl Request {
             Action::ConfirmRecoveryCredential => 4,
             Action::RecoverOwner => 5,
             Action::AcceptRecoveredOwnership => 6,
+            Action::ReconcileReceipt => 7,
         }]);
         hash.update(self.device.peer()?.principal().fingerprint());
         hash.update(self.peer.peer()?.principal().fingerprint());
@@ -406,6 +496,10 @@ impl Request {
         hash.update(&self.record_digest);
         if !matches!(self.action, Action::Pair | Action::Revoke) {
             hash.update(&self.next_owner);
+        }
+        if let Some(metadata) = &self.reconciliation {
+            hash.update(&metadata.prior_commitment);
+            hash.update(&metadata.receipt);
         }
         Ok(*hash.finalize().as_bytes())
     }

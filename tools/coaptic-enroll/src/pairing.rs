@@ -6,7 +6,11 @@ use coaptic::provisioning::{
     EnrollmentPolicy, Identity, LocalPairing, PairingChallenge, PairingRecord,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{
+    fs::OpenOptions,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +68,64 @@ fn open(record: &SealedRecord) -> Result<PairingRecord, Error> {
         return Err(Error::Input);
     }
     PairingRecord::decode(&device::unseal(&record.sealed)?).map_err(|_| Error::Input)
+}
+
+/// Preserve the exact public device checkpoint before an administrative mutation.
+/// The caller holds the host pairing lock and authenticates the local device.
+/// Existing files are never replaced, including malformed or partial archives.
+pub fn save_device_checkpoint(directory: &Path, record: &PairingRecord) -> Result<PathBuf, Error> {
+    let digest: String = record
+        .commitment()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let path = directory.join(format!("device-checkpoint-{digest}.cbor"));
+    let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+    let length = record.encode(&mut bytes).map_err(|_| Error::Input)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(&path) {
+        Ok(file) => crate::store::write_and_verify(file, &bytes[..length])?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if read_checkpoint_bytes(&path)? != bytes[..length] {
+                return Err(Error::Persistence);
+            }
+        }
+        Err(_) => return Err(Error::Persistence),
+    }
+    Ok(path)
+}
+
+/// Read bounded public CBOR retained before revocation. This does not establish
+/// authenticity; the device must authenticate its original Pending binding.
+pub fn read_device_checkpoint(path: &Path) -> Result<PairingRecord, Error> {
+    PairingRecord::decode(&read_checkpoint_bytes(path)?).map_err(|_| Error::Input)
+}
+
+fn read_checkpoint_bytes(path: &Path) -> Result<Vec<u8>, Error> {
+    let metadata = path.symlink_metadata().map_err(|_| Error::Persistence)?;
+    if !metadata.is_file() || metadata.len() > PairingRecord::MAX_ENCODED_LEN as u64 {
+        return Err(Error::Input);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(Error::Input);
+        }
+    }
+    let mut input = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| Error::Persistence)?
+        .take(PairingRecord::MAX_ENCODED_LEN as u64 + 1)
+        .read_to_end(&mut input)
+        .map_err(|_| Error::Persistence)?;
+    Ok(input)
 }
 
 /// Commit only the exact live challenge and the exact authenticated action.

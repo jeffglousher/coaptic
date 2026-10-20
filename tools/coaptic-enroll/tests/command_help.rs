@@ -11,6 +11,8 @@ fn help_does_not_open_credential_storage() {
         vec!["inspect", "-h"],
         vec!["peer", "--help"],
         vec!["peer", "-h"],
+        vec!["serial-reconcile", "--help"],
+        vec!["serial-reconcile", "-h"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_coaptic-enroll"))
             .env("COAPTIC_ENROLLMENT_DIR", "relative-help-must-not-open")

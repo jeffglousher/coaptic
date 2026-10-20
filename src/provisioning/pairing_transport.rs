@@ -5,7 +5,9 @@
 //! verify operator approval there before sending a state-changing update.
 
 use super::local_pairing::{Reader, Writer};
-use super::{PairingChallenge, PairingError, PairingRecord, PairingUpdate, PinnedPeer};
+use super::{
+    OperationId, PairingChallenge, PairingError, PairingRecord, PairingUpdate, PinnedPeer, Receipt,
+};
 use crate::Endpoint;
 
 const MAX: usize = 512;
@@ -36,6 +38,24 @@ pub enum CommissioningRequest {
     /// Drain existing durable work and hold production for local administration.
     /// Implementations bound the drain and hold deadlines; no grant is changed.
     Quiesce,
+    /// Read retained operation metadata under this originating grant, or an exact
+    /// already-completed current tombstone checkpoint after successful repair.
+    /// The latter authenticates completion, not the original grant's history.
+    /// The device remains revoked; no payload or private key is returned.
+    Pending {
+        /// Originating enabled grant candidate; never proof of history by itself.
+        prior: PairingRecord,
+    },
+    /// Apply a current-owner-approved receipt from the original service journal.
+    /// This never authorizes a new effect or changes the revoked policy.
+    Reconcile {
+        /// Fresh challenge bound to the current disabled record.
+        challenge: PairingChallenge,
+        /// Exact originating grant for the retained operation.
+        prior: PairingRecord,
+        /// Existing durable receipt; the trusted host verifies its provenance.
+        receipt: Receipt,
+    },
 }
 
 impl CommissioningRequest {
@@ -66,6 +86,25 @@ impl CommissioningRequest {
             }
             Self::Restart => out.raw(&[0x82, 1, 4])?,
             Self::Quiesce => out.raw(&[0x82, 1, 5])?,
+            Self::Pending { prior } => {
+                out.raw(&[0x83, 1, 6])?;
+                let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+                let len = prior.encode(&mut bytes)?;
+                blob(&mut out, &bytes[..len])?;
+            }
+            Self::Reconcile {
+                challenge,
+                prior,
+                receipt,
+            } => {
+                out.raw(&[0x85, 1, 7])?;
+                let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+                let len = challenge.encode(&mut bytes)?;
+                blob(&mut out, &bytes[..len])?;
+                let len = prior.encode(&mut bytes)?;
+                blob(&mut out, &bytes[..len])?;
+                blob(&mut out, &receipt.encode())?;
+            }
         }
         Ok(out.pos)
     }
@@ -97,6 +136,20 @@ impl CommissioningRequest {
             }
             (0x82, 4) => Self::Restart,
             (0x82, 5) => Self::Quiesce,
+            (0x83, 6) => Self::Pending {
+                prior: PairingRecord::decode(read_blob(
+                    &mut read,
+                    PairingRecord::MAX_ENCODED_LEN,
+                )?)?,
+            },
+            (0x85, 7) => Self::Reconcile {
+                challenge: PairingChallenge::decode(read_blob(&mut read, 224)?)?,
+                prior: PairingRecord::decode(read_blob(
+                    &mut read,
+                    PairingRecord::MAX_ENCODED_LEN,
+                )?)?,
+                receipt: Receipt::decode(read_blob(&mut read, 56)?).ok_or(PairingError::Record)?,
+            },
             _ => return Err(PairingError::Record),
         };
         read.finish()?;
@@ -141,6 +194,19 @@ pub enum CommissioningReply {
     /// Existing durable work is complete; new production is held for60 seconds.
     /// An administrative challenge may extend the hold to its own deadline.
     Quiesced,
+    /// Privileged metadata for an authenticated retained operation, without its payload.
+    Pending {
+        /// Original operation identifier.
+        id: OperationId,
+        /// Resource authenticated as part of the complete operation digest.
+        resource: [u8; 32],
+        /// Digest of the complete operation, including format and payload.
+        digest: [u8; 32],
+        /// Exact retained receipt when already reconciled.
+        receipt: Option<Receipt>,
+    },
+    /// Exact receipt confirmed durable under the unchanged disabled record.
+    Reconciled(Receipt),
     /// Bounded refusal code, with no private data or detailed logs.
     Refused(u8),
 }
@@ -193,6 +259,28 @@ impl CommissioningReply {
                 out.raw(&[0x82, 1])?;
                 out.uint(133)?;
             }
+            Self::Pending {
+                id,
+                resource,
+                digest,
+                receipt,
+            } => {
+                out.raw(&[0x86, 1])?;
+                out.uint(134)?;
+                blob(&mut out, id.as_bytes())?;
+                blob(&mut out, resource)?;
+                blob(&mut out, digest)?;
+                if let Some(receipt) = receipt {
+                    blob(&mut out, &receipt.encode())?;
+                } else {
+                    out.raw(&[0xf6])?;
+                }
+            }
+            Self::Reconciled(receipt) => {
+                out.raw(&[0x83, 1])?;
+                out.uint(135)?;
+                blob(&mut out, &receipt.encode())?;
+            }
             Self::Refused(code) => {
                 out.raw(&[0x83, 1])?;
                 out.uint(255)?;
@@ -243,6 +331,38 @@ impl CommissioningReply {
             )?)?),
             (0x82, 132) => Self::Restarting,
             (0x82, 133) => Self::Quiesced,
+            (0x86, 134) => {
+                let id = OperationId::new(
+                    read_blob(&mut read, 16)?
+                        .try_into()
+                        .map_err(|_| PairingError::Record)?,
+                );
+                let resource = read_blob(&mut read, 32)?
+                    .try_into()
+                    .map_err(|_| PairingError::Record)?;
+                let digest = read_blob(&mut read, 32)?
+                    .try_into()
+                    .map_err(|_| PairingError::Record)?;
+                let receipt = if read.bytes.get(read.pos) == Some(&0xf6) {
+                    read.take(1)?;
+                    None
+                } else {
+                    Some(Receipt::decode(read_blob(&mut read, 56)?).ok_or(PairingError::Record)?)
+                };
+                if receipt.is_some_and(|receipt| receipt.id() != id || receipt.digest() != &digest)
+                {
+                    return Err(PairingError::Binding);
+                }
+                Self::Pending {
+                    id,
+                    resource,
+                    digest,
+                    receipt,
+                }
+            }
+            (0x83, 135) => Self::Reconciled(
+                Receipt::decode(read_blob(&mut read, 56)?).ok_or(PairingError::Record)?,
+            ),
             (0x83, 255) => {
                 Self::Refused(read.uint()?.try_into().map_err(|_| PairingError::Record)?)
             }
@@ -385,6 +505,79 @@ impl CommissioningDecoder {
 mod tests {
     use super::*;
     use crate::provisioning::{EnrollmentPolicy, Identity, LocalPairing};
+
+    #[test]
+    fn reconciliation_frames_fit_and_metadata_is_exact() {
+        let device = Identity::from_private_key([1; 32], 255).unwrap();
+        let peer = Identity::from_private_key([2; 32], 254).unwrap();
+        let mut state =
+            LocalPairing::restore(&device, PairingRecord::unpaired(&device, [3; 32]).unwrap())
+                .unwrap();
+        let entropy = |out: &mut [u8]| {
+            out.fill(4);
+            true
+        };
+        let challenge = state.begin(&device, 0, entropy).unwrap();
+        let policy = EnrollmentPolicy::new(peer.peer(), [5; 32], [6; 32]).unwrap();
+        state
+            .pair(&challenge, policy.clone(), 1, |_, _| Ok::<_, ()>(()))
+            .unwrap();
+        let challenge = state.begin(&device, 2, entropy).unwrap();
+        state
+            .set_recovery(
+                &challenge,
+                &policy,
+                Some([7; 32]),
+                3,
+                |_, _| Ok::<_, ()>(()),
+            )
+            .unwrap();
+        let prior = state.checkpoint().clone();
+        let challenge = state.begin(&device, 4, entropy).unwrap();
+        state
+            .revoke(&challenge, &[5; 32], 5, |_, _| Ok::<_, ()>(()))
+            .unwrap();
+        let challenge = state.begin(&device, 6, entropy).unwrap();
+        let receipt = Receipt::from_parts(OperationId::new([8; 16]), [9; 32], u64::MAX).unwrap();
+        let mut bytes = [0; 512];
+        for request in [
+            CommissioningRequest::Pending {
+                prior: prior.clone(),
+            },
+            CommissioningRequest::Reconcile {
+                challenge,
+                prior,
+                receipt,
+            },
+        ] {
+            let len = request.encode(&mut bytes).unwrap();
+            assert!(len <= 512);
+            assert!(CommissioningRequest::decode(&bytes[..len]).is_ok());
+            for end in 0..len {
+                assert!(CommissioningRequest::decode(&bytes[..end]).is_err());
+            }
+            bytes[len] = 0;
+            assert!(CommissioningRequest::decode(&bytes[..len + 1]).is_err());
+        }
+        for receipt in [None, Some(receipt)] {
+            let reply = CommissioningReply::Pending {
+                id: OperationId::new([8; 16]),
+                resource: [10; 32],
+                digest: [9; 32],
+                receipt,
+            };
+            let len = reply.encode(&mut bytes).unwrap();
+            assert!(
+                matches!(CommissioningReply::decode(&bytes[..len]), Ok(CommissioningReply::Pending { resource, .. }) if resource == [10; 32])
+            );
+        }
+        let len = CommissioningReply::Reconciled(receipt)
+            .encode(&mut bytes)
+            .unwrap();
+        assert!(
+            matches!(CommissioningReply::decode(&bytes[..len]), Ok(CommissioningReply::Reconciled(actual)) if actual == receipt)
+        );
+    }
 
     #[test]
     fn quiesce_is_bounded_and_rejects_trailing_bytes() {

@@ -91,6 +91,19 @@ releases its store locks without racing the next effect. Revocation remains
 immediate and preserves unresolved work; restoring authority does not erase it.
 Use `serial-quiesce --help` for the precise boundaries.
 
+If revocation left an operation whose effect was already committed at the host,
+use `serial-reconcile PORT HOST PRIOR_PAIRING.cbor APPROVAL` to reconcile its
+exact receipt while access remains revoked. `serial-revoke` tries to retain the
+prior public device checkpoint in the host directory before device mutation. If
+storage fails, it warns and prints the exact public CBOR without delaying
+revocation or replacing existing archives. Keep that checkpoint and the original
+receipt journal.
+The guide exposes the same operation under Maintenance. Current-owner approval
+binds the live challenge, old grant and complete receipt. The device authenticates
+retained work under that old grant; the host only looks up the matching durable
+row. Missing/conflicting history refuses. No new effect or grant is created; an
+uncertain reply can be inspected and retried with the same checkpoint and journal.
+
 For an explicit lost-receipt qualification, `peer ... --qualify-lost-receipt`
 requires an approved telemetry grant and exits with code 75 after synchronizing
 the first new durable effect, before sending its receipt. Preserve the same

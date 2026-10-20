@@ -124,25 +124,37 @@ Both have complete owned-network cleanup; the initial fixture/cleanup failure
 is retained. Q4's exact counter-fixture sources and limitation receipts are in
 [companion #98](https://github.com/jeffglousher/coaptic-validation/pull/98).
 
-Q7/Q8 current installed echo-only proof uses core `7bb32c9467b791c9d5c5f159562b467407861773`
-/ companion `11288b43c9f34db7fbcadf00470f33ca24e2926b`, run
-`ce38fbbb809549099e57a6a01e63bd92`: authenticated app-only OTA/software restart,
-unchanged identity/key/owner/policy and same-session 5.03/Max-Age 1 to 2.05 protected
-echo. Earlier two-host restart/Observe evidence retains its prior source and
-was not silently recaptured by this image. Core #623 / companion #103 deliver
-permission restoration, authenticated Pending transitions, bounded drain/hold
-and explicit AfterSync lost-receipt injection; twenty focused pairing tests
-include actual UDP receipt recovery and quiescence.
+Q7/Q8 current installed echo-only proof uses core
+`75548536d6ea417dc3f4a74c7fc9fc4e03ab5953` / companion
+`ccb41104a138876f59527cfb2414f7bfa102e663` (the reviewed tree merged by
+[companion #123](https://github.com/jeffglousher/coaptic-validation/pull/123)
+as `971f4d7612d7c727f17bb64d62936be195565a43`). Independently reviewed legacy
+first-use provenance resolved the missing enrolled-custody prerequisite:
+retained NVS revisions 1–8 and original page history, identity checks and
+controlled-workflow installation evidence establish unused custody within the
+declared ordinary-flash model. The [public witness](https://github.com/jeffglousher/coaptic-validation/blob/971f4d7612d7c727f17bb64d62936be195565a43/tools/qualification/evidence/legacy-custody/reviewed-provenance.json)
+retains assumptions and limits; absence or source chronology alone remains
+insufficient. Migration run `ca1ce3422cf4baaa128f897b4ae3f537` created a verified
+one-time claim and authenticated 1,214-byte custody record. Normal permit-disabled
+run `012e92f1a2aa3724e65a7f4aa41b1c1b` preserves the exact identity/key/owner/echo
+policy/revision 8 across three Inspect reads. Authenticated OTA took 22.08s;
+protected 45-byte echo recovered from 5.03/Max-Age 1 to same-session 2.05.
+Private NVS remains sealed; `completion-20261020/installed-legacy-nvs-review.json`
+and normal runtime receipts retain the local execution evidence.
 
-Installed telemetry/revocation execution remains blocked: current Inspect
-reports missing enrolled `coaptic_pair/pending_v1`. The 1214-byte record differs
-from earlier static telemetry's `coaptic_sec/pending_v1`. No authentic enrolled
-backup was found in bounded provenance review. Source chronology suggesting
-unused history does not prove complete no-deletion history. Restore/reconcile
-authentic prior custody, or establish an independently reviewed legacy first-use
-provenance contract, before dependent grants. No history initialization, reset or
-grant change was performed. Physical power cuts and production custody remain
-separate Q7/Q9 prerequisites.
+Explicit first-use initialization created the original host receipt journal;
+no effect is yet committed in this new installed workflow. Receipt-only repair
+of unresolved old-grant work under a revoked tombstone is in a focused development
+batch, not yet merged or installed. The flow binds current-owner approval to
+the prior checkpoint and exact existing journal receipt; it creates no effect
+or grant. Initial repair authenticates the prior binding; completed retries
+authenticate the exact current-bound completion without claiming prior history.
+Installed queued-work revocation, lost-receipt/one-or-both-peer restart recovery,
+fresh work, actual power cuts and interrupted administrative persistence remain
+Q7/Q8 obligations. The RF-on readiness guard retains an RF-lifecycle precondition;
+it does not close comprehensive entropy or production-custody qualification in Q9.
+Earlier source-specific restart/Observe and #623/#103 UDP/drain proof remain valid
+for their recorded sources; they are not new execution of this installed image.
 
 Q10 includes a completed finite host slice at core
 `cdabea60b43db0a9ec110276b9122d45c85eab73` / companion

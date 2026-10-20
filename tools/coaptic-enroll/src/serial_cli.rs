@@ -5,7 +5,7 @@ use coaptic::{
     Endpoint,
     provisioning::{
         CommissioningDecoder, CommissioningPending, CommissioningReply, CommissioningRequest,
-        EnrollmentPolicy, PairingUpdate, PinnedPeer,
+        EnrollmentPolicy, PairingRecord, PairingUpdate, PinnedPeer,
     },
 };
 use coaptic_console_core::ApprovalMode;
@@ -329,8 +329,11 @@ pub fn run(
         Request::for_pairing(&challenge, &policy, action)
     };
     let mut device_update_attempted = false;
-    let outcome =
-        super::pairing_cli::approve(&approval_directory, approval, make_request, |request| {
+    let outcome = super::pairing_cli::approve(
+        &approval_directory,
+        approval,
+        make_request,
+        |request| {
             request.matches_pairing(&challenge)?;
             let policy = request.pairing_policy()?;
             let update = if action == Action::Transfer {
@@ -360,6 +363,28 @@ pub fn run(
                 action == Action::Revoke,
                 now,
             )?;
+            if action == Action::Revoke {
+                match pairing::save_device_checkpoint(&host_directory, &record) {
+                    Ok(checkpoint) => println!(
+                        "Prior public device checkpoint retained: {}",
+                        checkpoint.display()
+                    ),
+                    Err(error) => {
+                        eprintln!(
+                            "Warning: could not retain the prior public device checkpoint ({error:?}). Revocation will continue; preserve the following public CBOR and the original receipt journal for recovery. Existing archive files were not replaced."
+                        );
+                        let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+                        if let Ok(length) = record.encode(&mut bytes) {
+                            eprintln!(
+                                "Prior public device checkpoint CBOR (hex): {}",
+                                super::hex(&bytes[..length])
+                            );
+                        } else {
+                            eprintln!("Warning: prior public checkpoint could not be encoded.");
+                        }
+                    }
+                }
+            }
             device_update_attempted = true;
             let response = usb
                 .request(&CommissioningRequest::Update {
@@ -383,7 +408,8 @@ pub fn run(
             }
             prepared.commit(|old, next| store.commit(old, next))?;
             Ok(())
-        });
+        },
+    );
     if let Err(error) = outcome {
         if device_update_attempted {
             eprintln!(

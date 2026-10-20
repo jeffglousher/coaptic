@@ -73,6 +73,14 @@ pub fn operation(choice: &str) -> Option<Operation> {
         "15" => ("development-piv-test", &[]),
         "16" => ("serial-restart", &["Serial port"]),
         "21" => ("serial-quiesce", &["Serial port"]),
+        "22" => (
+            "serial-reconcile",
+            &[
+                "Serial port",
+                "Existing host identity name",
+                "Prior public device checkpoint file",
+            ],
+        ),
         "17" => ("receipts-init", &["Existing host identity name"]),
         "18" => (
             "serial-backup",
@@ -115,6 +123,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
             "15" => "Test the touchless development credential",
             "16" => "Restart device, retaining identity and pairing",
             "21" => "Drain durable work and hold production for administration",
+            "22" => "Reconcile a committed receipt under the unchanged revoked policy",
             "17" => {
                 "Initialize first receipt journal for an existing host (never reset lost history)"
             }
@@ -124,7 +133,7 @@ pub fn operation(choice: &str) -> Option<Operation> {
             _ => unreachable!(),
         },
         fields,
-        approval: matches!(choice, "2" | "3" | "4" | "5" | "18" | "19" | "20"),
+        approval: matches!(choice, "2" | "3" | "4" | "5" | "18" | "19" | "20" | "22"),
         connect: choice == "12",
         permissions: matches!(choice, "2" | "4" | "20"),
     })
@@ -143,7 +152,10 @@ pub fn group(choice: &str) -> Option<Group> {
         "2" => ("Set up", &["11", "8", "6", "17"]),
         "3" => ("Pair / connect", &["2", "12", "5"]),
         "4" => ("Credentials", &["9", "10", "14", "15", "13"]),
-        "5" => ("Maintenance", &["21", "16", "3", "4", "18", "19", "20"]),
+        "5" => (
+            "Maintenance",
+            &["21", "16", "3", "4", "18", "19", "20", "22"],
+        ),
         _ => return None,
     };
     Some(Group { title, operations })

@@ -258,12 +258,46 @@ impl Journal {
         }
     }
 
+    /// Read an already committed receipt for exact retained operation metadata.
+    ///
+    /// This does not authorize or apply an effect and does not require the old
+    /// grant to remain enabled. The caller authenticates the privileged recovery
+    /// operation separately. Principal, operation, resource and complete content
+    /// digest must match; an uncertain journal must be reopened before lookup.
+    pub fn lookup_receipt(
+        &self,
+        principal: &Principal,
+        id: OperationId,
+        resource: &[u8; 32],
+        digest: &[u8; 32],
+    ) -> Result<Option<Receipt>, ReceiptError<Error>> {
+        if self.uncertain {
+            return Err(ReceiptError::Persistence(Error::NeedsRecovery));
+        }
+        let Some(row) = self.rows[..self.len]
+            .iter()
+            .flatten()
+            .find(|row| &row.bytes[8..40] == principal.fingerprint() && row.id() == id)
+        else {
+            return Ok(None);
+        };
+        let receipt = row.receipt();
+        if &row.bytes[56..88] != resource || receipt.digest() != digest {
+            return Err(ReceiptError::Conflict);
+        }
+        Ok(Some(receipt))
+    }
+
     /// Install a bounded test checkpoint. Production integrations should retain
     /// the default no-op; callbacks run while the authoritative policy fence is held.
     pub fn set_checkpoint(&mut self, checkpoint: Checkpoint) {
         self.checkpoint = checkpoint;
     }
 }
+
+#[cfg(test)]
+#[path = "lookup_tests.rs"]
+mod lookup_tests;
 
 impl ReceiptStore for Journal {
     type Error = Error;
