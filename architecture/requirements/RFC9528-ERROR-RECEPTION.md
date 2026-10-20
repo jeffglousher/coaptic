@@ -48,17 +48,20 @@ check complete bounded identifiers, directional keys and protected delivery.
 These existing tests do not establish all RFC 9668 reservation requirements or
 the mandatory error reply for equal initiator/responder IDs.
 
-[#365](https://github.com/jeffglousher/coaptic/issues/365) retains outbound error
-generation, equal-ID error delivery, error requests to the responder, broader
-error/CBOR/profile assessment, suite/EAD/exporter requirements and installed
-policy. Unknown future error codes and encodings outside this receiver's stated
+The [security profile](SECURITY-PROFILES.md) and
+[bootstrap ledger](RFC7252-EDHOC-OPTIONS.md) retain the later selected
+suite/EAD/exporter/error and independent-envelope results. This receiver slice
+alone does not supply that broader proof.
+[#365](https://github.com/jeffglousher/coaptic/issues/365) retains remaining
+installed authorization/effect qualification. Unknown future error codes and encodings outside this receiver's stated
 bounds have no support claim. Cancelled or locally failed candidates retain the
 previous quarantine policy; a recognized peer abort instead retains transport
 ACKs and diagnostics until its cache expires. This consumes one existing cache
-slot and cannot evict another owner. Sustained availability and independent
-error peers remain unqualified.
+slot and cannot evict another owner. Sustained availability remains unqualified;
+independent error results retain their separately recorded sources and limits.
 
-The [IETF RFC plan](../IETF-RFC-PLAN.md) remains L2 for EDHOC. Normative sources
+The [IETF RFC plan](../IETF-RFC-PLAN.md) records L3 for the selected EDHOC profile;
+this is not whole-RFC qualification. Normative sources
 are original [RFC 9528](../../knowledge/rfcs/rfc9528.txt) sections 6 and A.2.3,
 [RFC 9668](../../knowledge/rfcs/rfc9668.txt) section 4 and
 [RFC 7252](../../knowledge/rfcs/rfc7252.txt) sections 4.2 and 4.5.
