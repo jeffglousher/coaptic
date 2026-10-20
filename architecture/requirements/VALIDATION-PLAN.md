@@ -144,6 +144,24 @@ provenance contract, before dependent grants. No history initialization, reset o
 grant change was performed. Physical power cuts and production custody remain
 separate Q7/Q9 prerequisites.
 
+Q10 includes a completed finite host slice at core
+`cdabea60b43db0a9ec110276b9122d45c85eab73` / companion
+`ea440271a007d3b64f0c849e410e837165d1f979`, retained in
+[companion #119](https://github.com/jeffglousher/coaptic-validation/pull/119).
+Both synchronous and native Tokio UDP paths use startup-sized `Service` pools.
+Each mode completes sixteen 2,000-byte blockwise replies, three local four-Call
+capacity refusals and consumption/cancellation recovery without observed App
+allocation or reallocation. The native async path actually suspends; its
+[receipt](https://github.com/jeffglousher/coaptic-validation/blob/f6c1f1fdbed0314a7d04bbf8f1ef7816efbf5b2d/tools/qualification/evidence/cloud-startup/native-async-cdabea60.json)
+names capacities, layouts and the observation boundary: App future construction,
+polls and explicit synchronous App operations, excluding startup, executor work
+between polls and pending-future Drop. Local refusal is not a wire-level overload
+response. Requested pool layouts, inline owners and the fixture's 4 MiB stack
+reservation are separate from deployment peaks. Whole-system peaks, installed
+pressure schedules and sustained cloud capacity remain open. Allocated storage
+does not grow after binding; any future live expansion must be explicit and
+disabled by default.
+
 Q12 is complete at core `244809ebcd852cfeaf912bd2f5ba5956b6495bfc` /
 companion `7d34275be771ee1b689c9005c2eb2745b74586e7`,
 [run39254465762](https://github.com/jeffglousher/coaptic-validation/actions/runs/39254465762).
@@ -161,6 +179,20 @@ matches independent Windows emission. Retained logs, original failures and the
 are linked from closed #522. AF_PACKET receipts do not establish authenticated
 application delivery, native-driver support or a performance benefit. WSL2
 installation remains separate and requires administrator elevation.
+
+A separate finite detached cost probe passes in
+[run39359240571](https://github.com/jeffglousher/coaptic-validation/actions/runs/39359240571)
+at core `cdabea60b43db0a9ec110276b9122d45c85eab73` / companion
+`f09f168eb4897f483cbd3345d41b070bf75f6d6c`, using unmodified Aya.
+Across five batches of 10,000 invocations, median kernel-reported average times
+are 158 ns for another UDP port, 160 ns for a 32-byte unprotected payload,
+170 ns for opaque OSCORE syntax and 429 ns for 126 CoAP options; the minimal
+PASS control is 28 ns in each case. Expected counters match all 400,800
+control/classifier invocations, including warmups, and every returned frame
+matches its input. Neither program
+is attached to a network interface in this probe. These are medians of kernel
+batch averages, not individual-packet percentiles, NIC throughput or application
+latency. The current classifier adds observation cost; no acceleration is shown.
 
 ## Execution order and prerequisites
 

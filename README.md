@@ -72,11 +72,16 @@ backward time. Use one clock epoch for all timed App operations.
 Start device integration with `SmallDevice`: constrained packet pools, four
 routes and one client Call. Customize capacities before binding; choose `Device`,
 `Gateway` or `Service` when the workload needs their larger starting budgets.
-Use `.allocated(limit)` for bounded heap pools.
+Use `.allocated(limit)` to allocate bounded heap pools once at startup and reuse
+them for requests. Capacities stay fixed after binding; enabling `alloc` never
+enables automatic pool expansion.
 The heap limit covers requested pool allocations, not whole-process memory.
 Collect complete replies with `take_response_into` and a caller-owned buffer.
 See rustdoc for resource capacities, response lifetimes, Observe and block-wise
 contracts rather than inferring them from a preset's name.
+
+The companion [native async host check](https://github.com/jeffglousher/coaptic-validation#native-async-host-check)
+uses the same startup allocation policy with Tokio UDP in unprotected and OSCORE modes.
 
 These are configurations of the same App. Blockwise transfers split larger
 messages across packets and reserve bounded body storage when enabled. A report
