@@ -86,6 +86,7 @@ Inspect: inspect [--port PORT] [--host NAME]
 Setup: custody-init | device-init NAME KID | serial-init PORT KID
 \
 Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only | --echo-only] APPROVAL
+  Qualification only: --qualify-lost-commissioning-reply discards its actual USB commit reply before saving the host pairing; see serial-pair --help.
 \
 Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
   Qualification only: --qualify-lost-receipt exits75 after first durable effect, before receipt.

@@ -11,6 +11,8 @@ fn help_does_not_open_credential_storage() {
         vec!["inspect", "-h"],
         vec!["peer", "--help"],
         vec!["peer", "-h"],
+        vec!["serial-pair", "--help"],
+        vec!["serial-pair", "-h"],
         vec!["serial-reconcile", "--help"],
         vec!["serial-reconcile", "-h"],
     ] {
@@ -40,4 +42,12 @@ fn help_does_not_open_credential_storage() {
     assert!(peer.contains("host PID"));
     assert!(peer.contains("fresh session alone does not prove"));
     assert!(peer.contains("responding host needs OS firewall permission"));
+    let pairing = Command::new(env!("CARGO_BIN_EXE_coaptic-enroll"))
+        .args(["serial-pair", "--help"])
+        .output()
+        .unwrap();
+    let pairing = String::from_utf8(pairing.stdout).unwrap();
+    assert!(pairing.contains("--qualify-lost-commissioning-reply"));
+    assert!(pairing.contains("serial-recover with fresh current-owner approval"));
+    assert!(pairing.contains("not a physical USB disconnect"));
 }

@@ -23,6 +23,26 @@ use std::{
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[derive(Default)]
+enum ReplyDelivery {
+    #[default]
+    Normal,
+    DiscardCommitted,
+}
+
+impl ReplyDelivery {
+    fn qualify_lost_reply(&mut self, command: &OsStr) -> Result<()> {
+        if command != "serial-pair" || !matches!(self, Self::Normal) {
+            return Err(
+                "lost commissioning reply qualification is allowed once, only for serial-pair"
+                    .into(),
+            );
+        }
+        *self = Self::DiscardCommitted;
+        Ok(())
+    }
+}
+
 pub(super) struct Usb {
     port: Box<dyn serialport::SerialPort>,
     decoder: CommissioningDecoder,
@@ -41,6 +61,14 @@ impl Usb {
     pub(super) fn request(&mut self, request: &CommissioningRequest) -> Result<CommissioningReply> {
         exchange(&mut *self.port, &mut self.decoder, request)
     }
+
+    fn request_with_delivery(
+        &mut self,
+        request: &CommissioningRequest,
+        delivery: ReplyDelivery,
+    ) -> Result<CommissioningReply> {
+        exchange_with_delivery(&mut *self.port, &mut self.decoder, request, delivery)
+    }
 }
 
 pub(super) fn commissioning_error(error: Box<dyn std::error::Error>) -> Error {
@@ -55,6 +83,19 @@ fn exchange<T: Read + Write + ?Sized>(
     decoder: &mut CommissioningDecoder,
     request: &CommissioningRequest,
 ) -> Result<CommissioningReply> {
+    exchange_with_delivery(port, decoder, request, ReplyDelivery::Normal)
+}
+
+fn exchange_with_delivery<T: Read + Write + ?Sized>(
+    port: &mut T,
+    decoder: &mut CommissioningDecoder,
+    request: &CommissioningRequest,
+    delivery: ReplyDelivery,
+) -> Result<CommissioningReply> {
+    let discard_committed = matches!(delivery, ReplyDelivery::DiscardCommitted);
+    if discard_committed && !matches!(request, CommissioningRequest::Update { .. }) {
+        return Err("lost reply qualification requires a commissioning Update".into());
+    }
     let mut payload = [0; 512];
     let len = request.encode(&mut payload)?;
     let mut frame = [0; 518];
@@ -76,6 +117,17 @@ fn exchange<T: Read + Write + ?Sized>(
                         let reply = CommissioningReply::decode(payload)?;
                         if let CommissioningReply::Refused(code) = reply {
                             return Err(Error::DeviceRefused(code).into());
+                        }
+                        if discard_committed && let CommissioningReply::Committed(record) = &reply {
+                            // Drop only actual decoded delivery, before the caller can
+                            // persist its prepared host transition. Never resend.
+                            eprintln!(
+                                "Qualification checkpoint: discarded USB Committed reply at revision {}; host pairing was not persisted.",
+                                record.revision()
+                            );
+                            return Err(Error::Commissioning(
+                                "qualification discarded the committed USB reply; inspect device and host state, then use serial-recover; do not repeat the device update".into(),
+                            ).into());
                         }
                         return Ok(reply);
                     }
@@ -182,6 +234,7 @@ pub fn run(
     let mut directory_selected = false;
     let mut access = pairing::Access::default();
     let mut access_selected = false;
+    let mut reply_delivery = ReplyDelivery::Normal;
     while let Some(option) = args.next() {
         if let Some(mode) = option.to_str().and_then(ApprovalMode::from_flag) {
             if approval_selected {
@@ -192,6 +245,8 @@ pub fn run(
         } else if option == "--approval-directory" && !directory_selected {
             approval_directory = args.next().ok_or("missing approval directory")?.into();
             directory_selected = true;
+        } else if option == "--qualify-lost-commissioning-reply" {
+            reply_delivery.qualify_lost_reply(command)?;
         } else if let Some(value) = option.to_str().and_then(pairing::Access::from_flag) {
             if access_selected || !(command == "serial-pair" || command == "serial-transfer") {
                 return Err("unexpected or repeated access option".into());
@@ -387,10 +442,13 @@ pub fn run(
             }
             device_update_attempted = true;
             let response = usb
-                .request(&CommissioningRequest::Update {
-                    update,
-                    endpoint: destination,
-                })
+                .request_with_delivery(
+                    &CommissioningRequest::Update {
+                        update,
+                        endpoint: destination,
+                    },
+                    reply_delivery,
+                )
                 .map_err(commissioning_error)?;
             let CommissioningReply::Committed(committed) = response else {
                 return Err(Error::Persistence);
@@ -566,6 +624,165 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn framed(payload: &[u8]) -> Vec<u8> {
+        let mut frame = [0; 518];
+        let len = CommissioningDecoder::frame(payload, &mut frame).unwrap();
+        frame[..len].to_vec()
+    }
+
+    fn update_fixture() -> (CommissioningRequest, PairingRecord) {
+        use coaptic::provisioning::{Identity, LocalPairing};
+        let device = Identity::from_private_key([1; 32], 1).unwrap();
+        let host = Identity::from_private_key([2; 32], 2).unwrap();
+        let mut pairing =
+            LocalPairing::restore(&device, PairingRecord::unpaired(&device, [3; 32]).unwrap())
+                .unwrap();
+        let challenge = pairing
+            .begin(&device, 0, |bytes| getrandom::fill(bytes).is_ok())
+            .unwrap();
+        let policy =
+            EnrollmentPolicy::new(host.peer(), [4; 32], pairing::permissions(false)).unwrap();
+        let update = PairingUpdate::new(challenge, policy, false);
+        update
+            .apply(&mut pairing, 1, |_, _| Ok::<_, Error>(()))
+            .unwrap();
+        (
+            CommissioningRequest::Update {
+                update,
+                endpoint: Endpoint::v4([192, 0, 2, 1], 5683),
+            },
+            pairing.checkpoint().clone(),
+        )
+    }
+
+    #[test]
+    fn lost_commit_delivery_consumes_real_frame_once_before_host_persistence() {
+        use coaptic::provisioning::{Identity, LocalPairing};
+        for lost in [false, true] {
+            let (request, committed) = update_fixture();
+            let mut payload = [0; 512];
+            let len = CommissioningReply::Committed(committed)
+                .encode(&mut payload)
+                .unwrap();
+            let mut port = Port {
+                input: Cursor::new(framed(&payload[..len])),
+                written: Vec::new(),
+            };
+            let host = Identity::from_private_key([2; 32], 2).unwrap();
+            let device = Identity::from_private_key([1; 32], 1).unwrap();
+            let prior = PairingRecord::unpaired(&host, [5; 32]).unwrap();
+            let mut local = LocalPairing::restore(&host, prior.clone()).unwrap();
+            let challenge = local
+                .begin(&host, 0, |bytes| getrandom::fill(bytes).is_ok())
+                .unwrap();
+            let prepared = coaptic_enroll::recovery::PreparedHostPairing::prepare(
+                &mut local,
+                &challenge,
+                EnrollmentPolicy::new(device.peer(), [4; 32], pairing::permissions(false)).unwrap(),
+                1,
+            )
+            .unwrap();
+            let mut persisted = prior.clone();
+            let outcome = (|| -> Result<()> {
+                let response = exchange_with_delivery(
+                    &mut port,
+                    &mut CommissioningDecoder::new(),
+                    &request,
+                    if lost {
+                        ReplyDelivery::DiscardCommitted
+                    } else {
+                        ReplyDelivery::Normal
+                    },
+                )?;
+                assert!(matches!(response, CommissioningReply::Committed(_)));
+                prepared.commit(|old, next| {
+                    assert_eq!(old.commitment(), persisted.commitment());
+                    persisted = next.clone();
+                    Ok(())
+                })?;
+                Ok(())
+            })();
+            assert_eq!(outcome.is_err(), lost);
+            assert_eq!(persisted.commitment() == prior.commitment(), lost);
+            if lost {
+                assert!(
+                    outcome
+                        .unwrap_err()
+                        .to_string()
+                        .contains("qualification discarded")
+                );
+            }
+            assert_eq!(port.input.position(), port.input.get_ref().len() as u64);
+            let len = request.encode(&mut payload).unwrap();
+            assert_eq!(port.written, framed(&payload[..len]), "send exactly once");
+        }
+    }
+
+    #[test]
+    fn lost_commit_delivery_preserves_refusal_malformed_and_read_errors() {
+        let (request, _) = update_fixture();
+        let mut payload = [0; 512];
+        let len = CommissioningReply::Refused(5).encode(&mut payload).unwrap();
+        for incoming in [framed(&payload[..len]), framed(&[0xff]), Vec::new()] {
+            let mut errors = Vec::new();
+            for delivery in [ReplyDelivery::Normal, ReplyDelivery::DiscardCommitted] {
+                let mut port = Port {
+                    input: Cursor::new(incoming.clone()),
+                    written: Vec::new(),
+                };
+                let error = exchange_with_delivery(
+                    &mut port,
+                    &mut CommissioningDecoder::new(),
+                    &request,
+                    delivery,
+                )
+                .unwrap_err();
+                assert!(!error.to_string().contains("qualification discarded"));
+                errors.push(error.to_string());
+            }
+            assert_eq!(errors[0], errors[1]);
+        }
+    }
+
+    #[test]
+    fn lost_reply_selection_is_one_shot_serial_pair_only_and_update_only() {
+        let mut selected = ReplyDelivery::Normal;
+        selected
+            .qualify_lost_reply(OsStr::new("serial-pair"))
+            .unwrap();
+        assert!(
+            selected
+                .qualify_lost_reply(OsStr::new("serial-pair"))
+                .is_err()
+        );
+        for command in [
+            "serial-transfer",
+            "serial-revoke",
+            "serial-recover",
+            "serial-info",
+        ] {
+            assert!(
+                ReplyDelivery::Normal
+                    .qualify_lost_reply(OsStr::new(command))
+                    .is_err()
+            );
+        }
+        let mut port = Port {
+            input: Cursor::new(Vec::new()),
+            written: Vec::new(),
+        };
+        assert!(
+            exchange_with_delivery(
+                &mut port,
+                &mut CommissioningDecoder::new(),
+                &CommissioningRequest::Inspect,
+                selected,
+            )
+            .is_err()
+        );
+        assert!(port.written.is_empty(), "guard before transport I/O");
     }
 
     #[test]

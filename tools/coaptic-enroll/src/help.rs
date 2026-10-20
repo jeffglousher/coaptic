@@ -13,6 +13,22 @@ Inspection does not sign or change pairing. Local inventory does not contact
 devices. A failed selected target is reported while other results remain visible.
 Credential-record presence is not a live key test.",
         )
+    } else if command == "serial-pair" {
+        Some(
+            "Usage: coaptic-enroll serial-pair PORT HOST HOST_ADDRESS [--read-only | --echo-only] APPROVAL
+
+Approve one exact device grant and persist its reciprocal host pairing only after
+the device confirms its commit. Stop the host service to release its pairing lock.
+APPROVAL: --piv-touch or --development-no-touch; omit for Windows WebAuthn.
+
+Qualification only: --qualify-lost-commissioning-reply
+  Discard the actual decoded USB Committed reply before host pairing persistence.
+  The command fails deliberately; it does not retry the update. Inspect both
+  records, then use serial-recover with fresh current-owner approval. The selected
+  grant must differ from the host's stored permissions/enabled state for recovery.
+  This injects receive loss in the host adapter, not a physical USB disconnect.
+  The flag is accepted once and only by serial-pair. Other errors stay unchanged.",
+        )
     } else if command == "peer" {
         Some(
             "Usage: coaptic-enroll peer HOST LOCAL_ADDRESS PEER_ADDRESS [MODE]
