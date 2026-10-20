@@ -318,6 +318,16 @@ fn review(request: &Request, approval: ApprovalMode) -> Result<(), Error> {
             super::hex(&request.next_owner)
         );
     }
+    if let Some(metadata) = &request.reconciliation {
+        let receipt = metadata.receipt()?;
+        println!(
+            "Receipt-only repair: prior checkpoint {}, operation {}, content {}, committed sequence {}. Access remains revoked.",
+            super::hex(metadata.prior_commitment()),
+            super::hex(receipt.id().as_bytes()),
+            super::hex(receipt.digest()),
+            receipt.sequence()
+        );
+    }
     println!(
         "Transaction {}{}",
         super::hex(&request.commitment()?),

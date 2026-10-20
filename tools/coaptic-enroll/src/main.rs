@@ -13,6 +13,7 @@ mod piv_cli;
 mod pairing_cli;
 
 mod owner_recovery_cli;
+mod reconcile_cli;
 mod serial_cli;
 
 mod guided;
@@ -91,6 +92,8 @@ Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
 \
 Maintain: serial-quiesce PORT | serial-restart PORT | serial-recover PORT HOST APPROVAL
   serial-recover also accepts --approval-directory DIRECTORY for the current owner's credential.
+  serial-reconcile PORT HOST PRIOR_PAIRING.cbor APPROVAL
+  Receipt-only repair under an unchanged revoked policy; --help describes prerequisites.
 \
   serial-revoke PORT HOST APPROVAL
 \
@@ -161,6 +164,7 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
         "serial-revoke",
         "serial-transfer",
         "serial-recover",
+        "serial-reconcile",
         "serial-backup",
         "serial-backup-remove",
         "serial-owner-recover",
@@ -174,6 +178,9 @@ APPROVAL: omit the PIV flag for Windows verified authentication."
     }
     let directory = enrollment_directory()?;
     private_directory(&directory)?;
+    if command == "serial-reconcile" {
+        return reconcile_cli::run(args, &directory);
+    }
     if [
         "serial-backup",
         "serial-backup-remove",

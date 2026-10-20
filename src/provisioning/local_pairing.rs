@@ -127,6 +127,27 @@ impl PairingRecord {
         self.recovery_owner.as_ref()
     }
 
+    /// Check a candidate originating grant for receipt-only reconciliation.
+    /// The current record must be a disabled tombstone for the same identity,
+    /// store, owner, service and permissions. This does not authenticate history:
+    /// the retained operation must authenticate the prior record's commitment.
+    pub fn validate_reconciliation_prior(&self, prior: &Self) -> Result<(), PairingError> {
+        let current = self.policy.as_ref().ok_or(PairingError::Binding)?;
+        let previous = prior.policy.as_ref().ok_or(PairingError::Binding)?;
+        if self.enabled
+            || !prior.enabled
+            || prior.revision >= self.revision
+            || prior.store != self.store
+            || prior.local != self.local
+            || current.peer().principal() != previous.peer().principal()
+            || current.owner() != previous.owner()
+            || current.resource_policy() != previous.resource_policy()
+        {
+            return Err(PairingError::Binding);
+        }
+        Ok(())
+    }
+
     /// Complete record commitment for serialized compare-and-swap, not rollback proof.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
@@ -813,6 +834,32 @@ impl LocalPairing {
         self.commit(next, commit)
     }
 
+    /// Consume current-owner approval for an existing receipt, without changing
+    /// this disabled policy or its revision. The privileged caller must bind
+    /// approval to the full challenge, prior commitment and exact receipt.
+    /// `reconcile` must authenticate originating work against that prior commitment,
+    /// or an exact already-completed operation and receipt under this tombstone.
+    /// The latter proves completion, not original-grant history. Accept only an
+    /// existing service receipt and confirm durable readback.
+    /// A failed or ambiguous callback poisons this live owner until recovery.
+    pub fn reconcile<E>(
+        &mut self,
+        challenge: &PairingChallenge,
+        prior: &PairingRecord,
+        now_ms: u64,
+        reconcile: impl FnOnce(&PairingRecord) -> Result<(), E>,
+    ) -> Result<(), PairingCommitError<E>> {
+        self.check(challenge, now_ms)
+            .map_err(PairingCommitError::State)?;
+        self.record
+            .validate_reconciliation_prior(prior)
+            .map_err(PairingCommitError::State)?;
+        self.blocked = true;
+        reconcile(&self.record).map_err(PairingCommitError::Store)?;
+        self.blocked = false;
+        Ok(())
+    }
+
     fn check(&mut self, challenge: &PairingChallenge, now_ms: u64) -> Result<(), PairingError> {
         let pending = self.pending.take().ok_or(PairingError::Challenge)?;
         if self.blocked || now_ms < pending.1 || now_ms >= pending.2 || pending.0 != challenge.nonce
@@ -975,6 +1022,77 @@ mod tests {
     fn entropy(out: &mut [u8]) -> bool {
         out.fill(7);
         true
+    }
+
+    #[test]
+    fn reconciliation_consumes_fresh_challenge_preserves_tombstone_and_poison_refuses() {
+        let device = identity(1);
+        let peer = identity(2);
+        let mut state =
+            LocalPairing::restore(&device, PairingRecord::unpaired(&device, [3; 32]).unwrap())
+                .unwrap();
+        let challenge = state.begin(&device, 0, entropy).unwrap();
+        state.pair(&challenge, policy(&peer, 4), 1, commit).unwrap();
+        let prior = state.checkpoint().clone();
+        assert!(
+            state
+                .checkpoint()
+                .validate_reconciliation_prior(&prior)
+                .is_err()
+        );
+        let challenge = state.begin(&device, 2, entropy).unwrap();
+        state.revoke(&challenge, &[4; 32], 3, commit).unwrap();
+        let mut backup_changed = state.checkpoint().clone();
+        backup_changed.recovery_owner = Some([8; 32]);
+        assert!(backup_changed.validate_reconciliation_prior(&prior).is_ok());
+        let tombstone = state.checkpoint().commitment();
+        for variant in 0..6 {
+            let mut wrong = prior.clone();
+            match variant {
+                0 => wrong.enabled = false,
+                1 => wrong.revision = state.checkpoint().revision(),
+                2 => wrong.store[0] ^= 1,
+                3 => wrong.local[0] ^= 1,
+                4 => wrong.policy = Some(policy(&identity(3), 4)),
+                _ => wrong.policy = Some(policy(&peer, 5)),
+            }
+            assert!(
+                state
+                    .checkpoint()
+                    .validate_reconciliation_prior(&wrong)
+                    .is_err()
+            );
+        }
+        let challenge = state.begin(&device, 4, entropy).unwrap();
+        let mut calls = 0;
+        state
+            .reconcile(&challenge, &prior, 5, |_| {
+                calls += 1;
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(state.checkpoint().commitment(), tombstone);
+        assert!(!state.permits(&peer.peer().principal()));
+        assert!(
+            state
+                .reconcile(&challenge, &prior, 6, |_| Ok::<_, ()>(()))
+                .is_err()
+        );
+        let challenge = state.begin(&device, 7, entropy).unwrap();
+        assert!(matches!(
+            state.reconcile(&challenge, &prior, 8, |_| Err(())),
+            Err(PairingCommitError::Store(()))
+        ));
+        assert!(state.begin(&device, 9, entropy).is_err());
+        assert_eq!(state.checkpoint().commitment(), tombstone);
+        let mut state = LocalPairing::restore(&device, state.checkpoint().clone()).unwrap();
+        let challenge = state.begin(&device, 10, entropy).unwrap();
+        assert!(
+            state
+                .reconcile::<()>(&challenge, &prior, 60_010, |_| panic!("expired callback"))
+                .is_err()
+        );
     }
 
     #[test]

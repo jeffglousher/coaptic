@@ -42,6 +42,25 @@ attempts, respecting Max-Age within the deadline. Durable telemetry has its own
 receipt policy. The service holds the pairing lock; stop it before management.
 No operator signature or key touch is needed for ordinary communication.",
         )
+    } else if command == "serial-reconcile" {
+        Some(
+            "Usage: coaptic-enroll serial-reconcile PORT HOST PRIOR_PAIRING.cbor APPROVAL
+
+Reconcile an already committed telemetry receipt after revocation. Serial-revoke
+tries to retain the exact public device checkpoint in the host directory. If
+storage fails, it warns and prints public CBOR without delaying revocation. Keep
+that checkpoint and the original receipt journal; missing history is not reset.
+
+Requires the same device/store, current owner and original service/permissions,
+a disabled current policy, its older enabled checkpoint, authenticated retained
+operation metadata and the exact committed journal row. Current-owner approval
+binds the fresh device challenge, prior checkpoint and complete receipt.
+
+APPROVAL: --piv-touch or --development-no-touch; omit for Windows WebAuthn.
+Use --approval-directory DIRECTORY for a separately registered current owner.
+Pairing and journal locks remain held. This never applies a new effect or restores
+permissions. Inspect after an uncertain reply; retry only the same retained repair.",
+        )
     } else if command == "serial-quiesce" {
         Some(
             "Usage: coaptic-enroll serial-quiesce PORT

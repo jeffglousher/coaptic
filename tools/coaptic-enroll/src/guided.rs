@@ -39,7 +39,9 @@ fn available(id: &str, capabilities: Capabilities) -> bool {
     match id {
         "13" => capabilities.webauthn,
         "9" | "10" | "14" | "15" => capabilities.piv,
-        "2" | "3" | "4" | "5" | "18" | "19" | "20" => capabilities.piv || capabilities.webauthn,
+        "2" | "3" | "4" | "5" | "18" | "19" | "20" | "22" => {
+            capabilities.piv || capabilities.webauthn
+        }
         _ => true,
     }
 }
@@ -345,6 +347,23 @@ mod tests {
             collect_text("5\n1\nCOM6\ncontinue\n").0.unwrap(),
             ["serial-quiesce", "COM6"]
         );
+    }
+
+    #[test]
+    fn receipt_repair_selects_approval_without_a_new_grant() {
+        let (args, output) = collect_text("5\n8\nCOM6\nwaveshare-host\nprior.cbor\n2\ncontinue\n");
+        assert_eq!(
+            args.unwrap(),
+            [
+                "serial-reconcile",
+                "COM6",
+                "waveshare-host",
+                "prior.cbor",
+                "--development-no-touch"
+            ]
+        );
+        assert!(output.contains("unchanged revoked policy"));
+        assert!(!output.contains("Access: 1"));
     }
 
     #[test]
