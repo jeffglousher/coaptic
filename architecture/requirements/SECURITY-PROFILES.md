@@ -147,19 +147,26 @@ installed authorization/effect integration. Independent selected EDHOC proof is
 delivered by core #614 / companion #95:24 raw sessions plus six UDP error
 directions, with exact native adapters/capability limits in the evidence index.
 This does not establish whole-RFC certification or authenticate native EAD
-callbacks that run before MAC verification. Installed host restart/echo now
-passes with #619; exact permission restoration, authenticated Pending custody
-transitions, producer drain/hold and explicit lost-receipt integration are
-delivered in core #623 / companion #103 with focused host/UDP proof. Their
-installed telemetry execution remains open. Missing/unverifiable journals refuse
-rather than authorizing new effects; revocation must not wait for an unreachable
-peer. The current installed core 7bb32c9 / companion11288b4 image passes protected
-echo but Inspect reports missing enrolled `coaptic_pair/pending_v1` history.
-That record is distinct from earlier static telemetry custody. Dependent grants
-remain refused until authentic prior custody is restored/reconciled or an
-independently reviewed legacy first-use provenance contract is established;
-absence alone never authorizes initialization. Core #625 makes the custody state
-visible in CLI inspection.
+callbacks that run before MAC verification. The selected installed device's
+legacy-custody prerequisite is resolved through independently reviewed retained
+NVS/page history and controlled-workflow provenance, with an exact one-time
+initialization permit. That narrowly bound contract does not treat missing
+history as unused storage or qualify hostile snapshot recovery.
+
+Installed core `c08de234` / companion `27b0e643` (tree equal merge `421f666`)
+passes durable receipt recovery after host-only, device-only and both-peer
+software restart; core #633 supplies the device-only host fixture. Revocation
+with an unresolved old-grant operation persists while the host is stopped.
+Regrant refuses until explicit receipt-only reconciliation resolves that exact
+operation without re-enabling the grant. Normal A-to-B-to-A ownership changes,
+former-B USB administrative regrant refusal and restored protected echo pass.
+Four retained journal rows contain four unique operations; the device-only
+test adds one row and preserves the prior three-row prefix. The journal's
+exclusive lock prevented live external hashing; no live hash equality is claimed.
+The [execution plan](VALIDATION-PLAN.md) retains source and evidence boundaries.
+Three-distinct-credential backup recovery and consumed-backup refusal remain
+unexecuted on this device. The earlier old-host timeout is not authenticated
+network-refusal evidence.
 
 The finite native-EDHOC/CoAP-envelope option extension is also complete in
 companion #108: eleven directions pass, including exact duplicate ownership,
@@ -169,10 +176,13 @@ capture and independent-backend boundaries. This does not convert the Python
 transport envelope into a separate native CoAP stack.
 
 [#333](https://github.com/jeffglousher/coaptic/issues/333) remains physical
-qualification: actual power cuts at persistence boundaries, entropy/custody,
-source-matched device/host recovery and real actuator effects are not established
-by software tests. Existing restart observations remain evidence only for their
-recorded firmware. Optional rollback hardware, routed/additional-MCU workloads,
+qualification: actual power cuts/interrupted persistence, hardware entropy and
+selected custody guarantees are not established by software tests. Companion
+#127's bounded main-lifecycle seed and pure-Rust worker generator close the
+identified RF lifecycle race; installed startup/fresh-session behavior passes.
+The journal's application effect is its complete telemetry row, not an external
+actuator transaction. Existing restart observations remain evidence only for
+their recorded firmware. Optional rollback hardware, routed/additional-MCU workloads,
 Ethernet/PoE and sustained hostile-load campaigns need explicit scope decisions;
 ordinary flash must not be described as physically rollback-resistant.
 

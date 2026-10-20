@@ -4,13 +4,49 @@ use coaptic::{
     App, Code, Endpoint, Method, Response, get,
     oscore::{DeriveParams, SecurityContext},
     provisioning::{CoapProvisioner, Identity, LocalPairing, Status},
-    resources::SmallDevice,
+    resources::{Fixed, Resources, SmallDevice},
     storage::UdpSocketIo,
 };
 use std::{
     net::UdpSocket,
     time::{Duration, Instant},
 };
+
+// Two simultaneous full-response CON owners need two RX credits and two
+// retained TX packets, each in addition to the pool's ingress/control headroom.
+// Every other pool dimension and the datagram-only selection stay Constrained.
+coaptic::memory_profile! {
+    SharedConstrained {
+        rx_datagram: (3, 1152), tx_datagram: (3, 1152),
+        rx_body: (1, 4096), tx_body: (1, 4096), dedup: 4, observe: 2,
+    }
+}
+type SharedResources = Resources<SharedConstrained, 4, false, 0, 2, Fixed, 4, 2>;
+
+fn shared_resources() -> SharedResources {
+    Resources::<SharedConstrained>::new()
+        .routes::<4>()
+        .client_calls::<2>()
+        .associations::<2>()
+        .security_requests::<4>()
+}
+
+fn check_owner_ceiling<A>(_: &A) {
+    const {
+        assert!(std::mem::size_of::<A>() <= 20 * 1024);
+    }
+}
+
+fn is_initiator(local: &[u8; 32], peer: &[u8; 32]) -> bool {
+    local > peer
+}
+
+const APPLICATION_DEADLINE_MS: u64 = 15_000;
+
+fn retry_at(code: Code, max_age_secs: u32, elapsed_ms: u64, attempts: u8) -> Option<u64> {
+    super::peer::probe_retry_at(code, max_age_secs, elapsed_ms, attempts)
+        .filter(|next| *next < APPLICATION_DEADLINE_MS)
+}
 
 fn entropy(bytes: &mut [u8]) -> bool {
     getrandom::fill(bytes).is_ok()
@@ -39,8 +75,16 @@ pub fn run(
     socket.set_nonblocking(true)?;
     let mut io = UdpSocketIo::new(socket, [0; 1473])?;
     let started = Instant::now();
-    let mut bootstrap = CoapProvisioner::start(identity, peer.clone(), endpoint, 0, entropy)
-        .map_err(|e| format!("bootstrap start: {e:?}"))?;
+    // Match the device's role selection; a responder needs incoming UDP access.
+    let mut bootstrap = if is_initiator(
+        identity.peer().principal().fingerprint(),
+        peer.principal().fingerprint(),
+    ) {
+        CoapProvisioner::start(identity, peer.clone(), endpoint, 0, entropy)
+            .map_err(|e| format!("bootstrap start: {e:?}"))?
+    } else {
+        CoapProvisioner::listen(identity, peer.clone(), endpoint, 0)
+    };
     let session = loop {
         bootstrap
             .poll(
@@ -64,11 +108,11 @@ pub fn run(
         return Err("shared probe session authorization changed".into());
     }
     let (context, principal) = session.into_parts();
-    // Only Call capacity changes from SmallDevice: both outbound operations live together.
-    let mut app = App::with_resources(SmallDevice::new().client_calls::<2>().associations::<2>())
+    let mut app = App::with_resources(shared_resources())
         .randomness(entropy)
         .require_associations()
         .bind(io)?;
+    check_owner_ceiling(&app);
     let hardware =
         app.install_association(endpoint, *principal.fingerprint(), 1, &mut Some(context))?;
     let second_socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -96,15 +140,29 @@ pub fn run(
         .bind(UdpSocketIo::new(second_socket, [0; 1473])?)?;
     let software =
         app.install_association(second_endpoint, [7; 32], 2, &mut Some(derive(&[8], &[7])?))?;
+    let capacities = app.engine().capacities();
+    let usage = app.resource_usage();
     println!(
-        "Shared App bytes {}; associations 2; routes 4; Calls 2; bindings/context 4; no body pools.",
-        std::mem::size_of_val(&app)
+        "Shared App bytes {}; Constrained two-CON override; RX {}x{}; TX {}x{}; associations {}; routes {}; Calls {}; bindings/context {}; body pools RX {} TX {}.",
+        std::mem::size_of_val(&app),
+        capacities.rx_datagram_slots,
+        capacities.rx_datagram_bytes,
+        capacities.tx_datagram_slots,
+        capacities.tx_datagram_bytes,
+        app.association_capacity(),
+        usage.routes.capacity,
+        app.client_capacity(),
+        app.security_request_capacity(),
+        capacities.rx_body_slots.unwrap_or(0),
+        capacities.tx_body_slots.unwrap_or(0),
     );
     let mut elapsed = [0; 2];
     for (round, elapsed_us) in elapsed.iter_mut().enumerate() {
         let now = started.elapsed().as_millis() as u64;
         let began = Instant::now();
-        let hardware_call = app.get("identity").to_association(hardware).send(now)?;
+        let mut hardware_call = Some(app.get("identity").to_association(hardware).send(now)?);
+        let mut hardware_attempts = 1;
+        let mut hardware_due = 0;
         let software_call = if round == 0 {
             Some(app.get("identity").to_association(software).send(now)?)
         } else {
@@ -117,6 +175,25 @@ pub fn run(
                 return Err("pairing no longer permits probe".into());
             }
             let now = started.elapsed().as_millis() as u64;
+            let round_now = began.elapsed().as_millis() as u64;
+            if round_now >= APPLICATION_DEADLINE_MS {
+                return Err("shared probe application deadline".into());
+            }
+            if !hardware_done && hardware_call.is_none() && round_now >= hardware_due {
+                match app.get("identity").to_association(hardware).send(now) {
+                    Ok(call) => {
+                        hardware_call = Some(call);
+                        hardware_attempts += 1;
+                    }
+                    Err(coaptic::app::Error::Backoff { until_ms }) => {
+                        hardware_due = round_now.saturating_add(until_ms.saturating_sub(now));
+                        if hardware_due >= APPLICATION_DEADLINE_MS {
+                            return Err("shared probe cooldown exceeds application deadline".into());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             let mut ingress_error = None;
             app.poll_with_association_ingress(
                 now,
@@ -159,14 +236,36 @@ pub fn run(
                 .flush(app.transport_mut(), now)
                 .map_err(|e| format!("bootstrap flush: {e:?}"))?;
             second.poll(now)?;
-            if !hardware_done && let Some(response) = app.take_response(hardware_call) {
+            if !hardware_done
+                && let Some(call) = hardware_call
+                && let Some(response) = app.take_response(call)
+            {
                 let response = response.map_err(|e| format!("hardware call: {e:?}"))?;
-                if response.code() != Code::CONTENT || response.payload() != principal.fingerprint()
+                hardware_call = None;
+                if response.code() == Code::CONTENT && response.payload() == principal.fingerprint()
                 {
-                    return Err("hardware identity differs".into());
+                    hardware_done = true;
+                    *elapsed_us = began.elapsed().as_micros();
+                } else {
+                    let max_age = response.max_age_secs().unwrap_or(60);
+                    if let Some(next) = retry_at(
+                        response.code(),
+                        max_age,
+                        began.elapsed().as_millis() as u64,
+                        hardware_attempts,
+                    ) {
+                        println!(
+                            "Shared ESP32 identity received code {} (Max-Age {max_age}s); retrying in the same session.",
+                            response.code()
+                        );
+                        hardware_due = next;
+                    } else {
+                        return Err(format!(
+                            "hardware identity differs: code {}, Max-Age {max_age}s, attempt {hardware_attempts}",
+                            response.code()
+                        ).into());
+                    }
                 }
-                hardware_done = true;
-                *elapsed_us = began.elapsed().as_micros();
             }
             if !software_done
                 && let Some(response) =
@@ -203,4 +302,127 @@ pub fn run(
         local_endpoint
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coaptic::{
+        app::Error,
+        message::{Type, decode},
+        storage::{DatagramIo, DatagramTransport},
+    };
+
+    #[derive(Default)]
+    struct Sink {
+        sent: usize,
+    }
+    impl DatagramTransport for Sink {
+        type Error = ();
+        fn fill_random(&mut self, bytes: &mut [u8]) -> bool {
+            entropy(bytes)
+        }
+    }
+    impl DatagramIo for Sink {
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let packet = decode(bytes).unwrap();
+            assert_eq!(packet.ty(), Type::Confirmable);
+            assert!(packet.oscore().is_some());
+            self.sent += 1;
+            Ok(bytes.len())
+        }
+    }
+
+    #[test]
+    fn shared_probe_handshake_roles_are_complementary() {
+        let lower = [1; 32];
+        let greater = [2; 32];
+        assert!(is_initiator(&greater, &lower));
+        assert!(!is_initiator(&lower, &greater));
+        assert!(!is_initiator(&lower, &lower));
+    }
+
+    #[test]
+    fn shared_probe_overload_retry_respects_round_deadline_and_attempt_bound() {
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 1), Some(1100));
+        assert_eq!(
+            retry_at(Code::TOO_MANY_REQUESTS, 0, 14_998, 2),
+            Some(14_999)
+        );
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 14_000, 1), None);
+        assert_eq!(retry_at(Code::TOO_MANY_REQUESTS, 0, 14_999, 2), None);
+        assert_eq!(retry_at(Code::SERVICE_UNAVAILABLE, 1, 100, 3), None);
+        assert_eq!(retry_at(Code::CONTENT, 0, 100, 1), None);
+    }
+
+    #[test]
+    fn shared_probe_two_protected_con_calls_preserve_headroom_and_recover_capacity() {
+        let mut app = App::with_resources(shared_resources())
+            .randomness(entropy)
+            .require_associations()
+            .bind(Sink::default())
+            .unwrap();
+        check_owner_ceiling(&app);
+        let capacities = app.engine().capacities();
+        assert_eq!(
+            (capacities.rx_datagram_slots, capacities.tx_datagram_slots),
+            (3, 3)
+        );
+        assert_eq!(
+            (capacities.rx_body_slots, capacities.tx_body_slots),
+            (None, None)
+        );
+        let context = |id: u8| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[id; 16],
+                master_salt: &[],
+                sender_id: &[0],
+                recipient_id: &[id],
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        let a = app
+            .install_association(
+                Endpoint::v4([192, 0, 2, 1], 5683),
+                [1; 32],
+                1,
+                &mut Some(context(1)),
+            )
+            .unwrap();
+        let b = app
+            .install_association(
+                Endpoint::v4([192, 0, 2, 2], 5683),
+                [2; 32],
+                1,
+                &mut Some(context(2)),
+            )
+            .unwrap();
+        let first = app.get("identity").to_association(a).send(0).unwrap();
+        let second = app.get("identity").to_association(b).send(0).unwrap();
+        assert_eq!(app.transport().sent, 2);
+        let usage = app.resource_usage();
+        assert_eq!(usage.client_requests.occupied, 2);
+        assert_eq!(usage.storage.tx_datagram.occupied, 2);
+        assert_eq!(usage.ordinary_tx_capacity, 2);
+        assert_eq!(usage.full_response_capacity, 2);
+        assert!(matches!(
+            app.get("third").to_association(a).send(1),
+            Err(Error::Saturated)
+        ));
+        assert_eq!(
+            app.transport().sent,
+            2,
+            "refusal must not send or displace either owner"
+        );
+        assert!(app.cancel(first));
+        assert!(app.take_response(first).unwrap().is_err());
+        assert!(app.get("replacement").to_association(a).send(2).is_ok());
+        assert_eq!(app.transport().sent, 3);
+        assert!(app.take_response(second).is_none());
+        assert_eq!(app.resource_usage().storage.tx_datagram.occupied, 2);
+    }
 }

@@ -360,16 +360,28 @@ host-socket PMTU/ICMP and compound-traffic slice with exact sources and owned
 network cleanup. These results do not supply unsupported roles or automatic App
 PMTU adaptation.
 
-Current installed core `7bb32c9` / companion `11288b4` passes authenticated
-app-only OTA/software restart and protected echo while preserving identity,
-owner and policy. Earlier source-matched two-host restart proof remains retained
-at its own source. Core #623 / companion #103 deliver exact echo permission
-restoration, authenticated Pending transitions, bounded producer drain/hold and
-explicit lost-receipt injection. Current inspection reports missing enrolled
-Pending history; #333/#365 keep installed effect/revocation proof blocked on
-authenticated history restoration/reconciliation or an independently reviewed
-legacy first-use provenance contract. Missing history never means unused
-storage; immediate revocation cannot depend on an unreachable peer.
+The installed core `c08de234` / companion `27b0e643` image (tree equal merge
+`421f666`) now passes read-only refusal, durable receipt recovery after host-only,
+device-only and both-peer software restart, revoked-journal reconciliation,
+normal owner transfer and transfer back, and explicit former-owner administrative
+refusal. The device-only check uses core #633's CLI while the host process stays
+alive. Original identity, keys and four committed effects remain intact. The
+selected device's legacy-custody prerequisite was resolved by an independently
+reviewed, narrowly bound provenance contract and one-time initialization; missing
+history is never a general first-use permission. The
+[qualification plan](requirements/VALIDATION-PLAN.md) identifies exact sources,
+receipt numbers and retained evidence.
+
+Companion #127 also fixes background cooldown handling and replaces worker-time
+RF sampling with a bounded, zeroizing Rust generator seeded under the main Wi-Fi
+lifecycle owner before worker creation. Focused native tests, target compilation
+and installed fresh sessions pass. This does not establish physical entropy
+quality or power-loss safety. Remaining #333/#365 boundaries include actual cold
+power/interrupted commits, three-distinct-credential backup recovery and consumed
+backup refusal. A responding Windows host and the reverse MCU timing fixture
+still need scoped inbound firewall permission. The operator is unavailable for
+UAC/touch/power actions; these prerequisites remain unfinished, rather than
+reopening delivered protocol code or expanding the selected IETF roles.
 
 Companion #108 completes the finite independent bootstrap-option increment:
 eleven directions covering elective requests/responses, duplicate ownership,
