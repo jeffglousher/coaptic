@@ -212,13 +212,11 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 
 /// Receives into scratch with one extra byte so exact-capacity datagrams are
 /// accepted and oversized datagrams cannot become valid-looking prefixes.
-/// Uses default-profile-sized stack scratch; larger caller buffers use a
-/// fallible temporary allocation of `buf.len() + 1` bytes only with `alloc`.
-/// Without `alloc`, larger buffers return `InvalidInput` before socket I/O.
+/// Uses default-profile-sized stack scratch without allocating. Larger destination
+/// buffers return `InvalidInput` before socket I/O, including when `alloc` is enabled.
 /// Native receive errors
 /// (including platform-specific truncation errors) are preserved.
-/// Use [`UdpSocketIo`] with caller-supplied scratch to avoid that temporary
-/// allocation when receiving larger datagrams.
+/// Use [`UdpSocketIo`] with caller-supplied reusable scratch for larger datagrams.
 #[cfg(feature = "std")]
 impl crate::storage::DatagramTransport for std::net::UdpSocket {
     type Error = std::io::Error;
@@ -234,21 +232,9 @@ impl DatagramIo for std::net::UdpSocket {
             .checked_add(1)
             .ok_or(std::io::ErrorKind::InvalidInput)?;
         let mut stack = [0; STACK_BYTES];
-        #[cfg(feature = "alloc")]
-        let mut heap = std::vec::Vec::new();
-        let scratch = if required <= stack.len() {
-            &mut stack[..required]
-        } else {
-            #[cfg(feature = "alloc")]
-            {
-                heap.try_reserve_exact(required)
-                    .map_err(std::io::Error::other)?;
-                heap.resize(required, 0);
-                heap.as_mut_slice()
-            }
-            #[cfg(not(feature = "alloc"))]
-            return Err(std::io::ErrorKind::InvalidInput.into());
-        };
+        let scratch = stack
+            .get_mut(..required)
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
         recv_udp(self, buf, scratch)
     }
 
@@ -692,13 +678,7 @@ mod udp_tests {
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let dest = receiver.local_addr().unwrap();
-            // The large raw-socket fallback is an explicit allocator capability.
-            let capacities = if cfg!(feature = "alloc") {
-                &[0, 64, 1472, 2048][..]
-            } else {
-                &[0, 64, 1472][..]
-            };
-            for &capacity in capacities {
+            for capacity in [0, 64, 1472] {
                 let mut output = std::vec![0xA5; capacity];
                 for extra in [0, 1, 100] {
                     let payload = std::vec![0x39; capacity + extra];
