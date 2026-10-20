@@ -30,4 +30,14 @@ fn help_does_not_open_credential_storage() {
             .unwrap();
         assert!(!output.status.success());
     }
+    let peer = Command::new(env!("CARGO_BIN_EXE_coaptic-enroll"))
+        .args(["peer", "--help"])
+        .output()
+        .unwrap();
+    let peer = String::from_utf8(peer.stdout).unwrap();
+    assert!(peer.contains("Qualification-only fault injection"));
+    assert!(peer.contains("--qualify-device-restart"));
+    assert!(peer.contains("host PID"));
+    assert!(peer.contains("fresh session alone does not prove"));
+    assert!(peer.contains("responding host needs OS firewall permission"));
 }

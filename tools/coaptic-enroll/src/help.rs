@@ -19,6 +19,8 @@ Credential-record presence is not a live key test.",
 
 Restore the named host's pairing and communicate over EDHOC/OSCORE.
 Addresses are numeric IP:port pairs; use [IPv6]:port for IPv6.
+Every mode uses the same deterministic role: the greater credential fingerprint
+initiates. A responding host needs OS firewall permission for incoming UDP.
 
 Persistent service (also the default when MODE is omitted):
   --connect       Serve authorized requests and observe the peer's identity.
@@ -33,13 +35,23 @@ Qualification-only fault injection (approved telemetry grant required):
   --qualify-lost-receipt  Exit 75 after the first new durable effect is synced,
                          before sending its receipt. Preserve the journal and
                          restart normally to recover the same effect/receipt.
+  --qualify-device-restart
+                         Keep this same host process alive for at most90 seconds.
+                         Withhold the first new durable receipt using5.03/Max-Age1.
+                         After the armed marker, restart only the ESP32. A later
+                         protected session releases only that original receipt;
+                         all other new effects refuse before journal commit.
+                         Record the physical action and unchanged host PID, then
+                         inspect durable completion and quiesce before stopping.
+                         A fresh session alone does not prove a device restart.
 
 Shared integration check (separate handshake and operation deadlines):
   --probe-shared  Exercise concurrent shared connection handles.
 
 Identity and echo probes retry authenticated 4.29/5.03 responses at most three
 attempts, respecting Max-Age within the deadline. Durable telemetry has its own
-receipt policy. The service holds the pairing lock; stop it before management.
+receipt policy. The service holds the pairing lock; stop it before grant changes.
+Serial inspection/quiescence can run while this host service remains alive.
 No operator signature or key touch is needed for ordinary communication.",
         )
     } else if command == "serial-reconcile" {

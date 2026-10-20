@@ -89,6 +89,7 @@ Pair: serial-pair PORT HOST HOST_ADDRESS [--read-only | --echo-only] APPROVAL
 \
 Connect: peer HOST LOCAL_ADDRESS PEER_ADDRESS --connect
   Qualification only: --qualify-lost-receipt exits75 after first durable effect, before receipt.
+  Qualification only: --qualify-device-restart withholds one receipt in this host process for a device-only restart (90s window).
 \
 Maintain: serial-quiesce PORT | serial-restart PORT | serial-recover PORT HOST APPROVAL
   serial-recover also accepts --approval-directory DIRECTORY for the current owner's credential.

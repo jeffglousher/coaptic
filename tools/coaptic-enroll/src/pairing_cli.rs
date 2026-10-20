@@ -83,15 +83,7 @@ pub fn run(
                 remote.to_str().ok_or("invalid address")?,
             );
         }
-        let probe = match mode {
-            None => None,
-            Some(value) if value == "--connect" => Some(peer::Probe::Connect),
-            Some(value) if value == "--probe" => Some(peer::Probe::Identity),
-            Some(value) if value == "--probe-echo" => Some(peer::Probe::Echo),
-            Some(value) if value == "--probe-denied" => Some(peer::Probe::DeniedEcho),
-            Some(value) if value == "--qualify-lost-receipt" => Some(peer::Probe::LostReceipt),
-            _ => return Err("expected --connect, --probe, --probe-echo, --probe-denied or --qualify-lost-receipt".into()),
-        };
+        let probe = mode.map(|value| peer::Probe::from_flag(&value).ok_or("expected --connect, --probe, --probe-echo, --probe-denied, --qualify-lost-receipt or --qualify-device-restart")).transpose()?;
         if args.next().is_some() {
             return Err("unexpected arguments".into());
         }
