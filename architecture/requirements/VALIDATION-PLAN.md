@@ -268,9 +268,12 @@ They complete the selected finite #340 scope; the unmeasured limits remain
 explicit in its report.
 
 Cold power/interrupted commits, three-distinct-credential backup recovery and
-consumed-backup refusal remain #333/#365 work; the third credential requires slot
-84's touch. #341's matched inbound MCU timing requires scoped Windows firewall
-permission. #130 continues to coordinate those accepted prerequisites.
+consumed-backup refusal remain #333/#365 work. On October 21 the operator deferred
+touch-dependent qualification, including slot 84's third-credential schedule;
+earlier touch validation is retained without claiming that backup schedule ran.
+Continue independent work. #341's matched inbound MCU timing requires scoped
+Windows firewall permission. #130 coordinates the remaining physical prerequisites
+and deferred qualification.
 
 Q10 adds finite native-async pressure proof at core
 `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953`: Windows implementation

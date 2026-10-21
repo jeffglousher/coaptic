@@ -12,6 +12,13 @@ Direct commands remain available through `--help` for automation.
 Use `inspect --help` or `peer --help` for selection and connection options.
 Help works before credential storage or a device is available.
 
+For a short paired-device timing sample, use
+`peer HOST LOCAL_ADDRESS PEER_ADDRESS --qualify-timing` with an existing echo-only
+grant. It verifies four warmups and 24 protected identity replies in one session,
+including request admission, retries and polling waits. Session setup is reported
+separately. It changes no permissions or receipt records and does not measure
+per-request durable I/O or an unprotected mode.
+
 `inspect` shows local credential-record presence, host names and serial ports
 without contacting devices or asking for a key touch. Add `--host NAME` for
 verified identity and pairing details, or `--port PORT` for live device state,

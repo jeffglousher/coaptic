@@ -182,9 +182,11 @@ Companion #132 then installs core `d0366476` / suite `6f450f6d` (tree equal merg
 completed custody remain intact. These resource observations do not extend the
 custody or power-loss guarantees.
 Three-distinct-credential backup recovery and consumed-backup refusal remain
-unexecuted on this device; slot 84's required touch is the third-credential
-prerequisite. The earlier old-host timeout is not authenticated network-refusal
-evidence.
+unexecuted on this device. On October 21 the operator deferred touch-dependent
+qualification, including reuse of slot 84 as the third credential, while
+autonomous work continues. Earlier touch-policy, registration and signing checks
+remain separate evidence; they do not establish this installed backup schedule.
+The earlier old-host timeout is not authenticated network-refusal evidence.
 
 The finite native-EDHOC/CoAP-envelope option extension is also complete in
 companion #108: eleven directions pass, including exact duplicate ownership,
