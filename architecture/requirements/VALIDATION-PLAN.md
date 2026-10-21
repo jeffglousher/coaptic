@@ -30,8 +30,8 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | Q4 / #200 | Non-idempotent effects against alternative servers. | Companion #98 characterizes both retained alternative-server fixtures: duplicate CON POST applies twice, distinct fresh POST and GET succeed. This is an explicit fixture limitation, not successful suppression or a whole-library verdict. Installed one-effect/lost-receipt recovery remains Q8. |
 | Q5 / [#202](https://github.com/jeffglousher/coaptic/issues/202) | Host parser/state/resource campaigns: companion `tools/qualification/{contracts,host,seeded,fuzz}.py` and `contracts.json`; core integration tests. | Selected finite inventory executed: 52 named protocol groups, bounded parser/CBOR mutations, fixed/allocated storage churn, replay models and compound lifecycle schedules. Four evidence-oracle refusal tests reject absent, ignored, failed or stale test records. See the source-bound result below; coverage percentages and totals are not whole-RFC proof. |
 | Q6 / #202 | Diagnostic host/export adapter consuming #521. | Delivered in companion #88: synchronized caller-owned recorder, sampled maxima, explicit reset/drop behavior and bounded CBOR v1 export. Nine focused host/service tests cover isolation and unchanged durability/replay outcomes; strict Clippy passes. No mandatory logger, exporter thread or allocation in core. Overhead remains unmeasured. |
-| Q7 / [#333](https://github.com/jeffglousher/coaptic/issues/333) | Reserved ESP32-S3 durable local pairing and installed service; companion `tools/esphome/rust`, `tools/durable-host`. | Source-matched cold power cycle, interrupted/ambiguous commits and lost administrative replies; same identity/owner/permissions or explicit fail-closed repair. Preserve original NVS and credentials. Software restart and an archive build are separate evidence. |
-| Q8 / #333 / [#365](https://github.com/jeffglousher/coaptic/issues/365) | Owner transfer, backup recovery, revocation and durable effect receipts on the installed two-peer workflow. | Installed host-only/device-only/both-peer software-restart receipt recovery, revocation with Pending, exact receipt-only reconciliation, fresh work, owner A-to-B-to-A and former-owner administrative refusal pass. Three-distinct-credential backup recovery, consumed-backup refusal, affected queued-work cancellation and remaining interrupted/ambiguous transitions still need physical execution. A timeout is not authenticated network refusal. |
+| Q7 / [#333](https://github.com/jeffglousher/coaptic/issues/333) | Reserved ESP32-S3 durable local pairing and installed service; companion `tools/esphome/rust`, `tools/durable-host`. | Installed #635 proves adapter-discarded Committed delivery and fresh current-owner host-only repair, followed by protected refusal and software restart. Actual cold power/interrupted persistent transitions remain open; adapter injection is not physical wire-fault proof. Preserve original NVS and credentials. |
+| Q8 / #333 / [#365](https://github.com/jeffglousher/coaptic/issues/365) | Owner transfer, backup recovery, revocation and durable effect receipts on the installed two-peer workflow. | Installed host-only/device-only/both-peer software-restart receipt recovery, revocation with Pending, exact receipt-only reconciliation, fresh work, owner A-to-B-to-A and former-owner administrative refusal pass. Installed #636 also proves one live-CON management-teardown slice with a protected retry/release control, expiry guards and durable revocation. Three-distinct-credential backup recovery, consumed-backup refusal and remaining interrupted/ambiguous transitions still need physical execution; other queue families retain their named core proof. A timeout is not authenticated network refusal. |
 | Q9 / #333 | Actual entropy, key custody and storage backend. | Companion #127 closes the RF lifecycle race with a main-owner seed and bounded pure-Rust worker generator; target compilation, native tests and installed sessions pass. Physical entropy quality is unmeasured; selected custody/commit guarantees and initialization/rekey peaks retain separate proof obligations. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening. |
 | Q10 / [#340](https://github.com/jeffglousher/coaptic/issues/340) / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Whole deployment budget and useful progress under pressure. | Begin with `SmallDevice` / `Constrained`; name route, Call, deferred and security capacities. Distinguish whole-App layout, initialization peak, actual stack/heap and transport/security reservations without double counting. Execute admitted-peer progress/refusal/recovery with measured memory placement. |
 | Q11 / #341 | Controlled current-source comparison when requested. | Current six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #125 builds the reverse MCU initiator, but its image is not installed or measured. Matched MCU/durable timing and complete peaks remain open. |
@@ -143,7 +143,7 @@ suite `27b0e6438eff112f17646f4023abb44a41da40cc` (tree equal #127 merge
 `802aed318cb34cdebc3830079d0f1d5c`: authenticated OTA 22.35s, image SHA256
 `6cf39f75f884bd7327b628ef5731b67f76b188142653310a14a05220f49fd6d6`,
 ELF SHA256 `7cc9cd1cfcf82b259cd7225f9e87d2dda299f852b49e149ee1c6062489ef3e48`.
-Original identity/key remain intact; current revision 20 restores the original
+Original identity/key remain intact; current revision 24 restores the original
 owner/host and echo-only grant with authenticated completed custody.
 
 Companion #127 fixes background subscription Backoff handling. Read-only probes
@@ -181,10 +181,42 @@ is inside future 49,560B; Runtime 104B and RNG 336B also live inside the reserve
 storage is 336B; the 16B compiler TLS reservation per task is inside existing
 stacks. SDK heap includes dynamic stacks and runtime owners; these views must
 not be added together. The numeric summary retains heap-domain overlap and
-sampling limits. No PSRAM is configured. Cold power/interrupted administrative
-commits, lost administrative replies, three-distinct-credential backup recovery,
-consumed-backup refusal, affected queued-work cancellation and selected installed
-pressure remain unfinished.
+sampling limits. No PSRAM is configured.
+
+Core [#635](https://github.com/jeffglousher/coaptic/pull/635) qualifies an actual
+decoded USB Committed reply discarded before host persistence: the target advances
+to read-only revision 21 while the sealed host record stays unchanged. Fresh current-owner
+approval repairs only the host; duplicate recovery refuses, protected 4.03 survives
+software restart and ordinary pairing restores echo at revision 22. Core
+[#636](https://github.com/jeffglousher/coaptic/pull/636), candidate `6162217` / same-tree
+merge `d988c979`, then proves a live encrypted CON teardown on this unchanged image.
+It releases an exact protected retry as control, holds a fresh CON through its
+retry, and uses the same host lock/socket for ordinary approved USB revocation.
+Source-bound packet age, session and retry deadlines exclude natural expiry;
+final bounded drains cover host scheduling gaps. Challenge is the first teardown,
+not the later commit. Revoked revision 23 survives software restart, echo at revision 24 recovers, and
+the original 4,768-byte, four-row journal is byte-identical. This is one selected queue
+slice; other queue families retain matching-source core proof. The
+[executed receipt](https://github.com/jeffglousher/coaptic-validation/pull/131)
+names the source, binary, nine logs and measured timing bounds.
+
+The [physical reservation ledger](https://github.com/jeffglousher/coaptic-validation/blob/e7cee494cb93ba249c81ea2c7c123ea4938b2ab0/tools/qualification/evidence/completion-20261020/fixed-physical-memory-reconciliation.json)
+reconciles 540,672 bytes of physical SRAM/RTC capacity, counting aliases once. Shared
+static reservation is 100,568 bytes, including 17 bytes of alignment beyond the
+100,551 bytes of section content. The 3,072-byte ISR reservation is already in
+`.data`. Registered heaps of 361,796 bytes include dynamic
+stacks/TCBs/security/transport/runtime owners. The 4,556-byte ROM exclusion is explicitly
+inferred from the exact SDK registry contract, not directly sampled. This is a
+reservation ledger, not minimum deployment RAM or a measured worst-case peak.
+A separate 29-snapshot admin/reset receipt has 27 complete post-reconnect
+snapshots of 12 tasks: maximum nonfree heap 295,456 bytes, minimum free 66,340
+bytes and worker watermark 177,084 of 196,608 bytes. The region-minimum envelope
+of 306,968 bytes is not simultaneous peak use, and no
+startup/terminal row was captured. These later observations preserve the earlier
+receipt rather than fabricating a historical performance improvement.
+Cold power/interrupted commits, three-distinct-credential backup recovery,
+consumed-backup refusal, selected installed pressure and unmeasured transient
+initialization/rekey/ISR boundaries remain unfinished.
 
 Q10 adds finite native-async pressure proof at core
 `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953`: Windows implementation
@@ -268,6 +300,14 @@ matches its input. Neither program
 is attached to a network interface in this probe. These are medians of kernel
 batch averages, not individual-packet percentiles, NIC throughput or application
 latency. The current classifier adds observation cost; no acceleration is shown.
+
+The host comparison retains applicable source evidence through core `d988c979`:
+its only library-source changes from measured `755485` are two commissioning
+files under `src/provisioning`, excluded by the benchmark's explicit
+`std,alloc,oscore` features with defaults off. Core manifest, lockfile, macro
+crate/configuration and the complete companion `tools/benchmark` tree match.
+This is compiled-source equivalence, not a new timing or host-environment sample;
+it supplies no EDHOC/commissioning, durable-mode or MCU timing result.
 
 ## Execution order and prerequisites
 

@@ -365,7 +365,13 @@ The installed core `c08de234` / companion `27b0e643` image (tree equal merge
 device-only and both-peer software restart, revoked-journal reconciliation,
 normal owner transfer and transfer back, and explicit former-owner administrative
 refusal. The device-only check uses core #633's CLI while the host process stays
-alive. Original identity, keys and four committed effects remain intact. The
+alive. Core #635 additionally proves a deliberately discarded USB commit reply
+and fresh approved host-only repair; #636 proves one live-CON management teardown
+slice with protected retry control and source-bound expiry guards. Revoked revision 23
+survives software restart and original-owner echo at revision 24 recovers. The unchanged
+four-row journal and reviewed physical capacity/reservation ledger are retained in
+companion #130/#131; unmeasured transient peaks remain explicit. Original identity,
+keys and four committed effects remain intact. The
 selected device's legacy-custody prerequisite was resolved by an independently
 reviewed, narrowly bound provenance contract and one-time initialization; missing
 history is never a general first-use permission. The

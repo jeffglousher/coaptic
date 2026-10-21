@@ -163,7 +163,15 @@ former-B USB administrative regrant refusal and restored protected echo pass.
 Four retained journal rows contain four unique operations; the device-only
 test adds one row and preserves the prior three-row prefix. The journal's
 exclusive lock prevented live external hashing; no live hash equality is claimed.
-The [execution plan](VALIDATION-PLAN.md) retains source and evidence boundaries.
+Core #635 also proves discarded USB commit delivery followed by fresh approved
+host-only recovery. Core #636 proves one live-CON teardown slice: a protected
+retry/release control, bounded packet age/session/expiry, exact held retry,
+ordinary same-lock approved revocation and final receive drains. Challenge drops
+the old target owner before commit. The revoked tombstone survives software
+restart, original-owner echo at revision 24 recovers and all four journal rows remain unchanged.
+Other queue families retain their named core proof; no all-queue physical claim
+follows. The [execution plan](VALIDATION-PLAN.md) retains exact source and evidence
+boundaries.
 Three-distinct-credential backup recovery and consumed-backup refusal remain
 unexecuted on this device. The earlier old-host timeout is not authenticated
 network-refusal evidence.
