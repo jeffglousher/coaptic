@@ -242,8 +242,8 @@ Exp means Experimental. Titles are shortened for readability.
 | [8075](../knowledge/rfcs/rfc8075.txt) — HTTP-to-CoAP Mapping; ST | Contribution opportunity: application gateway use case and ownership boundary. HTTP transport support is outside active core UDP development. | L0. | Unsupported in this milestone. A contribution needs method/status/media-type/conditional/stream/error/security mapping and independent proof. CoAP-to-HTTP is separately assessed under RFC 7252 section 10. [#517](https://github.com/jeffglousher/coaptic/issues/517). |
 | [8132](../knowledge/rfcs/rfc8132.txt) — FETCH, PATCH and iPATCH; ST | Committed: protocol methods and exact selection/transfer identity. Application patch formats remain separately named payload contracts. | L3: methods, retained selections, fragmented follow-ups and validator-aware Observe. | The Observe/transfer ledger maps selection/transfer identity and direct tests. Source-specific independent directions are recorded in #200. Application JSON patch fixture subsets do not establish universal patch-format semantics. |
 | [8323](../knowledge/rfcs/rfc8323.txt) — TCP, TLS and WebSockets; ST | Contribution opportunity: reliable client/server sessions, signaling and negotiated BERT; no delivery promise or MVP gate. | L1: Engine BERT codecs; L0: reliable session runtime. | A contributed profile needs framing/partial I/O, CSM/Ping/Pong/Release/Abort, lifecycle/identity epochs, reviewed TLS/WS adapters, negotiated size/BERT ownership and independent directions. [#516](https://github.com/jeffglousher/coaptic/issues/516). |
-| [8516](../knowledge/rfcs/rfc8516.txt) — Too Many Requests; ST | Committed: explicit server overload policy and client similar-request backoff contract. | L3: explicit 4.29/5.03 constructors and bounded similar-request cooldown, merged in #567. | Applications choose client-specific versus general overload. Reserve/refusal delivery is #586; #200 records finite peer proof, while whole-deployment pressure/progress remains #333/#340. |
-| [8613](../knowledge/rfcs/rfc8613.txt) — OSCORE; ST | Committed: pairwise origin endpoints and inner blockwise transfers. Contribution opportunity: protected intermediary/Outer Block-wise role. | L3: supported pairwise profile; L0: protected intermediary. | Bounded associations, owner epochs, nonce/replay persistence and admission are delivered. Finite independent profile proof is retained in #200; physical qualification and deployment budgets remain #333/#340; see the security ledger. [#340](https://github.com/jeffglousher/coaptic/issues/340), [#200](https://github.com/jeffglousher/coaptic/issues/200). Intermediary: [#517](https://github.com/jeffglousher/coaptic/issues/517). |
+| [8516](../knowledge/rfcs/rfc8516.txt) — Too Many Requests; ST | Committed: explicit server overload policy and client similar-request backoff contract. | L3: explicit 4.29/5.03 constructors and bounded similar-request cooldown, merged in #567. | Applications choose client-specific versus general overload. Reserve/refusal delivery is #586; #200 records finite peer proof and #340 retains selected cloud/installed pressure proof. |
+| [8613](../knowledge/rfcs/rfc8613.txt) — OSCORE; ST | Committed: pairwise origin endpoints and inner blockwise transfers. Contribution opportunity: protected intermediary/Outer Block-wise role. | L3: supported pairwise profile; L0: protected intermediary. | Bounded associations, owner epochs, nonce/replay persistence and admission are delivered. Finite independent profile proof is retained in #200; #340 records selected deployment accounting and #333 retains physical qualification; see the security ledger. [#340](https://github.com/jeffglousher/coaptic/issues/340), [#200](https://github.com/jeffglousher/coaptic/issues/200). Intermediary: [#517](https://github.com/jeffglousher/coaptic/issues/517). |
 | [8710](../knowledge/rfcs/rfc8710.txt) — Multipart Content-Format; ST | Interest: bounded multipart codec/API. | L0: no dedicated codec; bytes can be transported opaquely. | No multipart compliance claim. Adoption requires a payload API and grammar/limit tests; opaque transport is not format implementation. |
 | [8768](../knowledge/rfcs/rfc8768.txt) — Hop-Limit; ST | Committed: origin/codec handling. Contribution opportunity: proxy forwarding/loop refusal. | L1: option codec and 5.08 constant; L0: intermediary behavior. | Separate exact origin behavior from decrement/forward/loop rules and prove each delivered role. [#517](https://github.com/jeffglousher/coaptic/issues/517), [#200](https://github.com/jeffglousher/coaptic/issues/200). |
 | [8974](../knowledge/rfcs/rfc8974.txt) — Extended Tokens and Stateless Clients; ST | Committed: bounded UDP extended-token client/server support. Contribution opportunity: reliable capability negotiation. Interest: stateless-client recipes. | L3: configurable owned UDP tokens, complete matching, canonical probing and authenticated capacity refusal, merged in #598. | Compact eight-byte defaults remain. Full tokens are echoed without maximum-sized scratch; probes bind association/owner epoch and expiry. #516 is delivered; #200 records independent unprotected and authenticated capacity/refusal/recovery directions. |
@@ -345,9 +345,9 @@ refusal and fresh-recovery captures. Companion #88 completes the synchronized
 diagnostic host/export adapter and the finite 52-group protocol inventory; the
 selected Q5/Q6 campaigns are recorded in the qualification plan. These slices are
 delivered; independent and physical qualification retain their separate owners.
-#340 no longer describes the App as
-limited to one security association; its remaining deployment accounting belongs
-with #333/#341 rather than a second association implementation.
+#340's selected deployment scope has finite cloud startup/traffic/Drop accounting,
+installed refusal/recovery and initialization/terminal observations. These do not
+require another association implementation or an absolute peak-RAM claim.
 
 The [qualification plan](requirements/VALIDATION-PLAN.md) separates completed
 literal inventory (#199), finite host/parser/export campaigns (#202), completed finite
@@ -360,8 +360,8 @@ host-socket PMTU/ICMP and compound-traffic slice with exact sources and owned
 network cleanup. These results do not supply unsupported roles or automatic App
 PMTU adaptation.
 
-The installed core `c08de234` / companion `27b0e643` image (tree equal merge
-`421f666`) now passes read-only refusal, durable receipt recovery after host-only,
+The core `c08de234` / companion `27b0e643` image (tree equal merge
+`421f666`) supplies read-only refusal, durable receipt recovery after host-only,
 device-only and both-peer software restart, revoked-journal reconciliation,
 normal owner transfer and transfer back, and explicit former-owner administrative
 refusal. The device-only check uses core #633's CLI while the host process stays
@@ -371,12 +371,26 @@ slice with protected retry control and source-bound expiry guards. Revoked revis
 survives software restart and original-owner echo at revision 24 recovers. The unchanged
 four-row journal and reviewed physical capacity/reservation ledger are retained in
 companion #130/#131; unmeasured transient peaks remain explicit. Original identity,
-keys and four committed effects remain intact. The
-selected device's legacy-custody prerequisite was resolved by an independently
+keys and four committed effects remain intact. Core #638 adds three protected
+5.03/Max-Age 1 refusals, local cooldown refusals and same-session recoveries while
+retaining real device CONs; six malformed datagrams interleave without a new packet
+queue or journal effect. Companion #132 retains this selected pressure proof.
+The selected device's legacy-custody prerequisite was resolved by an independently
 reviewed, narrowly bound provenance contract and one-time initialization; missing
 history is never a general first-use permission. The
 [qualification plan](requirements/VALIDATION-PLAN.md) identifies exact sources,
 receipt numbers and retained evidence.
+
+Companion #132 (`6f450f6d`, tree equal merge `eb6dcfd9`) also completes the selected
+finite #340 initialization/terminal slice at core `d0366476`. Delayed run
+`ac4d17ad6ed04eada0e5c4fef7121a05` captures platform setup, entropy, worker creation,
+owner/session/completion watermarks and a pre-deletion terminal sample. The restored
+normal run `31e69a1bce804eedb783c7ff9f218afb` uses the default zero delay and preserves
+the original revision-24 identity, owner and four effects. Exact layouts, disjoint
+physical reservations and sampled heap/stack limits remain source-bound. Truncated
+worker-boundary heap lines are excluded; absolute SP/ISR peaks and minimum deployment
+RAM are not claimed. The [qualification plan](requirements/VALIDATION-PLAN.md) links
+the retained receipt.
 
 Companion #127 also fixes background cooldown handling and replaces worker-time
 RF sampling with a bounded, zeroizing Rust generator seeded under the main Wi-Fi
@@ -384,10 +398,11 @@ lifecycle owner before worker creation. Focused native tests, target compilation
 and installed fresh sessions pass. This does not establish physical entropy
 quality or power-loss safety. Remaining #333/#365 boundaries include actual cold
 power/interrupted commits, three-distinct-credential backup recovery and consumed
-backup refusal. A responding Windows host and the reverse MCU timing fixture
-still need scoped inbound firewall permission. The operator is unavailable for
-UAC/touch/power actions; these prerequisites remain unfinished, rather than
-reopening delivered protocol code or expanding the selected IETF roles.
+backup refusal; the third credential uses slot 84's required touch. #341's matched
+reverse MCU timing fixture still needs scoped inbound Windows firewall permission.
+The ordinary outbound host works. UAC/touch/power prerequisites remain unfinished;
+#130 coordinates those accepted boundaries without reopening delivered protocol
+code or expanding the selected IETF roles.
 
 Companion #108 completes the finite independent bootstrap-option increment:
 eleven directions covering elective requests/responses, duplicate ownership,
