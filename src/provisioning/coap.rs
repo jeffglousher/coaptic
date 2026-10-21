@@ -4,7 +4,7 @@
 //! and the default EDHOC resource. It supports piggybacked replies and separate
 //! Confirmable or Non-confirmable replies. Block-wise transfer, discovery,
 //! proxies, EAD and combined EDHOC/OSCORE requests are outside this profile.
-//! No application plaintext policy is changed by bootstrap.
+//! Bootstrap does not enable unprotected application traffic.
 //! Elective options outside the selected message role, invalid elective lengths
 //! and supernumerary elective occurrences are ignored for profile matching.
 //! Unsupported critical requests receive 4.02; matching separate Confirmable

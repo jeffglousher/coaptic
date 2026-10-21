@@ -160,7 +160,7 @@ pub enum ResponseBufferError {
         /// Supplied output capacity.
         available: usize,
     },
-    /// Complete bytes are unavailable (legacy truncated snapshot or invalid storage).
+    /// Complete bytes are unavailable because the snapshot is truncated or storage is invalid.
     Unavailable,
 }
 impl core::fmt::Display for ResponseBufferError {
@@ -1186,10 +1186,10 @@ where
     /// that hold (released from the Engine). Representations above
     /// [`super::RESPONSE_BODY`] fail with [`CallFailure::ResponseBodyBounds`],
     /// even when a custom Engine profile can assemble more bytes. A later [`Self::take_response`] or
-    /// [`Self::poll`] overwrites the hold. Datagram App has no hold. After
-    /// [`Outgoing::observe`], the same `call` yields the initial
+    /// [`Self::poll`] overwrites the hold. Without block-wise storage, there is no
+    /// assembled hold. After [`Outgoing::observe`], the same `call` yields the initial
     /// representation and later notifications.
-    /// Plaintext/DTLS notifications obey RFC 7641 serial-number ordering
+    /// Notifications without OSCORE obey RFC 7641 serial-number ordering
     /// and its strict 128-second fallback. Stale CON notifications are ACKed
     /// without replacing data or refreshing Max-Age. OSCORE notifications use
     /// authenticated Partial-IV ordering instead. For block-wise notifications,
@@ -1239,7 +1239,7 @@ where
     /// Collect a complete representation into caller-owned storage.
     ///
     /// Enable [`super::AppBuilder::full_responses`] before bind to retain full
-    /// ordinary datagrams and bodies larger than the legacy assembled hold.
+    /// ordinary datagrams and bodies larger than the [`super::RESPONSE_BODY`] hold.
     /// An insufficient buffer leaves the reply and all bytes available for a
     /// later attempt; no bytes are copied and no partial success is returned.
     /// Metadata borrows App; `payload()` (and block `body()`) borrows `output`.

@@ -21,8 +21,8 @@
 //!
 //! Bind requires a provisioned pairwise OSCORE context. The example's hidden
 //! credentials are test fixtures; supply authenticated credentials and persist
-//! sender-sequence reservations in production. Unprotected compatibility and
-//! tests explicitly select [`AppBuilder::allow_unprotected`].
+//! sender-sequence reservations in production. Select unprotected traffic
+//! explicitly with [`AppBuilder::allow_unprotected`].
 //!
 //! ```
 //! # #[cfg(feature = "oscore")]
