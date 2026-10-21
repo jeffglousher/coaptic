@@ -4238,15 +4238,27 @@ where
             attempted: None,
             failed_mid: None,
         });
-    let selection = DeferredSelection::from_parts(
-        &parsed,
-        match assembled {
-            InboundBody::Complete(id) => engine.rx_body_payload(id).unwrap_or(parsed.payload()),
-            _ => parsed.payload(),
-        },
-    )
-    .ok();
-    let q_selectors = DeferredQSelectors::from_request(&parsed);
+    let can_defer = DEFERRED != 0
+        && dispatch.is_some()
+        && deferred_lifetime_ms != 0
+        && (parsed.observe().is_none() || deferred_observe.is_some());
+    let selection = can_defer
+        .then(|| {
+            DeferredSelection::from_parts(
+                &parsed,
+                match assembled {
+                    InboundBody::Complete(id) => {
+                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                    }
+                    _ => parsed.payload(),
+                },
+            )
+            .ok()
+        })
+        .flatten();
+    let q_selectors = can_defer
+        .then(|| DeferredQSelectors::from_request(&parsed))
+        .flatten();
     let deferred_handle = if selection.is_some()
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
@@ -4286,7 +4298,7 @@ where
                     _ => false,
                 };
                 let request = request.with_retained_if_none_match(retained);
-                let plan = ObservePlan::from_request(site, &request);
+                let plan = request_plan.unwrap_or_else(ObservePlan::idle);
                 let response = match dispatch {
                     Some(dispatch) => dispatch(request, deferred_handle),
                     None => site.dispatch(request, catalog.as_mut()),
@@ -4446,10 +4458,6 @@ impl<K: OwnedToken> ObservePlan<K> {
     }
 
     fn from_request<const N: usize>(site: &Site<N, K>, request: &Request<'_, K>) -> Self {
-        let selected = matches!(
-            site.observe_source(site.observe_resource(request.path())),
-            Some(routing::SnapshotSource::Selected(_))
-        );
         let selection = {
             DeferredSelection::from_parts(
                 &request.message(),
@@ -4458,6 +4466,18 @@ impl<K: OwnedToken> ObservePlan<K> {
             .ok()
             .map(DeferredSelection::stored)
         };
+        // A reused token may still own a terminal Q-Observe representation.
+        // Keep its selection, but ordinary requests need no Observe routing.
+        if request.message().observe().is_none() && request.method() != Some(Method::Delete) {
+            return Self {
+                token: request.token(),
+                selection,
+                ..Self::idle()
+            };
+        }
+        let resource = site.observe_resource(request.path());
+        let source = site.observe_source(resource);
+        let selected = matches!(source, Some(routing::SnapshotSource::Selected(_)));
         Self {
             register: request.is_observe_register(),
             no_response: NoResponse::from_message(&request.message())
@@ -4493,9 +4513,9 @@ impl<K: OwnedToken> ObservePlan<K> {
             q_block2: request.message().q_block2().next().is_some(),
             deregister: request.is_observe_deregister(),
             delete: request.method() == Some(Method::Delete),
-            has_source: site.has_observe_source(request.path()),
+            has_source: source.is_some(),
             token: request.token(),
-            resource: site.observe_resource(request.path()),
+            resource,
         }
     }
 }
