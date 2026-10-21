@@ -101,7 +101,7 @@ envelopes are not simultaneous peaks. No PSRAM is configured on the selected boa
 | --- | --- |
 | Installed paired EnrolledDevice | RX3/TX2 × 1,152B; dedup4/Observe2, routes8/Calls4/deferred0, association1/bindings4, blockwise off. Managed29,184B is inside future49,560B / pairing frame49,760B / stack196,608B. Runtime104B is inside Driver10,464B; RNG336B is inside its816B frame; component336B is BSS and TLS16B/task is inside existing stacks. The [initialization/terminal receipt](https://github.com/jeffglousher/coaptic-validation/blob/bdceac3ad5ff023d00f1588a4bc296a7505b9771/tools/qualification/evidence/completion-20261020/init-terminal-d036647.json), [companion #132](https://github.com/jeffglousher/coaptic-validation/pull/132) and [physical ledger](https://github.com/jeffglousher/coaptic-validation/blob/e7cee494cb93ba249c81ea2c7c123ea4938b2ab0/tools/qualification/evidence/completion-20261020/fixed-physical-memory-reconciliation.json) bind exact ELF/map, 540,672B disjoint physical capacity and 361,796B registered heap. Delayed startup and normal running captures are separate lifetimes; normal early startup/session records are outside capture and truncated worker heap lines are excluded. |
 | Native-async cloud Service | Startup-sized RX32/TX32 × 1,472B; four16,384B bodies/direction, routes2/Calls4/deferred0, association1/bindings4. Layout282,640B/App; seventeen complete2,000B replies plus a small reply, saturation/cancellation, real5.03/cooldown, malformed churn and recovery pass with zero scoped App alloc/realloc. [Windows receipt](https://github.com/jeffglousher/coaptic-validation/blob/7ac82e297d15c1ab0c8e087a630ed78f7292652f/tools/qualification/evidence/cloud-startup/native-pressure-7554853.json) and [Linux run39421315970](https://github.com/jeffglousher/coaptic-validation/actions/runs/39421315970) retain whole-process startup/bound/traffic/Drop views. Executor work outside App polls is excluded from scoped counts; process views overlap component owners. |
-| SmallDevice comparison | RX2/TX2 × 1,152B, routes4/one installed, Call1/deferred0, association1/bindings4, blockwise off. Whole App13,128B includes transport/scratch in the retained source755485 run. The [raw six-cell receipt](https://github.com/jeffglousher/coaptic-validation/blob/d6b84dbfaea6b0f16d9583e040853adc225d6393/tools/qualification/evidence/completion-20261020/smalldevice-windows-755485.json) includes all samples and shared-host CPU/RSS limits; it is not a new performance result. |
+| SmallDevice comparison | RX2/TX2 × 1,152B, routes4/one installed, Call1/deferred0, association1/bindings4, blockwise off. Fresh core9a1922b/suite3612a9e whole App13,128B includes transport/scratch. The [six-cell result and complete raw receipt](https://github.com/jeffglousher/coaptic-validation/tree/0433b94d8cc0b3642d6fc9e4fbbce33882f0d99f/tools/benchmark/evidence/loopback-windows-20261021) retain 1,200/1,200 verified32B GET/CON operations and shared-host CPU/RSS boundaries; these are component/process views, not minimum RAM. |
 | Matched LAN body-enabled Constrained | RX2/TX2 × 1,152B, one4,096B body/direction, dedup4/Observe2, routes8/six application plus discovery, Calls4/deferred0; protected mode adds association1/bindings4. The 98,304B worker reservation and finite runtime observations do not establish target App size, startup/ISR/kernel peaks or minimum RAM. |
 
 Automatic growth is off. Physical entropy quality, absolute SP/ISR/parking-path
@@ -111,10 +111,15 @@ limits; they do not reopen the completed finite Q10 contract.
 ### Measurements and reverse execution
 
 [#341](https://github.com/jeffglousher/coaptic/issues/341) owns named current-source
-comparisons. The requested full local-loopback rerun must inventory available
-libraries, distinguish equivalent workloads/security/storage and retain failures
-and unsupported cells. Earlier timings are reference evidence, not a current
-ranking. Use historical comparison only for a requested comparison or a concrete fault.
+comparisons. The [fresh Windows loopback comparison](https://github.com/jeffglousher/coaptic-validation/tree/0433b94d8cc0b3642d6fc9e4fbbce33882f0d99f/tools/benchmark/evidence/loopback-windows-20261021)
+binds clean core9a1922b/suite3612a9e to five complete rotated windows per stratum:
+1,260 matrix cells, 168,000/168,000 verified operations, zero failures, failed
+warmups or invalid cells. It covers all pinned available CoAP peers at
+64/1,024/65,536B, concurrency1/4/16, CON/NON; supported volatile-OSCORE fixtures
+use matched controls, and HTTP/3 remains separate. The fixed SmallDevice control
+adds six cells/1,200 successful operations. Raw sessions, capacities, hashes,
+unsupported security fixtures and memory/statistical limits are retained.
+Earlier timings remain reference evidence; they are not current measurements.
 
 - The retained six-cell SmallDevice run uses core755485/suiteccb411, 20 warmups
   and 200 measured complete32B GET/CONs per cell at concurrency1. Shared Windows
@@ -146,8 +151,9 @@ ranking. Use historical comparison only for a requested comparison or a concrete
 
 ## Execution order and prerequisites
 
-1. Complete cleanup, then the requested local-loopback comparison at a clean exact
-   snapshot. Fix concrete coding/integration defects before broadening diagnostics.
+1. Cleanup and the requested full local-loopback comparison are complete at the
+   named snapshots above. Fix concrete coding/integration defects before expanding
+   diagnostics; additional performance work needs a concrete question or request.
 2. Preserve completed Q1–Q6/Q9/Q10/Q12 proof and its source/fixture limits.
    Additional workloads, targets, absolute-peak or stability campaigns need a
    concrete implementation question or requested qualification scope.
