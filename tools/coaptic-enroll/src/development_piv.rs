@@ -402,11 +402,248 @@ mod tests {
     }
 
     fn fixture() -> (DevelopmentOperator, SigningKey) {
-        let key = SigningKey::from_slice(&[7; 32]).unwrap();
+        software_fixture(7, 0x82)
+    }
+
+    fn software_fixture(scalar: u8, slot: u8) -> (DevelopmentOperator, SigningKey) {
+        let key = SigningKey::from_slice(&[scalar; 32]).unwrap();
         let public = key.verifying_key().to_encoded_point(false);
-        let pending = DevelopmentOperator::registration(123, 0x82, public.as_bytes()).unwrap();
+        let pending = DevelopmentOperator::registration(123, slot, public.as_bytes()).unwrap();
         let proof = sign_fixture(&key, pending.digest());
         (pending.finish(&proof).unwrap(), key)
+    }
+
+    fn software_approval(
+        operator: &mut DevelopmentOperator,
+        key: &SigningKey,
+        request: Request,
+    ) -> DevelopmentApproval {
+        let pending = operator.begin(request).unwrap();
+        let signature = sign_fixture(key, pending.digest());
+        pending
+            .finish(&signature, |old, next| {
+                assert_eq!(old.owner().unwrap(), operator.owner().unwrap());
+                assert_eq!(old.revision, operator.revision);
+                assert_eq!(next.revision, old.revision + 1);
+                *operator = next.clone();
+                Ok(())
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn software_three_role_backup_composes_proofs_persistence_and_consumption() {
+        use coaptic::provisioning::{
+            EnrollmentPolicy, LocalPairing, PairingCommitError, PairingError, PairingRecord,
+            PairingUpdate,
+        };
+
+        fn apply_encoded(
+            update: PairingUpdate,
+            state: &mut LocalPairing,
+            durable: &mut PairingRecord,
+            now: u64,
+        ) -> Result<(), PairingCommitError<()>> {
+            let mut wire = [0; 512];
+            let len = update.encode(&mut wire).unwrap();
+            PairingUpdate::decode(&wire[..len])
+                .unwrap()
+                .apply(state, now, |old, next| {
+                    assert_eq!(old.commitment(), durable.commitment());
+                    let mut record = [0; PairingRecord::MAX_ENCODED_LEN];
+                    let len = next.encode(&mut record).unwrap();
+                    *durable = PairingRecord::decode(&record[..len]).unwrap();
+                    Ok(())
+                })
+        }
+
+        // All three private signing keys exist only in this software test. This
+        // exercises neither live PIV policy/touch nor installed flash power loss.
+        let (mut current, current_key) = fixture();
+        let (mut backup, backup_key) = software_fixture(8, 0x83);
+        let (mut destination, destination_key) = software_fixture(9, 0x84);
+        let a = current.owner().unwrap();
+        let b = backup.owner().unwrap();
+        let c = destination.owner().unwrap();
+        assert!(a != b && a != c && b != c);
+        let device = Identity::from_private_key([1; 32], 1).unwrap();
+        let original_peer = Identity::from_private_key([2; 32], 2).unwrap();
+        let replacement_peer = Identity::from_private_key([3; 32], 3).unwrap();
+        let mut durable = PairingRecord::unpaired(&device, [4; 32]).unwrap();
+        let store = *durable.store();
+        let local = *durable.local_principal();
+        let mut state = LocalPairing::restore(&device, durable.clone()).unwrap();
+        let policy = EnrollmentPolicy::new(original_peer.peer(), a, [5; 32]).unwrap();
+        let challenge = state
+            .begin(&device, 0, |bytes| {
+                bytes.fill(1);
+                true
+            })
+            .unwrap();
+        apply_encoded(
+            PairingUpdate::new(challenge, policy.clone(), false),
+            &mut state,
+            &mut durable,
+            1,
+        )
+        .unwrap();
+
+        let challenge = state
+            .begin(&device, 2, |bytes| {
+                bytes.fill(2);
+                true
+            })
+            .unwrap();
+        let configure = Request::for_recovery_configuration(&challenge, &policy, Some(b)).unwrap();
+        let confirm = configure.recovery_cosignature().unwrap();
+        assert_eq!(configure.action, crate::Action::ConfigureRecovery);
+        assert_eq!(confirm.action, crate::Action::ConfirmRecoveryCredential);
+        assert!(current.begin(confirm.clone()).is_err());
+        assert!(backup.begin(configure.clone()).is_err());
+        let approval = software_approval(&mut current, &current_key, configure);
+        let cosigner = software_approval(&mut backup, &backup_key, confirm);
+        approval
+            .commit(|request| {
+                let expected = request.recovery_cosignature()?.commitment()?;
+                cosigner.commit(|proof| {
+                    assert_eq!(proof.commitment()?, expected);
+                    request.matches_pairing(&challenge)?;
+                    apply_encoded(
+                        PairingUpdate::set_recovery(
+                            challenge.clone(),
+                            request.pairing_policy()?,
+                            Some(request.next_owner),
+                        )
+                        .map_err(|_| Error::Input)?,
+                        &mut state,
+                        &mut durable,
+                        3,
+                    )
+                    .map_err(|_| Error::Persistence)
+                })
+            })
+            .unwrap();
+        state = LocalPairing::restore(&device, durable.clone()).unwrap();
+        assert_eq!(state.checkpoint().recovery_owner(), Some(&b));
+        assert_eq!(state.checkpoint().policy().unwrap().owner(), &a);
+
+        let challenge = state
+            .begin(&device, 4, |bytes| {
+                bytes.fill(3);
+                true
+            })
+            .unwrap();
+        let next = EnrollmentPolicy::new(replacement_peer.peer(), c, [6; 32]).unwrap();
+        let recovery = Request::for_owner_recovery(&challenge, b, &next).unwrap();
+        let accept = recovery.recovery_cosignature().unwrap();
+        assert_eq!(recovery.action, crate::Action::RecoverOwner);
+        assert_eq!(accept.action, crate::Action::AcceptRecoveredOwnership);
+        let before = durable.commitment();
+        assert!(current.begin(recovery.clone()).is_err());
+        assert!(backup.begin(accept.clone()).is_err());
+        let pending = backup.begin(recovery.clone()).unwrap();
+        let signature = sign_fixture(&backup_key, pending.digest());
+        assert!(matches!(
+            destination
+                .begin(accept.clone())
+                .unwrap()
+                .finish(&signature, |_, _| panic!("cross-role proof persisted")),
+            Err(Error::Authentication)
+        ));
+        let mut changed = recovery.clone();
+        changed.next_owner = a;
+        assert!(matches!(
+            backup
+                .begin(changed)
+                .unwrap()
+                .finish(&signature, |_, _| panic!(
+                    "changed destination proof persisted"
+                )),
+            Err(Error::Authentication)
+        ));
+        assert_eq!(state.checkpoint().commitment(), before);
+        assert_eq!(durable.commitment(), before);
+        assert_eq!(
+            (current.revision, backup.revision, destination.revision),
+            (1, 1, 0)
+        );
+        drop(pending);
+        let approval = software_approval(&mut backup, &backup_key, recovery);
+        let cosigner = software_approval(&mut destination, &destination_key, accept);
+        approval
+            .commit(|request| {
+                let expected = request.recovery_cosignature()?.commitment()?;
+                cosigner.commit(|proof| {
+                    assert_eq!(proof.commitment()?, expected);
+                    request.matches_pairing(&challenge)?;
+                    apply_encoded(
+                        PairingUpdate::recover(
+                            challenge.clone(),
+                            request.owner,
+                            request.pairing_policy()?,
+                        )
+                        .map_err(|_| Error::Input)?,
+                        &mut state,
+                        &mut durable,
+                        5,
+                    )
+                    .map_err(|_| Error::Persistence)
+                })
+            })
+            .unwrap();
+        state = LocalPairing::restore(&device, durable.clone()).unwrap();
+        assert_eq!(state.checkpoint().store(), &store);
+        assert_eq!(state.checkpoint().local_principal(), &local);
+        assert_eq!(state.checkpoint().policy().unwrap().owner(), &c);
+        assert!(state.permits(&replacement_peer.peer().principal()));
+        assert!(!state.permits(&original_peer.peer().principal()));
+        assert_eq!(state.checkpoint().recovery_owner(), None);
+
+        // Fresh, valid B and A signatures cannot reuse the consumed B authority.
+        let challenge = state
+            .begin(&device, 6, |bytes| {
+                bytes.fill(4);
+                true
+            })
+            .unwrap();
+        let reuse = Request::for_owner_recovery(&challenge, b, &policy).unwrap();
+        let approval = software_approval(&mut backup, &backup_key, reuse.clone());
+        let cosigner = software_approval(
+            &mut current,
+            &current_key,
+            reuse.recovery_cosignature().unwrap(),
+        );
+        let completed = durable.commitment();
+        approval
+            .commit(|request| {
+                let expected = request.recovery_cosignature()?.commitment()?;
+                cosigner.commit(|proof| {
+                    assert_eq!(proof.commitment()?, expected);
+                    request.matches_pairing(&challenge)?;
+                    assert!(matches!(
+                        apply_encoded(
+                            PairingUpdate::recover(
+                                challenge.clone(),
+                                request.owner,
+                                request.pairing_policy()?
+                            )
+                            .map_err(|_| Error::Input)?,
+                            &mut state,
+                            &mut durable,
+                            7,
+                        ),
+                        Err(PairingCommitError::State(PairingError::Owner))
+                    ));
+                    Ok(())
+                })
+            })
+            .unwrap();
+        assert_eq!(state.checkpoint().commitment(), completed);
+        assert_eq!(durable.commitment(), completed);
+        assert_eq!(
+            (current.revision, backup.revision, destination.revision),
+            (2, 3, 1)
+        );
     }
 
     fn request(operator: &DevelopmentOperator) -> Request {

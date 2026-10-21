@@ -398,11 +398,12 @@ lifecycle owner before worker creation. Focused native tests, target compilation
 and installed fresh sessions pass. This does not establish physical entropy
 quality or power-loss safety. Remaining #333/#365 boundaries include actual cold
 power/interrupted commits, three-distinct-credential backup recovery and consumed
-backup refusal; the third credential uses slot 84's required touch. #341's matched
-reverse MCU timing fixture still needs scoped inbound Windows firewall permission.
-The ordinary outbound host works. UAC/touch/power prerequisites remain unfinished;
-#130 coordinates those accepted boundaries without reopening delivered protocol
-code or expanding the selected IETF roles.
+backup refusal. The operator deferred touch-dependent qualification on October 21;
+earlier touch checks do not establish the installed three-credential schedule.
+#341's matched reverse MCU timing fixture still needs scoped inbound Windows
+firewall permission. The ordinary outbound host works and independent development
+continues. #130 coordinates deferred qualification and the remaining UAC/power
+prerequisites without expanding the selected IETF roles.
 
 Companion #108 completes the finite independent bootstrap-option increment:
 eleven directions covering elective requests/responses, duplicate ownership,

@@ -22,12 +22,16 @@ pub(super) use queued_revoke::run_qualified as qualify_queued_revoke;
 #[path = "peer_pressure.rs"]
 mod pressure;
 pub(super) use pressure::run as qualify_pressure;
+#[path = "peer_timing.rs"]
+mod timing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Probe {
     Connect,
     Identity,
     Echo,
+    /// Finite host-initiated identity timings; never changes durable grants.
+    Timing,
     DeniedEcho,
     /// Explicit qualification fault: exit after one durable journal sync,
     /// before sending its receipt. Never enabled by ordinary peer modes.
@@ -42,6 +46,7 @@ impl Probe {
             "--connect" => Some(Self::Connect),
             "--probe" => Some(Self::Identity),
             "--probe-echo" => Some(Self::Echo),
+            "--qualify-timing" => Some(Self::Timing),
             "--probe-denied" => Some(Self::DeniedEcho),
             "--qualify-lost-receipt" => Some(Self::LostReceipt),
             "--qualify-device-restart" => Some(Self::DeviceRestart),
@@ -62,6 +67,9 @@ pub fn run(
     remote: &str,
     probe: Option<Probe>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if probe == Some(Probe::Timing) {
+        return timing::run(identity, pairing, local, remote);
+    }
     let peer = pairing.peer()?;
     let persistent = probe.is_none() || probe.is_some_and(|probe| !probe.one_shot());
     let initiates = identity.peer().principal().fingerprint() > peer.principal().fingerprint();
@@ -283,7 +291,9 @@ pub fn run(
             && let Some(probe) = probe.filter(|probe| probe.one_shot())
         {
             let (method, path, payload, format) = match probe {
-                Probe::Connect | Probe::LostReceipt | Probe::DeviceRestart => unreachable!(),
+                Probe::Connect | Probe::Timing | Probe::LostReceipt | Probe::DeviceRestart => {
+                    unreachable!()
+                }
                 Probe::Identity => (Method::Get, "identity", &[][..], None),
                 Probe::Echo | Probe::DeniedEcho => {
                     (Method::Post, "echo", &sample[..], Some(ContentFormat::CBOR))
@@ -306,7 +316,10 @@ pub fn run(
                     let response =
                         response.map_err(|error| format!("protected probe failed: {error:?}"))?;
                     let valid = match probe.ok_or("missing probe")? {
-                        Probe::Connect | Probe::LostReceipt | Probe::DeviceRestart => {
+                        Probe::Connect
+                        | Probe::Timing
+                        | Probe::LostReceipt
+                        | Probe::DeviceRestart => {
                             unreachable!()
                         }
                         Probe::Identity => {

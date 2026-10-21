@@ -47,6 +47,17 @@ One-shot checks (30-second deadline):
   --probe-echo    Send and verify a protected echo.
   --probe-denied  Verify that the peer refuses an echo with 4.03 Forbidden.
 
+Finite paired-device timing:
+  --qualify-timing  Four warmups and 24 measured protected GET identity replies,
+                    one session, 30-second run / five-second operation limits.
+                    Times start before admission and include retries/cooldown
+                    through complete 32-byte verification; every refusal is kept.
+                    Setup is separate. The unchanged 2 ms polling wait is included.
+                    No grants, journals, firmware or firewall settings change.
+                    Requires the existing echo-only grant; other grants refuse.
+                    Durable pairing is reused; per-request durable I/O is not
+                    measured. Output contains metadata and timings, no identity.
+
 Qualification-only fault injection (approved telemetry grant required):
   --qualify-lost-receipt  Exit 75 after the first new durable effect is synced,
                          before sending its receipt. Preserve the journal and

@@ -116,7 +116,7 @@ pub fn run(
                 remote.to_str().ok_or("invalid address")?,
             );
         }
-        let probe = mode.map(|value| peer::Probe::from_flag(&value).ok_or("expected --connect, --probe, --probe-echo, --probe-denied, --qualify-lost-receipt or --qualify-device-restart")).transpose()?;
+        let probe = mode.map(|value| peer::Probe::from_flag(&value).ok_or("expected --connect, --probe, --probe-echo, --probe-denied, --qualify-timing, --qualify-lost-receipt or --qualify-device-restart")).transpose()?;
         if args.next().is_some() {
             return Err("unexpected arguments".into());
         }
