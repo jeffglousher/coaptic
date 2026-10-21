@@ -19,6 +19,9 @@ mod device_restart;
 #[path = "peer_queued_revoke.rs"]
 mod queued_revoke;
 pub(super) use queued_revoke::run_qualified as qualify_queued_revoke;
+#[path = "peer_pressure.rs"]
+mod pressure;
+pub(super) use pressure::run as qualify_pressure;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Probe {

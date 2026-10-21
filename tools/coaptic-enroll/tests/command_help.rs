@@ -45,6 +45,10 @@ fn help_does_not_open_credential_storage() {
     assert!(peer.contains("--qualify-queued-revoke PORT --development-no-touch"));
     assert!(peer.contains("ends with device and host revoked"));
     assert!(peer.contains("same pairing lock and UDP socket"));
+    assert!(peer.contains("--qualify-pressure"));
+    assert!(peer.contains("three fresh target CONs"));
+    assert!(peer.contains("no packet queue"));
+    assert!(peer.contains("installation receipt"));
     let pairing = Command::new(env!("CARGO_BIN_EXE_coaptic-enroll"))
         .args(["serial-pair", "--help"])
         .output()

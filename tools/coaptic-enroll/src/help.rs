@@ -64,6 +64,20 @@ Qualification-only fault injection (approved telemetry grant required):
 Shared integration check (separate handshake and operation deadlines):
   --probe-shared  Exercise concurrent shared connection handles.
 
+Installed admission qualification (45-second finite window):
+  --qualify-pressure
+                  Current echo-only outbound-initiating host required. Lose one
+                  echo ACK as control, then hold each of three fresh target CONs.
+                  Require authenticated5.03/Max-Age1 for an identity request while
+                  the target TX is held, verify local cooldown, release its exact
+                  echo retry, then verify protected identity2.05 in the same session.
+                  Interleave six fixed malformed1B datagrams; no packet queue,
+                  telemetry, journal or management changes. Source/time guards
+                  refuse missed windows and session changes. Target source/profile
+                  matching needs the installation receipt, not network attestation.
+                  Selected retained-TX reuse only; no all-queue, installed NSTART
+                  refusal, rate fairness or whole-system memory-peak claim.
+
 Queued-CON qualification (ends with device and host revoked):
   --qualify-queued-revoke PORT --development-no-touch
                   Current echo-only, outbound-initiating host and Complete device
