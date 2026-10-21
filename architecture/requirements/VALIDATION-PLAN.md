@@ -32,9 +32,9 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | Q6 / #202 | Diagnostic host/export adapter consuming #521. | Delivered in companion #88: synchronized caller-owned recorder, sampled maxima, explicit reset/drop behavior and bounded CBOR v1 export. Nine focused host/service tests cover isolation and unchanged durability/replay outcomes; strict Clippy passes. No mandatory logger, exporter thread or allocation in core. Overhead remains unmeasured. |
 | Q7 / [#333](https://github.com/jeffglousher/coaptic/issues/333) | Reserved ESP32-S3 durable local pairing and installed service; companion `tools/esphome/rust`, `tools/durable-host`. | Installed #635 proves adapter-discarded Committed delivery and fresh current-owner host-only repair, followed by protected refusal and software restart. Actual cold power/interrupted persistent transitions remain open; adapter injection is not physical wire-fault proof. Preserve original NVS and credentials. |
 | Q8 / #333 / [#365](https://github.com/jeffglousher/coaptic/issues/365) | Owner transfer, backup recovery, revocation and durable effect receipts on the installed two-peer workflow. | Installed host-only/device-only/both-peer software-restart receipt recovery, revocation with Pending, exact receipt-only reconciliation, fresh work, owner A-to-B-to-A and former-owner administrative refusal pass. Installed #636 also proves one live-CON management-teardown slice with a protected retry/release control, expiry guards and durable revocation. Three-distinct-credential backup recovery, consumed-backup refusal and remaining interrupted/ambiguous transitions still need physical execution; other queue families retain their named core proof. A timeout is not authenticated network refusal. |
-| Q9 / #333 | Actual entropy, key custody and storage backend. | Companion #127 closes the RF lifecycle race with a main-owner seed and bounded pure-Rust worker generator; target compilation, native tests and installed sessions pass. Physical entropy quality is unmeasured; selected custody/commit guarantees and initialization/rekey peaks retain separate proof obligations. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening. |
-| Q10 / [#340](https://github.com/jeffglousher/coaptic/issues/340) / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Whole deployment budget and useful progress under pressure. | Begin with `SmallDevice` / `Constrained`; name route, Call, deferred and security capacities. Distinguish whole-App layout, initialization peak, actual stack/heap and transport/security reservations without double counting. Execute admitted-peer progress/refusal/recovery with measured memory placement. |
-| Q11 / #341 | Controlled current-source comparison when requested. | Current six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #125 builds the reverse MCU initiator, but its image is not installed or measured. Matched MCU/durable timing and complete peaks remain open. |
+| Q9 / #333 | Actual entropy, key custody and storage backend. | Companion #127 closes the RF lifecycle race with a main-owner seed and bounded pure-Rust worker generator; target compilation, native tests and installed sessions pass. Companion #132 captures the selected entropy/startup and generation-2 session boundaries. Physical entropy quality and absolute transient peaks remain unmeasured limits. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening. |
+| Q10 / [#340](https://github.com/jeffglousher/coaptic/issues/340) | Whole deployment budget and useful progress under pressure. | Selected finite scope is implemented and executed: cloud startup/bound/traffic/Drop accounting, named fixed/allocated owners and disjoint physical reservations, installed #638 refusal/cooldown/recovery and companion #132 initialization/terminal observations. Use the named capacities below; absolute SP/ISR/kernel peaks and minimum deployment RAM are not claimed or added as closure gates. |
+| Q11 / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Controlled current-source comparison when requested. | Six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness; compiled-source reuse through core d0366476 / suite6f450f6d is established below. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #125 builds the reverse MCU initiator, but its image is not installed or measured. Matched MCU/durable timing requires scoped inbound Windows permission. |
 | Q12 / [#522](https://github.com/jeffglousher/coaptic/issues/522) | Observation-only Rust eBPF ingress pilot on a named Linux hook. | Complete in run39254465762 at exact core244809e / companion7d34275: actual kernel acceptance, differential cycles, counters, byte preservation, lifecycle/process recovery and capability refusal. Named verifier/object/resource metrics are retained below. No kernel authentication, admission authority or measured performance benefit is implied. |
 
 The companion process manifest is an executable case inventory, not an RFC
@@ -137,13 +137,23 @@ exact ELF layouts and overlapping heap-domain limits; private NVS remains sealed
 
 Receipt-only repair is merged in [core #631](https://github.com/jeffglousher/coaptic/pull/631)
 and [companion #124](https://github.com/jeffglousher/coaptic-validation/pull/124).
-The current installed image is core `c08de2347649cb8d3b53020c0289707786cb0e0c` /
+The current installed image is core `d036647698dc38c7b351621cbcbcc61301376f91` /
+companion `6f450f6d35418609a2f3eede66150156123e9b38` (tree equal #132 merge
+`eb6dcfd92d356da0757d31c17ad523cbe87d95e2`), normal run
+`31e69a1bce804eedb783c7ff9f218afb` with the default zero delay. Its authenticated
+2,330,128-byte OTA image SHA256 is
+`a5c6fa3b50740a980b20bfa4971022ed744918f1afcb429489d4079b0782ddcf`.
+Original identity, owner, revision-24 echo grant, completed custody and four effects
+remain intact. The finite initialization/terminal receipt below identifies the
+separate delayed capture and normal restoration.
+
+The retained custody/recovery image is core `c08de2347649cb8d3b53020c0289707786cb0e0c` /
 suite `27b0e6438eff112f17646f4023abb44a41da40cc` (tree equal #127 merge
 `421f666bf7bf6cafcbbdb0ff5ea026389e85c05f`), run
 `802aed318cb34cdebc3830079d0f1d5c`: authenticated OTA 22.35s, image SHA256
 `6cf39f75f884bd7327b628ef5731b67f76b188142653310a14a05220f49fd6d6`,
 ELF SHA256 `7cc9cd1cfcf82b259cd7225f9e87d2dda299f852b49e149ee1c6062489ef3e48`.
-Original identity/key remain intact; current revision 24 restores the original
+Original identity/key remain intact; revision 24 restores the original
 owner/host and echo-only grant with authenticated completed custody.
 
 Companion #127 fixes background subscription Backoff handling. Read-only probes
@@ -153,7 +163,8 @@ owner before worker creation, then uses a zeroizing, worker-owned Rust generator
 with finite per-request/boot limits and permanent exhaustion refusal. Actual SDK
 contract review, 80 native tests, strict Clippy, Xtensa archive/link and installed
 fresh-session/management checks pass. Physical entropy quality, hostile rollback
-and full initialization/rekey overlap are not established by these checks.
+and absolute transient peaks are not established by these checks. Companion #132's
+later finite initialization/session/terminal observations are recorded below.
 
 Four unique durable journal effects now have installed recovery evidence:
 receipt 1 after host-only restart; receipt 2 after revocation with Pending and
@@ -212,11 +223,54 @@ A separate 29-snapshot admin/reset receipt has 27 complete post-reconnect
 snapshots of 12 tasks: maximum nonfree heap 295,456 bytes, minimum free 66,340
 bytes and worker watermark 177,084 of 196,608 bytes. The region-minimum envelope
 of 306,968 bytes is not simultaneous peak use, and no
-startup/terminal row was captured. These later observations preserve the earlier
-receipt rather than fabricating a historical performance improvement.
-Cold power/interrupted commits, three-distinct-credential backup recovery,
-consumed-backup refusal, selected installed pressure and unmeasured transient
-initialization/rekey/ISR boundaries remain unfinished.
+startup/terminal row was captured in that receipt. It remains unchanged and supplies
+no historical performance-improvement claim.
+
+Core [#638](https://github.com/jeffglousher/coaptic/pull/638), candidate `592d33a` /
+same-tree merge `d0366476`, adds the selected installed pressure slice on the same
+`c08de234` / `802aed` image. Three retained device CONs each provoke authenticated
+5.03/Max-Age 1 and local Backoff, then exact protected identity 2.05 after the held
+retry is released. Generation 1 remains unchanged; source-bound arrival/retry/
+release/recovery windows exclude natural cancellation. Six malformed one-byte
+datagrams interleave. Revision 24, the sealed host pairing and original 4,768-byte
+journal remain unchanged. Companion #132's
+[pressure receipt](https://github.com/jeffglousher/coaptic-validation/blob/eb6dcfd92d356da0757d31c17ad523cbe87d95e2/tools/qualification/evidence/completion-20261020/installed-pressure-592d33a.json)
+retains four exact logs and finite API aggregates. This is retained-TX admission
+and reuse, not installed NSTART refusal, rate fairness or every-queue saturation.
+
+Companion [#132](https://github.com/jeffglousher/coaptic-validation/pull/132),
+candidate `6f450f6d35418609a2f3eede66150156123e9b38` / same-tree merge
+`eb6dcfd92d356da0757d31c17ad523cbe87d95e2`, completes the finite initialization/
+terminal slice at core `d036647698dc38c7b351621cbcbcc61301376f91`. Native 89-test,
+configuration, strict Clippy, target Rust and full firmware checks pass. A selected
+60,000ms delay permits capture of run `ac4d17ad6ed04eada0e5c4fef7121a05` before
+platform setup, entropy seeding and worker creation. Worker phase watermarks are
+127,936 bytes before owner construction and 177,092 bytes after construction,
+generation-2 session establishment and authenticated completion. The final
+pre-deletion watermark is 177,092 of 196,608 bytes; the main producer also emits a
+complete 12-task terminal snapshot during `App.safe_reboot` for the restoring OTA.
+Setup/running/terminal heap rows are valid. Worker-boundary heap JSON lines were
+truncated and are excluded from complete heap-boundary claims.
+
+The [initialization/terminal receipt](https://github.com/jeffglousher/coaptic-validation/blob/bdceac3ad5ff023d00f1588a4bc296a7505b9771/tools/qualification/evidence/completion-20261020/init-terminal-d036647.json)
+binds both runs and their exact artifacts. The installed EnrolledDevice App uses
+Constrained RX3/TX2×1,152B, dedup4/Observe2, eight routes, four Calls, zero deferred,
+four security bindings and one association, with blockwise off. The normal boot
+has running snapshots and fresh protected work; its early startup/session records
+were outside the capture. Managed 29,184B is nested in future
+49,560B / pairing frame 49,760B; Runtime 104B is inside Driver 10,464B; RNG 336B is
+inside its 816B outer frame. Component 336B is in BSS, while TLS raw 8B / reserved
+16B per task is inside existing stacks. The 540,672B physical partition,
+361,796B registered heap and 100,551B shared static content plus 17B padding retain
+their disjoint accounting. These are layout/reservation and sampled observations,
+not absolute SP/ISR/parking-path peaks, kernel attribution or minimum required RAM.
+They complete the selected finite #340 scope; the unmeasured limits remain
+explicit in its report.
+
+Cold power/interrupted commits, three-distinct-credential backup recovery and
+consumed-backup refusal remain #333/#365 work; the third credential requires slot
+84's touch. #341's matched inbound MCU timing requires scoped Windows firewall
+permission. #130 continues to coordinate those accepted prerequisites.
 
 Q10 adds finite native-async pressure proof at core
 `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953`: Windows implementation
@@ -231,14 +285,16 @@ recovery. Scoped App allocation/reallocation requests stay zero. Pools are
 startup-sized Service RX32/TX32×1,472B, four 16,384B bodies/direction, two routes,
 four Calls, zero deferred, four security bindings and one association.
 Requested pool layout is 282,640B/App; whole-process requested live Rust heap
-after binding/traffic is 699,590B Windows / 662,351B Linux without successful
-allocation-count growth in that interval. OS/process totals overlap component
-views; the 4MiB fixture stack reservation is not measured peak use. Startup,
-executor work between App polls and pending-future Drop are outside scoped App
-counts. Individual stack peaks, native/kernel attribution, initialization/rekey
-overlap and installed pressure proof remain open. No live growth API is added;
-future expansion must be explicitly selected and disabled by default. Earlier
-sync/native-async #119 evidence retains its own sources and limits.
+after binding/traffic is 699,590B Windows / 662,351B Linux. Cumulative successful
+Rust requests are 225 allocations / 7 reallocations on Windows and 212 / 1 on
+Linux at binding and after traffic. Startup, bound, traffic and pending-future
+Drop have whole-process requested-heap/process snapshots; executor work outside
+App polls remains outside the zero scoped-App counts. OS/process totals overlap
+component views; the 4MiB fixture stack reservation is not measured peak use.
+Individual stack peaks and native/kernel attribution remain unmeasured limits.
+No live growth API is added; future expansion must be explicitly selected and
+disabled by default. Earlier sync/native-async #119 evidence retains its own
+sources and limits.
 
 Q11 reruns the existing SmallDevice harness at core
 `75548536d6ea417dc3f4a74c7fc9fc4e03ab5953` / companion
@@ -301,12 +357,17 @@ is attached to a network interface in this probe. These are medians of kernel
 batch averages, not individual-packet percentiles, NIC throughput or application
 latency. The current classifier adds observation cost; no acceleration is shown.
 
-The host comparison retains applicable source evidence through core `d988c979`:
+The SmallDevice comparison and finite cloud fixture retain applicable compiled
+source evidence through core `d0366476` / suite `6f450f6d`:
 its only library-source changes from measured `755485` are two commissioning
 files under `src/provisioning`, excluded by the benchmark's explicit
-`std,alloc,oscore` features with defaults off. Core manifest, lockfile, macro
-crate/configuration and the complete companion `tools/benchmark` tree match.
-This is compiled-source equivalence, not a new timing or host-environment sample;
+`std,alloc,oscore` selection with EDHOC off. The benchmark disables defaults;
+the cloud default only adds OSCORE. Core manifest, lockfile, build/configuration
+and macro crate match. The complete companion `tools/benchmark` tree matches
+measured `ccb411`; cloud `crates/peer-coaptic`, root manifest and lockfile match
+measured Linux `ea242dc`.
+The [reuse receipt](https://github.com/jeffglousher/coaptic-validation/blob/bdceac3ad5ff023d00f1588a4bc296a7505b9771/tools/qualification/evidence/completion-20261020/host-source-reuse-d036647.json)
+records these exact comparisons. This is compiled-source equivalence, not a new timing or host-environment sample;
 it supplies no EDHOC/commissioning, durable-mode or MCU timing result.
 
 ## Execution order and prerequisites
@@ -317,10 +378,12 @@ it supplies no EDHOC/commissioning, durable-mode or MCU timing result.
 2. Preserve completed finite Q2 directions and their retained limitations. The
    selected device's authenticated-history prerequisite, installed receipt
    recovery/reconciliation and read-only refusal defect are resolved. Finish the
-   remaining physical transitions and selected pressure/measurement boundaries.
+   remaining physical transitions and matched MCU measurement prerequisite. Selected
+   finite pressure and initialization/terminal resource slices are complete.
    Reuse proof when its exact source and required boundary still match. Keep
    optional DTLS fixtures and their reviewed RFC conflicts separate from the MVP.
-3. Execute Q7–Q10 on a source-matched installed image. Hardware touch is only
+3. Execute remaining Q7/Q8 transitions on a source-matched installed image; retain
+   the completed finite Q9/Q10 resource evidence. Hardware touch is only
    needed by the selected administrative approval policy, not ordinary traffic.
    An interrupted commit must be recoverable without regenerating identity keys.
 4. Preserve completed Q3 and Q12 source-bound evidence. A separate WSL2 lane

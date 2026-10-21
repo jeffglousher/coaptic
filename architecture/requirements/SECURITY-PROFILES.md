@@ -172,9 +172,19 @@ restart, original-owner echo at revision 24 recovers and all four journal rows r
 Other queue families retain their named core proof; no all-queue physical claim
 follows. The [execution plan](VALIDATION-PLAN.md) retains exact source and evidence
 boundaries.
+Core #638 and companion #132 add three authenticated 5.03/Max-Age 1 pressure refusals,
+local cooldown refusal and exact protected recovery in the same session on that
+image. Six malformed datagrams interleave; no telemetry or management mutation is
+requested. The original sealed pairing and four-row journal remain byte-identical.
+Companion #132 then installs core `d0366476` / suite `6f450f6d` (tree equal merge
+`eb6dcfd9`) for finite startup/terminal observations and restores default-delay run
+`31e69a1bce804eedb783c7ff9f218afb`. Identity, owner, revision-24 echo grant and
+completed custody remain intact. These resource observations do not extend the
+custody or power-loss guarantees.
 Three-distinct-credential backup recovery and consumed-backup refusal remain
-unexecuted on this device. The earlier old-host timeout is not authenticated
-network-refusal evidence.
+unexecuted on this device; slot 84's required touch is the third-credential
+prerequisite. The earlier old-host timeout is not authenticated network-refusal
+evidence.
 
 The finite native-EDHOC/CoAP-envelope option extension is also complete in
 companion #108: eleven directions pass, including exact duplicate ownership,
