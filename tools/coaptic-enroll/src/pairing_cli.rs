@@ -105,6 +105,17 @@ pub fn run(
                 remote.to_str().ok_or("invalid address")?,
             );
         }
+        if mode.as_deref() == Some(OsStr::new("--qualify-pressure")) {
+            if args.next().is_some() {
+                return Err("unexpected arguments after --qualify-pressure".into());
+            }
+            return peer::qualify_pressure(
+                &identity,
+                &state,
+                local.to_str().ok_or("invalid address")?,
+                remote.to_str().ok_or("invalid address")?,
+            );
+        }
         let probe = mode.map(|value| peer::Probe::from_flag(&value).ok_or("expected --connect, --probe, --probe-echo, --probe-denied, --qualify-lost-receipt or --qualify-device-restart")).transpose()?;
         if args.next().is_some() {
             return Err("unexpected arguments".into());
