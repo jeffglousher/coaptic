@@ -413,6 +413,7 @@ pub(crate) fn run_qualified(
         drain(&socket, &mut scratch, peer, Some(&armed.selected_hash))?;
         std::thread::sleep(Duration::from_millis(1));
     }
+    drain(&socket, &mut scratch, peer, Some(&armed.selected_hash))?;
     let CommissioningReply::State {
         device,
         record,
@@ -428,6 +429,7 @@ pub(crate) fn run_qualified(
     {
         return Err("final revoked device checkpoint differs".into());
     }
+    drain(&socket, &mut scratch, peer, Some(&armed.selected_hash))?;
     println!(
         "Queued-CON qualification passed: positive byte-identical retry/release, held retry stopped across privileged management teardown; ordinary approved revocation committed at {committed_at} ms, revision {}; no old ciphertext through {} ms. Device and host remain revoked; use ordinary approved pairing for fresh work. This is not physical power-loss or all-queue-family proof.",
         record.revision(),
