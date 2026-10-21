@@ -400,9 +400,15 @@ quality or power-loss safety. Remaining #333/#365 boundaries include actual cold
 power/interrupted commits, three-distinct-credential backup recovery and consumed
 backup refusal. The operator deferred touch-dependent qualification on October 21;
 earlier touch checks do not establish the installed three-credential schedule.
-#341's matched reverse MCU timing fixture still needs scoped inbound Windows
-firewall permission. The ordinary outbound host works and independent development
-continues. #130 coordinates deferred qualification and the remaining UAC/power
+#341 now has source-matched host-to-MCU unprotected and durable OSCORE cells:
+24 verified reads per mode at core3ca0be6/suite97517ea, with exact normal-image
+restoration and original pairing/four effects verified. Companion #138 retains
+the raw timings, named body-enabled Constrained configuration and finite memory
+observations. The selected LAN matrix has two initiator directions and two
+security modes. Reverse-direction Rust drivers and configuration generation have
+native proof in both modes; target validation and scoped inbound Windows firewall
+permission remain pending. No reverse execution or isolated crypto-cost claim is
+made. #130 coordinates deferred qualification and the remaining UAC/power
 prerequisites without expanding the selected IETF roles.
 
 Companion #108 completes the finite independent bootstrap-option increment:

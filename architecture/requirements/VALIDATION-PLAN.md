@@ -34,7 +34,7 @@ CI; execute a coherent batch once and repeat only to address a concrete failure.
 | Q8 / #333 / [#365](https://github.com/jeffglousher/coaptic/issues/365) | Owner transfer, backup recovery, revocation and durable effect receipts on the installed two-peer workflow. | Installed host-only/device-only/both-peer software-restart receipt recovery, revocation with Pending, exact receipt-only reconciliation, fresh work, owner A-to-B-to-A and former-owner administrative refusal pass. Installed #636 also proves one live-CON management-teardown slice with a protected retry/release control, expiry guards and durable revocation. Three-distinct-credential backup recovery, consumed-backup refusal and remaining interrupted/ambiguous transitions still need physical execution; other queue families retain their named core proof. A timeout is not authenticated network refusal. |
 | Q9 / #333 | Actual entropy, key custody and storage backend. | Companion #127 closes the RF lifecycle race with a main-owner seed and bounded pure-Rust worker generator; target compilation, native tests and installed sessions pass. Companion #132 captures the selected entropy/startup and generation-2 session boundaries. Physical entropy quality and absolute transient peaks remain unmeasured limits. Ordinary durable flash is the default; hostile snapshot/physical rollback resistance is optional hardening. |
 | Q10 / [#340](https://github.com/jeffglousher/coaptic/issues/340) | Whole deployment budget and useful progress under pressure. | Selected finite scope is implemented and executed: cloud startup/bound/traffic/Drop accounting, named fixed/allocated owners and disjoint physical reservations, installed #638 refusal/cooldown/recovery and companion #132 initialization/terminal observations. Use the named capacities below; absolute SP/ISR/kernel peaks and minimum deployment RAM are not claimed or added as closure gates. |
-| Q11 / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Controlled current-source comparison when requested. | Six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness; compiled-source reuse through core d0366476 / suite6f450f6d is established below. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #125 builds the reverse MCU initiator, but its image is not installed or measured. Matched MCU/durable timing requires scoped inbound Windows permission. |
+| Q11 / [#341](https://github.com/jeffglousher/coaptic/issues/341) | Controlled current-source comparison when requested. | Six-cell SmallDevice Windows quick check at core755485/suiteccb411 passes 200/200 per cell using the #110 harness; compiled-source reuse through core d0366476 / suite6f450f6d is established below. Named volatile OSCORE and unprotected fixtures retain CPU/RSS limits. Companion #138 completes matched host-to-MCU unprotected/durable OSCORE reads at core3ca0be6/suite97517ea: 24/24 per mode, exact normal restoration and retained records verified. The selected LAN matrix has two initiator directions and two security modes. Both reverse drivers have native proof; target validation/execution and scoped inbound Windows permission remain pending. |
 | Q12 / [#522](https://github.com/jeffglousher/coaptic/issues/522) | Observation-only Rust eBPF ingress pilot on a named Linux hook. | Complete in run39254465762 at exact core244809e / companion7d34275: actual kernel acceptance, differential cycles, counters, byte preservation, lifecycle/process recovery and capability refusal. Named verifier/object/resource metrics are retained below. No kernel authentication, admission authority or measured performance benefit is implied. |
 
 The companion process manifest is an executable case inventory, not an RFC
@@ -324,9 +324,53 @@ App/runtime/stack. Durable commits and MCU timing are not measured by these cell
 builds the synchronous reverse MCU 24-GET fixture at core 68664c2/suite 1990fcf,
 run `69ec4c6764cfc5455b7aaa3e41e17db8`, but this separate image is not installed.
 Its body-enabled Constrained configuration is not the paired/SmallDevice profile.
-The four-role matched MCU timing matrix still needs actual complete captures.
+The selected LAN timing matrix has two initiator directions and two security
+modes. Its two MCU-to-host cells still need complete captures; the two host-to-MCU
+cells are completed below. This is not completion of the archived four-role plan.
 Scoped Windows inbound permission for the exact host executable/reserved device
 requires human UAC; the user is unavailable and the firewall remains unchanged.
+
+Q11 adds two source-matched host-to-MCU cells on October 21: core
+3ca0be6fe8b13e23d0f834d7340f8e06ee9547a1 / companion
+97517ea3cf71a201c2f33778544a2fbcf92ec465.
+[Companion #138](https://github.com/jeffglousher/coaptic-validation/pull/138)
+retains exact raw samples, archive/ELF/OTA/compiler/lock digests and restoration
+receipts in its
+[public bundle](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/qualification/evidence/matched-host-mcu-20261021).
+Each mode completes eight ordered identity (32 B), test (7 B), large (2,000 B)
+cycles: 24/24 verified replies. The synchronous body-enabled Constrained service
+uses RX2/TX2 × 1,152 B, one 4,096 B body per direction, dedup4, Observe2, eight
+route slots/six application routes plus separate discovery, four Calls and no
+deferred slots. OSCORE adds one association/four request bindings; the unprotected
+target omits OSCORE. This differs from the body-disabled SmallDevice host
+comparison and paired Managed firmware. Growth remains off.
+
+Median complete-operation milliseconds, unprotected / durable OSCORE:
+identity 8.8774/18.10895, test 7.6426/17.6536 and large 20.42265/44.66395.
+The first protected identity read took 139.0548 ms and remains in the mean.
+Wi-Fi, scheduling and the requested 1 ms host wait are included. Existing
+authenticated legacy records are used without provisioning or rollback.
+Host recovery/reservation precede measurement; per-operation host state reads
+and commits are zero. Device checkpoint boundaries remain required, but device
+flash times/counts are uninstrumented. These are complete-operation observations,
+not isolated encryption cost, EDHOC timing, throughput or cross-library MCU proof.
+
+Observed worker touched-stack maxima 65,212/87,964 B fit the existing 98,304 B
+reservation. Running all-8-bit nonfree maxima 193,928/194,248 B and largest-free-
+block minimum 124,928 B accompany four complete 12-task snapshots per mode.
+Capability views overlap; dynamic stacks/TCBs/sockets and nested App/scratch
+already contribute. Target server App size, startup/deleted-task/ISR/kernel
+peaks and minimum deployment RAM remain unmeasured. These limits do not reopen
+the completed selected finite Q10 contract.
+
+The exact normal app-only OTA a5c6fa3b... is restored. Encrypted run31e69a...,
+original identity/owner/revision24/echo grant/completed custody, fresh protected
+echo and byte-identical pairing plus four durable effects pass. No keys, NVS
+snapshot or host security counters are reset. Reverse protected and unprotected
+Rust drivers and configuration generation have native proof in companion #140;
+target validation/execution and scoped inbound Windows permission remain pending.
+Touch revalidation is deferred.
+Physical cold-power/interrupted storage checks remain open.
 
 Q12 is complete at core `244809ebcd852cfeaf912bd2f5ba5956b6495bfc` /
 companion `7d34275be771ee1b689c9005c2eb2745b74586e7`,
