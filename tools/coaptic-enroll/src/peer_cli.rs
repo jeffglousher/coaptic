@@ -16,6 +16,9 @@ use std::{
 };
 #[path = "peer_device_restart.rs"]
 mod device_restart;
+#[path = "peer_queued_revoke.rs"]
+mod queued_revoke;
+pub(super) use queued_revoke::run_qualified as qualify_queued_revoke;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Probe {

@@ -64,6 +64,20 @@ Qualification-only fault injection (approved telemetry grant required):
 Shared integration check (separate handshake and operation deadlines):
   --probe-shared  Exercise concurrent shared connection handles.
 
+Queued-CON qualification (ends with device and host revoked):
+  --qualify-queued-revoke PORT --development-no-touch
+                  Current echo-only, outbound-initiating host and Complete device
+                  custody required. Lose one echo reply, deliver its exact retry,
+                  then hold another real CON through an exact retry. Discard the
+                  host session before normal fresh current-owner approval and USB
+                  revocation, keeping the same pairing lock and UDP socket.
+                  Observe old ciphertext through its next would-send deadline.
+                  No telemetry effect, touch, packet queue or pressure claim.
+                  A missed timing window refuses qualification; inspect before
+                  recovery. Restore service with ordinary approved serial-pair.
+                  Firmware source matching is an external installation receipt;
+                  this does not attest firmware or qualify power loss/all queues.
+
 Identity and echo probes retry authenticated 4.29/5.03 responses at most three
 attempts, respecting Max-Age within the deadline. Durable telemetry has its own
 receipt policy. The service holds the pairing lock; stop it before grant changes.

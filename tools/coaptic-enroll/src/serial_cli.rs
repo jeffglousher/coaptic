@@ -5,7 +5,7 @@ use coaptic::{
     Endpoint,
     provisioning::{
         CommissioningDecoder, CommissioningPending, CommissioningReply, CommissioningRequest,
-        EnrollmentPolicy, PairingRecord, PairingUpdate, PinnedPeer,
+        EnrollmentPolicy, Identity, LocalPairing, PairingRecord, PairingUpdate, PinnedPeer,
     },
 };
 use coaptic_console_core::ApprovalMode;
@@ -69,6 +69,20 @@ impl Usb {
     ) -> Result<CommissioningReply> {
         exchange_with_delivery(&mut *self.port, &mut self.decoder, request, delivery)
     }
+
+    pub(super) fn request_progress(
+        &mut self,
+        request: &CommissioningRequest,
+        progress: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<CommissioningReply> {
+        exchange_progress(
+            &mut *self.port,
+            &mut self.decoder,
+            request,
+            ReplyDelivery::Normal,
+            progress,
+        )
+    }
 }
 
 pub(super) fn commissioning_error(error: Box<dyn std::error::Error>) -> Error {
@@ -92,6 +106,16 @@ fn exchange_with_delivery<T: Read + Write + ?Sized>(
     request: &CommissioningRequest,
     delivery: ReplyDelivery,
 ) -> Result<CommissioningReply> {
+    exchange_progress(port, decoder, request, delivery, &mut || Ok(()))
+}
+
+fn exchange_progress<T: Read + Write + ?Sized>(
+    port: &mut T,
+    decoder: &mut CommissioningDecoder,
+    request: &CommissioningRequest,
+    delivery: ReplyDelivery,
+    progress: &mut dyn FnMut() -> Result<()>,
+) -> Result<CommissioningReply> {
     let discard_committed = matches!(delivery, ReplyDelivery::DiscardCommitted);
     if discard_committed && !matches!(request, CommissioningRequest::Update { .. }) {
         return Err("lost reply qualification requires a commissioning Update".into());
@@ -110,6 +134,7 @@ fn exchange_with_delivery<T: Read + Write + ?Sized>(
         });
     let mut bytes = [0; 64];
     while Instant::now() < deadline {
+        progress()?;
         match port.read(&mut bytes) {
             Ok(len) => {
                 for byte in &bytes[..len] {
@@ -257,6 +282,21 @@ pub fn run(
             return Err("unexpected or repeated commissioning option".into());
         }
     }
+    if command == "serial-revoke" {
+        revoke_locked(
+            &mut usb,
+            LockedHost {
+                directory: &host_directory,
+                identity: &host,
+                store: &store,
+                pairing: &mut local,
+            },
+            &approval_directory,
+            approval,
+            &mut |_| Ok(()),
+        )?;
+        return Ok(());
+    }
     let CommissioningReply::State {
         device: device_pin,
         record,
@@ -337,9 +377,7 @@ pub fn run(
     {
         return Err("device identity or revision changed during commissioning".into());
     }
-    let action = if command == "serial-revoke" {
-        Action::Revoke
-    } else if command == "serial-transfer" {
+    let action = if command == "serial-transfer" {
         Action::Transfer
     } else {
         Action::Pair
@@ -366,40 +404,22 @@ pub fn run(
                     .map_err(|_| Error::Input)?;
             return Request::for_transfer(&challenge, owner, &policy);
         }
-        let policy = if action == Action::Revoke {
-            let policy = device_policy.clone().ok_or(Error::Input)?;
-            if policy.owner() != &owner || policy.peer().principal() != host.peer().principal() {
-                return Err(Error::Input);
-            }
-            if prior
-                .as_ref()
-                .is_none_or(|policy| policy.peer().principal() != device_pin.principal())
-            {
-                return Err(Error::Input);
-            }
-            policy
-        } else {
-            EnrollmentPolicy::new(host.peer(), owner, permission).map_err(|_| Error::Input)?
-        };
+        let policy =
+            EnrollmentPolicy::new(host.peer(), owner, permission).map_err(|_| Error::Input)?;
         Request::for_pairing(&challenge, &policy, action)
     };
     let mut device_update_attempted = false;
-    let outcome = super::pairing_cli::approve(
-        &approval_directory,
-        approval,
-        make_request,
-        |request| {
+    let outcome =
+        super::pairing_cli::approve(&approval_directory, approval, make_request, |request| {
             request.matches_pairing(&challenge)?;
             let policy = request.pairing_policy()?;
             let update = if action == Action::Transfer {
                 PairingUpdate::transfer(challenge.clone(), request.owner, policy.clone())
                     .map_err(|_| Error::Input)?
             } else {
-                PairingUpdate::new(challenge.clone(), policy.clone(), action == Action::Revoke)
+                PairingUpdate::new(challenge.clone(), policy.clone(), false)
             };
-            // Revocation retains the existing routing hint. The destination itself
-            // is not an identity; this value is unused once access is disabled.
-            let destination = endpoint.unwrap_or(Endpoint::v4([127, 0, 0, 1], 1));
+            let destination = endpoint.ok_or(Error::Input)?;
             let reciprocal = EnrollmentPolicy::new(
                 device_pin.clone(),
                 *policy.owner(),
@@ -415,31 +435,9 @@ pub fn run(
                 &mut local,
                 &local_challenge,
                 reciprocal,
-                action == Action::Revoke,
+                false,
                 now,
             )?;
-            if action == Action::Revoke {
-                match pairing::save_device_checkpoint(&host_directory, &record) {
-                    Ok(checkpoint) => println!(
-                        "Prior public device checkpoint retained: {}",
-                        checkpoint.display()
-                    ),
-                    Err(error) => {
-                        eprintln!(
-                            "Warning: could not retain the prior public device checkpoint ({error:?}). Revocation will continue; preserve the following public CBOR and the original receipt journal for recovery. Existing archive files were not replaced."
-                        );
-                        let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
-                        if let Ok(length) = record.encode(&mut bytes) {
-                            eprintln!(
-                                "Prior public device checkpoint CBOR (hex): {}",
-                                super::hex(&bytes[..length])
-                            );
-                        } else {
-                            eprintln!("Warning: prior public checkpoint could not be encoded.");
-                        }
-                    }
-                }
-            }
             device_update_attempted = true;
             let response = usb
                 .request_with_delivery(
@@ -457,7 +455,7 @@ pub fn run(
             if committed.store() != record.store()
                 || record.revision().checked_add(1) != Some(committed.revision())
                 || committed.local_principal() != device_pin.principal().fingerprint()
-                || committed.enabled() != (action != Action::Revoke)
+                || !committed.enabled()
                 || approved.peer().principal() != policy.peer().principal()
                 || approved.owner() != policy.owner()
                 || approved.resource_policy() != policy.resource_policy()
@@ -466,8 +464,7 @@ pub fn run(
             }
             prepared.commit(|old, next| store.commit(old, next))?;
             Ok(())
-        },
-    );
+        });
     if let Err(error) = outcome {
         if device_update_attempted {
             eprintln!(
@@ -481,6 +478,159 @@ pub fn run(
         super::hex(device_pin.principal().fingerprint())
     );
     Ok(())
+}
+
+/// The existing file lock remains held while its last live session is discarded
+/// and the ordinary approved reciprocal revocation is committed.
+pub(super) struct LockedHost<'a> {
+    pub directory: &'a Path,
+    pub identity: &'a Identity,
+    pub store: &'a PairingFile,
+    pub pairing: &'a mut LocalPairing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RevokeProgress {
+    BeforeChallenge,
+    AfterChallenge,
+}
+
+pub(super) fn revoke_locked(
+    usb: &mut Usb,
+    host: LockedHost<'_>,
+    approval_directory: &Path,
+    approval: ApprovalMode,
+    progress: &mut dyn FnMut(RevokeProgress) -> Result<()>,
+) -> Result<PairingRecord> {
+    let CommissioningReply::State { device, record, .. } = usb
+        .request_progress(&CommissioningRequest::Inspect, &mut || {
+            progress(RevokeProgress::BeforeChallenge)
+        })?
+    else {
+        return Err("device has no identity; explicit serial-init is required".into());
+    };
+    if device.principal() == host.identity.peer().principal() {
+        return Err("device and host identities must differ".into());
+    }
+    let policy = record.policy().ok_or(Error::Input)?.clone();
+    let prior = host.pairing.checkpoint().policy().ok_or(Error::Input)?;
+    if policy.peer().principal() != host.identity.peer().principal()
+        || prior.peer().principal() != device.principal()
+        || prior.owner() != policy.owner()
+    {
+        return Err(Error::Input.into());
+    }
+    let started = Instant::now();
+    let local_challenge = host
+        .pairing
+        .begin(host.identity, 0, |out| getrandom::fill(out).is_ok())?;
+    progress(RevokeProgress::BeforeChallenge)?;
+    let CommissioningReply::Challenge(challenge) = usb
+        .request_progress(&CommissioningRequest::Challenge, &mut || {
+            progress(RevokeProgress::AfterChallenge)
+        })?
+    else {
+        return Err("unexpected device challenge response".into());
+    };
+    if challenge.device().principal() != device.principal()
+        || challenge.expected() != (*record.store(), record.revision(), record.commitment())
+    {
+        return Err("device identity or revision changed during commissioning".into());
+    }
+    let mut update_attempted = false;
+    let result = super::pairing_cli::approve(
+        approval_directory,
+        approval,
+        |owner| {
+            if policy.owner() != &owner {
+                return Err(Error::Input);
+            }
+            Request::for_pairing(&challenge, &policy, Action::Revoke)
+        },
+        |request| {
+            request.matches_pairing(&challenge)?;
+            let approved = request.pairing_policy()?;
+            let reciprocal = EnrollmentPolicy::new(
+                device.clone(),
+                *approved.owner(),
+                *approved.resource_policy(),
+            )
+            .map_err(|_| Error::Input)?;
+            let prepared = coaptic_enroll::recovery::PreparedHostPairing::prepare_update(
+                host.pairing,
+                &local_challenge,
+                reciprocal,
+                true,
+                started
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .map_err(|_| Error::Expired)?,
+            )?;
+            retain_revoked_checkpoint(host.directory, &record);
+            update_attempted = true;
+            let reply = usb
+                .request_progress(
+                    &CommissioningRequest::Update {
+                        update: PairingUpdate::new(challenge.clone(), approved.clone(), true),
+                        endpoint: Endpoint::v4([127, 0, 0, 1], 1),
+                    },
+                    &mut || progress(RevokeProgress::AfterChallenge),
+                )
+                .map_err(commissioning_error)?;
+            let CommissioningReply::Committed(committed) = reply else {
+                return Err(Error::Persistence);
+            };
+            let actual = committed.policy().ok_or(Error::Persistence)?;
+            if committed.store() != record.store()
+                || record.revision().checked_add(1) != Some(committed.revision())
+                || committed.local_principal() != device.principal().fingerprint()
+                || committed.recovery_owner() != record.recovery_owner()
+                || committed.enabled()
+                || actual.peer().principal() != approved.peer().principal()
+                || actual.owner() != approved.owner()
+                || actual.resource_policy() != approved.resource_policy()
+            {
+                return Err(Error::Persistence);
+            }
+            prepared.commit(|old, next| host.store.commit(old, next))?;
+            Ok(committed)
+        },
+    );
+    if result.is_err() && update_attempted {
+        eprintln!(
+            "Device update may have committed. Inspect device and host policy before any retry; do not repeat the device update blindly. Use serial-recover only when its exact current-owner/destination checks accept the inspected state."
+        );
+    }
+    let committed = result?;
+    println!(
+        "Device and host pairing committed. Peer {}.",
+        super::hex(device.principal().fingerprint())
+    );
+    Ok(committed)
+}
+
+fn retain_revoked_checkpoint(directory: &Path, record: &PairingRecord) {
+    match pairing::save_device_checkpoint(directory, record) {
+        Ok(checkpoint) => println!(
+            "Prior public device checkpoint retained: {}",
+            checkpoint.display()
+        ),
+        Err(error) => {
+            eprintln!(
+                "Warning: could not retain the prior public device checkpoint ({error:?}). Revocation will continue; preserve the following public CBOR and the original receipt journal for recovery. Existing archive files were not replaced."
+            );
+            let mut bytes = [0; PairingRecord::MAX_ENCODED_LEN];
+            if let Ok(length) = record.encode(&mut bytes) {
+                eprintln!(
+                    "Prior public device checkpoint CBOR (hex): {}",
+                    super::hex(&bytes[..length])
+                );
+            } else {
+                eprintln!("Warning: prior public checkpoint could not be encoded.");
+            }
+        }
+    }
 }
 
 fn show(reply: CommissioningReply) -> Result<()> {
