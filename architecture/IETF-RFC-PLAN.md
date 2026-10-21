@@ -406,8 +406,9 @@ restoration and original pairing/four effects verified. Companion #138 retains
 the raw timings, named body-enabled Constrained configuration and finite memory
 observations. The selected LAN matrix has two initiator directions and two
 security modes. Reverse-direction Rust drivers and configuration generation have
-native proof in both modes; target validation and scoped inbound Windows firewall
-permission remain pending. No reverse execution or isolated crypto-cost claim is
+native proof and compiled Xtensa archives in both modes; the mode-7 firmware
+also links, as recorded in companion #140. Actual reverse execution still needs
+scoped inbound Windows firewall permission. No reverse execution or isolated crypto-cost claim is
 made. #130 coordinates deferred qualification and the remaining UAC/power
 prerequisites without expanding the selected IETF roles.
 
