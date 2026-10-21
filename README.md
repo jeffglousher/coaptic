@@ -6,9 +6,9 @@ Serve resources, send requests, subscribe with Observe and transfer larger
 bodies through one client/server API. OSCORE message protection and fixed storage
 are the defaults. The core supports `no_std`; `std` and `alloc` are independent.
 
-Coaptic is pre-release and available from Git. Current development prioritizes
-completing UDP/OSCORE capabilities, EDHOC, durable provisioning and device/host
-integration. APIs may change directly during development.
+Coaptic is pre-release and available from Git. Its selected scope is direct UDP
+endpoints with OSCORE/EDHOC and durable local commissioning. APIs and formats may
+change directly during development.
 
 ## Run a protected exchange
 
@@ -64,10 +64,9 @@ let mut service = App::with_resources(SmallDevice::new())
 service.poll(now_ms)?;
 ```
 
-The [shared service](examples/support/fixed_service.rs) provides telemetry and echo
-handlers. The same service can use a microcontroller adapter or a nonblocking
-host UDP socket. `platform::CheckedClock` checks fallible timer reads and refuses
-backward time. Use one clock epoch for all timed App operations.
+The [shared service](examples/support/fixed_service.rs) runs with microcontroller
+or nonblocking host UDP adapters. Use one clock epoch for timed App operations;
+`platform::CheckedClock` refuses failed or backward timer reads.
 
 Start device integration with `SmallDevice`: constrained packet pools, four
 routes and one client Call. Customize capacities before binding; choose `Device`,
@@ -83,12 +82,10 @@ contracts rather than inferring them from a preset's name.
 The companion [native async host check](https://github.com/jeffglousher/coaptic-validation#native-async-host-check)
 uses the same startup allocation policy with Tokio UDP in unprotected and OSCORE modes.
 
-These are configurations of the same App. Blockwise transfers split larger
-messages across packets and reserve bounded body storage when enabled. A report
-should say, for example, "SmallDevice, OSCORE, blockwise enabled" and name any
-capacity overrides. "Constrained" means predictable resource use, not missing
-capabilities. Pool capacity and App size are only parts of the deployment budget;
-account for stack, scratch and platform transport storage as well.
+Security, blockwise transfers and storage are options of the same App. Blockwise
+uses bounded body storage; name capacities and overrides when comparing options.
+"Constrained" means predictable resource use. Include stack, scratch and platform
+transport storage in the deployment budget alongside App/pool storage.
 
 Our physical target is the Waveshare ESP32-S3, using the companion
 [ESPHome integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification).
@@ -115,8 +112,8 @@ If retaining an OSCORE key across restart instead, recover durable sender-sequen
 reservations and replay checkpoints before using it. Durable application effects
 also need an application receipt; a CoAP acknowledgement alone is not a commit.
 See [SECURITY.md](SECURITY.md) for the boundary and the
-[qualification plan](architecture/requirements/VALIDATION-PLAN.md) for remaining
-independent and installed-device proof.
+[qualification plan](architecture/requirements/VALIDATION-PLAN.md) for source-bound
+evidence and remaining physical qualification.
 
 ## Unprotected mode
 

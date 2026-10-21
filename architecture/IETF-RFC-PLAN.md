@@ -2,173 +2,115 @@
 
 ## Purpose
 
-This plan defines Coaptic's IETF RFC commitments, supported implementation
-boundaries, compliance evidence and remaining protocol work. It is the
-architectural authority for RFC scope. [Project 2](https://github.com/users/jeffglousher/projects/2)
-and the linked owner issues schedule implementation. Public API contracts remain
-in rustdoc. Original protocol text is retained in [knowledge/rfcs](../knowledge/rfcs/index.md).
+This plan defines the selected IETF roles, implementation boundaries and
+acceptance requirements. [Project 2](https://github.com/users/jeffglousher/projects/2)
+and owner issues schedule delivery; public API contracts belong in rustdoc.
+Original protocol text is in [knowledge/rfcs](../knowledge/rfcs/index.md).
 
-The implementation is a portable Rust library with secure defaults, explicit
-resource limits and caller-owned I/O, runtime, time, entropy and storage. This is
-pre-release development, without compatibility or version-bump obligations.
-Default operation requires neither `std` nor allocation; `std` and
-`alloc` are independent. Allocated storage retains checked limits. These are
-implementation constraints, not exceptions to applicable protocol requirements.
+Coaptic is a portable Rust library with caller-owned I/O, runtime, clock, entropy
+and storage. Default operation requires neither `std` nor allocation; `std` and
+`alloc` are independent, and allocated storage retains checked limits.
+Pre-release development has no compatibility or version-bump obligation.
+These choices do not waive applicable protocol requirements.
 
 ## Architecture and development focus
 
-Coaptic's development focus is CoAP over UDP, pairwise OSCORE message protection,
-and EDHOC establishment of authenticated OSCORE contexts. Provisioning, enrollment,
-ownership, authorization and recovery are part of delivering a usable solution.
-They are not satisfied by an encrypted demonstration with manually staged keys.
-The immediate deployment targets are constrained devices, including the reserved
-ESP32-S3, and Rust host services. Taldra is a consumer and contributor; its
-deployment needs inform reusable contracts without coupling the libraries.
+The selected milestone is direct CoAP/UDP origin endpoints with pairwise OSCORE
+and EDHOC, including authenticated commissioning, ownership, authorization and
+recovery. Targets are constrained devices, including the reserved ESP32-S3, and
+Rust host services. Consumers such as Taldra inform reusable contracts without
+coupling the libraries.
 
-TCP/TLS/WebSockets, reliable-transport signaling/BERT and DTLS identity/version
-profiles are welcome contribution opportunities. They are outside active MVP
-development, with no promised delivery or later completion gate. This replaces
-the earlier deferred delivery commitments for those features. A contribution
-must name its supported boundary and meet the same correctness, secure-default,
-resource-bound and focused validation requirements as actively developed code.
-Existing codecs and companion fixtures are not delivered endpoint support.
+Resource Directory, proxy/gateway/cache, multicast, ACE, DTLS and reliable
+TCP/TLS/WebSocket/BERT endpoints are unsupported contribution opportunities.
+They have no delivery promise or completion gate. Codecs and companion fixtures
+do not establish endpoint support. Adoption requires a concrete use case,
+security/trust model, bounded API and reviewed implementation/proof. Discovery
+does not grant trust, forwarding does not grant authorization, and multicast
+does not imply group security.
 
-The operator selected direct UDP endpoints for this milestone. Resource Directory,
-proxy/gateway/cache, multicast and standardized ACE authorization are unsupported
-contribution opportunities, alongside reliable transports and DTLS. They have no
-promised delivery or later completion gate. This resolves the role-selection
-questions in #517, #518 and the directory/ACE portions of #519/#365; it does not
-claim those protocols were implemented. Adoption requires a concrete use case,
-security/trust model and bounded implementation and acceptance contract.
-Discovery does not grant trust, forwarding does not grant authorization, and
-multicast does not implicitly adopt group security.
-
-UDP is an architectural choice. Reliability, congestion handling, scalability
-and comparative performance claims require measurements of named workloads,
-sources and environments; no universal superiority claim follows from that choice.
+UDP does not establish universal reliability, scalability or performance
+superiority; those claims require named workloads, sources and environments.
 
 ### Resource and delivery acceptance
 
-Constrained means deterministic resource ownership and bounded memory/work for
-reliability, performance and ease of integration. Accepted capabilities remain
-required. Each implementation must include capacity exhaustion, refusal and
-recovery; a fixed array by itself does not establish a sufficient memory budget.
-Reuse identity/body storage across lifetimes where possible and account for all
-metadata, scratch, initialization, security and platform reservations. Keep total
-ceilings independent of feature allowances and distinguish static layout from
-whole-system peak use.
+Constrained means bounded memory and work for reliability, performance and
+integration. Accepted capabilities include explicit exhaustion, refusal and
+recovery. Reuse storage across mutually exclusive lifetimes before adding it.
+Account for metadata, alignment, scratch, initialization, security and platform
+reservations; keep whole-object ceilings independent of feature allowances.
+Static layout and sampled use are not whole-system peak requirements.
 
-Use `SmallDevice` with `profiles::Constrained` pools as the starting device
-configuration. Explicitly record its route, Call, deferred and security capacities
-and any overrides. Security, blockwise transfers and storage backend are options
-of the same App. Compare equal-capability workloads and change one setting at a
-time; a profile name alone is not a memory or performance specification.
+Start device comparisons with `SmallDevice` / `profiles::Constrained`, naming
+route, Call, deferred and security capacities and overrides. Security, blockwise
+transfers and backend are options of one App. Compare equivalent workloads and
+change one setting at a time. Allocated pools are startup-sized and reused;
+automatic expansion is off.
 
-The execution priority is completed coding and integration on real loopback and
-the reserved ESP32. Focused success/refusal/recovery checks accompany each batch.
-Benchmark expansion, long stability runs and presentation are not prerequisites
-for implementing the next accepted requirement. Current-state reports use current
-source/configuration evidence or mark a metric unmeasured. Historical evidence
-stays archived; it is not the default report or a substitute for current results.
+Finish accepted coding/integration with focused success, refusal and recovery
+checks on loopback and the reserved ESP32. Benchmark or stability expansion does
+not delay the next capability. Requested measurements use exact source and
+configuration identities; missing metrics stay unmeasured. Retained evidence
+supports its original boundary, not an implicit current-result claim.
 
 ## Provisioning and enrollment decisions
 
-The published specifications contribute distinct parts of the solution:
+RFC 8613 protects messages with an established OSCORE context. RFC 9528 establishes
+authenticated keys; RFC 9668 maps EDHOC to CoAP/OSCORE. The application profile
+still defines credential trust and peer authorization. RFC 9200/9203 delegated
+authorization and context provisioning are separate unsupported roles, not an
+implicit layer on EDHOC or a substitute for initial ownership.
+[draft-ietf-lake-authz-08](https://datatracker.ietf.org/doc/html/draft-ietf-lake-authz-08)
+is an exact, unadopted manufacturer-trust enrollment candidate; refresh official
+publication state before adoption or a current-status claim.
 
-- RFC 8613 protects application messages using an established OSCORE context.
-- RFC 9528 establishes authenticated keys with EDHOC; RFC 9668 maps EDHOC to
-  CoAP and OSCORE. The application profile still defines credential trust,
-  authentication choices and how the peer becomes authorized.
-- RFCs 9200/9203 provide standardized authorization-server, client and resource-
-  server exchanges and OSCORE proof-of-possession tokens. They are candidates
-  for delegated permissions, not a substitute for deciding initial device
-  ownership. RFC 9203 has its own context-provisioning procedure; it is not
-  automatically an authorization layer on the existing EDHOC-derived context.
-- [draft-ietf-lake-authz-08](https://datatracker.ietf.org/doc/html/draft-ietf-lake-authz-08)
-  describes manufacturer-trust-assisted enrollment through EDHOC EAD. This exact
-  draft is not adopted; refresh official publication state before adoption or a
-  current-status claim.
+Commissioning requires authenticated encryption and explicit owner approval.
+The guided Rust CLI supports separately provisioned touch-required and explicit
+touchless development PIV credentials; native WebAuthn is optional. PIV touch is
+not FIDO2 user verification. Alternative providers must preserve authenticated
+transactions and durable trust; the approval key is distinct from device identity.
+Production approval/custody claims require the selected provider and platform
+to be qualified.
 
-Commissioning requires authenticated encryption and explicit owner authorization.
-The guided Rust CLI defaults to PIV approval with separately provisioned
-touch-required or explicit touchless development credentials. Native WebAuthn is
-an optional provider; PIV touch is not FIDO2 user verification. Production approval
-and custody claims require qualification of the selected provider and platform.
-Approval is required for administrative transactions, not on ordinary restart.
-Alternative providers preserve the same authenticated transaction and durable
-trust contract; the approval key is distinct from each device's identity key.
+The default workflow uses trusted privileged local USB to bind unique device
+and owner keys, establish EDHOC and select permissions. Local channel custody is
+a deployment assumption: physical presence, an unverified name or blind first
+contact is not peer authentication (RFC 9528 Appendix D.5). Both directions must
+authenticate the initial binding. Verification, storage or policy failure refuses
+the transaction without unprotected or unverified-first-contact fallback.
 
-The default onboarding path must be secure and convenient: guided authenticated
-local pairing, unique credentials and durable permissions, followed by automatic
-encrypted operation and restart recovery. Support alternative commissioning
-providers behind that contract. Users must not need a cloud account, recurring
-operator taps, manual cryptographic parameter selection or disabled message
-protection to complete ordinary operation. The implemented device workflow uses
-the trusted privileged local USB commissioning channel to bind device and owner
-keys. Physical presence alone or an unverified device name does not authenticate
-a peer; that channel's local custody is an explicit deployment assumption.
-
-Stricter administrative approval, preinstalled organization/manufacturer trust
-and restrictive management or authorization-expiry policies are explicit hardening
-choices. Convenience changes the commissioning effort and policy, not the need
-for authenticated encryption and peer/owner authorization. Verification, storage
-or policy failures must not trigger unprotected traffic or unverified-first-contact fallback.
-
-- Convenient path: generate a unique device key, authenticate and pin it
-  through a scanned public-key fingerprint or trusted local commissioning
-  channel, then complete EDHOC and an explicit ownership/permission decision.
-  Self-generated credentials do not require a public CA, but their first binding
-  to the intended device and owner still needs authentication in both directions.
-- Hardened candidate: independently provision manufacturer/organization trust,
-  authenticate device and management authority, require the selected approval
-  policy, and qualify credential custody and rollback resistance on the platform.
-  Hardware-backed custody is a platform capability, not a generic library claim.
-
-Blind trust on first use cannot exclude an active attacker at first contact
-(RFC 9528 Appendix D.5). Initial trust must use the authenticated commissioning
-channel; verification failure must refuse pairing.
-
-Both paths need explicit decisions for owner claim/transfer, authority trust,
-revocation, replacement, reset/re-enrollment, entropy, durable
-state and application-effect receipts. Core enrollment authority, local pairing, managed reconnection and trust/store
-contracts exist. Remaining platform workflows and physical qualification are tracked in [#365](https://github.com/jeffglousher/coaptic/issues/365) and
-[#333](https://github.com/jeffglousher/coaptic/issues/333).
+Preinstalled organization/manufacturer trust, stricter administrative approval,
+authorization expiry, hardware custody and rollback resistance are explicit
+hardening choices. They retain the same owner claim/transfer, revocation,
+replacement, reset/re-enrollment, entropy, state and application-receipt contracts.
+Their strength is a qualified platform property, not a generic library claim.
 
 ### Durable offline pairing
 
-Paired devices must communicate directly for long periods without internet or a
-continually reachable enrollment authority. Initial provisioning establishes each
-device's own unique persistent identity key in qualified device custody and
-installs authenticated peer/owner credentials and permissions. The operator's
-approval credential authenticates that transaction; it is distinct from the
-device's identity key. Ordinary messages, reconnects and
-unplug/replug or power-cycle recovery require neither a hardware-key tap nor
-another human pairing ceremony. Management tooling must support local authorized
-commissioning; internet availability is not an enrollment prerequisite.
+Initial provisioning installs a unique persistent device identity, authenticated
+peer/owner credentials and permissions. Management is local and authorized;
+ordinary traffic, reconnects and power-cycle recovery need neither internet,
+a reachable authority nor another approval/touch ceremony.
 
-After restart, restore the qualified identity/trust state and establish fresh
-session keys automatically with EDHOC. The current profile keeps session keys
-volatile; restored identities do not justify restoring old session keys, nonce
-counters or exchanges. Long-lived authorization and automatically refreshed
-session keys have separate lifecycles. A short online-authorization lease must
-not impose a periodic operator presence or reconnection requirement on this path.
+After restart, restore identity/trust/permissions and establish fresh volatile
+EDHOC/OSCORE session keys. Durable authorization does not justify restoring old
+sessions, nonce counters or exchanges, and the default has no short online lease
+requiring periodic operator presence.
 
-The normal default uses durable local flash under the operator's physical custody,
-with `LocalPairing` and `PolicyValidity::OfflineLocalStorage`. Restore the same
-identity, owner, permissions and revocation tombstone after ordinary restart.
-Physical flash rollback protection and hardware-backed custody are optional
-hardening. `PeerTrust` with `PolicyValidity::OfflineProtectedAnchor` retains its
-stronger, separately qualified protected monotonic authority contract; a record
-and counter in ordinary flash do not meet it. Qualify actual device commits,
-local trust/permission restoration and automated peer recovery on ESP32. Core
-contracts and in-memory tests alone do not establish those platform guarantees.
+The default is `LocalPairing` with `PolicyValidity::OfflineLocalStorage` under
+operator custody. Identity, owner, permissions and revocation tombstones survive
+ordinary restart. `PeerTrust` with `PolicyValidity::OfflineProtectedAnchor`
+requires a separately qualified protected monotonic authority; ordinary flash
+records/counters do not meet that stronger contract. Physical commit/recovery
+proof belongs to [#333](https://github.com/jeffglousher/coaptic/issues/333) and
+[#365](https://github.com/jeffglousher/coaptic/issues/365).
 
-Revocation takes effect when an authenticated update reaches the enforcing peer,
-or through authorized local management. A disconnected peer cannot know about an
-undelivered remote revocation. Once applied, revoke/regrant, replacement or owner
-changes must invalidate affected grants, sessions, pending work and cached effects
-and survive restart. Optional expiring/online policies retain their own explicit
-contracts; they are not the default durable-pairing requirement.
+Revocation takes effect when an authenticated update reaches the enforcing peer
+or authorized local management applies it; a disconnected peer cannot know an
+undelivered revocation. Applied revoke/regrant, replacement and owner changes
+invalidate affected grants, sessions, queued work and caches and survive restart.
+Unresolved durable effects are preserved for authenticated receipt-only recovery.
+Optional expiring/online policies retain separate explicit contracts.
 
 ## Commitment and document state
 
@@ -332,116 +274,54 @@ whole-RFC wording is withheld while applicable mandatory requirements remain ope
 
 ## Delivery and remaining proof
 
-The implementation baseline includes #598: bounded associations and admission,
-readiness/deadlines, extended UDP tokens, discovery metadata/URI views, selected
-Observe/transfer work, durable owner/backup recovery and receipt integration, and
-EDHOC erasure. #589 delivered shared sync/async capabilities. These are present
-code, not an unstarted backlog. Later changes update their specific ledgers.
+Delivered contracts include bounded association/admission, readiness/deadlines,
+extended tokens, discovery/URI views, Observe and classic/Q transfers, shared
+sync/native-async capabilities, EDHOC erasure, durable local ownership and
+application receipts. The linked RFC ledgers define their exact supported
+boundaries; the [qualification plan](requirements/VALIDATION-PLAN.md) maps proof
+to source-matched receipts.
 
-Merged #608 completes #520 nonzero/selection/validator interactions and #521
-caller-owned diagnostics without additional App storage. Companion #87 corrects
-#486 connection-level GCM failure policy with finite exact control, wrong-key
-refusal and fresh-recovery captures. Companion #88 completes the synchronized
-diagnostic host/export adapter and the finite 52-group protocol inventory; the
-selected Q5/Q6 campaigns are recorded in the qualification plan. These slices are
-delivered; independent and physical qualification retain their separate owners.
-#340's selected deployment scope has finite cloud startup/traffic/Drop accounting,
-installed refusal/recovery and initialization/terminal observations. These do not
-require another association implementation or an absolute peak-RAM claim.
+- [#199](https://github.com/jeffglousher/coaptic/issues/199),
+  [#200](https://github.com/jeffglousher/coaptic/issues/200) and
+  [#202](https://github.com/jeffglousher/coaptic/issues/202): completed finite
+  literal, independent-peer and host/parser/resource slices, retaining fixture
+  limitations and original failures. No whole-RFC or process-stability claim.
+- [#340](https://github.com/jeffglousher/coaptic/issues/340): completed finite
+  startup/traffic/Drop, installed pressure/refusal/recovery and device
+  initialization/terminal accounting. Absolute SP/ISR/kernel peaks and minimum
+  deployment RAM remain unmeasured limits, not added closure gates.
+- [#522](https://github.com/jeffglousher/coaptic/issues/522): completed observation-only
+  XDP/kernel lifecycle proof in
+  [run39254465762](https://github.com/jeffglousher/coaptic-validation/actions/runs/39254465762).
+  It establishes neither kernel authentication nor acceleration. A separate WSL2
+  installation still requires administrator elevation.
 
-The [qualification plan](requirements/VALIDATION-PLAN.md) separates completed
-literal inventory (#199), finite host/parser/export campaigns (#202), completed finite
-independent integrations and explicit peer limits (#200), physical custody/persistence (#333), deployment
-budgets/progress (#340) and controlled measurements (#341). Companion #91
-records 15 supported newer independent profiles; #95 records selected EDHOC
-suite/role/EAD/exporter/error proof. #98 characterizes actual duplicate-effect
-fixture limitations. #100-102 complete the selected scoped/routed IPv6,
-host-socket PMTU/ICMP and compound-traffic slice with exact sources and owned
-network cleanup. These results do not supply unsupported roles or automatic App
-PMTU adaptation.
+Installed proof covers retained identity/owner/custody, host-only/device-only/
+both-peer software-restart receipt recovery, revoked-work reconciliation, normal
+owner transfer/back, former-owner administrative refusal, discarded commissioning
+reply repair and one source-bound live-CON teardown. Finite pressure and resource
+receipts name their firmware; they do not prove every queue or physical power loss.
+The narrowly reviewed one-time legacy provenance contract resolved the selected
+device's missing-history prerequisite; absence and chronology alone never
+authorize first use. Original credentials, NVS and four effects remain preserved.
+Main-lifecycle entropy seeding and the bounded zeroizing worker RNG, with permanent
+exhaustion refusal, resolve the identified RF lifecycle race without claiming
+physical entropy quality.
 
-The core `c08de234` / companion `27b0e643` image (tree equal merge
-`421f666`) supplies read-only refusal, durable receipt recovery after host-only,
-device-only and both-peer software restart, revoked-journal reconciliation,
-normal owner transfer and transfer back, and explicit former-owner administrative
-refusal. The device-only check uses core #633's CLI while the host process stays
-alive. Core #635 additionally proves a deliberately discarded USB commit reply
-and fresh approved host-only repair; #636 proves one live-CON management teardown
-slice with protected retry control and source-bound expiry guards. Revoked revision 23
-survives software restart and original-owner echo at revision 24 recovers. The unchanged
-four-row journal and reviewed physical capacity/reservation ledger are retained in
-companion #130/#131; unmeasured transient peaks remain explicit. Original identity,
-keys and four committed effects remain intact. Core #638 adds three protected
-5.03/Max-Age 1 refusals, local cooldown refusals and same-session recoveries while
-retaining real device CONs; six malformed datagrams interleave without a new packet
-queue or journal effect. Companion #132 retains this selected pressure proof.
-The selected device's legacy-custody prerequisite was resolved by an independently
-reviewed, narrowly bound provenance contract and one-time initialization; missing
-history is never a general first-use permission. The
-[qualification plan](requirements/VALIDATION-PLAN.md) identifies exact sources,
-receipt numbers and retained evidence.
+Remaining qualification is explicit: cold power/interrupted persistence;
+installed three-distinct-credential backup recovery and consumed-backup refusal
+(touch-dependent qualification deferred by the operator); and actual reverse LAN
+timing behind scoped Windows inbound permission. The selected LAN matrix is two
+initiator directions × two security modes. Host-to-MCU cells are executed;
+reverse drivers, native controls and target build evidence do not establish reverse
+execution. Current measurements and requested loopback reruns belong to
+[#341](https://github.com/jeffglousher/coaptic/issues/341).
 
-Companion #132 (`6f450f6d`, tree equal merge `eb6dcfd9`) also completes the selected
-finite #340 initialization/terminal slice at core `d0366476`. Delayed run
-`ac4d17ad6ed04eada0e5c4fef7121a05` captures platform setup, entropy, worker creation,
-owner/session/completion watermarks and a pre-deletion terminal sample. The restored
-normal run `31e69a1bce804eedb783c7ff9f218afb` uses the default zero delay and preserves
-the original revision-24 identity, owner and four effects. Exact layouts, disjoint
-physical reservations and sampled heap/stack limits remain source-bound. Truncated
-worker-boundary heap lines are excluded; absolute SP/ISR peaks and minimum deployment
-RAM are not claimed. The [qualification plan](requirements/VALIDATION-PLAN.md) links
-the retained receipt.
-
-Companion #127 also fixes background cooldown handling and replaces worker-time
-RF sampling with a bounded, zeroizing Rust generator seeded under the main Wi-Fi
-lifecycle owner before worker creation. Focused native tests, target compilation
-and installed fresh sessions pass. This does not establish physical entropy
-quality or power-loss safety. Remaining #333/#365 boundaries include actual cold
-power/interrupted commits, three-distinct-credential backup recovery and consumed
-backup refusal. The operator deferred touch-dependent qualification on October 21;
-earlier touch checks do not establish the installed three-credential schedule.
-#341 now has source-matched host-to-MCU unprotected and durable OSCORE cells:
-24 verified reads per mode at core3ca0be6/suite97517ea, with exact normal-image
-restoration and original pairing/four effects verified. Companion #138 retains
-the raw timings, named body-enabled Constrained configuration and finite memory
-observations. The selected LAN matrix has two initiator directions and two
-security modes. Reverse-direction Rust drivers and configuration generation have
-native proof and compiled Xtensa archives in both modes; the mode-7 firmware
-also links, as recorded in companion #140. Actual reverse execution still needs
-scoped inbound Windows firewall permission. No reverse execution or isolated crypto-cost claim is
-made. #130 coordinates deferred qualification and the remaining UAC/power
-prerequisites without expanding the selected IETF roles.
-
-Companion #108 completes the finite independent bootstrap-option increment:
-eleven directions covering elective requests/responses, duplicate ownership,
-critical-option refusal and fresh protected recovery. The native backend owns
-EDHOC cryptography; a Python CoAP envelope supplies transport controls. The
-protected extended-token success/capacity/tamper/recovery row passes separately
-in run39254030000. Companion #116 completes the four selected GET/FETCH and two
-CON-Q Observe directions with exact recovery/cancellation/fresh-work controls.
-Its secondary 18-selector inventory preserves the existing 181-case evaluator,
-all original failures and exact source pairs. Core #627 fixes the independent
-CON Q client counterexample without extra state. An earlier reverse Windows
-server exit remains unexplained in companion #115; a diagnostic pass establishes
-the finite lifecycle, not process stability. #200 records completed scope and
-these limits.
-
-The observation-only XDP pilot #522 is complete at core #622 / companion #107.
-Final [run39254465762](https://github.com/jeffglousher/coaptic-validation/actions/runs/39254465762)
-passes actual verifier acceptance and three cycles (two instrumented and one
-ordinary), each with 4,556 BPF executions plus 1,456 exact short-frame kernel
-refusals. Concurrent/saturating counters, unchanged protected/unprotected
-bytes, owned attach/detach/reload, SIGKILL recovery/parent isolation and actual
-capability refusal all pass. Before/after inventories match. The named kernel reports
-352+0B stack and 344 translated instructions; this establishes neither kernel
-authentication nor a performance benefit. Earlier failed attempts remain
-retained. WSL2 installation separately requires administrator elevation.
-
-Publication #132 is an owner decision after a concrete candidate, package review
-and requested release qualification. No development issue, project status or
-successful test authorizes tags, registry publication or external outreach.
-Hosted CI is advisory during pre-release; focused local proof and review support
-authorized squash merges without waiting for the hosted matrix.
+[#130](https://github.com/jeffglousher/coaptic/issues/130) coordinates these boundaries
+and the current-state report. Publication
+[#132](https://github.com/jeffglousher/coaptic/issues/132) separately requires an exact
+reviewed candidate, package/release checks and explicit authorization. Development
+delivery authorizes no tag, registry upload or outreach; hosted CI is advisory.
 
 ## Evidence and implementation anchors
 

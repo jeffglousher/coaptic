@@ -339,7 +339,7 @@ impl<
         self
     }
 
-    /// Permit unprotected CoAP for compatibility or tests.
+    /// Explicitly permit unprotected CoAP.
     ///
     /// This supplies no confidentiality, integrity or peer authentication.
     /// Deterministic test mode does not select this mode. A configured

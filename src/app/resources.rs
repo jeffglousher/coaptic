@@ -483,7 +483,7 @@ impl<
         self.inner = self.inner.deterministic_for_tests();
         self
     }
-    /// Explicit unprotected compatibility/test mode; does not override OSCORE.
+    /// Permit unprotected CoAP; see [`AppBuilder::allow_unprotected`].
     #[must_use]
     pub fn allow_unprotected(mut self) -> Self {
         self.inner = self.inner.allow_unprotected();

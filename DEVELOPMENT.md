@@ -12,43 +12,33 @@ release version selection belongs to an explicitly requested publication.
 
 ## Current-state assessment
 
-Finish accepted coding and integration before expanding comparative benchmarks
-or stability campaigns. For a performance question, use a short current-source
-sample with named workload, security, storage and resource settings. Start device
-comparisons from `SmallDevice` / `profiles::Constrained`, keeping route, Call,
-deferred and security capacities explicit. Hold these settings constant when
-comparing blockwise enabled/disabled or protected/unprotected operation. The
-small preset is a starting budget, not a restriction on accepted capabilities.
+Finish accepted coding/integration before expanding benchmarks or stability
+campaigns. Requested performance runs identify source, workload, security,
+backend and capacities. Start device comparisons from `SmallDevice` /
+`profiles::Constrained`, naming route, Call, deferred and security settings.
+Hold capabilities constant when comparing blockwise or protected/unprotected
+operation; a preset is a starting budget, not a feature restriction.
 
-Report complete-object storage separately from peak stack, heap and transport
-usage, without double counting an App placed inside a reserved stack. Identify
-unmeasured quantities. Retain source identities and compact evidence privately;
-older results do not fill gaps in a current-state report. Use historical comparison
-only when requested or necessary to diagnose a particular regression.
+Report whole-object storage separately from stack, heap and transport views.
+An App inside a reserved stack is not additional RAM. Name missing metrics and
+retain compact source-bound evidence; older results do not become current
+measurements. Historical comparisons need a request or a concrete regression.
 
 ## Validate each batch
 
-Complete a coherent batch of capability, optimization or cleanup work before
-testing. Run an earlier focused check when it resolves an implementation uncertainty.
-Choose checks from the affected boundaries and record what ran. Format and lint
-affected Rust targets, then run focused behavior tests. For batches spanning core
-protocols, resource ownership or integrations, broader checks include:
+Complete a coherent batch, then choose checks that can detect faults in its
+affected boundaries. Check earlier when it resolves an implementation uncertainty.
+Format/lint affected Rust targets and run focused behavior tests; use the
+[release matrix](#release-validation) for broader protocol/resource/integration changes.
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-```
+Check `--no-default-features` when modules or feature gates move. Allocation/security
+changes need the affected `alloc`, `oscore`, `alloc,oscore` and `std` configurations.
+Rustdoc changes use `cargo doc --no-deps --all-features` and relevant doctests.
+Documentation-only edits need link/source review, not a protocol campaign.
 
-Also check `--no-default-features` when code moves across modules or feature gates.
-For allocation/security changes, add the affected `alloc`, `oscore`, `alloc,oscore`
-and `std` configurations from the release matrix below. For rustdoc changes, run
-`cargo doc --no-deps --all-features`; executable examples are checked by doctests.
-Documentation-only edits need link/source review, not an unrelated protocol campaign.
-
-Use focused loopback or ESP32 proof when transport, persistence or hardware behavior
-changes. Reuse existing tests and source-matched evidence. After a meaningful check
-passes, continue delivery; repeat testing for a concrete unresolved concern.
+Use loopback or ESP32 proof when transport, persistence or hardware behavior
+changes. Reuse source-matched tests/evidence; once a meaningful check passes,
+continue delivery unless a concrete concern warrants another run.
 
 ## Hosted CI
 

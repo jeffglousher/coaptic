@@ -5,7 +5,9 @@
 //! using one fixed scratch buffer; older download requests are not retained.
 //! Download follow-ups omit Observe and preserve notification replay history.
 
-use crate::error::{EncodeError, SlotMessageError};
+#[cfg(feature = "oscore")]
+use crate::error::EncodeError;
+use crate::error::SlotMessageError;
 use crate::message::{Message, OwnedToken, ParsedMessage, Token};
 use crate::storage::{DatagramSlots, Endpoint, Engine, SlotId, Storage};
 
@@ -470,7 +472,7 @@ pub(crate) fn stage_notification<E, const REQUESTS: usize, K: OwnedToken>(
         .map_err(|error| super::Error::Message(SlotMessageError::Encode(error)))
 }
 
-#[cfg_attr(not(feature = "oscore"), allow(dead_code))]
+#[cfg(feature = "oscore")]
 pub(crate) fn fill_tx<S: Storage + DatagramSlots>(
     engine: &mut Engine<S>,
     tx: SlotId,

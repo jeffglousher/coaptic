@@ -782,7 +782,7 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// borrowed for `'a` (capped at [`RESPONSE_BODY`]). This is the handler
     /// path that is **not** silently cut at [`INLINE_PAYLOAD`]. Input exceeding
     /// [`RESPONSE_BODY`] is marked truncated and App refuses to send it; use
-    /// [`Self::payload_borrowed`] for a complete borrow without this legacy cap.
+    /// [`Self::payload_borrowed`] to borrow without the [`RESPONSE_BODY`] limit.
     #[must_use]
     pub fn payload_copy_full(self, payload: &'a [u8]) -> Self {
         if payload.len() <= INLINE_PAYLOAD {
@@ -800,7 +800,8 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// The caller owns these bytes until App has encoded/sent this intent.
     /// Datagram and body pools selected by the App builder determine whether
     /// it fits; failures are explicit. This works with fixed storage, `alloc`
-    /// and `std`, and permits bodies larger than the legacy 4096-byte borrow.
+    /// and `std`, and permits bodies larger than the [`RESPONSE_BODY`] limit of
+    /// [`Self::payload_copy_full`].
     #[must_use]
     pub fn payload_borrowed(mut self, payload: &'a [u8]) -> Self {
         self.payload = Payload::Borrowed(payload);
