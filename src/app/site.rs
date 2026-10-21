@@ -386,11 +386,6 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
                 .and_then(|entry| entry.methods.observe_source())
         })
     }
-
-    pub(crate) fn has_observe_source(&self, segments: &[&str]) -> bool {
-        self.observe_source(self.observe_resource(segments))
-            .is_some()
-    }
 }
 
 impl<const N: usize, T: OwnedToken> Default for Site<N, T> {
