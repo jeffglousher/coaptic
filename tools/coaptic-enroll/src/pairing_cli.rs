@@ -72,6 +72,28 @@ pub fn run(
         let local = args.next().ok_or("missing local address")?;
         let remote = args.next().ok_or("missing peer address")?;
         let mode = args.next();
+        if mode.as_deref() == Some(OsStr::new("--qualify-queued-revoke")) {
+            let port = args.next().ok_or("missing qualification serial port")?;
+            if args.next().as_deref() != Some(OsStr::new("--development-no-touch"))
+                || args.next().is_some()
+            {
+                return Err(
+                    "queued-CON qualification requires exactly PORT --development-no-touch".into(),
+                );
+            }
+            return peer::qualify_queued_revoke(
+                super::serial_cli::LockedHost {
+                    directory: &device_directory,
+                    identity: &identity,
+                    store: &store,
+                    pairing: &mut state,
+                },
+                directory,
+                local.to_str().ok_or("invalid address")?,
+                remote.to_str().ok_or("invalid address")?,
+                port.to_str().ok_or("invalid serial port")?,
+            );
+        }
         if mode.as_deref() == Some(OsStr::new("--probe-shared")) {
             if args.next().is_some() {
                 return Err("unexpected arguments".into());

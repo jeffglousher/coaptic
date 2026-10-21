@@ -42,6 +42,9 @@ fn help_does_not_open_credential_storage() {
     assert!(peer.contains("host PID"));
     assert!(peer.contains("fresh session alone does not prove"));
     assert!(peer.contains("responding host needs OS firewall permission"));
+    assert!(peer.contains("--qualify-queued-revoke PORT --development-no-touch"));
+    assert!(peer.contains("ends with device and host revoked"));
+    assert!(peer.contains("same pairing lock and UDP socket"));
     let pairing = Command::new(env!("CARGO_BIN_EXE_coaptic-enroll"))
         .args(["serial-pair", "--help"])
         .output()
