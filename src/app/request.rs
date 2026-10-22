@@ -174,6 +174,11 @@ impl<'a, T: OwnedToken> Request<'a, T> {
         self
     }
 
+    pub(crate) fn with_body(mut self, body: Option<&'a [u8]>) -> Self {
+        self.body = body;
+        self
+    }
+
     pub(crate) fn with_association(mut self, association: Option<super::Association>) -> Self {
         self.association = association;
         self

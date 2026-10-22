@@ -85,6 +85,7 @@ fn reregistration_releases_unsent_notification() {
         interest.endpoint(),
         Response::content(b"done"),
         plan,
+        None,
         oscore::no_request(),
     )
     .unwrap();
