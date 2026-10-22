@@ -16,63 +16,52 @@ Keep client costs, failures, latency and whole-system memory visible. The prior
 throughput report does not prove this target; it remains open until representative
 device and cloud configurations have relevant evidence.
 
-The latest [matched Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39803846125)
-completed 1,536,000 verified operations with no failures. At concurrency one,
-64/1024-byte payloads and matched Rust 1.99.0, CPU changes ranged from a 6.33%
-reduction to a 1.23% increase; neither 50% target is established. Idle receive
-polling is a measured cost, with a latency tradeoff when using readiness. The
-[earlier Linux report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/cpu-cost-linux-20261022)
-retains raw profiling evidence; its different compiler and host prevent isolating
-later changes by comparing the two runs.
+Core `120a622` validates each request path once, encodes selections lazily,
+borrows dedup rows during timer scans, and validates request options in one pass.
+The [isolated option-validation run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39825129898)
+verified 952,000 operations at C1 CON, 64 bytes and 11,900 operations/s with
+matched Rust 1.99.0. Total server CPU changed -1.22% unprotected and +1.17% with
+OSCORE, only two pooled 10 ms ticks in either mode. No material repeatable total
+gain is established. OSCORE p99 increased 3.205 microseconds; retain that observed
+cost. Separate inclusive profiles resolved kernel syscall/scheduler symbols,
+but sampled self counts do not identify stage costs or prove redundant wakeups.
 
-Dispatch now validates the path once and encodes a request selection only when
-Observe, deferral or retained Q-body state needs it. Timer maintenance borrows
-dedup rows and checks Call deadlines before inbox/Observe lookups. These changes
-add no retained storage. Their stack effects and individual CPU contributions
-remain unmeasured. The combined server-role result above cannot isolate them. The
-matched run compares core `b8f44fa` with `183b4b9`; two pairs and 10 ms CPU
-counters limit conclusions about small changes. Perf was disabled. Further
-concurrency qualification must keep NON separate from CON, preserve NSTART and
-nonce ownership, and report actual overlap, refusal and recovery.
+The explicit [blocking UDP control](https://github.com/jeffglousher/coaptic-validation/pull/157)
+stages one packet in existing scratch before calling App with fresh time. Its
+[same-core run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39839988246)
+verified all 952,000 operations without operation failures, but only 13 of 16
+windows met pacing requirements. Three ready-baseline windows exceeded the
+unchanged 1% missed-period limit. Qualified CPU ratios are withheld for both
+security cohorts; descriptive reductions of 22.58% and 26.33% do not establish
+performance acceptance. No windows or failures are discarded.
+
+The control preserves core capacities and default adapters. It uses a distinct
+synchronous congestion policy with soft read/write timeouts, not async
+cancellation or exact absolute send deadlines. Linux inline sizes are 56 bytes
+of metadata inside the 2,112-byte adapter inside the 16,064-byte App; nested
+owners must not be summed. Whole-system memory and runtime congestion behavior
+remain unqualified. The next finite comparison uses a separate 4,000 operations/s
+stratum, 64/1024-byte responses, the same core/client and separate inclusive
+profiles. It retains the failed high-load cohort and existing eligibility gates.
+
+The optional [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
+remains available. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
+used 9.28-18.83% more server CPU and failed the +2 microsecond median-latency guard
+in all four 64/1024-byte security strata. This measures application scheduling,
+not isolated core processing. [Borrowing App from its setup owner](https://github.com/jeffglousher/coaptic-validation/pull/155)
+reduced the complete outer future from 120,696 to 56,536 bytes in a controlled
+Windows Rust 1.99.0 layout check. This does not establish CPU, peak-stack or
+whole-RAM savings; pools, allocator, body storage and kernel costs remain separate.
 
 Concurrent Block2 response assembly is isolated by App Call. Two live Calls with
 the same ETag previously shared a body slot and one could stop before sending
 its follow-up ([#655](https://github.com/jeffglousher/coaptic/issues/655)). Both
-original protected/unprotected cases now complete four operations with eight
-requests and replies at unchanged capacities and reported memory. Fixed and
-allocated storage, classic/Q Block2 and raw Engine token-change behavior have
-focused regression coverage. The raw Engine's cross-token assembly stays intact.
-
-The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/pull/153)
-keeps CON and NON cohorts separate and reports observed overlap, capacity refusal
-and failed work. The reviewed [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
-is merged. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
-verified 1,536,000 operations without failures, but native async used 9.28-18.83%
-more server CPU and failed the +2 microsecond median-latency guard in all four
-64/1024-byte security strata. It remains optional; default adapters are unchanged.
-This measures application scheduling, not isolated core processing.
-
-[Companion #155](https://github.com/jeffglousher/coaptic-validation/pull/155)
-borrows App from its setup owner. A controlled Windows Rust 1.99.0 check reduces
-the complete outer future from 120,696 to 56,536 bytes, including App; nested
-component sizes must not be added again. This is compiler layout, not CPU savings,
-peak stack or whole-RAM qualification. Existing pools and the loop body are
-unchanged. Runtime, allocator, body/pool heap and kernel costs remain separate.
-
-The [user-code diagnosis](https://github.com/jeffglousher/coaptic-validation/actions/runs/39814549184)
-completed 666,400 operations without failures at 11,900 operations/s, 64 bytes,
-and concurrency one. Async used 9.78% more server CPU unprotected and 7.00% more
-with OSCORE. System time accounted for 68-83% of clean process CPU; user-only
-samples cannot explain it. Leading server symbols have only 8-16 self samples,
-so their ranks remain tentative. This is a separate load stratum.
-
-[Bounded inclusive profiling](https://github.com/jeffglousher/coaptic-validation/pull/156)
-now supports user and kernel samples with reporting on the recording runner.
-Kernel symbols may remain unresolved under existing policy; no policy change is
-part of qualification. Request option validation uses one borrowed pass with
-local scalar state; focused protocol checks and differential comparisons against
-the original predicate pass. Its effect still needs measurement at fixed sources,
-workload and adapter. Neither this change nor the tool establishes a CPU gain.
+original security cases now complete at unchanged capacities. Fixed/allocated
+storage and classic/Q Block2 have focused coverage; raw Engine cross-token
+assembly stays intact. The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/pull/153)
+keeps CON/NON cohorts separate and reports actual overlap, capacity refusal and
+failed work. Further concurrency qualification must preserve NSTART and nonce
+ownership, and include refusal and recovery.
 
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
@@ -81,7 +70,7 @@ Authenticated Inner reconstruction encodes once, opened requests avoid RX
 reserialization, and fresh protected TX slots avoid packet staging. Retained-TX
 replacement preserves transactional staging and retransmission bytes on refusal.
 
-The [current report](https://github.com/jeffglousher/coaptic-validation/tree/98b54fe8fd4c9b76301d2d22a533af40ecade744/tools/benchmark/evidence/comprehensive-windows-20261022)
+The [source-matched Windows report](https://github.com/jeffglousher/coaptic-validation/tree/98b54fe8fd4c9b76301d2d22a533af40ecade744/tools/benchmark/evidence/comprehensive-windows-20261022)
 contains all named protected/unprotected configurations, resource ledgers,
 independent packet grades and retained failures. Separate client/runtime strata
 and the patched-toolchain control are explicit. The copy reductions did not
