@@ -1761,7 +1761,7 @@ fn app_unprotected_request_is_401_max_age_zero() {
 }
 
 #[test]
-fn write_unprotected_rx_fails_loud_on_encode() {
+fn write_unprotected_rx_refuses_default_profile_overflow() {
     use crate::app::write_unprotected_rx;
     use crate::error::{EncodeError, SlotMessageError};
     use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
@@ -1781,9 +1781,8 @@ fn write_unprotected_rx_fails_loud_on_encode() {
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
     let mut buf = [0u8; 1600];
     let n = encode(&msg, &mut buf).unwrap();
-    let inner = decode(&buf[..n]).unwrap();
-
-    let err = write_unprotected_rx::<_, &'static str>(&mut engine, rx, &inner, peer).unwrap_err();
+    let err =
+        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer).unwrap_err();
     assert_eq!(
         err,
         crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
@@ -1796,7 +1795,7 @@ fn write_unprotected_rx_fails_loud_on_encode() {
 }
 
 #[test]
-fn write_unprotected_rx_fails_loud_on_slot_overflow() {
+fn write_unprotected_rx_refuses_constrained_profile_overflow() {
     use crate::app::write_unprotected_rx;
     use crate::error::{EncodeError, SlotMessageError};
     use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
@@ -1812,17 +1811,47 @@ fn write_unprotected_rx_fails_loud_on_slot_overflow() {
         .write_rx(rx, &[0x40, 0x01, 0x00, 0x01], peer)
         .expect("seed");
 
-    // Profile-sized scratch is Constrained RX (1152); 1200-byte Inner fails loud.
+    // The Constrained RX ceiling (1152) applies before runtime slot admission.
     let big = [0x41u8; 1200];
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
     let mut buf = [0u8; 1472];
     let n = encode(&msg, &mut buf).unwrap();
-    let inner = decode(&buf[..n]).unwrap();
-
-    let err = write_unprotected_rx::<_, &'static str>(&mut engine, rx, &inner, peer).unwrap_err();
+    let err =
+        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer).unwrap_err();
     assert_eq!(
         err,
         crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
+    );
+    assert_eq!(engine.release_rx(rx), Err(SlotError::NotOccupied));
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn write_unprotected_rx_preserves_wire_and_refuses_smaller_runtime_slot() {
+    use crate::app::write_unprotected_rx;
+    use crate::storage::{AllocMemory, Capacities, Engine, SlotError, profiles};
+
+    let mut capacities = Capacities::from_profile::<profiles::Constrained>();
+    capacities.rx_datagram_bytes = 128;
+    let memory = AllocMemory::<Token>::try_new(capacities, usize::MAX).unwrap();
+    let mut engine = Engine::from_storage(memory);
+    let rx = engine.acquire_rx().unwrap();
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let body = [0x41u8; 200];
+    let mut wire = [0u8; 256];
+
+    let small =
+        Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&body[..100]);
+    let n = encode(&small, &mut wire).unwrap();
+    write_unprotected_rx::<_, &'static str>(&mut engine, rx, &wire[..n], peer).unwrap();
+    assert_eq!(engine.access_rx(rx).unwrap().as_bytes(), &wire[..n]);
+    assert_eq!(engine.rx_endpoint(rx), Some(peer));
+
+    let large = Message::new(Type::Confirmable, Code::PUT, MessageId::new(2)).with_payload(&body);
+    let n = encode(&large, &mut wire).unwrap();
+    assert_eq!(
+        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &wire[..n], peer),
+        Err(crate::Error::Slot(SlotError::LengthExceedsSlot))
     );
     assert_eq!(engine.release_rx(rx), Err(SlotError::NotOccupied));
 }

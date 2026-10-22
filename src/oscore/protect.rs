@@ -198,6 +198,15 @@ pub fn unprotect_request<'a, const REQUESTS: usize, T: OwnedToken>(
     protected: &ParsedMessage<'_, T>,
     out: &'a mut [u8],
 ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
+    let (wire, request) = unprotect_request_wire(ctx, protected, out)?;
+    Ok((decode_owned::<T>(wire)?, request))
+}
+
+fn unprotect_request_wire<'a, const REQUESTS: usize, T: OwnedToken>(
+    ctx: &mut BoundedSecurityContext<REQUESTS, T>,
+    protected: &ParsedMessage<'_, T>,
+    out: &'a mut [u8],
+) -> Result<(&'a [u8], RequestRef), Error> {
     let header = parse_protected(protected)?;
     if !ctx.matches_recipient(header.kid, header.kid_context) {
         return Err(Error::Context);
@@ -233,13 +242,12 @@ pub fn unprotect_request<'a, const REQUESTS: usize, T: OwnedToken>(
         &plaintext[..pt_len],
         out,
     )?;
-    let inner = decode_owned::<T>(&out[..n])?;
     let request = RequestRef::from_kid(kid, piv)?;
     // Caller (App) holds `request` on the inbound exchange for
     // `protect_response`. The live Token table is the client in-flight
     // set (`protect_request` → `unprotect_response`); do not remember
     // here or sequential server Tokens saturate the outbound binding table.
-    Ok((inner, request))
+    Ok((&out[..n], request))
 }
 
 /// See [`super::SecurityContext::protect_response`].
@@ -320,15 +328,34 @@ pub fn unprotect_response<'a, const REQUESTS: usize, T: OwnedToken>(
     request: RequestRef,
     out: &'a mut [u8],
 ) -> Result<ParsedMessage<'a, T>, Error> {
-    unprotect_response_candidates(ctx, protected, request, None, out).map(|(message, _)| message)
+    let (wire, _) = unprotect_response_candidates(ctx, protected, request, None, out)?;
+    decode_owned::<T>(wire)
 }
 
 impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
+    pub(crate) fn unprotect_request_wire<'a>(
+        &mut self,
+        protected: &ParsedMessage<'_, T>,
+        out: &'a mut [u8],
+    ) -> Result<(&'a [u8], RequestRef), Error> {
+        unprotect_request_wire(self, protected, out)
+    }
+
+    #[cfg(test)]
     pub(crate) fn unprotect_bound_response<'a>(
         &self,
         protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
     ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
+        let (wire, request) = self.unprotect_bound_response_wire(protected, out)?;
+        Ok((decode_owned::<T>(wire)?, request))
+    }
+
+    pub(crate) fn unprotect_bound_response_wire<'a>(
+        &self,
+        protected: &ParsedMessage<'_, T>,
+        out: &'a mut [u8],
+    ) -> Result<(&'a [u8], RequestRef), Error> {
         let request = self.lookup(protected.token()).ok_or(Error::Context)?;
         let observation = self
             .observe_request(protected.token())
@@ -343,7 +370,7 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
     request: RequestRef,
     fallback: Option<RequestRef>,
     out: &'a mut [u8],
-) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
+) -> Result<(&'a [u8], RequestRef), Error> {
     let header = parse_protected(protected)?;
     if protected.payload().len() < TAG_LEN {
         return Err(Error::MessageLength);
@@ -386,7 +413,7 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
         &plaintext[..len],
         out,
     )?;
-    Ok((decode_owned::<T>(&out[..n])?, request))
+    Ok((&out[..n], request))
 }
 
 fn parse_protected<'a, T: OwnedToken>(
@@ -514,51 +541,31 @@ fn stitch_inner<T: OwnedToken>(
     if plaintext.is_empty() {
         return Err(Error::MessageLength);
     }
-    let rest = &plaintext[1..];
-    // Build only the header/token through the common RFC 8974 encoder, then
-    // attach the authenticated inner options for validation and merging.
-    let header_end = crate::message::Message::new(ty, Code::from_raw(plaintext[0]), mid)
-        .with_token(token)
-        .encode(out)?;
-    let end = header_end
-        .checked_add(rest.len())
-        .ok_or(Error::BufferTooSmall)?;
-    if end > out.len() {
-        return Err(Error::BufferTooSmall);
-    }
-    out[header_end..end].copy_from_slice(rest);
-
-    // Re-encode so Class U-only outer options (Uri-Host, Hop-Limit, …)
-    // sit beside Class E. Dual options on the outer datagram are not
+    let (inner_opts, payload) = crate::message::decode_options_payload(&plaintext[1..])?;
+    // Merge Class U-only outer options with authenticated Inner options before
+    // encoding once. Dual options on the outer datagram are not
     // merged: Observe stays Inner (§4.1.3.5.2); Block/Size stay Inner
     // (§4.1.3.4.2); Max-Age Outer is discarded (§8.4); No-Response
     // Outer is ignored (§4.1.3.6). Class E on the outer (ETag, …) is
     // discarded (§8.2 / §8.4).
-    let mut merged = [0u8; INNER];
-    let n = {
-        let fake = decode_owned::<T>(&out[..header_end + rest.len()])?;
-        let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
-        for opt in outer_opts {
-            let n = opt.number().get();
-            if header::is_oscore(n) || header::classify(n) != OptionClass::Outer {
-                continue;
-            }
-            opts.push(opt).map_err(|_| Error::Options)?;
+    let mut opts = OptionsBuilder::<OPT_SLOTS>::new();
+    for opt in outer_opts {
+        let n = opt.number().get();
+        if header::is_oscore(n) || header::classify(n) != OptionClass::Outer {
+            continue;
         }
-        for opt in fake.options() {
-            opts.push(opt).map_err(|_| Error::Options)?;
-        }
-        let msg = Message::new(ty, fake.code(), mid)
-            .with_token(token)
-            .with_options(opts.as_slice())
-            .with_payload(fake.payload());
-        msg.encode(&mut merged)?
-    };
-    if n > out.len() {
-        return Err(Error::BufferTooSmall);
+        opts.push(opt).map_err(|_| Error::Options)?;
     }
-    out[..n].copy_from_slice(&merged[..n]);
-    Ok(n)
+    for opt in inner_opts {
+        opts.push(opt).map_err(|_| Error::Options)?;
+    }
+    let msg = Message::new(ty, Code::from_raw(plaintext[0]), mid)
+        .with_token(token)
+        .with_options(opts.as_slice())
+        .with_payload(payload);
+    // Retain the former merge buffer's ceiling with larger caller storage too.
+    let limit = out.len().min(INNER);
+    Ok(msg.encode(&mut out[..limit])?)
 }
 
 fn decode_owned<T: OwnedToken>(wire: &[u8]) -> Result<ParsedMessage<'_, T>, Error> {
@@ -566,4 +573,163 @@ fn decode_owned<T: OwnedToken>(wire: &[u8]) -> Result<ParsedMessage<'_, T>, Erro
         crate::message::TokenDecodeError::Malformed(error) => Error::Parse(error),
         crate::message::TokenDecodeError::Capacity(_) => Error::MessageLength,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ParseError;
+    use crate::message::{decode, decode_with_token, extended};
+
+    #[test]
+    fn stitch_merges_outer_options_and_preserves_extended_token() {
+        let token = extended::Token::<13>::new(b"extendedtoken").unwrap();
+        let outer_options = [
+            Opt::uri_host("node"),
+            Opt::etag(b"fake"),
+            Opt::oscore(&[]),
+            Opt::new(OptionNumber::MAX_AGE, &[99]),
+            Opt::new(OptionNumber::HOP_LIMIT, &[5]),
+        ];
+        let outer = Message::new(Type::Confirmable, Code::POST, MessageId::new(73))
+            .with_token(token)
+            .with_options(&outer_options);
+        let mut outer_wire = [0; 128];
+        let n = outer.encode(&mut outer_wire).unwrap();
+        let outer = decode_with_token::<extended::Token<13>>(&outer_wire[..n]).unwrap();
+        let plaintext = [Code::GET.as_raw(), 0xb1, b'x', 0x10, 0xff, b'v'];
+        let mut out = [0; 128];
+        let n = stitch_inner(
+            outer.ty(),
+            outer.message_id(),
+            token,
+            outer.options(),
+            &plaintext,
+            &mut out,
+        )
+        .unwrap();
+        let inner = decode_with_token::<extended::Token<13>>(&out[..n]).unwrap();
+        assert_eq!(inner.ty(), Type::Confirmable);
+        assert_eq!(inner.code(), Code::GET);
+        assert_eq!(inner.message_id(), MessageId::new(73));
+        assert_eq!(inner.token(), token);
+        assert!(inner.options().map(|option| option.number()).eq([
+            OptionNumber::URI_HOST,
+            OptionNumber::URI_PATH,
+            OptionNumber::CONTENT_FORMAT,
+            OptionNumber::HOP_LIMIT,
+        ]));
+        assert_eq!(inner.uri_host(), Some(Ok("node")));
+        assert_eq!(inner.uri_path().next(), Some(Ok("x")));
+        assert_eq!(
+            inner.content_format(),
+            Some(Ok(crate::ContentFormat::TEXT_PLAIN))
+        );
+        assert_eq!(
+            inner.get_option(OptionNumber::HOP_LIMIT).unwrap().value(),
+            &[5]
+        );
+        assert_eq!(inner.payload(), b"v");
+    }
+
+    #[test]
+    fn stitch_refuses_malformed_inner_options_and_payload_marker() {
+        let outer = decode(&[0x40, 1, 0, 1]).unwrap();
+        let malformed: &[(&[u8], ParseError)] = &[
+            (&[1, 0xf0], ParseError::ReservedOptionDelta),
+            (&[1, 0x0f], ParseError::ReservedOptionLength),
+            (&[1, 0xd0], ParseError::TruncatedOption),
+            (&[1, 0xb2, b'x'], ParseError::TruncatedOption),
+            (&[1, 0xff], ParseError::PayloadMarkerWithoutPayload),
+        ];
+        for &(plaintext, error) in malformed {
+            assert_eq!(
+                stitch_inner(
+                    outer.ty(),
+                    outer.message_id(),
+                    outer.token(),
+                    outer.options(),
+                    plaintext,
+                    &mut [0; 64],
+                ),
+                Err(Error::Parse(error))
+            );
+        }
+    }
+
+    #[test]
+    fn stitch_bounds_combined_outer_and_inner_option_count() {
+        let mut plaintext = [0; 35];
+        plaintext[0] = Code::GET.as_raw();
+        for (index, option) in plaintext[1..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            option.copy_from_slice(&[if index == 0 { 0xb1 } else { 0x01 }, b'x']);
+        }
+        let mut outer_wire = [0; 16];
+        let outer_options = [Opt::uri_host("node")];
+        let n = Message::new(Type::Confirmable, Code::POST, MessageId::new(1))
+            .with_options(&outer_options)
+            .encode(&mut outer_wire)
+            .unwrap();
+        let with_outer = decode(&outer_wire[..n]).unwrap();
+        let empty_outer = decode(&[0x40, 1, 0, 1]).unwrap();
+        for (outer, inner_count, accepted) in [
+            (empty_outer, 16, true),
+            (empty_outer, 17, false),
+            (with_outer, 15, true),
+            (with_outer, 16, false),
+        ] {
+            let mut out = [0; 128];
+            let result = stitch_inner(
+                outer.ty(),
+                outer.message_id(),
+                outer.token(),
+                outer.options(),
+                &plaintext[..1 + 2 * inner_count],
+                &mut out,
+            );
+            if accepted {
+                let inner = decode(&out[..result.unwrap()]).unwrap();
+                assert_eq!(inner.options().count(), 16);
+            } else {
+                assert_eq!(result, Err(Error::Options));
+            }
+        }
+    }
+
+    #[test]
+    fn stitch_keeps_inner_ceiling_and_refuses_short_output() {
+        let outer = decode(&[0x40, 1, 0, 1]).unwrap();
+        let mut plaintext = [0x5a; 1278];
+        plaintext[0] = Code::GET.as_raw();
+        plaintext[1] = 0xff;
+        let mut out = [0; 1281];
+        let n = stitch_inner(
+            outer.ty(),
+            outer.message_id(),
+            outer.token(),
+            outer.options(),
+            &plaintext[..1277],
+            &mut out[..1280],
+        )
+        .unwrap();
+        assert_eq!(n, 1280);
+        assert_eq!(decode(&out[..n]).unwrap().payload(), &[0x5a; 1275]);
+        for (plaintext, limit) in [
+            (&plaintext[..1277], 0),
+            (&plaintext[..1277], 1279),
+            (&plaintext[..], 1281),
+        ] {
+            assert_eq!(
+                stitch_inner(
+                    outer.ty(),
+                    outer.message_id(),
+                    outer.token(),
+                    outer.options(),
+                    plaintext,
+                    &mut out[..limit],
+                ),
+                Err(Error::Encode(EncodeError::BufferTooSmall))
+            );
+        }
+    }
 }

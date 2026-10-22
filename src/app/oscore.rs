@@ -219,11 +219,12 @@ pub(crate) fn commit_response<E, const REQUESTS: usize, K: OwnedToken>(
     Ok(())
 }
 
-/// Opened inner message after unprotect.
+/// Parsed Inner and its encoded wire, borrowed from the same unprotect output.
 #[cfg(feature = "oscore")]
-pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, RequestRef, ResponseState<K>);
+pub(crate) type Opened<'a, K = Token> =
+    (ParsedMessage<'a, K>, &'a [u8], RequestRef, ResponseState<K>);
 #[cfg(not(feature = "oscore"))]
-pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, Request, ResponseState<K>);
+pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, &'a [u8], Request, ResponseState<K>);
 
 #[cfg(feature = "oscore")]
 pub(crate) type InboundError = OscoreError;
@@ -289,10 +290,17 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
     };
     if parsed.oscore().is_some() {
         let mut response_state = ResponseState::None;
-        let (inner, request) = if parsed.code().is_request() {
-            ctx.unprotect_request(parsed, scratch)?
+        let (wire, request) = if parsed.code().is_request() {
+            ctx.unprotect_request_wire(parsed, scratch)?
         } else {
-            let (inner, request) = ctx.unprotect_bound_response(parsed, scratch)?;
+            ctx.unprotect_bound_response_wire(parsed, scratch)?
+        };
+        let inner: ParsedMessage<'a, K> =
+            crate::message::decode_with_token(wire).map_err(|error| match error {
+                crate::message::TokenDecodeError::Malformed(error) => OscoreError::Parse(error),
+                crate::message::TokenDecodeError::Capacity(_) => OscoreError::MessageLength,
+            })?;
+        if !parsed.code().is_request() {
             let header =
                 crate::oscore::OscoreHeader::parse(parsed.oscore().ok_or(OscoreError::Header)?)?;
             let observe = inner.observe().is_some();
@@ -340,9 +348,8 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
             // options or a failed CON ACK can leave the Call pending. Retire
             // ordinary bindings when App collects/completes/cancels the Call,
             // or replace them when a continuation encodes a fresh request.
-            (inner, request)
-        };
-        return Ok(Some((inner, request, response_state)));
+        }
+        return Ok(Some((inner, wire, request, response_state)));
     }
     if parsed.is_empty() {
         return Ok(None);
@@ -376,16 +383,9 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
     let _ = (&ctx, peer);
     #[cfg(feature = "oscore")]
     if let Some(ctx) = selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)? {
-        let capacity = engine
-            .access_tx_mut(tx)
-            .map_err(super::Error::from)?
-            .capacity();
-        let mut wire = S::TxScratch::default();
-        let limit = capacity.min(wire.as_ref().len());
-        let n = ctx
-            .protect_request(msg, &mut wire.as_mut()[..limit])
-            .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
+        return protect_into_tx(engine, tx, |out| {
+            ctx.protect_request(msg, out).map_err(protect_err)
+        });
     }
     engine
         .encode_tx(tx, msg)
@@ -412,11 +412,9 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usiz
         let Some(request) = request else {
             return Err(protect_err(OscoreError::Context));
         };
-        let mut wire = S::TxScratch::default();
-        let n = ctx
-            .protect_response(msg, request, wire.as_mut())
-            .map_err(protect_err)?;
-        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
+        return protect_into_tx(engine, tx, |out| {
+            ctx.protect_response(msg, request, out).map_err(protect_err)
+        });
     }
     engine
         .encode_tx(tx, msg)
@@ -440,9 +438,9 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
     let _ = (ctx, request, peer);
     #[cfg(feature = "oscore")]
     if ctx.is_some() {
-        let mut wire = S::TxScratch::default();
-        let n = stage_notification(ctx, peer, request, msg, wire.as_mut())?;
-        return fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from);
+        return protect_into_tx(engine, tx, |out| {
+            stage_notification(ctx, peer, request, msg, out)
+        });
     }
     engine
         .encode_tx(tx, msg)
@@ -470,6 +468,41 @@ pub(crate) fn stage_notification<E, const REQUESTS: usize, K: OwnedToken>(
     }
     crate::message::encode(msg, out)
         .map_err(|error| super::Error::Message(SlotMessageError::Encode(error)))
+}
+
+#[cfg(feature = "oscore")]
+fn protect_into_tx<S: Storage + DatagramSlots, E>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    encode: impl FnOnce(&mut [u8]) -> Result<usize, super::Error<E>>,
+) -> Result<(), super::Error<E>> {
+    let mut access = engine.access_tx_mut(tx).map_err(super::Error::from)?;
+    let limit = access.capacity().min(S::TX_DATAGRAM_BYTES);
+    if access.payload().is_empty() {
+        // A fresh reservation has no retained packet to preserve on failure.
+        // Commit its length only after protection and binding admission succeed.
+        let n = encode(&mut access.bytes_mut()[..limit])?;
+        return access.set_len(n).map_err(super::Error::from);
+    }
+    drop(access);
+    protect_retained_tx(engine, tx, limit, encode)
+}
+
+#[cfg(feature = "oscore")]
+#[cold]
+#[inline(never)]
+fn protect_retained_tx<S: Storage + DatagramSlots, E>(
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    limit: usize,
+    encode: impl FnOnce(&mut [u8]) -> Result<usize, super::Error<E>>,
+) -> Result<(), super::Error<E>> {
+    // Replacing an occupied packet is transactional: an encode refusal must
+    // leave its previous ciphertext available for retransmission.
+    let mut wire = S::TxScratch::default();
+    let limit = limit.min(wire.as_ref().len());
+    let n = encode(&mut wire.as_mut()[..limit])?;
+    fill_tx(engine, tx, &wire.as_ref()[..n]).map_err(super::Error::from)
 }
 
 #[cfg(feature = "oscore")]
@@ -673,6 +706,83 @@ mod request_capacity_tests {
             before + 1
         );
         engine.release_tx(tx).unwrap();
+    }
+
+    #[test]
+    fn request_binding_refusal_preserves_retained_tx_and_leaves_fresh_tx_empty() {
+        use crate::storage::{Memory, profiles};
+
+        let mut engine = Engine::from_storage(Memory::<profiles::Constrained>::new());
+        let mut ctx = Some(
+            crate::oscore::BoundedSecurityContext::<1>::derive(crate::oscore::DeriveParams {
+                master_secret: &[0x24; 16],
+                master_salt: &[],
+                sender_id: &[1],
+                recipient_id: &[2],
+                id_context: &[],
+            })
+            .unwrap(),
+        );
+        let peer = Endpoint::v4([127, 0, 0, 1], 5683);
+        let first = Token::from_checked(&[1]);
+        let second = Token::from_checked(&[2]);
+        let message =
+            Message::new(Type::Confirmable, Code::GET, MessageId::new(1)).with_token(first);
+        let retained = engine.acquire_tx().unwrap();
+        encode_request::<_, core::convert::Infallible, 1>(
+            &mut ctx,
+            peer,
+            &mut engine,
+            retained,
+            &message,
+        )
+        .unwrap();
+        let original = ctx.as_ref().unwrap().lookup(first).unwrap();
+        let before = ctx.as_ref().unwrap().sender_seq();
+        let mut bytes = [0; 64];
+        let n = {
+            let access = engine.access_tx(retained).unwrap();
+            let n = access.as_bytes().len();
+            bytes[..n].copy_from_slice(access.as_bytes());
+            n
+        };
+        let fresh = engine.acquire_tx().unwrap();
+        let refused =
+            Message::new(Type::Confirmable, Code::GET, MessageId::new(2)).with_token(second);
+        for (tx, spent) in [(retained, 1), (fresh, 2)] {
+            assert_eq!(
+                encode_request::<_, core::convert::Infallible, 1>(
+                    &mut ctx,
+                    peer,
+                    &mut engine,
+                    tx,
+                    &refused,
+                ),
+                Err(super::super::Error::Oscore(OscoreError::Saturated))
+            );
+            assert_eq!(ctx.as_ref().unwrap().lookup(first), Some(original));
+            assert_eq!(ctx.as_ref().unwrap().lookup(second), None);
+            assert_eq!(ctx.as_ref().unwrap().sender_seq(), before + spent);
+            assert_eq!(engine.access_tx(retained).unwrap().as_bytes(), &bytes[..n]);
+            assert!(engine.access_tx(fresh).unwrap().as_bytes().is_empty());
+        }
+        assert_eq!(ctx.as_mut().unwrap().take(first), Some(original));
+        encode_request::<_, core::convert::Infallible, 1>(
+            &mut ctx,
+            peer,
+            &mut engine,
+            fresh,
+            &refused,
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.as_ref().unwrap().lookup(second).unwrap().piv().seq(),
+            before + 2
+        );
+        assert_eq!(engine.access_tx(retained).unwrap().as_bytes(), &bytes[..n]);
+        assert!(!engine.access_tx(fresh).unwrap().as_bytes().is_empty());
+        engine.release_tx(retained).unwrap();
+        engine.release_tx(fresh).unwrap();
     }
 }
 

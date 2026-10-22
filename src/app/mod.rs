@@ -3090,27 +3090,25 @@ fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
 
 /// Write a successfully unprotected Inner over the RX slot.
 ///
-/// Block-wise assembly reads that slot (RFC 8613 §4.1.3.4.1). Encode or
-/// `write_rx` failure is an error — not `Ok(())` that drops the Inner.
+/// Block-wise assembly reads that slot (RFC 8613 §4.1.3.4.1). Preserve the
+/// profile-sized encoding ceiling before checking the runtime slot capacity.
 #[cfg(feature = "oscore")]
 pub(crate) fn write_unprotected_rx<Mem, E>(
     engine: &mut Engine<Mem>,
     rx: SlotId,
-    inner: &ParsedMessage<'_, Mem::Token>,
+    wire: &[u8],
     peer: Endpoint,
 ) -> Result<(), Error<E>>
 where
     Mem: Storage + DatagramSlots,
 {
-    let mut inner_wire = Mem::RxScratch::default();
-    let n = match inner.encode(inner_wire.as_mut()) {
-        Ok(n) => n,
-        Err(e) => {
-            let _ = engine.release_rx(rx);
-            return Err(Error::Message(SlotMessageError::Encode(e)));
-        }
-    };
-    if let Err(e) = engine.write_rx(rx, &inner_wire.as_ref()[..n], peer) {
+    if wire.len() > Mem::RX_DATAGRAM_BYTES {
+        let _ = engine.release_rx(rx);
+        return Err(Error::Message(SlotMessageError::Encode(
+            EncodeError::BufferTooSmall,
+        )));
+    }
+    if let Err(e) = engine.write_rx(rx, wire, peer) {
         let _ = engine.release_rx(rx);
         return Err(Error::Slot(e));
     }
@@ -3541,13 +3539,13 @@ where
         }
     };
     let (parsed, oscore_req, response_state) = match opened {
-        Some((inner, req, response_state)) => {
+        Some((inner, _wire, req, response_state)) => {
             #[cfg(feature = "oscore")]
             {
                 // Inner Block-wise (RFC 8613 §4.1.3.4.1): assembly reads
                 // the RX slot. Replace the outer OSCORE datagram with the
                 // opened Inner so Block1/Block2 see Class E options.
-                write_unprotected_rx(engine, rx, &inner, peer)?;
+                write_unprotected_rx(engine, rx, _wire, peer)?;
                 (inner, Some(req), response_state)
             }
             #[cfg(not(feature = "oscore"))]

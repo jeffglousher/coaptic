@@ -42,9 +42,9 @@ pub mod value;
 mod tests;
 
 pub use builder::OptionsBuilder;
-#[cfg(feature = "oscore")]
-pub(crate) use decode::decode_without_token;
 pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
+#[cfg(feature = "oscore")]
+pub(crate) use decode::{decode_options_payload, decode_without_token};
 pub use echo::{Echo, EchoFreshness};
 #[cfg(feature = "oscore")]
 pub(crate) use encode::write_option;
