@@ -452,7 +452,17 @@ impl<'a> Iterator for OptionsByNumber<'a> {
     type Item = Opt<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.find(|opt| opt.number() == self.number)
+        for option in self.inner.by_ref() {
+            if option.number() == self.number {
+                return Some(option);
+            }
+            if option.number() > self.number {
+                // Decoded option numbers never decrease, including repeats.
+                self.inner = Options::new(&[]);
+                return None;
+            }
+        }
+        None
     }
 }
 
@@ -813,7 +823,7 @@ impl<'a, T: super::OwnedToken> ParsedMessage<'a, T> {
     /// First option with `number`, if any.
     #[must_use]
     pub fn get_option(self, number: OptionNumber) -> Option<Opt<'a>> {
-        self.options().find(|opt| opt.number() == number)
+        self.get_options(number).next()
     }
 
     /// All options with `number`, in wire order.
@@ -1099,6 +1109,63 @@ mod unit_tests {
     };
     use crate::error::ValueError;
     use crate::message::OptionNumber;
+
+    #[test]
+    fn option_lookup_matches_full_scan_across_ordered_ranges() {
+        use crate::message::{Code, Message, MessageId, Opt, Type, decode, encode};
+
+        let options = [
+            Opt::new(OptionNumber::URI_HOST, b"host"),
+            Opt::uri_path("first"),
+            Opt::uri_path("second"),
+            Opt::new(OptionNumber::URI_QUERY, b"a=1"),
+            Opt::new(OptionNumber::URI_QUERY, b"b=2"),
+            Opt::new(OptionNumber::BLOCK2, &[]),
+            Opt::new(OptionNumber::new(u16::MAX), b"last"),
+        ];
+        let message =
+            Message::new(Type::Confirmable, Code::GET, MessageId::new(1)).with_options(&options);
+        let mut wire = [0; 128];
+        let len = encode(&message, &mut wire).expect("fixture fits");
+        let parsed = decode(&wire[..len]).expect("valid ordered options");
+
+        for target in [
+            0,
+            2,
+            3,
+            4,
+            10,
+            11,
+            12,
+            14,
+            15,
+            16,
+            22,
+            23,
+            24,
+            65000,
+            u16::MAX,
+        ] {
+            let number = OptionNumber::new(target);
+            let expected = parsed.options().filter(|option| option.number() == number);
+            assert_eq!(parsed.get_option(number), expected.clone().next());
+            let mut actual = parsed.get_options(number);
+            assert!(actual.by_ref().eq(expected), "option number {target}");
+            for _ in 0..3 {
+                assert_eq!(actual.next(), None);
+                assert_eq!(actual.clone().next(), None);
+            }
+        }
+
+        let mut paths = parsed.uri_path();
+        assert_eq!(paths.next(), Some(Ok("first")));
+        let mut remaining = paths.clone();
+        assert_eq!(paths.next(), Some(Ok("second")));
+        assert_eq!(remaining.next(), Some(Ok("second")));
+        assert_eq!(paths.next(), None);
+        assert_eq!(remaining.next(), None);
+        assert_eq!(paths.next(), None);
+    }
 
     #[test]
     fn encode_uint_omits_leading_zeros() {
