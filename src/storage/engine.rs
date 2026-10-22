@@ -1598,7 +1598,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, RxBlockOpt::Block1)
+        self.apply_incoming_rx(id, RxBlockOpt::Block1, false)
     }
 
     /// Admit a new incoming Block2 body when the first block arrives.
@@ -1653,7 +1653,28 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, RxBlockOpt::Block2)
+        self.apply_incoming_rx(id, RxBlockOpt::Block2, false)
+    }
+
+    // App Calls keep one Token for their lifetime. An ETag identifies a
+    // representation, not the Call that owns its assembly slot.
+    pub(crate) fn apply_call_block2_rx(
+        &mut self,
+        id: SlotId,
+        q_block: bool,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        S: DatagramSlots,
+    {
+        self.apply_incoming_rx(
+            id,
+            if q_block {
+                RxBlockOpt::QBlock2
+            } else {
+                RxBlockOpt::Block2
+            },
+            true,
+        )
     }
 
     /// Admit a new incoming Q-Block1 body when the first window-0 block arrives.
@@ -1714,7 +1735,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, RxBlockOpt::QBlock1)
+        self.apply_incoming_rx(id, RxBlockOpt::QBlock1, false)
     }
 
     /// Admit a new incoming Q-Block2 body when the first window-0 block arrives.
@@ -1771,7 +1792,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     where
         S: DatagramSlots,
     {
-        self.apply_incoming_rx(id, RxBlockOpt::QBlock2)
+        self.apply_incoming_rx(id, RxBlockOpt::QBlock2, false)
     }
 
     /// Copy a complete body into an Outgoing Body Slot and start Block1.
@@ -2401,6 +2422,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         &mut self,
         id: SlotId,
         which: RxBlockOpt,
+        call_scoped: bool,
     ) -> Result<BlockProgress, BlockTransferError>
     where
         S: DatagramSlots,
@@ -2531,7 +2553,15 @@ impl<S: Storage + BodySlots> Engine<S> {
                 }
             }
         }
-        let progress = if untagged_classic {
+        let progress = if call_scoped {
+            self.apply_call_block2(
+                key,
+                block,
+                &tmp.as_ref()[..n],
+                expected,
+                matches!(which, RxBlockOpt::QBlock2),
+            )?
+        } else if untagged_classic {
             let result = if let Some(id) = classic_body {
                 self.write_block1(id, block, &tmp.as_ref()[..n])
             } else {
@@ -2574,6 +2604,52 @@ impl<S: Storage + BodySlots> Engine<S> {
             }
         }
         Ok(progress)
+    }
+
+    fn apply_call_block2(
+        &mut self,
+        key: BlockKey<S::Token>,
+        block: BlockValue,
+        payload: &[u8],
+        expected: Option<u32>,
+        q_block: bool,
+    ) -> Result<BlockProgress, BlockTransferError> {
+        let role = if q_block {
+            BlockRole::IncomingQBlock2
+        } else {
+            BlockRole::IncomingBlock2
+        };
+        let result = (|| {
+            if let Some(id) = self.lookup_rx_body_role(key, role) {
+                if q_block
+                    && self
+                        .rx_body_transfer(id)
+                        .is_some_and(|t| t.expected_len() != expected)
+                {
+                    return Err(BlockTransferError::LengthInconsistent);
+                }
+                return if q_block {
+                    self.write_q_block2(id, block, payload)
+                } else {
+                    self.write_block2(id, block, payload)
+                };
+            }
+            let id = if q_block {
+                self.admit_q_block2(key, block, payload, expected)?
+            } else {
+                self.admit_block2(key, block, payload, expected)?
+            };
+            let transfer = self
+                .rx_body_transfer(id)
+                .ok_or(BlockTransferError::NoTransfer)?;
+            Ok(BlockProgress::new(
+                id,
+                transfer.filled(),
+                transfer.is_complete(),
+            ))
+        })();
+        self.metrics.tally_block(result.as_ref().map(|_| ()), false);
+        result
     }
 
     fn issue_and_encode_tx(

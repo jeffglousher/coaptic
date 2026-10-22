@@ -33,6 +33,20 @@ effect remain unmeasured. Next, measure the merged source and extend bounded
 concurrent workloads. Keep NON traffic separate from CON qualification, preserve
 NSTART and nonce ownership, and report actual overlap, refusal and recovery.
 
+Concurrent Block2 response assembly is isolated by App Call. Two live Calls with
+the same ETag previously shared a body slot and one could stop before sending
+its follow-up ([#655](https://github.com/jeffglousher/coaptic/issues/655)). Both
+original protected/unprotected cases now complete four operations with eight
+requests and replies at unchanged capacities and reported memory. Fixed and
+allocated storage, classic/Q Block2 and raw Engine token-change behavior have
+focused regression coverage. The raw Engine's cross-token assembly stays intact.
+
+The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/pull/153)
+keeps CON and NON cohorts separate and reports observed overlap, capacity refusal
+and failed work. True async host scheduling is the next experiment; compare it
+with the current Tokio polling loop at an identical core revision before
+attributing any gain. Generated futures and runtime costs need their own ledger.
+
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
 [companion #149](https://github.com/jeffglousher/coaptic-validation/pull/149).

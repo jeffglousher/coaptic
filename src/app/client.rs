@@ -3902,7 +3902,7 @@ where
     // Classify from the already-decoded response. A plain 2.05 must not
     // stack Block IO scratch via MissingBlock probes.
     if !overloaded && parsed.block2().is_some() {
-        match engine.apply_block2_rx(rx) {
+        match engine.apply_call_block2_rx(rx, false) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 finish_assembled(
@@ -3983,7 +3983,7 @@ where
             }
         }
     } else if !overloaded && parsed.q_block2().next().is_some() {
-        match engine.apply_q_block2_rx(rx) {
+        match engine.apply_call_block2_rx(rx, true) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
                 let _ = engine.note_q_receive(progress.id(), now_ms);

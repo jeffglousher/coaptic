@@ -395,3 +395,182 @@ fn deferred_fetch_selection_byte_bound_refuses_without_capacity_loss() {
     #[cfg(feature = "oscore")]
     bounds(fixed(), true);
 }
+
+fn concurrent_fixed() -> Server {
+    App::with_resources(
+        Resources::<Buffers>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<2>(),
+    )
+    .allow_unprotected()
+    .deterministic_for_tests()
+    .route("select", coaptic::get(concurrent_representation))
+    .bind(Io::default())
+    .unwrap()
+}
+
+fn concurrent_representation(request: coaptic::Request<'_>) -> Response<'static> {
+    let body = if request.uri_query().next() == Some(Ok("right")) {
+        &[0x6b; 2048]
+    } else {
+        &[0x5a; 2048]
+    };
+    Response::content(body)
+        .content_format(ContentFormat::OCTET_STREAM)
+        .etag(b"shared")
+}
+
+fn concurrent_downloads<S: AppStorage<Token = Token>>(
+    mut client: Server<S>,
+    mut server: Server<S>,
+    protected: bool,
+) {
+    #[cfg(feature = "oscore")]
+    if protected {
+        let make = |sender, recipient| {
+            coaptic::oscore::SecurityContext::derive(coaptic::oscore::DeriveParams {
+                master_secret: &[0x42; 16],
+                master_salt: &[],
+                sender_id: sender,
+                recipient_id: recipient,
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+    }
+    #[cfg(not(feature = "oscore"))]
+    assert!(!protected);
+    without_allocating(|| {
+        let mut now = 0;
+        for q_block in [false, true] {
+            for different_selection in [false, true] {
+                let calls = core::array::from_fn::<_, 2, _>(|index| {
+                    let request = client
+                        .get("select")
+                        .query(if index == 1 && different_selection {
+                            "right"
+                        } else {
+                            "left"
+                        })
+                        .to(PEER)
+                        .non();
+                    let request = if q_block { request.q_block2() } else { request };
+                    request.send(now).unwrap()
+                });
+                assert_ne!(calls[0].token(), calls[1].token());
+                let mut completed = [false; 2];
+                let mut bodies = [None; 2];
+                for round in 0..2 {
+                    let mut replies = [[Frame::default(); 2]; 2];
+                    let mut counts = [0; 2];
+                    while let Some(frame) = client.transport_mut().take() {
+                        server.transport_mut().incoming = Some(frame);
+                        now += 1;
+                        server.poll(now).unwrap();
+                        while let Some(reply) = server.transport_mut().take() {
+                            let token = decode(&reply.bytes[..reply.len]).unwrap().token();
+                            let index =
+                                calls.iter().position(|call| call.token() == token).unwrap();
+                            assert!(counts[index] < 2);
+                            replies[counts[index]][index] = reply;
+                            counts[index] += 1;
+                        }
+                    }
+                    // Deliver A0, B0 before either Call receives its final block.
+                    for (block, by_call) in replies.into_iter().enumerate() {
+                        for (index, reply) in by_call.into_iter().enumerate() {
+                            if block < counts[index] {
+                                client.transport_mut().incoming = Some(reply);
+                                now += 1;
+                                client.poll(now).unwrap();
+                            }
+                        }
+                        if round == 0 && block == 0 {
+                            let key = |call: coaptic::Call| {
+                                coaptic::storage::BlockKey::new(call.token(), PEER).with_identity(
+                                    coaptic::storage::BodyTag::new(b"shared").unwrap(),
+                                )
+                            };
+                            let a = client.engine().lookup_rx_body(key(calls[0])).unwrap();
+                            let b = client.engine().lookup_rx_body(key(calls[1]));
+                            assert!(b.is_some(), "second Call must own its own partial body");
+                            assert_ne!(Some(a), b);
+                            bodies = [Some(a), b];
+                            if !q_block {
+                                assert_eq!(
+                                    client.transport().len,
+                                    2,
+                                    "both Calls must request block1"
+                                );
+                            }
+                        }
+                    }
+                    let mut output = [0; 2048];
+                    for index in 0..2 {
+                        if let Some(reply) = client
+                            .take_response_into(calls[index], &mut output)
+                            .unwrap()
+                        {
+                            let reply = reply.unwrap();
+                            assert_eq!(reply.code(), Code::CONTENT);
+                            assert_eq!(reply.etag_bytes(), Some(b"shared".as_slice()));
+                            assert_eq!(
+                                reply.body(),
+                                Some(if index == 1 && different_selection {
+                                    &[0x6b; 2048][..]
+                                } else {
+                                    &[0x5a; 2048][..]
+                                })
+                            );
+                            completed[index] = true;
+                        }
+                    }
+                    if completed == [true; 2] {
+                        break;
+                    }
+                }
+                assert_eq!(completed, [true; 2]);
+                assert_eq!(client.engine_mut().rx_occupied(), 0);
+                for body in bodies.into_iter().flatten() {
+                    assert!(client.engine().rx_body_transfer(body).is_none());
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn concurrent_same_etag_downloads_keep_call_ownership() {
+    concurrent_downloads(concurrent_fixed(), concurrent_fixed(), false);
+    #[cfg(feature = "oscore")]
+    concurrent_downloads(concurrent_fixed(), concurrent_fixed(), true);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_concurrent_same_etag_downloads_keep_call_ownership() {
+    let make = || {
+        let resources = || {
+            Resources::<Buffers>::new()
+                .routes::<1>()
+                .block_wise::<true>()
+                .deferred::<2>()
+        };
+        let bytes = resources()
+            .allocated(usize::MAX)
+            .required_heap_bytes()
+            .unwrap();
+        App::with_resources(resources().allocated(bytes))
+            .allow_unprotected()
+            .deterministic_for_tests()
+            .route("select", coaptic::get(concurrent_representation))
+            .bind(Io::default())
+            .unwrap()
+    };
+    for protected in [false, cfg!(feature = "oscore")] {
+        concurrent_downloads(make(), make(), protected);
+    }
+}
