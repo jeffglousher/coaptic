@@ -8,6 +8,14 @@ it is not silently treated as finished software work.
 
 ## Current software status
 
+The current priority is [CPU efficiency #650](https://github.com/jeffglousher/coaptic/issues/650):
+halve CPU time per verified operation separately for unprotected and established
+OSCORE traffic. Establish matched-load process CPU baselines, separate idle
+scheduling from active processing, and profile before expanding instrumentation.
+Keep client costs, failures, latency and whole-system memory visible. The prior
+throughput report does not prove this target; it remains open until representative
+device and cloud configurations have relevant evidence.
+
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
 [companion #149](https://github.com/jeffglousher/coaptic-validation/pull/149).

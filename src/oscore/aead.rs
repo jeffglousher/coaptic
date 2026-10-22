@@ -1,7 +1,7 @@
 //! HKDF-SHA-256 and AES-CCM-16-64-128. RustCrypto only; no hand-rolled AEAD.
 
-use aes::Aes128;
-use ccm::aead::{AeadInOut, KeyInit, Tag};
+use aes::Aes128Enc;
+use ccm::aead::{AeadInOut, KeyInit, Tag, inout::InOutBuf};
 use ccm::{
     Ccm,
     consts::{U8, U13},
@@ -13,7 +13,9 @@ use super::cbor;
 use super::header::PartialIv;
 use super::{Error, KEY_LEN, NONCE_LEN, TAG_LEN};
 
-type Aes128Ccm = Ccm<Aes128, U8, U13>;
+// CCM uses AES encryption for both sealing and opening; inverse round keys
+// are unused. Keep the key schedule local rather than enlarging every context.
+type Aes128Ccm = Ccm<Aes128Enc, U8, U13>;
 
 pub(crate) fn hkdf_expand(
     master_secret: &[u8],
@@ -83,12 +85,13 @@ pub(crate) fn open(
     if out.len() < pt_len {
         return Err(Error::BufferTooSmall);
     }
-    out[..pt_len].copy_from_slice(&ciphertext[..pt_len]);
     let tag =
         Tag::<Aes128Ccm>::try_from(&ciphertext[pt_len..]).map_err(|_| Error::MessageLength)?;
     let cipher = Aes128Ccm::new(key.into());
+    let buffer = InOutBuf::new(&ciphertext[..pt_len], &mut out[..pt_len])
+        .map_err(|_| Error::MessageLength)?;
     cipher
-        .decrypt_inout_detached(nonce.into(), aad, (&mut out[..pt_len]).into(), &tag)
+        .decrypt_inout_detached(nonce.into(), aad, buffer, &tag)
         .map_err(|_| Error::Decrypt)?;
     Ok(pt_len)
 }
@@ -113,6 +116,32 @@ impl Aad {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separate_input_authenticates_without_modifying_ciphertext_or_output_tail() {
+        let key = [0x31; KEY_LEN];
+        let nonce = [0x27; NONCE_LEN];
+        for length in [0, 1, 15, 16, 17, 63, 64, 65, 1280] {
+            let mut sealed = [0x5a; 1280 + TAG_LEN];
+            let n = seal_in_place(&key, &nonce, b"aad", length, &mut sealed).unwrap();
+            let original = sealed;
+            let mut opened = [0xcc; 1281];
+            assert_eq!(
+                open(&key, &nonce, b"aad", &sealed[..n], &mut opened),
+                Ok(length)
+            );
+            assert_eq!(&opened[..length], &[0x5a; 1280][..length]);
+            assert!(opened[length..].iter().all(|byte| *byte == 0xcc));
+            assert_eq!(sealed, original);
+            assert_eq!(
+                open(&key, &nonce, b"wrong", &sealed[..n], &mut opened),
+                Err(Error::Decrypt)
+            );
+            assert!(opened[..length].iter().all(|byte| *byte == 0));
+            assert!(opened[length..].iter().all(|byte| *byte == 0xcc));
+            assert_eq!(sealed, original);
+        }
+    }
 
     #[test]
     fn in_place_capacity_checks_preserve_plaintext_and_exact_fit_authenticates() {
