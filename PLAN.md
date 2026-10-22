@@ -28,21 +28,37 @@ but sampled self counts do not identify stage costs or prove redundant wakeups.
 
 The explicit [blocking UDP control](https://github.com/jeffglousher/coaptic-validation/pull/157)
 stages one packet in existing scratch before calling App with fresh time. Its
-[same-core run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39839988246)
-verified all 952,000 operations without operation failures, but only 13 of 16
-windows met pacing requirements. Three ready-baseline windows exceeded the
-unchanged 1% missed-period limit. Qualified CPU ratios are withheld for both
-security cohorts; descriptive reductions of 22.58% and 26.33% do not establish
-performance acceptance. No windows or failures are discarded.
+[qualified 4,000/s comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39843237773)
+verified 1,344,000 operations at the same core, compiler and frozen client.
+All 32 clean windows and four pooled latency guards passed. Server CPU per
+operation fell 17.61%/26.30% unprotected and 23.75%/30.89% with OSCORE for
+64/1024-byte responses. Unprotected 64-byte median latency increased 1.8435
+microseconds, close to the +2 guard. These are host scheduling gains; both
+representative 50% targets remain open.
+
+Retain the [11,900/s pacing failures](https://github.com/jeffglousher/coaptic-validation/actions/runs/39839988246):
+only 13 of 16 windows qualify, so both cohort ratios remain withheld. The latest
+[scheduler-accounting check](https://github.com/jeffglousher/coaptic-validation/actions/runs/39867544358)
+verified 320,000 operations and passed 106 Linux tests. One unprotected window
+missed 212 of 20,000 starts, above the unchanged 200 limit; its cohort ratio is
+withheld. OSCORE qualified at 29.5 to 23.5 microseconds per operation, 20.34%
+lower. Do not pool different hosts or substitute passing windows.
 
 The control preserves core capacities and default adapters. It uses a distinct
 synchronous congestion policy with soft read/write timeouts, not async
 cancellation or exact absolute send deadlines. Linux inline sizes are 56 bytes
 of metadata inside the 2,112-byte adapter inside the 16,064-byte App; nested
 owners must not be summed. Whole-system memory and runtime congestion behavior
-remain unqualified. The next finite comparison uses a separate 4,000 operations/s
-stratum, 64/1024-byte responses, the same core/client and separate inclusive
-profiles. It retains the failed high-load cohort and existing eligibility gates.
+remain unqualified.
+
+Recorder fences and optional scheduler snapshots are delivered in the companion
+runner. Scheduler runtime agrees with process CPU within 10 ms in all four
+latest captures, but they contain only 4/3/57/14 samples. No user/kernel mode
+reaches 100 resolved samples, so there is no supported hotspot ranking or
+accounting correction. The next task is bounded transport and idle-work counting
+through existing diagnostic/test seams before removing work. Keep clean CPU
+metrics and acceptance gates unchanged; further profiler infrastructure needs a
+concrete reason.
 
 The optional [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
 remains available. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
