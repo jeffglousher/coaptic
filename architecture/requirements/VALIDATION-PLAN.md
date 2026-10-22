@@ -84,11 +84,12 @@ history into this plan:
   retain identity/custody, owner transfer/back, software-restart receipt recovery,
   revocation, commissioning-reply repair and selected live-CON/pressure proof.
   Original firmware, keys, NVS and raw private captures remain preserved.
-- [Loopback comparison](https://github.com/jeffglousher/coaptic-validation/tree/0433b94d8cc0b3642d6fc9e4fbbce33882f0d99f/tools/benchmark/evidence/loopback-windows-20261021)
-  completed the requested full library matrix at its named sources.
-  [Hot-path study](https://github.com/jeffglousher/coaptic-validation/tree/5014d52aee960c2ad0e24034991275f9bdc8fecf/tools/benchmark/evidence/hot-path-windows-20261021)
-  retains the planning fix, crossed-client controls and all slower samples.
-  These are separate measurement strata, not an automatic result for newer code.
+- [Current protected/unprotected comparison](https://github.com/jeffglousher/coaptic-validation/tree/98b54fe8fd4c9b76301d2d22a533af40ecade744/tools/benchmark/evidence/comprehensive-windows-20261022)
+  retains the full matrix, all failures, exact sources, resource accounting and
+  independent socket-packet grades. OSCORE copy cleanup is delivered; the
+  before/after probe does not establish a large speedup. Native UDP, matched
+  Python UDP/OSCORE, test-only DTLS adapters and HTTP/3 remain separate strata.
+  The patched Go control is distinct from original timing observations.
 - [Host-to-MCU evidence](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/qualification/evidence/matched-host-mcu-20261021)
   records the executed direction and unchanged-image restoration.
 - [Kernel observation #522](https://github.com/jeffglousher/coaptic/issues/522)

@@ -6,28 +6,28 @@ storage, sync/async operation, OSCORE/EDHOC, guided commissioning, durable
 ownership and application receipts. Remaining qualification is listed below;
 it is not silently treated as finished software work.
 
-## Next software work
+## Current software status
 
-Follow the [performance investigation (#341)](https://github.com/jeffglousher/coaptic/issues/341).
-Repeated request planning is removed. Authenticated Inner reconstruction now
-encodes once, and fresh protected TX slots avoid packet staging. Retained-packet
-replacement keeps transactional staging so refusal preserves retransmission bytes.
+The OSCORE copy cleanup and source-matched library comparison are delivered in
+[core #648](https://github.com/jeffglousher/coaptic/pull/648) and
+[companion #149](https://github.com/jeffglousher/coaptic-validation/pull/149).
+Authenticated Inner reconstruction encodes once, opened requests avoid RX
+reserialization, and fresh protected TX slots avoid packet staging. Retained-TX
+replacement preserves transactional staging and retransmission bytes on refusal.
 
-1. Finish the source-matched protected/unprotected library comparison and separate
-   offline packet grading. Keep client, security and runtime strata distinct.
-2. Use optimizer barriers and clock calibration for in-process probes; retain
-   complete-response verification and all failures in network runs.
-3. Change further hot-path work only for measured waste, preserving authentication,
-   replay checks, refusal/recovery, bounded ownership and memory limits.
+The [current report](https://github.com/jeffglousher/coaptic-validation/tree/98b54fe8fd4c9b76301d2d22a533af40ecade744/tools/benchmark/evidence/comprehensive-windows-20261022)
+contains all named protected/unprotected configurations, resource ledgers,
+independent packet grades and retained failures. Separate client/runtime strata
+and the patched-toolchain control are explicit. The copy reductions did not
+establish a large core-poll speedup. Further optimization needs measured waste,
+with authentication, replay, refusal/recovery and bounded ownership preserved.
 
-This is an optimization task, not a target speedup or a reason to weaken checks.
-The [latest study](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/hot-path-windows-20261021)
-contains exact sources and all samples. It found client-runtime overhead as well
-as real library waste; it did not establish a historical 2–3× core regression.
-
-Future hardening [#647](https://github.com/jeffglousher/coaptic/issues/647) studies
-volatile plaintext/key lifetime and bounded zeroization. Copy removal does not
-promise secure erasure; the study is separate from the accepted delivery milestone.
+No accepted protocol implementation gap remains in this batch. Required physical
+qualification stays below. Future [#647](https://github.com/jeffglousher/coaptic/issues/647)
+studies volatile plaintext/key lifetime and bounded zeroization; copy removal
+does not promise erasure. The open third-party
+[Go comparator defect](https://github.com/jeffglousher/coaptic-validation/issues/146)
+is tracked separately from Coaptic implementation.
 
 ## Qualification waiting for physical access
 
