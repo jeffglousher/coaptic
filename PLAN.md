@@ -9,19 +9,25 @@ it is not silently treated as finished software work.
 ## Next software work
 
 Follow the [performance investigation (#341)](https://github.com/jeffglousher/coaptic/issues/341).
-Repeated request planning has been removed. The next useful question is whether
-repeated OSCORE message reconstruction and packet staging cost enough to change.
+Repeated request planning is removed. Authenticated Inner reconstruction now
+encodes once, and fresh protected TX slots avoid packet staging. Retained-packet
+replacement keeps transactional staging so refusal preserves retransmission bytes.
 
-1. Measure that work separately from socket and client-runtime costs.
-2. Remove demonstrated waste while preserving authentication, replay checks,
-   refusal/recovery, bounded ownership and memory limits.
-3. Validate the batch with focused tests and equivalent complete UDP exchanges.
-   Keep the independent Python and native-client results separate.
+1. Finish the source-matched protected/unprotected library comparison and separate
+   offline packet grading. Keep client, security and runtime strata distinct.
+2. Use optimizer barriers and clock calibration for in-process probes; retain
+   complete-response verification and all failures in network runs.
+3. Change further hot-path work only for measured waste, preserving authentication,
+   replay checks, refusal/recovery, bounded ownership and memory limits.
 
 This is an optimization task, not a target speedup or a reason to weaken checks.
 The [latest study](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/hot-path-windows-20261021)
 contains exact sources and all samples. It found client-runtime overhead as well
 as real library waste; it did not establish a historical 2–3× core regression.
+
+Future hardening [#647](https://github.com/jeffglousher/coaptic/issues/647) studies
+volatile plaintext/key lifetime and bounded zeroization. Copy removal does not
+promise secure erasure; the study is separate from the accepted delivery milestone.
 
 ## Qualification waiting for physical access
 

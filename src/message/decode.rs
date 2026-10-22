@@ -265,6 +265,12 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
     })
 }
 
+#[cfg(feature = "oscore")]
+pub(crate) fn decode_options_payload(bytes: &[u8]) -> Result<(Options<'_>, &[u8]), ParseError> {
+    let (options, payload) = split_options_and_payload(bytes, 0)?;
+    Ok((Options::new(options), payload))
+}
+
 fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]), ParseError> {
     let mut i = start;
     let mut prev = 0u32;
