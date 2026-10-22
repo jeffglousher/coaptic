@@ -31,9 +31,9 @@ dedup rows and checks Call deadlines before inbox/Observe lookups. These changes
 add no retained storage. Their stack effects and individual CPU contributions
 remain unmeasured. The combined server-role result above cannot isolate them. The
 matched run compares core `b8f44fa` with `183b4b9`; two pairs and 10 ms CPU
-counters limit conclusions about small changes. Perf was disabled. Next, extend
-bounded concurrent workloads. Keep NON separate from CON qualification, preserve
-NSTART and nonce ownership, and report actual overlap, refusal and recovery.
+counters limit conclusions about small changes. Perf was disabled. Further
+concurrency qualification must keep NON separate from CON, preserve NSTART and
+nonce ownership, and report actual overlap, refusal and recovery.
 
 Concurrent Block2 response assembly is isolated by App Call. Two live Calls with
 the same ETag previously shared a body slot and one could stop before sending
@@ -59,12 +59,20 @@ component sizes must not be added again. This is compiler layout, not CPU saving
 peak stack or whole-RAM qualification. Existing pools and the loop body are
 unchanged. Runtime, allocator, body/pool heap and kernel costs remain separate.
 
-The [next finite diagnosis](https://github.com/jeffglousher/coaptic-validation/actions/runs/39814549184)
-uses both security modes at 11,900 operations/s with separate 997 Hz user-code
-captures. Clean CPU still includes user and system time. Rank timer/socket
-lifecycle and deadline scans only when samples support them; preserve deadline
-precedence and cancellation while optimizing. This is a separate load stratum,
-with eight clean and eight profile windows, not evidence for either 50% target.
+The [user-code diagnosis](https://github.com/jeffglousher/coaptic-validation/actions/runs/39814549184)
+completed 666,400 operations without failures at 11,900 operations/s, 64 bytes,
+and concurrency one. Async used 9.78% more server CPU unprotected and 7.00% more
+with OSCORE. System time accounted for 68-83% of clean process CPU; user-only
+samples cannot explain it. Leading server symbols have only 8-16 self samples,
+so their ranks remain tentative. This is a separate load stratum.
+
+[Bounded inclusive profiling](https://github.com/jeffglousher/coaptic-validation/pull/156)
+now supports user and kernel samples with reporting on the recording runner.
+Kernel symbols may remain unresolved under existing policy; no policy change is
+part of qualification. Request option validation uses one borrowed pass with
+local scalar state; focused protocol checks and differential comparisons against
+the original predicate pass. Its effect still needs measurement at fixed sources,
+workload and adapter. Neither this change nor the tool establishes a CPU gain.
 
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and

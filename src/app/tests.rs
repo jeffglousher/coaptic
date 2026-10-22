@@ -457,6 +457,49 @@ fn unrecognized_critical_option_is_bad_option() {
 }
 
 #[test]
+fn repeated_block2_validates_and_uses_only_the_first_value() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.store(0, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for malformed_first in [false, true] {
+        let values: [&[u8]; 2] = if malformed_first {
+            [&[1; 4], &[]]
+        } else {
+            [&[], &[1; 4]]
+        };
+        let options = values.map(|value| Opt::new(OptionNumber::BLOCK2, value));
+        let (wire, n) = encode_wide(Code::GET, &["bench"], &options, 0x3a01);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "bench",
+                get(|_| {
+                    CALLS.fetch_add(1, Ordering::SeqCst);
+                    Response::content(b"x").etag(b"fixture")
+                }),
+            )
+            .allow_unprotected()
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        assert_eq!(
+            last_wide(&app).code(),
+            if malformed_first {
+                Code::BAD_OPTION
+            } else {
+                Code::CONTENT
+            }
+        );
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[test]
 fn oscore_option_without_context_is_bad_option_not_outer_post() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let extra = [Opt::new(OptionNumber::OSCORE, &[0x09])];
@@ -9789,6 +9832,18 @@ fn qblock_options_refuse_mixed_classic_and_repeated_non_recovery_before_dispatch
         &[
             (OptionNumber::Q_BLOCK2, &[0x20]),
             (OptionNumber::Q_BLOCK2, &[0, 0, 0, 0]),
+        ],
+        &[
+            (OptionNumber::Q_BLOCK2, &[0x20]),
+            (OptionNumber::Q_BLOCK2, &[7]),
+        ],
+        &[
+            (OptionNumber::Q_BLOCK2, &[0x20]),
+            (OptionNumber::Q_BLOCK2, &[0x08]),
+        ],
+        &[
+            (OptionNumber::Q_BLOCK2, &[0x08]),
+            (OptionNumber::Q_BLOCK2, &[0x10]),
         ],
     ];
     for case in cases {
