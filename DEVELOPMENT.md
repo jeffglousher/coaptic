@@ -1,73 +1,60 @@
 # Development
 
-Follow [AGENTS.md](AGENTS.md) for delivery. Use the pinned Rust toolchain;
-the library is edition 2024 with MSRV 1.89. Test peers may require newer tools.
-Merges to `main` are squash-only. During pre-release, focused local validation
-supports authorized merges; hosted CI is advisory and does not block delivery.
+Use the pinned Rust toolchain. The library uses Rust 2024 with MSRV 1.89.
+Some test peers need a newer compiler.
 
-Pre-release development does not require version bumps, backwards compatibility,
-deprecation cycles or compatibility layers. Update affected callers together when
-changing interfaces. Keep manifest versions and dependency pins required by tooling;
-release version selection belongs to an explicitly requested publication.
-
-## Current-state assessment
-
-Finish accepted coding/integration before expanding benchmarks or stability
-campaigns. Requested performance runs identify source, workload, security,
-backend and capacities. Start device comparisons from `SmallDevice` /
-`profiles::Constrained`, naming route, Call, deferred and security settings.
-Hold capabilities constant when comparing blockwise or protected/unprotected
-operation; a preset is a starting budget, not a feature restriction.
-
-Report whole-object storage separately from stack, heap and transport views.
-An App inside a reserved stack is not additional RAM. Name missing metrics and
-retain compact source-bound evidence; older results do not become current
-measurements. Historical comparisons need a request or a concrete regression.
-
-## Validate each batch
-
-Complete a coherent batch, then choose checks that can detect faults in its
-affected boundaries. Check earlier when it resolves an implementation uncertainty.
-Format/lint affected Rust targets and run focused behavior tests; use the
-[release matrix](#release-validation) for broader protocol/resource/integration changes.
-
-Check `--no-default-features` when modules or feature gates move. Allocation/security
-changes need the affected `alloc`, `oscore`, `alloc,oscore` and `std` configurations.
-Rustdoc changes use `cargo doc --no-deps --all-features` and relevant doctests.
-Documentation-only edits need link/source review, not a protocol campaign.
-
-Use loopback or ESP32 proof when transport, persistence or hardware behavior
-changes. Reuse source-matched tests/evidence; once a meaningful check passes,
-continue delivery unless a concrete concern warrants another run.
-
-## Hosted CI
-
-Pull requests run one advisory development job: formatting, Clippy and library
-tests with all features and without defaults. A queued hosted run is not a merge
-prerequisite when focused local checks support the change.
-
-Run the CI workflow manually with `full_validation` enabled for the full feature,
-MSRV, documentation, packaging and companion matrix. Enrollment provider checks
-are manual. The additional CodeQL candidate workflow runs weekly or manually;
-GitHub's separate default CodeQL setup remains independent.
-
-## Companion validation
-
+[AGENTS.md](AGENTS.md) contains project policy.
+[PLAN.md](PLAN.md) identifies the current work.
 [coaptic-validation](https://github.com/jeffglousher/coaptic-validation) owns
-independent peers, hardware tooling and benchmarks. This repository owns the Rust
-library, examples and unit/integration tests.
+independent peers, benchmarks and device tooling; this repository owns the
+library, examples and core tests.
 
-Full CI calls a pinned companion workflow against the exact library revision. Follow
-its [run instructions](https://github.com/jeffglousher/coaptic-validation#run) for
-transport, security or harness changes. Retain both revisions, lockfiles, setup
-limits and reports. Review suite-pin changes. Short process timings are preliminary
-samples; a library-to-itself exchange does not establish independent interoperability.
+## Check a change
 
-## Release validation
+Choose checks for the code you changed. Run them after a coherent batch:
 
-Run the complete feature and packaging matrix before an explicitly requested
-release. During development, select the affected checks from this matrix; expand
-coverage when a concrete cross-feature or compiler concern warrants it:
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
+Use the relevant test filter while developing. Check without defaults when
+feature gates or shared modules change:
+
+```sh
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo test --no-default-features
+```
+
+Allocation and security changes also need their affected `alloc`, `oscore`,
+`alloc,oscore` and `std` combinations. Transport, persistence and hardware
+changes need relevant loopback or device proof. Keep both repository revisions,
+features, capacities and runner identities with the result.
+
+For rustdoc changes, build the docs and run relevant doctests. For Markdown-only
+changes, review claims, examples and links; do not rerun protocol campaigns.
+
+Pull requests run the advisory **Quick development checks** job. Use the
+workflow's `full_validation` input for a requested full run. Enrollment-provider
+checks are manual. GitHub's default CodeQL setup runs separately.
+
+## Record useful evidence
+
+Name the workload, security mode, storage and capacities. Preserve raw failures
+and unsupported cases. Identify the source that actually ran; a newer CI pin
+does not update an old measurement.
+
+Separate object layout, heap requests, reserved stacks and process memory.
+Nested objects are already included in their owners. Do not turn finite samples
+into minimum-RAM, peak-memory or maximum-throughput claims.
+See the [qualification checklist](architecture/requirements/VALIDATION-PLAN.md).
+
+## Prepare an authorized release
+
+Publication is separate work under
+[#132](https://github.com/jeffglousher/coaptic/issues/132).
+Select the exact candidate before running the complete matrix:
 
 ```sh
 cargo fmt --all -- --check
@@ -86,16 +73,11 @@ cargo +1.89.0 check --locked -p coaptic --no-default-features
 cargo +1.89.0 check --locked -p coaptic --all-features
 ```
 
-`coaptic` uses the compile-time `coaptic-io` procedural macro crate to generate
-native async counterparts from shared protocol bodies. A registry release must
-publish that dependency before `coaptic`; it adds no device runtime dependency.
-Harnesses and peers stay out of the published crates. Inspect
-packaged files and license notices, complete maintainer/external review, and agree
-on the final release snapshot before publishing. Package preparation does not
-authorize publication.
+Inspect packaged files, licenses and dependency provenance, and complete the
+agreed review. Package verification does not authorize publishing.
 
-Release tags trigger rustdoc and crates.io publication. The tag must match the
-manifest version exactly (`v0.0.10` for `0.0.10`). Configure the repository's
-`CARGO_REGISTRY_TOKEN` secret with an authorized crates.io token; never commit it.
-After publication, update the README dependency and manifest documentation URL
-to the released crate and `https://docs.rs/coaptic`.
+The `coaptic-io` macro crate generates async counterparts at compile time and
+must be published before `coaptic`. Release tags trigger documentation and
+crates.io publication; the tag must match the selected manifest version.
+Use the authorized `CARGO_REGISTRY_TOKEN` secret. Never commit it.
+After publication, verify installation and update dependency/documentation links.

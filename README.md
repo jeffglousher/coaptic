@@ -1,16 +1,23 @@
-# coaptic
+# Coaptic
 
-CoAP over UDP for devices and host services, written in Rust, with explicit
-memory and work bounds for reliable operation.
-Serve resources, send requests, subscribe with Observe and transfer larger
-bodies through one client/server API. OSCORE message protection and fixed storage
-are the defaults. The core supports `no_std`; `std` and `alloc` are independent.
+Coaptic is a Rust library for CoAP: small messages over UDP between devices and
+services. Use it to serve resources, send requests, watch values with Observe,
+and transfer bodies that do not fit in one packet.
 
-Coaptic is pre-release and available from Git. Its selected scope is direct UDP
-endpoints with OSCORE/EDHOC and durable local commissioning. APIs and formats may
-change directly during development.
+It runs on microcontrollers and on servers. You choose the memory budget before
+starting: fixed arrays on a device, or pools allocated once on a host. Requests
+reuse that storage. When capacity runs out, the library reports the limit and
+reserves packet capacity for protocol control and recovery.
 
-## Run a protected exchange
+Messages are protected with OSCORE by default. Add the EDHOC feature to establish
+authenticated session keys. The core supports `no_std` without a heap, with both
+synchronous and native async interfaces.
+
+**Pre-release:** use the Git dependency below. APIs may change.
+
+## Try it
+
+Run a protected client and server on your computer:
 
 ```sh
 git clone https://github.com/jeffglousher/coaptic.git
@@ -18,133 +25,88 @@ cd coaptic
 cargo run --locked --example oscore_pair --features std
 ```
 
-The [example](examples/oscore_pair.rs) creates fresh local credentials, starts a
-client and server, and verifies all 200 response bytes:
-
-```text
-Storage: fixed constrained profile (2 RX/TX slots, 1152 bytes each)
-OSCORE: received all 200 bytes
-```
-
-To use bounded heap storage instead:
+The example starts both peers, creates fresh keys and checks a complete
+200-byte response. It uses fixed storage. To try the same exchange with pools
+allocated at startup:
 
 ```sh
 cargo run --locked --example oscore_pair --features std,alloc -- --alloc
 ```
 
-Both runs protect messages with OSCORE. The demonstration uses process-local keys;
-real devices need persistent identity and authenticated pairing.
+These keys last for the demonstration. For a real device, use the
+[commissioning guide](tools/coaptic-enroll/README.md).
 
-## Integrate
+## Use it in an application
 
 ```toml
 [dependencies]
 coaptic = { git = "https://github.com/jeffglousher/coaptic" }
 ```
 
-Add `features = ["std"]` for OS sockets or `["std", "alloc"]` for host networking
-with optional heap-backed pools. Enabling a feature does not select heap storage
-or disable security.
+Add the `std` feature for host sockets and `alloc` if you want heap-backed pools.
+Neither feature changes the security policy or chooses the storage backend.
 
-Applications supply a `DatagramIo` transport, secure entropy, a provisioned OSCORE
-context and a monotonic millisecond clock. They own the polling loop:
+A resource handler returns a response. The builder connects it to a path:
 
 ```rust
 use coaptic::{App, Request, Response, get, resources::SmallDevice};
 
-fn telemetry(_: Request<'_>) -> Response<'static> {
+fn temperature(_: Request<'_>) -> Response<'static> {
     Response::content(b"21.5")
 }
 
-// io, context and secure_random come from the platform/provisioning layer.
-let mut service = App::with_resources(SmallDevice::new())
+// Supply your transport, OSCORE context and secure random source.
+let mut app = App::with_resources(SmallDevice::new())
     .oscore(context)
-    .route("telemetry", get(telemetry))
+    .route("temperature", get(temperature))
     .bind_with_entropy(io, secure_random)?;
-service.poll(now_ms)?;
+
+app.poll(now_ms)?; // Call regularly with a monotonic millisecond clock.
 ```
 
-The [shared service](examples/support/fixed_service.rs) runs with microcontroller
-or nonblocking host UDP adapters. Use one clock epoch for timed App operations;
-`platform::CheckedClock` refuses failed or backward timer reads.
+The complete [shared service example](examples/support/fixed_service.rs) shows
+the device-independent application code. Start with `SmallDevice` and adjust its
+capacities for your workload. For startup allocation, select
+`SmallDevice::new().allocated(heap_limit)` before binding. Socket, runtime and
+stack memory also belong in your application's budget.
 
-Start device integration with `SmallDevice`: constrained packet pools, four
-routes and one client Call. Customize capacities before binding; choose `Device`,
-`Gateway` or `Service` when the workload needs their larger starting budgets.
-Use `.allocated(limit)` to allocate bounded heap pools once at startup and reuse
-them for requests. Capacities stay fixed after binding; enabling `alloc` never
-enables automatic pool expansion.
-The heap limit covers requested pool allocations, not whole-process memory.
-Collect complete replies with `take_response_into` and a caller-owned buffer.
-See rustdoc for resource capacities, response lifetimes, Observe and block-wise
-contracts rather than inferring them from a preset's name.
+For async host integration, see the
+[UDP adapter and runnable example](tools/coaptic-async-host/README.md).
+The companion repository supplies an
+[ESP32-S3 integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification)
+and a [Linux container example](https://github.com/jeffglousher/coaptic-validation#protected-linux-container).
 
-The companion [native async host check](https://github.com/jeffglousher/coaptic-validation#native-async-host-check)
-uses the same startup allocation policy with Tokio UDP in unprotected and OSCORE modes.
+## Pair a device
 
-Security, blockwise transfers and storage are options of the same App. Blockwise
-uses bounded body storage; name capacities and overrides when comparing options.
-"Constrained" means predictable resource use. Include stack, scratch and platform
-transport storage in the deployment budget alongside App/pool storage.
-
-Our physical target is the Waveshare ESP32-S3, using the companion
-[ESPHome integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification).
-It supplies board startup, Wi-Fi and deployment. Other targets need their own
-platform adapters and qualification. The companion also provides a
-[Linux container recipe](https://github.com/jeffglousher/coaptic-validation#protected-linux-container).
-
-## Provision and recover
-
-Use the guided Rust [commissioning CLI](tools/coaptic-enroll/README.md) on Windows,
-Linux or macOS for inspection, identity setup, pairing and recovery. Its default
-PIV provider supports touch-required and explicit touchless development credentials.
-The tool documents native smart-card and credential-store prerequisites.
-Choose read-only, echo-only or durable-telemetry access. Inspection reports
-pending-work custody; drain telemetry before changing its grant so the exact
-outstanding effect can finish.
-
-Provision a unique device identity and authenticate the peer/owner binding.
-The optional `edhoc` feature establishes fresh OSCORE sessions from installed
-trust. Normal reconnects restore durable identity and permissions, then establish
-fresh session keys; they do not need another operator approval.
-
-If retaining an OSCORE key across restart instead, recover durable sender-sequence
-reservations and replay checkpoints before using it. Durable application effects
-also need an application receipt; a CoAP acknowledgement alone is not a commit.
-See [SECURITY.md](SECURITY.md) for the boundary and the
-[qualification plan](architecture/requirements/VALIDATION-PLAN.md) for source-bound
-evidence and remaining physical qualification.
-
-## Unprotected mode
-
-Unprotected CoAP carries binary or textual payloads without message encryption,
-authentication or replay protection. Select `.allow_unprotected()` explicitly for
-compatibility or tests.
-An attached OSCORE context still enforces protection; authentication failure never
-selects unprotected mode. Disabling Cargo defaults does not select it either.
-
-Run the optional localhost examples in separate terminals:
+The Rust commissioning tool guides you through inspection, identity setup,
+pairing, permissions and recovery on Windows, Linux and macOS:
 
 ```sh
-cargo run --locked --example server --features std
-cargo run --locked --example client --features std
+cargo run --manifest-path tools/coaptic-enroll/Cargo.toml
 ```
 
-## Documentation and development
+It supports touch-required YubiKey PIV credentials and explicit touchless
+development credentials. See its [setup requirements](tools/coaptic-enroll/README.md)
+before connecting hardware. Normal reconnects restore the installed identity
+and permissions and establish fresh sessions; they do not require another touch.
 
-```sh
-cargo doc --all-features --open
-```
+For interoperability or local tests, select `.allow_unprotected()` explicitly.
+An authentication failure never switches a protected connection to unprotected
+operation. See [SECURITY.md](SECURITY.md) for persistent keys, recovery and durable
+application effects.
 
-- [Development and validation](DEVELOPMENT.md)
-- [Accepted protocol scope](architecture/IETF-RFC-PLAN.md)
-- [Delivery and remaining qualification](https://github.com/jeffglousher/coaptic/issues/130)
-- [Physical qualification and source-bound evidence](https://github.com/jeffglousher/coaptic/issues/333)
-- [Independent peers and benchmarks](https://github.com/jeffglousher/coaptic-validation)
+## Find your way around
 
-Current hardware reports cover finite named workloads, not production readiness.
-DTLS, TCP/TLS/WebSockets and BERT endpoints are contribution opportunities outside
-active MVP development.
+- [Examples](examples) and `cargo doc --all-features --open` for the API.
+- [Project plan](PLAN.md) for priorities and remaining work.
+- [Protocol scope](architecture/IETF-RFC-PLAN.md) for supported CoAP features.
+- [Development](DEVELOPMENT.md) for contributing and checking changes.
+- [Benchmarks and independent peers](https://github.com/jeffglousher/coaptic-validation)
+  for measured results and their configurations.
+
+DTLS, TCP/TLS/WebSockets, proxies, Resource Directory, multicast and ACE are
+outside the current delivery scope. Contributions need an agreed use case and
+implementation plan.
 
 ## License
 
