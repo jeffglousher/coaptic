@@ -272,8 +272,13 @@ pub trait DedupSlots {
     /// Release the slot matching `key`, if occupied.
     fn remove_dedup(&mut self, key: DedupKey) -> bool;
 
-    /// Occupied payload at `id`.
-    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry>;
+    /// Borrow the occupied payload at `id`, without copying its replay buffer.
+    fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;
+
+    /// Copy the occupied payload at `id`, including its replay buffer.
+    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
+        self.dedup_entry_ref(id).copied()
+    }
 }
 
 /// Typed Observe Interest Table access.

@@ -4527,6 +4527,102 @@ fn next_timeout_observes_retransmission_without_consuming_it() {
 }
 
 #[test]
+fn dedup_maintenance_sees_engine_mutations_on_same_and_regressed_clock() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let permanent = DedupEntry::new(MessageId::new(50), peer);
+    app.engine_mut().insert_dedup(permanent).unwrap();
+    for (index, now) in [10, 9, u64::MAX].into_iter().enumerate() {
+        app.poll(now).unwrap();
+        let tx = app.engine_mut().acquire_tx().unwrap();
+        let entry = DedupEntry::new(MessageId::new(51 + index as u16), peer)
+            .with_due_ms(now)
+            .with_tx_pin(tx);
+        let id = app.engine_mut().insert_dedup(entry).unwrap();
+        assert_eq!(app.engine().dedup_entry_ref(id), Some(&entry));
+        assert_eq!(app.next_timeout(), Some(now));
+        app.poll(now - 1).unwrap();
+        assert_eq!(app.engine().lookup_dedup(entry.key()), Some(id));
+        assert_eq!(app.engine_mut().tx_occupied(), 1);
+        app.poll(now).unwrap();
+        assert_eq!(app.engine().dedup_entry_ref(id), None);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert!(app.engine().lookup_dedup(permanent.key()).is_some());
+        assert_eq!(app.next_timeout(), None);
+    }
+}
+
+#[test]
+fn client_expiry_snapshot_preserves_completed_future_and_simultaneous_calls() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let completed = app.get("done").to(peer).deadline(20).send(0).unwrap();
+    overload_reply(&mut app, completed, Code::CONTENT, None, 1);
+    let future = app
+        .get("later")
+        .to(peer)
+        .non()
+        .deadline(30)
+        .send(1)
+        .unwrap();
+    let first = app
+        .get("first")
+        .to(peer)
+        .non()
+        .deadline(20)
+        .send(1)
+        .unwrap();
+    let second = app
+        .get("second")
+        .to(peer)
+        .non()
+        .deadline(20)
+        .send(1)
+        .unwrap();
+    app.poll(19).unwrap();
+    assert!(app.take_response(first).is_none());
+    assert!(app.take_response(second).is_none());
+    app.poll(20).unwrap();
+    for call in [first, second] {
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::DeadlineExceeded
+        );
+    }
+    assert!(app.take_response(future).is_none());
+    assert_eq!(app.next_timeout(), Some(30));
+    assert_eq!(
+        app.take_response(completed).unwrap().unwrap().code(),
+        Code::CONTENT
+    );
+    assert!(app.cancel(future));
+    let _ = app.take_response(future);
+
+    // A newly installed Call must still expire on a repeated poll timestamp.
+    let new = app.get("new").to(peer).non().deadline(20).send(19).unwrap();
+    app.poll(20).unwrap();
+    assert_eq!(
+        app.take_response(new).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    let last = app
+        .get("last")
+        .to(peer)
+        .non()
+        .deadline(u64::MAX)
+        .send(u64::MAX - 1)
+        .unwrap();
+    app.poll(u64::MAX - 1).unwrap();
+    assert!(app.take_response(last).is_none());
+    app.poll(u64::MAX).unwrap();
+    assert_eq!(
+        app.take_response(last).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    assert_eq!(app.next_timeout(), None);
+}
+
+#[test]
 fn next_poll_at_retained_ingress_does_not_rotate_or_consume_slots() {
     let mut app = record_client();
     assert_eq!(app.next_poll_at(10), None);

@@ -5882,16 +5882,23 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
     lives.expire_backoffs(now_ms);
     let mut due = [None; CALLS];
     for (i, live) in lives.rows.iter().enumerate() {
-        let Some(live) = *live else {
+        let Some(live) = live.as_ref() else {
             continue;
         };
-        if live.retired || (inbox.contains(live.call) && !client_observe_live(engine, live.call)) {
+        // Most polls precede both timers. Inspect only this row's metadata until
+        // expiry is possible; completed replies and Observe still decide whether
+        // a due timer may terminate the Call.
+        let deadline_reached = live.deadline_ms.is_some_and(|deadline| now_ms >= deadline);
+        let lifetime_reached = live.due_ms != 0 && now_ms >= live.due_ms;
+        if live.retired || (!deadline_reached && !lifetime_reached) {
             continue;
         }
-        let failure = if live.deadline_ms.is_some_and(|deadline| now_ms >= deadline) {
+        if inbox.contains(live.call) && !client_observe_live(engine, live.call) {
+            continue;
+        }
+        let failure = if deadline_reached {
             Some(CallFailure::DeadlineExceeded)
-        } else if live.due_ms != 0
-            && now_ms >= live.due_ms
+        } else if lifetime_reached
             && engine
                 .lookup_exchange(ExchangeKey::new(live.call.token(), live.call.peer))
                 .is_some()

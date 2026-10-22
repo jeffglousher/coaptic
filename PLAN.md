@@ -16,6 +16,14 @@ Keep client costs, failures, latency and whole-system memory visible. The prior
 throughput report does not prove this target; it remains open until representative
 device and cloud configurations have relevant evidence.
 
+The [Linux CPU report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/cpu-cost-linux-20261022)
+retains 1,872,000 verified operations and mixed first-batch core results; neither
+50% target is established. Idle receive polling is a measured cost, with a
+latency tradeoff when using readiness. Current timer maintenance borrows dedup
+rows and checks Call deadlines before inbox/Observe lookups, without new retained
+storage. Measure that batch before claiming a gain; keep compiler identity,
+scheduling and core changes explicit in the next comparison.
+
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
 [companion #149](https://github.com/jeffglousher/coaptic-validation/pull/149).

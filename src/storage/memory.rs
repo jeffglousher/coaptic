@@ -605,8 +605,8 @@ where
         self.dedup.remove(key)
     }
 
-    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
-        self.dedup.entry(id)
+    fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+        self.dedup.entry_ref(id)
     }
 }
 

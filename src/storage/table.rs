@@ -112,7 +112,7 @@ impl DedupEntry {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> DedupKey {
+    pub const fn key(&self) -> DedupKey {
         self.key
     }
 
@@ -130,7 +130,7 @@ impl DedupEntry {
 
     /// Absolute expiry (`0` = never).
     #[must_use]
-    pub const fn due_ms(self) -> u64 {
+    pub const fn due_ms(&self) -> u64 {
         self.due_ms
     }
 
@@ -174,7 +174,7 @@ pub(crate) trait DedupStore {
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId>;
     fn lookup(&self, key: DedupKey) -> Option<SlotId>;
     fn remove(&mut self, key: DedupKey) -> bool;
-    fn entry(&self, id: SlotId) -> Option<DedupEntry>;
+    fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;
 }
 
 /// Lookup identity for one Observe Interest Table row.
@@ -961,7 +961,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     pub fn lookup(&self, key: DedupKey) -> Option<SlotId> {
         (0..ENTRIES).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.entry(id) {
+            match self.entry_ref(id) {
                 Some(entry) if entry.key() == key => Some(id),
                 _ => None,
             }
@@ -981,10 +981,16 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     /// Occupied payload at `id`.
     #[must_use]
     pub fn entry(&self, id: SlotId) -> Option<DedupEntry> {
+        self.entry_ref(id).copied()
+    }
+
+    /// Borrow an occupied payload without copying its replay buffer.
+    #[must_use]
+    pub fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.entries.get(id.index()).copied().flatten()
+        self.entries.get(id.index()).and_then(Option::as_ref)
     }
 
     /// Write payload into an already-acquired slot.
@@ -1026,8 +1032,8 @@ impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
         DedupTable::remove(self, key)
     }
 
-    fn entry(&self, id: SlotId) -> Option<DedupEntry> {
-        DedupTable::entry(self, id)
+    fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+        DedupTable::entry_ref(self, id)
     }
 }
 
