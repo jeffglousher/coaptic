@@ -14512,6 +14512,217 @@ fn deferred_selection_preserves_get_validator_behavior() {
     }
 }
 
+fn terminal_q_app(
+    peer: Endpoint,
+    token: Token,
+) -> (
+    App<profiles::Default, WideLoopback, DEFAULT_ROUTES, true>,
+    crate::storage::SlotId,
+) {
+    use crate::storage::BodyTag;
+
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(
+            "obs",
+            get(|request| get_obs(request).etag(b"initial")).observe(obs_snapshot),
+        )
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let q = BlockValue::new(0, false, 6).unwrap().encode();
+    let (wire, n) = encode_wide_token(
+        Code::GET,
+        &["obs"],
+        &[Opt::observe_register(), Opt::q_block2(&q)],
+        1,
+        token,
+    );
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(0).unwrap();
+    assert_eq!(
+        app.notify_confirmable(
+            5000,
+            &["obs"],
+            Response::new(Code::INTERNAL_SERVER_ERROR)
+                .with_static(&LARGE)
+                .etag(b"terminal"),
+        )
+        .unwrap(),
+        1
+    );
+    assert!(
+        app.engine
+            .lookup_observe(ObserveKey::new(token, peer))
+            .is_none()
+    );
+    let id = app
+        .engine
+        .lookup_tx_body(
+            BlockKey::new(token, peer).with_identity(BodyTag::new(b"terminal").unwrap()),
+        )
+        .unwrap();
+    (app, id)
+}
+
+#[test]
+fn ordinary_requests_update_terminal_q_selection_after_send_and_while_pinned() {
+    use crate::storage::SlotError;
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(b"terminal").unwrap();
+    let oversized = [b'x'; 600];
+    let mut option_overflow = [Opt::uri_query("x"); 25];
+    option_overflow[0] = Opt::uri_path("changed");
+    let cases: &[&[Opt<'_>]] = &[
+        &[
+            Opt::etag(b"ignored"),
+            Opt::uri_path("changed"),
+            Opt::uri_query("b=2"),
+            Opt::uri_query("a=1"),
+        ],
+        &[Opt::new(OptionNumber::URI_PATH, &oversized)],
+        &[Opt::uri_path(".")],
+        &[Opt::new(OptionNumber::URI_PATH, &[0xff])],
+        &[Opt::uri_path("")],
+        &[Opt::uri_path("x"); 9],
+        &option_overflow,
+    ];
+    for mode in 0..4 {
+        for (case, options) in cases.iter().enumerate() {
+            let (mut app, id) = terminal_q_app(peer, token);
+            let before = app.engine.tx_body_transfer(id).unwrap();
+            assert!(before.q_observe_sequence().is_some());
+            assert!(before.observe_selection().is_some());
+            if mode & 2 != 0 {
+                core::mem::forget(app.engine.access_tx_body_mut(id).unwrap());
+            }
+            app.transport_mut().send_n = if mode & 1 != 0 { 4 } else { 0 };
+            let message = Message::new(Type::Confirmable, Code::GET, MessageId::new(2))
+                .with_token(token)
+                .with_options(options);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            let expected = if case == 0 || case == 4 {
+                let mut bytes = [0; 512];
+                let len = encode(
+                    &Message::new(Type::NonConfirmable, Code::GET, MessageId::new(0))
+                        .with_token(token)
+                        .with_options(if case == 0 { &options[1..] } else { options }),
+                    &mut bytes,
+                )
+                .unwrap() as u16;
+                Some(crate::storage::ObserveSelection { bytes, len })
+            } else {
+                None
+            };
+            app.transport_mut().inbox = Some((peer, wire, n));
+            let mut dispatched = false;
+            let outcome = app.poll_with(5001, |_, candidate| {
+                assert!(candidate.is_none());
+                dispatched = true;
+                Response::bad_request()
+            });
+            assert_eq!(
+                dispatched,
+                matches!(case, 0 | 1 | 4 | 6),
+                "case={case}, mode={mode}"
+            );
+            if mode & 1 != 0 {
+                assert!(matches!(outcome, Err(Error::Io(_))));
+            } else {
+                outcome.unwrap();
+            }
+            let after = app.engine.tx_body_transfer(id).unwrap();
+            assert_eq!(after.observe_selection(), expected);
+            let mut expected_transfer = before;
+            expected_transfer.retain_observe_selection(expected);
+            assert_eq!(after, expected_transfer);
+            if mode & 2 != 0 {
+                assert!(app.engine.tx_body_is_pinned(id));
+                assert_eq!(app.engine.release_tx_body(id), Err(SlotError::Pinned));
+            }
+            assert_eq!(app.engine.tx_body_payload(id), Some(LARGE.as_slice()));
+            assert_eq!(app.engine.rx_occupied(), 0);
+        }
+    }
+}
+
+#[test]
+fn ordinary_fragmented_fetch_retains_complete_terminal_q_selection_after_send() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(b"terminal").unwrap();
+    let payload: [u8; 64] = core::array::from_fn(|i| i as u8);
+    for fail_send in [false, true] {
+        let (mut app, id) = terminal_q_app(peer, token);
+        let original = app.engine.tx_body_transfer(id).unwrap();
+        for num in 0..2 {
+            app.transport_mut().send_n = if fail_send && num == 1 { 4 } else { 0 };
+            let block = BlockValue::new(num, num == 0, 1).unwrap().encode();
+            let format = ContentFormat::OCTET_STREAM.encode();
+            let options = [
+                Opt::etag(b"v1"),
+                Opt::etag(b"v2"),
+                Opt::uri_path("changed"),
+                Opt::content_format(&format),
+                Opt::uri_query("b=2"),
+                Opt::uri_query("a=1"),
+                Opt::block1(&block),
+            ];
+            let message = Message::new(
+                Type::Confirmable,
+                Code::FETCH,
+                MessageId::new(2 + num as u16),
+            )
+            .with_token(token)
+            .with_options(&options)
+            .with_payload(&payload[num as usize * 32..(num as usize + 1) * 32]);
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            let mut dispatched = false;
+            let outcome = app.poll_with(5001 + u64::from(num), |request, candidate| {
+                assert!(candidate.is_none());
+                assert_eq!(request.body(), Some(payload.as_slice()));
+                dispatched = true;
+                Response::bad_request()
+            });
+            assert_eq!(dispatched, num == 1);
+            if fail_send && num == 1 {
+                assert!(matches!(outcome, Err(Error::Io(_))));
+            } else {
+                outcome.unwrap();
+            }
+            if num == 0 {
+                assert_eq!(app.engine.tx_body_transfer(id), Some(original));
+            }
+        }
+        let transfer = app.engine.tx_body_transfer(id).unwrap();
+        let selection = transfer.observe_selection().unwrap();
+        let retained = decode(&selection.bytes[..usize::from(selection.len)]).unwrap();
+        assert_eq!(retained.code(), Code::FETCH);
+        assert_eq!(retained.payload(), payload);
+        let mut tags = retained.etag();
+        assert_eq!(tags.next(), Some(b"v1".as_slice()));
+        assert_eq!(tags.next(), Some(b"v2".as_slice()));
+        assert_eq!(tags.next(), None);
+        let mut queries = retained.uri_query();
+        assert_eq!(queries.next(), Some(Ok("b=2")));
+        assert_eq!(queries.next(), Some(Ok("a=1")));
+        assert_eq!(queries.next(), None);
+        assert_eq!(app.engine.tx_body_payload(id), Some(LARGE.as_slice()));
+        assert_eq!(app.engine.rx_occupied(), 0);
+        for index in 0..app.engine.capacities().rx_body_slots.unwrap() {
+            assert!(
+                app.engine
+                    .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                    .is_none()
+            );
+        }
+    }
+}
+
 #[test]
 fn fetch_observe_requestless_source_does_not_register_selection() {
     fn selected(request: Request<'_>) -> Response<'static> {

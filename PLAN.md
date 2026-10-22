@@ -16,13 +16,22 @@ Keep client costs, failures, latency and whole-system memory visible. The prior
 throughput report does not prove this target; it remains open until representative
 device and cloud configurations have relevant evidence.
 
-The [Linux CPU report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/cpu-cost-linux-20261022)
-retains 1,872,000 verified operations and mixed first-batch core results; neither
-50% target is established. Idle receive polling is a measured cost, with a
-latency tradeoff when using readiness. Current timer maintenance borrows dedup
-rows and checks Call deadlines before inbox/Observe lookups, without new retained
-storage. Measure that batch before claiming a gain; keep compiler identity,
-scheduling and core changes explicit in the next comparison.
+The latest [matched Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39786342261)
+completed 1,536,000 verified operations with no failures. At concurrency one,
+64/1024-byte payloads and matched Rust 1.99.0, CPU changes ranged from a 3.45%
+reduction to a 2.70% increase; neither 50% target is established. Idle receive
+polling is a measured cost, with a latency tradeoff when using readiness. The
+[earlier Linux report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/cpu-cost-linux-20261022)
+retains raw profiling evidence; its different compiler and host prevent isolating
+later changes by comparing the two runs.
+
+Dispatch now validates the path once and encodes a request selection only when
+Observe, deferral or retained Q-body state needs it. Timer maintenance borrows
+dedup rows and checks Call deadlines before inbox/Observe lookups. These changes
+add no retained storage; generated stack/future size and the latest dispatch CPU
+effect remain unmeasured. Next, measure the merged source and extend bounded
+concurrent workloads. Keep NON traffic separate from CON qualification, preserve
+NSTART and nonce ownership, and report actual overlap, refusal and recovery.
 
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and

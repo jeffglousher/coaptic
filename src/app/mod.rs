@@ -405,6 +405,36 @@ impl DeferredSelection {
     }
 }
 
+#[derive(Default)]
+struct RequestSelection {
+    // None has not been attempted; an encoding refusal must not be retried.
+    encoded: Option<Result<DeferredSelection, EncodeError>>,
+}
+
+impl RequestSelection {
+    fn get_or_encode<S: Storage + BodySlots>(
+        &mut self,
+        engine: &Engine<S>,
+        parsed: &ParsedMessage<'_, S::Token>,
+        assembled: InboundBody,
+    ) -> Option<&DeferredSelection> {
+        self.encoded
+            .get_or_insert_with(|| {
+                DeferredSelection::from_parts(
+                    parsed,
+                    match assembled {
+                        InboundBody::Complete(id) => {
+                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
+                        }
+                        _ => parsed.payload(),
+                    },
+                )
+            })
+            .as_ref()
+            .ok()
+    }
+}
+
 fn deferred_reply_metadata<K: OwnedToken>(
     response: &Response<'_, K>,
     meta: SendResponse<'_, K>,
@@ -4131,13 +4161,13 @@ where
         return outcome;
     }
 
+    // Validate the path once, without borrowing body storage across mutations.
+    let request = Request::from_decoded(parsed, peer, None);
     // Continuations may use control headroom; their handler still needs capacity.
     if admission::refuse_dispatch(engine) {
         // Authenticated cancellation can release its relation under pressure,
         // even when the accompanying fresh representation cannot be admitted.
-        let cancel = Request::from_decoded(parsed, peer, None)
-            .ok()
-            .is_some_and(|request| ObservePlan::from_request(site, &request).deregister);
+        let cancel = request.as_ref().is_ok_and(Request::is_observe_deregister);
         if cancel {
             let key = ObserveKey::new(parsed.token(), peer);
             let cleanup = (|| -> Result<(), crate::storage::SlotError> {
@@ -4181,16 +4211,14 @@ where
         return outcome;
     }
 
-    let request_plan = Request::from_decoded(
-        parsed,
-        peer,
-        match assembled {
-            InboundBody::Complete(id) => engine.rx_body_payload(id),
-            _ => None,
-        },
-    )
-    .ok()
-    .map(|request| ObservePlan::from_request(site, &request));
+    let mut selection = RequestSelection::default();
+    let request_plan = request.as_ref().ok().map(|request| {
+        let selection_supported = request.is_observe_register()
+            && selection
+                .get_or_encode(engine, &parsed, assembled)
+                .is_some();
+        ObservePlan::from_request(site, request, selection_supported)
+    });
     // RFC 7959 section 2.6 observes the entire resource and starts every
     // notification at its first block. NUM is not an observed subresource.
     let meta = if request_plan
@@ -4240,24 +4268,14 @@ where
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
         && (parsed.observe().is_none() || deferred_observe.is_some());
-    let selection = can_defer
-        .then(|| {
-            DeferredSelection::from_parts(
-                &parsed,
-                match assembled {
-                    InboundBody::Complete(id) => {
-                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                    }
-                    _ => parsed.payload(),
-                },
-            )
-            .ok()
-        })
-        .flatten();
+    let selection_supported = can_defer
+        && selection
+            .get_or_encode(engine, &parsed, assembled)
+            .is_some();
     let q_selectors = can_defer
         .then(|| DeferredQSelectors::from_request(&parsed))
         .flatten();
-    let deferred_handle = if selection.is_some()
+    let deferred_handle = if selection_supported
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
         && (parsed.observe().is_none() || deferred_observe.is_some())
@@ -4285,9 +4303,7 @@ where
             | InboundBody::QWait(_)
             | InboundBody::Refused(_) => None,
         };
-        match Request::from_decoded(parsed, peer, body)
-            .map(|request| request.with_association(oscore.association(peer)))
-        {
+        match request {
             Ok(request) => {
                 let retained = match assembled {
                     InboundBody::Complete(id) => engine
@@ -4295,7 +4311,10 @@ where
                         .is_some_and(|t| t.if_none_match()),
                     _ => false,
                 };
-                let request = request.with_retained_if_none_match(retained);
+                let request = request
+                    .with_body(body)
+                    .with_association(oscore.association(peer))
+                    .with_retained_if_none_match(retained);
                 let plan = request_plan.unwrap_or_else(ObservePlan::idle);
                 let response = match dispatch {
                     Some(dispatch) => dispatch(request, deferred_handle),
@@ -4337,7 +4356,9 @@ where
                     request: meta.request,
                 },
                 now_ms.saturating_add(deferred_lifetime_ms),
-                selection.expect("admitted selection"),
+                *selection
+                    .get_or_encode(engine, &parsed, assembled)
+                    .expect("admitted selection"),
                 q_selectors.expect("admitted selectors"),
                 deferred_observe,
             );
@@ -4375,7 +4396,20 @@ where
         let _ = engine.release_rx(rx);
         return Err(Error::Response(error));
     }
-    let response = match apply_observe(engine, now_ms, peer, response, plan, oscore_req) {
+    let observe_selection = if plan.register {
+        selection.get_or_encode(engine, &parsed, assembled)
+    } else {
+        None
+    };
+    let response = match apply_observe(
+        engine,
+        now_ms,
+        peer,
+        response,
+        plan,
+        observe_selection,
+        oscore_req,
+    ) {
         Ok(response) => response,
         Err(error) => {
             if let InboundBody::Complete(id) = assembled {
@@ -4410,9 +4444,17 @@ where
             dedup_closed,
         )
     };
-    let retained =
-        retain_q_observe_selection(engine, BlockKey::new(meta.token, peer), plan.selection)
-            .map_err(Error::Slot);
+    let retained = retain_q_observe_selection(engine, BlockKey::new(meta.token, peer), |engine| {
+        // Terminal Q bodies can outlive the observer. Even a failed send must
+        // update their selection; invalid paths still clear it as before.
+        request_plan.and_then(|_| {
+            selection
+                .get_or_encode(engine, &parsed, assembled)
+                .copied()
+                .map(DeferredSelection::stored)
+        })
+    })
+    .map_err(Error::Slot);
     if outcome.is_ok() && response.observe_seq().is_some() {
         record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
     }
@@ -4425,7 +4467,6 @@ where
 
 #[derive(Clone, Copy)]
 struct ObservePlan<K: OwnedToken = crate::message::Token> {
-    selection: Option<crate::storage::ObserveSelection>,
     register: bool,
     registration_supported: bool,
     no_response: NoResponse,
@@ -4442,7 +4483,6 @@ impl<K: OwnedToken> ObservePlan<K> {
     fn idle() -> Self {
         Self {
             register: false,
-            selection: None,
             registration_supported: false,
             no_response: NoResponse::DEFAULT,
             block2_max_szx: None,
@@ -4455,21 +4495,14 @@ impl<K: OwnedToken> ObservePlan<K> {
         }
     }
 
-    fn from_request<const N: usize>(site: &Site<N, K>, request: &Request<'_, K>) -> Self {
-        let selection = {
-            DeferredSelection::from_parts(
-                &request.message(),
-                request.body().unwrap_or(request.payload()),
-            )
-            .ok()
-            .map(DeferredSelection::stored)
-        };
-        // A reused token may still own a terminal Q-Observe representation.
-        // Keep its selection, but ordinary requests need no Observe routing.
+    fn from_request<const N: usize>(
+        site: &Site<N, K>,
+        request: &Request<'_, K>,
+        selection_supported: bool,
+    ) -> Self {
         if request.message().observe().is_none() && request.method() != Some(Method::Delete) {
             return Self {
                 token: request.token(),
-                selection,
                 ..Self::idle()
             };
         }
@@ -4480,8 +4513,7 @@ impl<K: OwnedToken> ObservePlan<K> {
             register: request.is_observe_register(),
             no_response: NoResponse::from_message(&request.message())
                 .unwrap_or(NoResponse::DEFAULT),
-            selection,
-            registration_supported: selection.is_some()
+            registration_supported: selection_supported
                 // RFC 7641 section 4.1 permits ordinary-response fallback.
                 // Classic notifications begin at NUM0. Q registration may
                 // select an initial range; later epochs still represent the
@@ -4524,6 +4556,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
     peer: Endpoint,
     mut response: Response<'a, S::Token>,
     plan: ObservePlan<S::Token>,
+    selection: Option<&DeferredSelection>,
     oscore_req: oscore::Request,
 ) -> Result<Response<'a, S::Token>, crate::storage::SlotError> {
     let key = ObserveKey::new(plan.token, peer);
@@ -4565,7 +4598,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .with_block2_max_szx(plan.block2_max_szx)
             .with_q_block2(plan.q_block2)
             .with_no_response(plan.no_response)
-            .with_selection(plan.selection);
+            .with_selection(selection.copied().map(DeferredSelection::stored));
         let interest = initial_observe_format(interest, &response, None);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
@@ -5275,7 +5308,7 @@ where
                 .map_err(|_| Error::CommitAfterSend)?;
         }
         outcome?;
-        retain_q_observe_selection(engine, key, interest.selection().copied())?;
+        retain_q_observe_selection(engine, key, |_| interest.selection().copied())?;
         let now_ms = completion_time(io, now_ms);
         if !notify.code().is_success() {
             engine.take_observe(interest.key());
@@ -5857,13 +5890,13 @@ fn response_body_for<S: Storage + BodySlots>(
 fn retain_q_observe_selection<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey<S::Token>,
-    selection: Option<crate::storage::ObserveSelection>,
+    selection: impl FnOnce(&Engine<S>) -> Option<crate::storage::ObserveSelection>,
 ) -> Result<(), crate::storage::SlotError> {
     if let Some(id) = response_body_for(engine, key)
         && let Some(mut transfer) = engine.tx_body_transfer(id)
         && transfer.q_observe_sequence().is_some()
     {
-        transfer.retain_observe_selection(selection);
+        transfer.retain_observe_selection(selection(engine));
         engine.storage_mut().set_tx_body_transfer(id, transfer)?;
     }
     Ok(())
