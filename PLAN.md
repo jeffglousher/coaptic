@@ -28,9 +28,8 @@ later changes by comparing the two runs.
 Dispatch now validates the path once and encodes a request selection only when
 Observe, deferral or retained Q-body state needs it. Timer maintenance borrows
 dedup rows and checks Call deadlines before inbox/Observe lookups. These changes
-add no retained storage. Generated stack/future sizes remain unmeasured; the
-latest dispatch CPU effect cannot be isolated from the combined server-role
-result above. The
+add no retained storage. Their stack effects and individual CPU contributions
+remain unmeasured. The combined server-role result above cannot isolate them. The
 matched run compares core `b8f44fa` with `183b4b9`; two pairs and 10 ms CPU
 counters limit conclusions about small changes. Perf was disabled. Next, extend
 bounded concurrent workloads. Keep NON separate from CON qualification, preserve
@@ -48,9 +47,24 @@ The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/p
 keeps CON and NON cohorts separate and reports observed overlap, capacity refusal
 and failed work. The reviewed [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
 is merged. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
-with the Tokio polling loop is pending: 32 clean C1 CON windows, both security
-modes and 64/1024-byte responses at core `183b4b9`. Treat any difference as
-application scheduling. Generated futures and runtime costs need their own ledger.
+verified 1,536,000 operations without failures, but native async used 9.28-18.83%
+more server CPU and failed the +2 microsecond median-latency guard in all four
+64/1024-byte security strata. It remains optional; default adapters are unchanged.
+This measures application scheduling, not isolated core processing.
+
+[Companion #155](https://github.com/jeffglousher/coaptic-validation/pull/155)
+borrows App from its setup owner. A controlled Windows Rust 1.99.0 check reduces
+the complete outer future from 120,696 to 56,536 bytes, including App; nested
+component sizes must not be added again. This is compiler layout, not CPU savings,
+peak stack or whole-RAM qualification. Existing pools and the loop body are
+unchanged. Runtime, allocator, body/pool heap and kernel costs remain separate.
+
+The [next finite diagnosis](https://github.com/jeffglousher/coaptic-validation/actions/runs/39814549184)
+uses both security modes at 11,900 operations/s with separate 997 Hz user-code
+captures. Clean CPU still includes user and system time. Rank timer/socket
+lifecycle and deadline scans only when samples support them; preserve deadline
+precedence and cancellation while optimizing. This is a separate load stratum,
+with eight clean and eight profile windows, not evidence for either 50% target.
 
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
