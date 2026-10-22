@@ -16,10 +16,10 @@ Keep client costs, failures, latency and whole-system memory visible. The prior
 throughput report does not prove this target; it remains open until representative
 device and cloud configurations have relevant evidence.
 
-The latest [matched Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39786342261)
+The latest [matched Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39803846125)
 completed 1,536,000 verified operations with no failures. At concurrency one,
-64/1024-byte payloads and matched Rust 1.99.0, CPU changes ranged from a 3.45%
-reduction to a 2.70% increase; neither 50% target is established. Idle receive
+64/1024-byte payloads and matched Rust 1.99.0, CPU changes ranged from a 6.33%
+reduction to a 1.23% increase; neither 50% target is established. Idle receive
 polling is a measured cost, with a latency tradeoff when using readiness. The
 [earlier Linux report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/cpu-cost-linux-20261022)
 retains raw profiling evidence; its different compiler and host prevent isolating
@@ -28,9 +28,12 @@ later changes by comparing the two runs.
 Dispatch now validates the path once and encodes a request selection only when
 Observe, deferral or retained Q-body state needs it. Timer maintenance borrows
 dedup rows and checks Call deadlines before inbox/Observe lookups. These changes
-add no retained storage; generated stack/future size and the latest dispatch CPU
-effect remain unmeasured. Next, measure the merged source and extend bounded
-concurrent workloads. Keep NON traffic separate from CON qualification, preserve
+add no retained storage. Generated stack/future sizes remain unmeasured; the
+latest dispatch CPU effect cannot be isolated from the combined server-role
+result above. The
+matched run compares core `b8f44fa` with `183b4b9`; two pairs and 10 ms CPU
+counters limit conclusions about small changes. Perf was disabled. Next, extend
+bounded concurrent workloads. Keep NON separate from CON qualification, preserve
 NSTART and nonce ownership, and report actual overlap, refusal and recovery.
 
 Concurrent Block2 response assembly is isolated by App Call. Two live Calls with
@@ -43,9 +46,11 @@ focused regression coverage. The raw Engine's cross-token assembly stays intact.
 
 The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/pull/153)
 keeps CON and NON cohorts separate and reports observed overlap, capacity refusal
-and failed work. True async host scheduling is the next experiment; compare it
-with the current Tokio polling loop at an identical core revision before
-attributing any gain. Generated futures and runtime costs need their own ledger.
+and failed work. The reviewed [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
+is merged. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
+with the Tokio polling loop is pending: 32 clean C1 CON windows, both security
+modes and 64/1024-byte responses at core `183b4b9`. Treat any difference as
+application scheduling. Generated futures and runtime costs need their own ledger.
 
 The OSCORE copy cleanup and source-matched library comparison are delivered in
 [core #648](https://github.com/jeffglousher/coaptic/pull/648) and
