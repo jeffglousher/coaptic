@@ -179,6 +179,9 @@ mod lifecycle_soak;
 mod tests;
 
 #[cfg(test)]
+mod option_validation_tests;
+
+#[cfg(test)]
 mod capacity_tests;
 
 #[cfg(test)]
@@ -3227,36 +3230,72 @@ fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
 ) -> bool {
-    let mut tags = parsed.request_tag();
-    let first = tags.next();
-    let bad_tag = first.is_some_and(|tag| tag.len() > 8) || tags.next().is_some();
-    bad_tag
-        || (parsed.code() == Code::FETCH
-            && (matches!(parsed.content_format(), Some(Err(_)))
-                || parsed
-                    .get_options(crate::message::OptionNumber::CONTENT_FORMAT)
-                    .nth(1)
-                    .is_some()))
-        || parsed.unknown_critical().is_some()
-        || (parsed.oscore().is_some() && !oscore::is_active(oscore))
-        || matches!(parsed.block2(), Some(Err(_)))
-        || parsed
-            .q_block2()
-            .any(|value| value.map_or(true, |block| block.is_bert()))
-        || mixes_block_and_qblock(parsed)
-        || parsed
-            .get_options(crate::message::OptionNumber::Q_BLOCK1)
-            .nth(1)
-            .is_some()
-        || (parsed.q_block2().nth(1).is_some()
-            && (parsed.observe().is_some()
-                || parsed.q_block2().any(|q| {
-                    q.is_ok_and(|q| {
-                        q.more()
-                            && q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0
-                    })
-                })))
-        || matches!(parsed.block1(), Some(Err(_)))
+    use crate::message::OptionNumber;
+
+    let fetch = parsed.code() == Code::FETCH;
+    let mut tag = false;
+    let mut format = false;
+    let mut observe = false;
+    let mut block1 = false;
+    let mut block2 = false;
+    let mut q_block1 = false;
+    let mut q_block2 = false;
+    let mut repeated_q_block2 = false;
+    let mut q_block2_start = false;
+    // Decode validated wire options once; values continue to borrow the packet.
+    for option in parsed.options() {
+        match option.number() {
+            OptionNumber::REQUEST_TAG => {
+                if tag || option.value().len() > 8 {
+                    return true;
+                }
+                tag = true;
+            }
+            OptionNumber::CONTENT_FORMAT if fetch => {
+                if format || option.as_uint16().is_err() {
+                    return true;
+                }
+                format = true;
+            }
+            OptionNumber::OBSERVE => observe = true,
+            OptionNumber::OSCORE if !oscore::is_active(oscore) => return true,
+            OptionNumber::BLOCK1 => {
+                // Existing singleton accessors validate only the first value.
+                if !block1 && option.as_block().is_err() {
+                    return true;
+                }
+                block1 = true;
+            }
+            OptionNumber::BLOCK2 => {
+                if !block2 && option.as_block().is_err() {
+                    return true;
+                }
+                block2 = true;
+            }
+            OptionNumber::Q_BLOCK1 => {
+                if q_block1 {
+                    return true;
+                }
+                q_block1 = true;
+            }
+            OptionNumber::Q_BLOCK2 => {
+                let Ok(value) = option.as_block() else {
+                    return true;
+                };
+                if value.is_bert() {
+                    return true;
+                }
+                repeated_q_block2 |= q_block2;
+                q_block2 = true;
+                q_block2_start |= value.more()
+                    && value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0;
+            }
+            number if number.is_critical() && !number.is_known() => return true,
+            _ => {}
+        }
+    }
+    ((block1 || block2) && (q_block1 || q_block2))
+        || (repeated_q_block2 && (observe || q_block2_start))
 }
 
 fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
