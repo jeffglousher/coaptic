@@ -694,8 +694,8 @@ impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
         self.dedup.remove(key)
     }
 
-    fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
-        self.dedup.entry(id)
+    fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+        self.dedup.entry_ref(id)
     }
 }
 
@@ -1650,7 +1650,7 @@ impl DedupStore for AllocDedupTable {
     fn lookup(&self, key: DedupKey) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.entry(id) {
+            match self.entry_ref(id) {
                 Some(entry) if entry.key() == key => Some(id),
                 _ => None,
             }
@@ -1664,11 +1664,11 @@ impl DedupStore for AllocDedupTable {
         }
     }
 
-    fn entry(&self, id: SlotId) -> Option<DedupEntry> {
+    fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.entries.get(id.index()).copied().flatten()
+        self.entries.get(id.index()).and_then(Option::as_ref)
     }
 }
 

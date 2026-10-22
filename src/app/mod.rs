@@ -1469,7 +1469,7 @@ impl<
             }
         }
         for index in 0..capacities.dedup_entries {
-            if let Some(entry) = self.engine.dedup_entry(SlotId::from_index(index))
+            if let Some(entry) = self.engine.dedup_entry_ref(SlotId::from_index(index))
                 && entry.due_ms() != 0
             {
                 consider(entry.due_ms());
@@ -7591,12 +7591,14 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     }
     let n = engine.capacities().dedup_entries;
     for i in 0..n {
-        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+        let Some(entry) = engine
+            .dedup_entry_ref(SlotId::from_index(i))
+            .filter(|entry| entry.due_ms() != 0 && now_ms >= entry.due_ms())
+            .copied()
+        else {
             continue;
         };
-        if entry.due_ms() != 0 && now_ms >= entry.due_ms() {
-            release_dedup_row(engine, entry);
-        }
+        release_dedup_row(engine, entry);
     }
 }
 

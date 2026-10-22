@@ -1344,6 +1344,35 @@ fn engine_dedup_insert_lookup_remove() {
     assert_eq!(engine.lookup_dedup(key), None);
 }
 
+fn dedup_borrowed_payload_and_default_copy<S: Storage + super::DedupSlots>(mut engine: Engine<S>) {
+    let entry = DedupEntry::new(MessageId::new(92), Endpoint::v4([192, 0, 2, 8], 5683))
+        .with_due_ms(u64::MAX)
+        .with_replay(&[0x5a; DedupEntry::REPLAY_MAX]);
+    let id = engine.insert_dedup(entry).unwrap();
+    assert_eq!(engine.dedup_entry_ref(id), Some(&entry));
+    assert_eq!(
+        super::DedupSlots::dedup_entry_ref(engine.storage(), id),
+        Some(&entry)
+    );
+    // Both owned backends use the trait's default copy operation.
+    assert_eq!(
+        super::DedupSlots::dedup_entry(engine.storage(), id),
+        Some(entry)
+    );
+    let invalid = SlotId::from_index(engine.capacities().dedup_entries);
+    assert!(engine.dedup_entry_ref(invalid).is_none());
+    assert!(engine.remove_dedup(entry.key()));
+    assert!(engine.dedup_entry_ref(id).is_none());
+    let acquired = engine.storage_mut().dedup().acquire().unwrap();
+    assert!(engine.dedup_entry_ref(acquired).is_none());
+    assert!(engine.dedup_entry(acquired).is_none());
+}
+
+#[test]
+fn fixed_dedup_borrowed_payload_and_default_copy_follow_occupancy() {
+    dedup_borrowed_payload_and_default_copy(build_default());
+}
+
 #[test]
 fn dedup_entry_replay_fits_or_stays_empty() {
     let ep = Endpoint::v4([198, 51, 100, 7], 5683);
@@ -4222,6 +4251,11 @@ mod alloc_backend {
                 .insert_dedup(DedupEntry::new(MessageId::new(99), ep))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn alloc_dedup_borrowed_payload_and_default_copy_follow_occupancy() {
+        dedup_borrowed_payload_and_default_copy(build_alloc(false));
     }
 
     #[test]

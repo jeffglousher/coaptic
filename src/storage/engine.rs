@@ -470,7 +470,13 @@ impl<S: Storage + DedupSlots> Engine<S> {
         self.storage.remove_dedup(key)
     }
 
-    /// Occupied Dedup Table payload at `id`.
+    /// Borrow the occupied Dedup Table payload without copying its replay buffer.
+    #[must_use]
+    pub fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+        self.storage.dedup_entry_ref(id)
+    }
+
+    /// Copy the occupied Dedup Table payload at `id`, including its replay buffer.
     #[must_use]
     pub fn dedup_entry(&self, id: SlotId) -> Option<DedupEntry> {
         self.storage.dedup_entry(id)
