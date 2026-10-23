@@ -1,7 +1,7 @@
 # Delivery handoff — October 23, 2026
 
 Accepted protocol and integration software is implemented. The remaining work
-is performance qualification, one unfinished diagnostic, and the physical checks
+is performance qualification and the physical checks
 in [PLAN.md](../PLAN.md). Both 50% server CPU targets remain open under
 [#650](https://github.com/jeffglousher/coaptic/issues/650). Release publication
 requires separate authorization under #132.
@@ -16,28 +16,45 @@ requires separate authorization under #132.
   samples. It includes a standalone report, CSV, exact identities and regrading
   command. Captures containing fixture credentials and private operational
   records remain retained privately; they are not public source artifacts.
-- [Companion draft #170](https://github.com/jeffglousher/coaptic-validation/pull/170),
-  branch `wip/server-app-batch-cpu-20261023`, commit `795d570`, saves all four
-  unfinished server-App CPU probe files. It is not merged or qualified.
-  The last delegated provider turn failed; no child remains running or queued.
+- [Companion #170](https://github.com/jeffglousher/coaptic-validation/pull/170)
+  is merged as `4d65781`. The server-App CPU mode has completed focused native
+  checks, independent source review and finite Linux window qualification.
+  Its tested companion source is `ff46fd5`, with identical merged file bytes.
 - PR watches and recurring tasks are off. Registered Coaptic build lanes are
   idle. No performance run is in progress. Historical child entries are records,
   not evidence of active agents.
 
-## Resume the unfinished diagnostic
+## Current server-App CPU result
 
-Review the full current draft, including its batch-only pidfd ownership and
-receipt-scope fixes. R1 findings are addressed in source; combined R2 review is
-pending. Python evidence includes 41 earlier passes with two Linux skips and
-16 affected unique passes, including five overlaps. Do not sum those counts.
-Six focused native Rust tests, affected strict Clippy/build, and real Linux
-process/clock/cleanup checks have not run.
+The [qualified run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40024678302)
+verifies 200,512 exchanges across four serial processes, including 512 warmups.
+All four CPU windows qualify. Unprotected server-App driver CPU is
+0.901244–0.916253 microseconds/op; OSCORE is 2.032878–2.034727 microseconds/op.
+These are two observations per mode on one EPYC 7763 runner, not confidence
+intervals or an optimization comparison. Core is `b9b83d8`, Rust is 1.99.0,
+and full source/compiler/clock/fixture receipts are in the run artifact.
 
 The probe prepares requests outside a server-App CPU window, runs full App polls
 and captures complete responses inside it, then authenticates/verifies every
 response outside. It retains protocol maintenance and server crypto. This is
-a proposed isolation tool; it cannot replace socket acceptance or establish
-either target before measured qualification. The separate existing global
+a server-driver measurement including fixture copies, monotonic reads and
+loop/gate work. It cannot replace socket acceptance, establish either target
+or yield a transport percentage by subtracting another run's timing.
+
+The earlier [short-window run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40022418841)
+retains its failed unprotected 10 ms qualification. One 50,000-operation window
+now replaces five 10,000-operation windows, with unchanged total work and guards.
+Each fixed-workload capture buffer is 256 bytes; a complete row contains two
+buffers plus 40 bytes of metadata and padding, totaling 552 bytes. Actual
+App/CoreIo datagrams stay 1,472 bytes. Enclosing requested fixture plus App is 27,658,654 bytes below
+32 MiB, including metadata/padding and a 16 KiB scratch allowance. Allocator
+overhead, generated peak stack and whole RAM remain unknown.
+
+Six release Rust tests, strict Clippy, formatting and build pass. Linux passes
+the 54-test Python set with two optional skips, then both native worker-death/EOF
+checks; 1,001 independent evidence checks pass. EOF tests do not exercise
+production marker/error cleanup, which retains mocked coverage; whole-tree
+failure cleanup remains unqualified. The separate existing global
 cleanup concern remains [validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169).
 
 Use [DEVELOPMENT.md](../DEVELOPMENT.md), the registered compatible build wrapper,
