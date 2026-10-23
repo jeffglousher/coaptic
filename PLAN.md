@@ -51,14 +51,30 @@ of metadata inside the 2,112-byte adapter inside the 16,064-byte App; nested
 owners must not be summed. Whole-system memory and runtime congestion behavior
 remain unqualified.
 
-Recorder fences and optional scheduler snapshots are delivered in the companion
-runner. Scheduler runtime agrees with process CPU within 10 ms in all four
-latest captures, but they contain only 4/3/57/14 samples. No user/kernel mode
-reaches 100 resolved samples, so there is no supported hotspot ranking or
-accounting correction. The next task is bounded transport and idle-work counting
-through existing diagnostic/test seams before removing work. Keep clean CPU
-metrics and acceptance gates unchanged; further profiler infrastructure needs a
-concrete reason.
+The explicit [staged nonblocking fixture](https://github.com/jeffglousher/coaptic-validation/pull/163)
+preserves immediate `try_send_to` refusal while staging one datagram in existing
+scratch. Its [same-core Linux comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39887105143)
+verified 640,000 operations plus 640 warmups at 4,000/s, C1 CON and 64/1024 bytes.
+All 32 clean windows qualify. Server CPU changed +0.45%/-2.65% unprotected and
++1.97%/+1.14% with OSCORE. No material repeatable saving is established. All pooled
+latency guards pass, but four OSCORE pair guards fail; retain that variation.
+Linux inline sizes are 32 bytes of Stage inside the 2,120-byte adapter inside the
+16,072-byte App, with a separate 40-byte Driver and 496-byte borrowing loop future.
+Whole-system memory remains unknown; these owners are not additive.
+
+Finite Windows checks recorded nine ready receive calls, versus five external
+staged probes and four App receives consuming staged packets. These are different
+operations; their syscall and wakeup costs remain unknown. Fewer empty App polls
+did not establish lower CPU cost. The next task is to audit repeated deadline and
+readiness work before another change. Reuse existing counts and avoid persistent
+timer caches. Fresh clocks, local/due precedence, cancellation and refusal/recovery
+remain required.
+
+Recorder fences and optional scheduler snapshots are delivered. Prior scheduler
+runtime agreed with process CPU within 10 ms, but sparse samples supported no
+hotspot ranking or accounting correction. The current comparison has profiling
+off. Keep clean CPU metrics and acceptance gates unchanged; further profiler
+infrastructure needs a concrete reason.
 
 The optional [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
 remains available. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
