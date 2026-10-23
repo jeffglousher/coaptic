@@ -6,134 +6,88 @@ storage, sync/async operation, OSCORE/EDHOC, guided commissioning, durable
 ownership and application receipts. Remaining qualification is listed below;
 it is not silently treated as finished software work.
 
-## Current software status
+## Current work
 
-The current priority is [CPU efficiency #650](https://github.com/jeffglousher/coaptic/issues/650):
-halve CPU time per verified operation separately for unprotected and established
-OSCORE traffic. Establish matched-load process CPU baselines, separate idle
-scheduling from active processing, and profile before expanding instrumentation.
-Keep client costs, failures, latency and whole-system memory visible. The prior
-throughput report does not prove this target; it remains open until representative
-device and cloud configurations have relevant evidence.
+[CPU efficiency #650](https://github.com/jeffglousher/coaptic/issues/650) remains
+open: halve server CPU time per verified complete operation, separately for
+unprotected and established OSCORE communication. Preserve behavior, security,
+capacities, refusal and recovery. A passing host control does not complete the
+representative SmallDevice/Constrained and cloud targets.
 
-Core `120a622` validates each request path once, encodes selections lazily,
-borrows dedup rows during timer scans, and validates request options in one pass.
-The [isolated option-validation run](https://github.com/jeffglousher/coaptic-validation/actions/runs/39825129898)
-verified 952,000 operations at C1 CON, 64 bytes and 11,900 operations/s with
-matched Rust 1.99.0. Total server CPU changed -1.22% unprotected and +1.17% with
-OSCORE, only two pooled 10 ms ticks in either mode. No material repeatable total
-gain is established. OSCORE p99 increased 3.205 microseconds; retain that observed
-cost. Separate inclusive profiles resolved kernel syscall/scheduler symbols,
-but sampled self counts do not identify stage costs or prove redundant wakeups.
+The current Rust implementation is unchanged from core `120a622`; later core
+commits update this plan. The companion's explicit scheduling controls are at
+`3a1764d`. Source-matched commands, compiler settings and limits are in the
+[Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
 
-The explicit [blocking UDP control](https://github.com/jeffglousher/coaptic-validation/pull/157)
-stages one packet in existing scratch before calling App with fresh time. Its
-[qualified 4,000/s comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39843237773)
-verified 1,344,000 operations at the same core, compiler and frozen client.
-All 32 clean windows and four pooled latency guards passed. Server CPU per
-operation fell 17.61%/26.30% unprotected and 23.75%/30.89% with OSCORE for
-64/1024-byte responses. Unprotected 64-byte median latency increased 1.8435
-microseconds, close to the +2 guard. These are host scheduling gains; both
-representative 50% targets remain open.
+### What the measurements support
 
-Retain the [11,900/s pacing failures](https://github.com/jeffglousher/coaptic-validation/actions/runs/39839988246):
-only 13 of 16 windows qualify, so both cohort ratios remain withheld. The latest
-[scheduler-accounting check](https://github.com/jeffglousher/coaptic-validation/actions/runs/39867544358)
-verified 320,000 operations and passed 106 Linux tests. One unprotected window
-missed 212 of 20,000 starts, above the unchanged 200 limit; its cohort ratio is
-withheld. OSCORE qualified at 29.5 to 23.5 microseconds per operation, 20.34%
-lower. Do not pool different hosts or substitute passing windows.
+The [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
+qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
+C1 CON, 64/1024 bytes and four rotated pairs. Mio used 12.20%/14.29% less server
+CPU unprotected and 12.59%/8.28% less with OSCORE. All 16 CPU pairs favored Mio.
+Pooled latency guards passed, but two pair guards failed: unprotected 64-byte
+p99 +12.027 microseconds and OSCORE 1024-byte median +4.107 microseconds. This
+supports a limited host CPU saving, not overall latency acceptance or either
+50% target.
 
-The control preserves core capacities and default adapters. It uses a distinct
-synchronous congestion policy with soft read/write timeouts, not async
-cancellation or exact absolute send deadlines. Linux inline sizes are 56 bytes
-of metadata inside the 2,112-byte adapter inside the 16,064-byte App; nested
-owners must not be summed. Whole-system memory and runtime congestion behavior
-remain unqualified.
+The [Mio-versus-staged-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39895566785)
+also qualified all 32 windows and 640,000 operations plus 640 warmups. Staging
+established no consistent CPU improvement: changes were +4.42%/0.00%
+unprotected and +8.61%/-3.98% with OSCORE at 64/1024 bytes. OSCORE 64-byte pooled
+median increased 14.738 microseconds; five pair median guards failed. Preserve
+these failures. Fewer empty App polls did not establish a lower total cost.
+Existing selectors and defaults remain unchanged.
 
-The explicit [staged nonblocking fixture](https://github.com/jeffglousher/coaptic-validation/pull/163)
-preserves immediate `try_send_to` refusal while staging one datagram in existing
-scratch. Its [same-core Linux comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39887105143)
-verified 640,000 operations plus 640 warmups at 4,000/s, C1 CON and 64/1024 bytes.
-All 32 clean windows qualify. Server CPU changed +0.45%/-2.65% unprotected and
-+1.97%/+1.14% with OSCORE. No material repeatable saving is established. All pooled
-latency guards pass, but four OSCORE pair guards fail; retain that variation.
-Linux inline sizes are 32 bytes of Stage inside the 2,120-byte adapter inside the
-16,072-byte App, with a separate 40-byte Driver and 496-byte borrowing loop future.
-Whole-system memory remains unknown; these owners are not additive.
+These are separate host comparisons. Do not combine their ratios, replace failed
+windows or subtract timings with different scopes. Process CPU includes host I/O
+and scheduling; sparse earlier profiles did not establish a hotspot ranking.
+Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 
-Finite Windows checks recorded nine ready receive calls, versus five external
-staged probes and four App receives consuming staged packets. These are different
-operations; their syscall and wakeup costs remain unknown. Fewer empty App polls
-did not establish lower CPU cost. The subsequent
-[adjacent-query cleanup](https://github.com/jeffglousher/coaptic-validation/pull/164)
-removes one repeated deadline query without a persistent timer cache. Focused
-checks and all four CLI cases pass; no CPU gain is measured. Its Windows borrowing
-future is 504 bytes, eight bytes larger; other ordinary inline owners are unchanged.
+### Next steps
 
-The matched [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
-uses companion `c9c2b351` and core `1adb0d1` for both labels, with unchanged Rust
-source. All 32 windows qualify: 640,000 operations plus 640 warmups, 4,000/s,
-C1 CON, 64/1024 bytes and four rotated pairs. Server CPU per operation falls
-12.20%/14.29% unprotected and 12.59%/8.28% with OSCORE. All 16 CPU pairs favor
-Mio. All pooled latency guards pass, but unprotected 64-byte repeat 2 has p99
-+12.027 microseconds and OSCORE 1024-byte repeat 1 has median +4.107 microseconds,
-failing their pair guards. Preserve both failures; neither overall latency
-acceptance nor either representative 50% target is established. Do not combine
-ratios from different hosts. Runtime allocations and whole-memory costs remain
-unknown for these adapters.
+- Separate core processing from host I/O and scheduling using the existing
+  optimizer-resistant core probe. Keep client preparation and response
+  verification visible; whole-probe CPU is not isolated server CPU. Inspect
+  optimized emitted code to establish which memory operations actually remain.
+- Optimize the largest supported cost in a coherent batch. Reuse storage and
+  parsing, preserve authentication, replay/nonce safety, cancellation, retained
+  bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
+- Validate the change with matched, complete operations and clean CPU windows.
+  Keep diagnosis separate from clean measurement. Reuse existing counters and
+  runners; add bounded observability only to answer a concrete cost question.
+  Keep kernel/eBPF work proportional to measurable value.
+- Complete representative SmallDevice/Constrained and cloud qualification:
+  small messages, blockwise bodies, CON concurrency, CPU-limited throughput,
+  saturation, fairness, cancellation and recovery. Report client limits,
+  uncertainty and instrumentation overhead with all failures retained.
 
-The next code batch combines direct Mio readiness with one staged receive as an
-explicit control, leaving existing selectors and defaults unchanged. It tests
-whether skipping empty App maintenance helps without Tokio scheduling; the gain
-is unknown. Validate ownership, N+1 refusal, fresh clocks, local/due precedence,
-retained errors and immediate nonblocking sends before measurement. Reuse the
-existing runner, client and gates; add no profiling infrastructure.
+Count whole-system memory: configured pools, initialization, metadata, scratch,
+security, transport, runtime, stacks and kernel costs. Pools are allocated at
+startup and reused; automatic expansion stays off. Inline components and RSS
+snapshots do not establish peak or whole RAM. In the latest Linux staged-Mio
+control, Stage (32 bytes) is inside adapter (2,088 bytes), which is inside App
+(16,040 bytes); Driver is separate (64 bytes). Stage retains one extra datagram
+beyond the four Engine RX slots using existing scratch. Do not sum nested owners.
+Runtime allocations and whole-memory costs remain unqualified.
 
-Recorder fences and optional scheduler snapshots are delivered. Prior scheduler
-runtime agreed with process CPU within 10 ms, but sparse samples supported no
-hotspot ranking or accounting correction. The current comparison has profiling
-off. Keep clean CPU metrics and acceptance gates unchanged; further profiler
-infrastructure needs a concrete reason.
+### Delivered behavior and boundaries
 
-The optional [native async fixture](https://github.com/jeffglousher/coaptic-validation/pull/154)
-remains available. Its [same-core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39807483103)
-used 9.28-18.83% more server CPU and failed the +2 microsecond median-latency guard
-in all four 64/1024-byte security strata. This measures application scheduling,
-not isolated core processing. [Borrowing App from its setup owner](https://github.com/jeffglousher/coaptic-validation/pull/155)
-reduced the complete outer future from 120,696 to 56,536 bytes in a controlled
-Windows Rust 1.99.0 layout check. This does not establish CPU, peak-stack or
-whole-RAM savings; pools, allocator, body storage and kernel costs remain separate.
+No accepted protocol implementation gap remains in this batch. Fixed/allocated
+storage, sync/async operation, OSCORE/EDHOC, guided commissioning and durable
+ownership are implemented. App Calls have isolated concurrent Block2 assembly
+([#655](https://github.com/jeffglousher/coaptic/issues/655)); nonce ownership and
+per-endpoint NSTART still constrain concurrency qualification.
 
-Concurrent Block2 response assembly is isolated by App Call. Two live Calls with
-the same ETag previously shared a body slot and one could stop before sending
-its follow-up ([#655](https://github.com/jeffglousher/coaptic/issues/655)). Both
-original security cases now complete at unchanged capacities. Fixed/allocated
-storage and classic/Q Block2 have focused coverage; raw Engine cross-token
-assembly stays intact. The [bounded native driver](https://github.com/jeffglousher/coaptic-validation/pull/153)
-keeps CON/NON cohorts separate and reports actual overlap, capacity refusal and
-failed work. Further concurrency qualification must preserve NSTART and nonce
-ownership, and include refusal and recovery.
+The native async and blocking controls remain optional. Earlier async work did
+not establish a CPU gain; the blocking control has a distinct soft write-timeout
+policy. Neither is a substitute for immediate-refusal or async cancellation
+qualification. The adjacent deadline-query cleanup removes repeated work but
+establishes no measured CPU gain. Retained reports and #650 hold the full
+experiment ledger.
 
-The OSCORE copy cleanup and source-matched library comparison are delivered in
-[core #648](https://github.com/jeffglousher/coaptic/pull/648) and
-[companion #149](https://github.com/jeffglousher/coaptic-validation/pull/149).
-Authenticated Inner reconstruction encodes once, opened requests avoid RX
-reserialization, and fresh protected TX slots avoid packet staging. Retained-TX
-replacement preserves transactional staging and retransmission bytes on refusal.
-
-The [source-matched Windows report](https://github.com/jeffglousher/coaptic-validation/tree/98b54fe8fd4c9b76301d2d22a533af40ecade744/tools/benchmark/evidence/comprehensive-windows-20261022)
-contains all named protected/unprotected configurations, resource ledgers,
-independent packet grades and retained failures. Separate client/runtime strata
-and the patched-toolchain control are explicit. The copy reductions did not
-establish a large core-poll speedup. Further optimization needs measured waste,
-with authentication, replay, refusal/recovery and bounded ownership preserved.
-
-No accepted protocol implementation gap remains in this batch. Required physical
-qualification stays below. Future [#647](https://github.com/jeffglousher/coaptic/issues/647)
-studies volatile plaintext/key lifetime and bounded zeroization; copy removal
-does not promise erasure. The open third-party
-[Go comparator defect](https://github.com/jeffglousher/coaptic-validation/issues/146)
+[#647](https://github.com/jeffglousher/coaptic/issues/647) studies volatile
+plaintext/key lifetime and bounded zeroization; removing copies does not promise
+erasure. The third-party [Go comparator defect](https://github.com/jeffglousher/coaptic-validation/issues/146)
 is tracked separately from Coaptic implementation.
 
 ## Qualification waiting for physical access
