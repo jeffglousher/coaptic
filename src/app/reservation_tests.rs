@@ -79,11 +79,12 @@ fn reregistration_releases_unsent_notification() {
     let mut plan = ObservePlan::idle();
     plan.deregister = true;
     plan.token = interest.token();
+    let mut response = Response::content_copy(b"done").observe(17);
     apply_observe(
         &mut engine,
         0,
         interest.endpoint(),
-        Response::content(b"done"),
+        &mut response,
         plan,
         None,
         oscore::no_request(),
@@ -92,4 +93,7 @@ fn reregistration_releases_unsent_notification() {
     assert!(engine.pending_con(reserved.tx_slot()).is_none());
     assert_eq!(engine.tx_occupied(), 0);
     assert!(engine.lookup_observe(interest.key()).is_none());
+    assert_eq!(response.observe_seq(), None);
+    assert_eq!(response.payload(), b"done");
+    assert_eq!(response.validate(), Ok(()));
 }

@@ -279,16 +279,19 @@ pub(crate) fn is_active<const REQUESTS: usize, K: OwnedToken>(_ctx: &Field<REQUE
 /// application body. A token-matching unprotected 2.xx/4.xx/5.xx must
 /// not complete a [`Call`](super::Call).
 #[cfg(feature = "oscore")]
-pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default + AsMut<[u8]>>(
     ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
     parsed: &ParsedMessage<'_, K>,
-    scratch: &'a mut [u8],
+    scratch: &'a mut Option<Scratch>,
 ) -> Result<Option<Opened<'a, K>>, InboundError> {
     let Some(ctx) = selected_mut(ctx, peer.association())? else {
         return Ok(None);
     };
     if parsed.oscore().is_some() {
+        // Keep the opened wire in the caller's local owner, but initialize it
+        // only after context selection and the OSCORE-option check.
+        let scratch = scratch.get_or_insert_with(Scratch::default).as_mut();
         let mut response_state = ResponseState::None;
         let (wire, request) = if parsed.code().is_request() {
             ctx.unprotect_request_wire(parsed, scratch)?
@@ -358,11 +361,11 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
 }
 
 #[cfg(not(feature = "oscore"))]
-pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default + AsMut<[u8]>>(
     _ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
     _parsed: &ParsedMessage<'_, K>,
-    _scratch: &'a mut [u8],
+    _scratch: &'a mut Option<Scratch>,
 ) -> Result<Option<Opened<'a, K>>, InboundError> {
     let _ = peer;
     Ok(None)
@@ -614,6 +617,174 @@ where
         return Err(error);
     }
     super::finish_send(engine, io, tx, recover.key().endpoint(), None)
+}
+
+#[cfg(test)]
+mod inbound_scratch_tests {
+    use super::*;
+    use crate::message::{Code, MessageId, Token, Type, decode};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Scratch([u8; 1472]);
+
+    impl Default for Scratch {
+        fn default() -> Self {
+            INITIALIZATIONS.fetch_add(1, Ordering::SeqCst);
+            Self([0; 1472])
+        }
+    }
+
+    impl AsMut<[u8]> for Scratch {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn inbound_initializes_scratch_only_after_context_and_protected_selection() {
+        use crate::oscore::{DeriveParams, SecurityContext};
+
+        let make = |sender_id, recipient_id| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[0x31; 16],
+                master_salt: &[],
+                sender_id,
+                recipient_id,
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let token = Token::from_checked(&[7]);
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+            .with_token(token)
+            .with_payload(b"selection");
+        let mut wire = [0; 1472];
+        let n = request.encode(&mut wire).unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        let mut scratch = None::<Scratch>;
+        let mut inactive = None::<SecurityContext>;
+        assert!(
+            inbound(&mut inactive, peer, &parsed, &mut scratch)
+                .unwrap()
+                .is_none()
+        );
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+
+        let mut server = Some(make(&[2], &[1]));
+        assert!(matches!(
+            inbound(&mut server, peer, &parsed, &mut scratch),
+            Err(OscoreError::Unprotected)
+        ));
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            inbound(&mut server, peer.with_association(1), &parsed, &mut scratch),
+            Err(OscoreError::Context)
+        ));
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+
+        for control in [
+            Message::empty_ack(MessageId::new(2)),
+            Message::empty_rst(MessageId::new(3)),
+        ] {
+            let n = control.encode(&mut wire).unwrap();
+            let parsed = decode(&wire[..n]).unwrap();
+            assert!(
+                inbound(&mut server, peer, &parsed, &mut scratch)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(scratch.is_none());
+            assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+        }
+
+        let mut client = make(&[1], &[2]);
+        let n = client.protect_request(&request, &mut wire).unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        assert!(
+            inbound(&mut inactive, peer, &parsed, &mut scratch)
+                .unwrap()
+                .is_none()
+        );
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            inbound(&mut server, peer.with_association(1), &parsed, &mut scratch),
+            Err(OscoreError::Context)
+        ));
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+
+        let before = server.as_ref().unwrap().replay_checkpoint();
+        #[cfg(feature = "std")]
+        std::println!(
+            "local inbound scratch layout: initialized={} optional={}",
+            core::mem::size_of::<Scratch>(),
+            core::mem::size_of::<Option<Scratch>>()
+        );
+        {
+            let (inner, opened, binding, _) = inbound(&mut server, peer, &parsed, &mut scratch)
+                .unwrap()
+                .unwrap();
+            assert_eq!(inner.code(), Code::GET);
+            assert_eq!(inner.token(), token);
+            assert_eq!(inner.payload(), b"selection");
+            assert_eq!(decode(opened).unwrap().payload(), b"selection");
+            assert_eq!(binding.piv().seq(), 0);
+        }
+        assert!(scratch.is_some());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 1);
+        let accepted = server.as_ref().unwrap().replay_checkpoint();
+        assert_ne!(before, accepted);
+        assert!(matches!(
+            inbound(&mut server, peer, &parsed, &mut scratch),
+            Err(OscoreError::Replay)
+        ));
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 1);
+        assert_eq!(server.as_ref().unwrap().replay_checkpoint(), accepted);
+
+        wire[n - 1] ^= 1;
+        let parsed = decode(&wire[..n]).unwrap();
+        let mut server = Some(make(&[2], &[1]));
+        let mut refused = None::<Scratch>;
+        assert!(matches!(
+            inbound(&mut server, peer, &parsed, &mut refused),
+            Err(OscoreError::Decrypt)
+        ));
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 2);
+        assert_eq!(server.as_ref().unwrap().replay_checkpoint(), before);
+    }
+
+    #[cfg(not(feature = "oscore"))]
+    #[test]
+    fn unprotected_build_does_not_initialize_inbound_scratch() {
+        let mut ctx = Store::<4, 1>::new();
+        let mut wire = [0; 64];
+        let n = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+            .with_token(Token::EMPTY)
+            .encode(&mut wire)
+            .unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        let mut scratch = None::<Scratch>;
+        assert!(
+            inbound(
+                &mut ctx,
+                Endpoint::v4([192, 0, 2, 1], 5683),
+                &parsed,
+                &mut scratch
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(scratch.is_none());
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[cfg(all(test, feature = "alloc", feature = "oscore"))]

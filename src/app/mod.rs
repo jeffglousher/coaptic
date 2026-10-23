@@ -3580,12 +3580,12 @@ where
         return outcome;
     }
 
-    let mut inner_scratch = Mem::RxScratch::default();
+    let mut inner_scratch = None::<Mem::RxScratch>;
     #[cfg(feature = "oscore")]
     let before = oscore
         .context(peer.association())
         .map(|ctx| ctx.replay_checkpoint());
-    let opened = oscore::inbound(oscore, peer, &parsed, inner_scratch.as_mut());
+    let opened = oscore::inbound(oscore, peer, &parsed, &mut inner_scratch);
     #[cfg(feature = "oscore")]
     if before
         != oscore
@@ -4334,7 +4334,7 @@ where
         None
     };
     let mut catalog = site::LinkFormatScratch::<N>::new();
-    let (response, plan) = {
+    let (mut response, plan) = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
             InboundBody::None
@@ -4440,24 +4440,21 @@ where
     } else {
         None
     };
-    let response = match apply_observe(
+    if let Err(error) = apply_observe(
         engine,
         now_ms,
         peer,
-        response,
+        &mut response,
         plan,
         observe_selection,
         oscore_req,
     ) {
-        Ok(response) => response,
-        Err(error) => {
-            if let InboundBody::Complete(id) = assembled {
-                let _ = engine.release_rx_body(id);
-            }
-            let _ = engine.release_rx(rx);
-            return Err(error.into());
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
         }
-    };
+        let _ = engine.release_rx(rx);
+        return Err(error.into());
+    }
 
     let outcome = if response.is_separate() {
         send_separate(
@@ -4589,19 +4586,19 @@ impl<K: OwnedToken> ObservePlan<K> {
     }
 }
 
-fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
+fn apply_observe<S: Storage + ObserveSlots + BodySlots + PendingCons>(
     engine: &mut Engine<S>,
     now_ms: u64,
     peer: Endpoint,
-    mut response: Response<'a, S::Token>,
+    response: &mut Response<'_, S::Token>,
     plan: ObservePlan<S::Token>,
     selection: Option<&DeferredSelection>,
     oscore_req: oscore::Request,
-) -> Result<Response<'a, S::Token>, crate::storage::SlotError> {
+) -> Result<(), crate::storage::SlotError> {
     let key = ObserveKey::new(plan.token, peer);
 
     let opted = response.observe_seq().is_some() || plan.has_source;
-    response = response.without_observe();
+    response.clear_observe();
     let previous = if plan.deregister || plan.register {
         // Retire only this relation's current notification before replacing its
         // row. A pinned TX refuses without detaching the old row or body.
@@ -4638,7 +4635,7 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
             .with_q_block2(plan.q_block2)
             .with_no_response(plan.no_response)
             .with_selection(selection.copied().map(DeferredSelection::stored));
-        let interest = initial_observe_format(interest, &response, None);
+        let interest = initial_observe_format(interest, response, None);
         #[cfg(feature = "oscore")]
         let interest = interest.with_oscore(oscore_req);
         #[cfg(not(feature = "oscore"))]
@@ -4646,15 +4643,15 @@ fn apply_observe<'a, S: Storage + ObserveSlots + BodySlots + PendingCons>(
         if engine.insert_observe(interest).is_some() {
             let max_age = response.max_age_secs().unwrap_or(DEFAULT_MAX_AGE_SECS);
             let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-            response = response.observe(sequence);
+            response.set_observe(sequence);
         } else {
-            response = response.without_observe();
+            response.clear_observe();
         }
     }
     if plan.delete && response.code().is_success() {
         let _ = engine.mark_observe_resource_deleted(plan.resource);
     }
-    Ok(response)
+    Ok(())
 }
 
 fn initial_observe_format<K: OwnedToken>(

@@ -65,6 +65,33 @@ fn async_transaction_metadata_has_independent_small_device_ceilings() {
     assert!(core::mem::size_of::<BodyOwner<'_, Memory>>() <= 32);
     assert!(core::mem::size_of::<NotifyOwner<'_, Memory>>() <= 128);
     assert!(core::mem::size_of::<DeferredObserveOwner<'_, Memory>>() <= 24);
+    #[cfg(feature = "std")]
+    {
+        let ready = Cell::new(false);
+        let accepted = Cell::new(0);
+        let mut app = App::with_resources(
+            Resources::<profiles::Constrained>::new()
+                .routes::<1>()
+                .block_wise::<false>(),
+        )
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .route("value", get(handler))
+        .bind(Io {
+            ready: &ready,
+            accepted: &accepted,
+        })
+        .unwrap();
+        let mut clock = || Ok::<_, ()>(0);
+        let mut timer = Timer;
+        let progress = app.progress_async(0, &mut clock, &mut timer, 100);
+        std::println!(
+            "Constrained routes1 blockwise=false progress_async future={} local_rx_scratch={} optional_local_rx_scratch={}; future size only, not peak stack or whole RAM",
+            core::mem::size_of_val(&progress),
+            core::mem::size_of::<<Memory as DatagramSlots>::RxScratch>(),
+            core::mem::size_of::<Option<<Memory as DatagramSlots>::RxScratch>>()
+        );
+    }
 }
 
 #[test]

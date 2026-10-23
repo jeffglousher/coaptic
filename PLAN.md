@@ -14,9 +14,12 @@ unprotected and established OSCORE communication. Preserve behavior, security,
 capacities, refusal and recovery. A passing host control does not complete the
 representative SmallDevice/Constrained and cloud targets.
 
-The current Rust implementation is unchanged from core `120a622`; later core
-commits update this plan. The companion's explicit scheduling controls are at
-`3a1764d`. Source-matched commands, compiler settings and limits are in the
+The socket measurements below used Rust equivalent to core `120a622`. The current
+batch mutates Observe responses in place and initializes local Inner scratch only
+after protected input is selected. Windows emitted code confirms one helper
+return copy removed; an ordinary 608-byte response copy remains. CPU gains are
+unmeasured. The companion's explicit scheduling controls are at `3a1764d`.
+Source-matched commands, compiler settings and limits are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
 
 ### What the measurements support

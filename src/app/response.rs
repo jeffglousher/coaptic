@@ -723,8 +723,13 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// as if Observe had not been requested.
     #[must_use]
     pub const fn without_observe(mut self) -> Self {
-        self.observe = None;
+        self.clear_observe();
         self
+    }
+
+    /// Drop Observe without moving the response or its inline payload.
+    pub(crate) const fn clear_observe(&mut self) {
+        self.observe = None;
     }
 
     /// Replace the payload with a `'static` slice.
@@ -1175,6 +1180,33 @@ mod assembled_hold_tests {
         assert_eq!(none.view(), None);
         none.store(b"x");
         assert_eq!(none.view(), None);
+    }
+
+    #[test]
+    fn clear_observe_preserves_inline_payload_metadata_and_validation() {
+        let bytes = [0x5a; INLINE_PAYLOAD + 1];
+        for length in [INLINE_PAYLOAD, INLINE_PAYLOAD + 1] {
+            let mut response = Response::<crate::message::Token>::content_copy(&bytes[..length])
+                .content_format(crate::ContentFormat::OCTET_STREAM)
+                .etag(b"fixture")
+                .max_age(9)
+                .observe(7);
+            let payload = response.payload().as_ptr();
+            let validation = response.validate();
+            response.clear_observe();
+            assert_eq!(response.observe_seq(), None);
+            assert_eq!(response.payload().as_ptr(), payload);
+            assert_eq!(response.payload(), &bytes[..INLINE_PAYLOAD]);
+            assert_eq!(response.payload_src_len(), length);
+            assert_eq!(response.code(), Code::CONTENT);
+            assert_eq!(response.format(), Some(crate::ContentFormat::OCTET_STREAM));
+            assert_eq!(response.etag_bytes(), Some(&b"fixture"[..]));
+            assert_eq!(response.max_age_secs(), Some(9));
+            assert_eq!(response.validate(), validation);
+            response.set_observe(11);
+            assert_eq!(response.observe_seq(), Some(11));
+            assert_eq!(response.validate(), validation);
+        }
     }
 
     #[test]
