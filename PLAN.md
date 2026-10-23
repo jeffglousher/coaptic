@@ -67,8 +67,9 @@ also verifies every exchange, but unprotected windows are below the unchanged
 operations into one window preserves the 10 ms, 100-resolution and 1% empty-control
 guards. Empty controls are never subtracted.
 
-Only diagnostic capture rows use 256-byte storage for this fixed workload;
-App/CoreIo datagrams remain 1,472 bytes with unchanged pools. Enclosing requested
+Each diagnostic row has two 256-byte capture buffers and 40 bytes of metadata
+and padding: 552 bytes total. App/CoreIo datagrams remain 1,472 bytes with
+unchanged pools. Enclosing requested
 fixture plus App is 27,658,654 bytes, including all rows, metadata/padding,
 requested App heap, inline owners and a 16 KiB scratch allowance. This is below
 the 32 MiB diagnostic ceiling, not a production memory requirement or whole-RAM

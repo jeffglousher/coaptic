@@ -44,8 +44,9 @@ or yield a transport percentage by subtracting another run's timing.
 The earlier [short-window run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40022418841)
 retains its failed unprotected 10 ms qualification. One 50,000-operation window
 now replaces five 10,000-operation windows, with unchanged total work and guards.
-Only fixed-workload capture rows shrink to 256 bytes; actual App/CoreIo datagrams
-stay 1,472 bytes. Enclosing requested fixture plus App is 27,658,654 bytes below
+Each fixed-workload capture buffer is 256 bytes; a complete row contains two
+buffers plus 40 bytes of metadata and padding, totaling 552 bytes. Actual
+App/CoreIo datagrams stay 1,472 bytes. Enclosing requested fixture plus App is 27,658,654 bytes below
 32 MiB, including metadata/padding and a 16 KiB scratch allowance. Allocator
 overhead, generated peak stack and whole RAM remain unknown.
 
