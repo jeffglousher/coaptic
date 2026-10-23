@@ -18,6 +18,11 @@ Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
 emitted code confirms removal of the helper return copy and the ordinary
 608-byte response join copy. CPU gains for the latest change remain unmeasured.
+OSCORE builds AAD directly in its existing output buffer. Canonical bytes and
+refusal behavior are preserved. Windows emission confirms removal of the
+48-byte intermediate, its 44-byte clear and staging copy, with more branches
+and register saves. Net CPU benefit remains unmeasured.
+
 The latest socket comparison tests prior core `ff089264` with companion
 `3a1764d`. Commands, compiler settings and limits are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
@@ -58,7 +63,9 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
 - Validate the change with matched, complete operations and clean CPU windows.
-  Keep diagnosis separate from clean measurement. Reuse existing counters and
+  Keep diagnosis separate from clean measurement. Supplement coarse process
+  CPU ticks with bounded whole-process clock readings; preserve original
+  eligibility, ratios and failures. Reuse existing counters and
   runners; add bounded observability only to answer a concrete cost question.
   Keep kernel/eBPF work proportional to measurable value.
 - Complete representative SmallDevice/Constrained and cloud qualification:

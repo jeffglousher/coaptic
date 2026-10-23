@@ -619,6 +619,134 @@ where
     super::finish_send(engine, io, tx, recover.key().endpoint(), None)
 }
 
+/// Authenticate a valid over-capacity request without retaining its token.
+#[cfg(feature = "oscore")]
+#[allow(clippy::too_many_arguments)]
+#[coaptic_io::dual_io(send_token_capacity_refusal_async, bound(crate::app::async_server::ProtocolIo), calls(super::finish_send => super::finish_send_async, super::send_empty_ack => super::send_empty_ack_async, super::replay_con_request => super::replay_con_request_async))]
+pub(crate) fn send_token_capacity_refusal<S, T, const R: usize>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    ids: &mut super::AppIds,
+    now_ms: u64,
+    peer: Endpoint,
+    wire: &[u8],
+    ctx: &mut Field<R, S::Token>,
+    checkpoint: &mut CheckpointState,
+    commit: &mut Option<&mut CheckpointCommit<'_>>,
+    dedup_closed: &mut Option<super::DedupClosed>,
+) -> Result<(), super::Error<T::Error>>
+where
+    S: Storage + DatagramSlots + crate::storage::PendingCons + crate::storage::DedupSlots,
+    T: crate::storage::DatagramIo,
+{
+    use crate::message::{Code, NoResponse, Type};
+    use crate::storage::DedupEntry;
+    let Ok(raw) = crate::message::extended::decode(wire) else {
+        return Ok(());
+    };
+    if !raw.code().is_request() || !matches!(raw.ty(), Type::Confirmable | Type::NonConfirmable) {
+        return Ok(());
+    }
+    let Ok(projected) = crate::message::decode_without_token::<S::Token>(wire) else {
+        return Ok(());
+    };
+    let Ok(peer) = ctx.inbound_route(peer, &projected) else {
+        return Ok(());
+    };
+    if projected.ty() == Type::Confirmable
+        && let super::Replay::Hit(outcome) =
+            super::replay_con_request(engine, io, peer, &projected, now_ms, dedup_closed)
+    {
+        return outcome;
+    }
+    let Some(selected) = ctx.context_mut(peer.association()) else {
+        return Ok(());
+    };
+    let before = selected.replay_checkpoint();
+    let mut inner = S::RxScratch::default();
+    let opened = selected.unprotect_request(&projected, inner.as_mut());
+    if before != selected.replay_checkpoint() {
+        checkpoint.invalidate();
+    }
+    checkpoint.flush(ctx, commit)?;
+    let Ok((plain, request)) = opened else {
+        return Ok(());
+    };
+    crate::storage::Metrics::inc(&mut engine.metrics_mut().token_capacity_refused);
+    let suppress = plain
+        .no_response()
+        .and_then(Result::ok)
+        .unwrap_or(NoResponse::DEFAULT)
+        .suppresses(Code::BAD_REQUEST);
+    if suppress {
+        if raw.ty() == Type::Confirmable {
+            super::remember_empty_ack(
+                engine,
+                peer,
+                raw.message_id(),
+                now_ms,
+                plain.code(),
+                dedup_closed,
+            );
+        }
+        return if raw.ty() == Type::Confirmable {
+            super::send_empty_ack(engine, io, peer, raw.message_id())
+        } else {
+            Ok(())
+        };
+    }
+    let ty = if raw.ty() == Type::Confirmable {
+        Type::Acknowledgement
+    } else {
+        Type::NonConfirmable
+    };
+    let mid = if ty == Type::Acknowledgement {
+        raw.message_id()
+    } else {
+        ids.next_for(engine, io, now_ms)?
+    };
+    let response = Message::new(ty, Code::BAD_REQUEST, mid).with_token(S::Token::EMPTY);
+    let mut protected = S::TxScratch::default();
+    let Some(selected) = ctx.context(peer.association()) else {
+        return Ok(());
+    };
+    let len = selected
+        .protect_response(&response, request, protected.as_mut())
+        .map_err(super::Error::Oscore)?;
+    let encoded = crate::message::extended::decode(&protected.as_ref()[..len])
+        .map_err(|error| super::Error::Message(SlotMessageError::Parse(error)))?;
+    let tx = super::admission::control_tx(engine).ok_or(super::Error::Saturated)?;
+    let result = (|| {
+        let mut access = engine.access_tx_mut(tx)?;
+        let len = encoded
+            .with_token(raw.token())
+            .encode(access.bytes_mut())
+            .map_err(SlotMessageError::Encode)?;
+        access.set_len(len)?;
+        Ok::<_, SlotMessageError>(())
+    })();
+    if let Err(error) = result {
+        let _ = engine.release_tx(tx);
+        return Err(error.into());
+    }
+    if raw.ty() == Type::Confirmable {
+        let entry = engine.access_tx(tx).ok().and_then(|access| {
+            let bytes = access.as_bytes();
+            (bytes.len() <= DedupEntry::REPLAY_MAX).then(|| {
+                DedupEntry::new(mid, peer)
+                    .with_due_ms(super::dedup_due_ms(now_ms))
+                    .with_replay(bytes)
+            })
+        });
+        if let Some(entry) = entry {
+            super::note_dedup_store(engine, entry, plain.code(), dedup_closed);
+        } else {
+            super::remember_empty_ack(engine, peer, mid, now_ms, plain.code(), dedup_closed);
+        }
+    }
+    super::finish_send(engine, io, tx, peer, None)
+}
+
 #[cfg(test)]
 mod inbound_scratch_tests {
     use super::*;
@@ -955,132 +1083,4 @@ mod request_capacity_tests {
         engine.release_tx(retained).unwrap();
         engine.release_tx(fresh).unwrap();
     }
-}
-
-/// Authenticate a valid over-capacity request without retaining its token.
-#[cfg(feature = "oscore")]
-#[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_token_capacity_refusal_async, bound(crate::app::async_server::ProtocolIo), calls(super::finish_send => super::finish_send_async, super::send_empty_ack => super::send_empty_ack_async, super::replay_con_request => super::replay_con_request_async))]
-pub(crate) fn send_token_capacity_refusal<S, T, const R: usize>(
-    engine: &mut Engine<S>,
-    io: &mut T,
-    ids: &mut super::AppIds,
-    now_ms: u64,
-    peer: Endpoint,
-    wire: &[u8],
-    ctx: &mut Field<R, S::Token>,
-    checkpoint: &mut CheckpointState,
-    commit: &mut Option<&mut CheckpointCommit<'_>>,
-    dedup_closed: &mut Option<super::DedupClosed>,
-) -> Result<(), super::Error<T::Error>>
-where
-    S: Storage + DatagramSlots + crate::storage::PendingCons + crate::storage::DedupSlots,
-    T: crate::storage::DatagramIo,
-{
-    use crate::message::{Code, NoResponse, Type};
-    use crate::storage::DedupEntry;
-    let Ok(raw) = crate::message::extended::decode(wire) else {
-        return Ok(());
-    };
-    if !raw.code().is_request() || !matches!(raw.ty(), Type::Confirmable | Type::NonConfirmable) {
-        return Ok(());
-    }
-    let Ok(projected) = crate::message::decode_without_token::<S::Token>(wire) else {
-        return Ok(());
-    };
-    let Ok(peer) = ctx.inbound_route(peer, &projected) else {
-        return Ok(());
-    };
-    if projected.ty() == Type::Confirmable
-        && let super::Replay::Hit(outcome) =
-            super::replay_con_request(engine, io, peer, &projected, now_ms, dedup_closed)
-    {
-        return outcome;
-    }
-    let Some(selected) = ctx.context_mut(peer.association()) else {
-        return Ok(());
-    };
-    let before = selected.replay_checkpoint();
-    let mut inner = S::RxScratch::default();
-    let opened = selected.unprotect_request(&projected, inner.as_mut());
-    if before != selected.replay_checkpoint() {
-        checkpoint.invalidate();
-    }
-    checkpoint.flush(ctx, commit)?;
-    let Ok((plain, request)) = opened else {
-        return Ok(());
-    };
-    crate::storage::Metrics::inc(&mut engine.metrics_mut().token_capacity_refused);
-    let suppress = plain
-        .no_response()
-        .and_then(Result::ok)
-        .unwrap_or(NoResponse::DEFAULT)
-        .suppresses(Code::BAD_REQUEST);
-    if suppress {
-        if raw.ty() == Type::Confirmable {
-            super::remember_empty_ack(
-                engine,
-                peer,
-                raw.message_id(),
-                now_ms,
-                plain.code(),
-                dedup_closed,
-            );
-        }
-        return if raw.ty() == Type::Confirmable {
-            super::send_empty_ack(engine, io, peer, raw.message_id())
-        } else {
-            Ok(())
-        };
-    }
-    let ty = if raw.ty() == Type::Confirmable {
-        Type::Acknowledgement
-    } else {
-        Type::NonConfirmable
-    };
-    let mid = if ty == Type::Acknowledgement {
-        raw.message_id()
-    } else {
-        ids.next_for(engine, io, now_ms)?
-    };
-    let response = Message::new(ty, Code::BAD_REQUEST, mid).with_token(S::Token::EMPTY);
-    let mut protected = S::TxScratch::default();
-    let Some(selected) = ctx.context(peer.association()) else {
-        return Ok(());
-    };
-    let len = selected
-        .protect_response(&response, request, protected.as_mut())
-        .map_err(super::Error::Oscore)?;
-    let encoded = crate::message::extended::decode(&protected.as_ref()[..len])
-        .map_err(|error| super::Error::Message(SlotMessageError::Parse(error)))?;
-    let tx = super::admission::control_tx(engine).ok_or(super::Error::Saturated)?;
-    let result = (|| {
-        let mut access = engine.access_tx_mut(tx)?;
-        let len = encoded
-            .with_token(raw.token())
-            .encode(access.bytes_mut())
-            .map_err(SlotMessageError::Encode)?;
-        access.set_len(len)?;
-        Ok::<_, SlotMessageError>(())
-    })();
-    if let Err(error) = result {
-        let _ = engine.release_tx(tx);
-        return Err(error.into());
-    }
-    if raw.ty() == Type::Confirmable {
-        let entry = engine.access_tx(tx).ok().and_then(|access| {
-            let bytes = access.as_bytes();
-            (bytes.len() <= DedupEntry::REPLAY_MAX).then(|| {
-                DedupEntry::new(mid, peer)
-                    .with_due_ms(super::dedup_due_ms(now_ms))
-                    .with_replay(bytes)
-            })
-        });
-        if let Some(entry) = entry {
-            super::note_dedup_store(engine, entry, plain.code(), dedup_closed);
-        } else {
-            super::remember_empty_ack(engine, peer, mid, now_ms, plain.code(), dedup_closed);
-        }
-    }
-    super::finish_send(engine, io, tx, peer, None)
 }
