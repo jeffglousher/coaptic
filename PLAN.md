@@ -65,10 +65,30 @@ Whole-system memory remains unknown; these owners are not additive.
 Finite Windows checks recorded nine ready receive calls, versus five external
 staged probes and four App receives consuming staged packets. These are different
 operations; their syscall and wakeup costs remain unknown. Fewer empty App polls
-did not establish lower CPU cost. The next task is to audit repeated deadline and
-readiness work before another change. Reuse existing counts and avoid persistent
-timer caches. Fresh clocks, local/due precedence, cancellation and refusal/recovery
-remain required.
+did not establish lower CPU cost. The subsequent
+[adjacent-query cleanup](https://github.com/jeffglousher/coaptic-validation/pull/164)
+removes one repeated deadline query without a persistent timer cache. Focused
+checks and all four CLI cases pass; no CPU gain is measured. Its Windows borrowing
+future is 504 bytes, eight bytes larger; other ordinary inline owners are unchanged.
+
+The matched [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
+uses companion `c9c2b351` and core `1adb0d1` for both labels, with unchanged Rust
+source. All 32 windows qualify: 640,000 operations plus 640 warmups, 4,000/s,
+C1 CON, 64/1024 bytes and four rotated pairs. Server CPU per operation falls
+12.20%/14.29% unprotected and 12.59%/8.28% with OSCORE. All 16 CPU pairs favor
+Mio. All pooled latency guards pass, but unprotected 64-byte repeat 2 has p99
++12.027 microseconds and OSCORE 1024-byte repeat 1 has median +4.107 microseconds,
+failing their pair guards. Preserve both failures; neither overall latency
+acceptance nor either representative 50% target is established. Do not combine
+ratios from different hosts. Runtime allocations and whole-memory costs remain
+unknown for these adapters.
+
+The next code batch combines direct Mio readiness with one staged receive as an
+explicit control, leaving existing selectors and defaults unchanged. It tests
+whether skipping empty App maintenance helps without Tokio scheduling; the gain
+is unknown. Validate ownership, N+1 refusal, fresh clocks, local/due precedence,
+retained errors and immediate nonblocking sends before measurement. Reuse the
+existing runner, client and gates; add no profiling infrastructure.
 
 Recorder fences and optional scheduler snapshots are delivered. Prior scheduler
 runtime agreed with process CPU within 10 ms, but sparse samples supported no
