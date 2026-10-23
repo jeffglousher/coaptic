@@ -17,11 +17,11 @@ representative SmallDevice/Constrained and cloud targets.
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
 emitted code confirms removal of the helper return copy and the ordinary
-608-byte response join copy. CPU gains for the latest change remain unmeasured.
+608-byte response join copy. A qualified CPU gain remains unestablished.
 OSCORE builds AAD directly in its existing output buffer. Canonical bytes and
 refusal behavior are preserved. Windows emission confirms removal of the
 48-byte intermediate, its 44-byte clear and staging copy, with more branches
-and register saves. Net CPU benefit remains unmeasured.
+and register saves. Net CPU benefit remains unestablished.
 
 Discovery catalog scratch initializes only for the selected built-in GET.
 Windows emission removes the ordinary 128-byte clear; scratch-owner layouts
@@ -29,13 +29,32 @@ and the measured 17,128-byte constrained async future stay unchanged. The
 local dispatch frame grows by 16 bytes. This is a recorded stack cost, not
 a whole-memory saving or measured CPU gain.
 
-The latest socket comparison tests prior core `ff089264` with companion
-`3a1764d`. Commands, compiler settings and limits are in the
-[Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
+The latest socket comparison tests current core `7ab6949` against baseline
+`b8f44fa`, using companion `eea0374`. Commands, compiler settings and limits
+are in the
+[Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/eea0374b60c93098a7f0dcf24a999e49d753d624/tools/benchmark/linux_cpu.md).
 
 ### What the measurements support
 
-The [same-Mio core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39902235048)
+The [current same-Mio comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39924741885)
+verified 1,536,000 operations plus 640 warmups with no operation failures:
+4,000/s, C1 CON, 64/1024 bytes, twelve seconds and four rotated pairs.
+Both labels use the same capacities and frozen baseline client. Sixteen of
+32 windows exceed the unchanged 1% missed-start limit. All four full-cohort
+CPU ratios are withheld; this run establishes no speedup.
+
+All pooled latency guards pass numerically, but two pair guards fail:
+unprotected 1024-byte median +2.212 microseconds and OSCORE 64-byte p99
++10.402 microseconds. Both pairs also fail pacing eligibility. Preserve these
+failures; pooled values do not establish overall latency acceptance.
+
+The native Linux process-clock smoke test and all 32 bounded clock sidecars
+pass. These optional whole-process, all-thread readings supplement the
+original tick metrics. They do not change eligibility or provide replacement
+ratios; reported nanosecond resolution is not nanosecond accuracy. They
+exclude descendants and unattributed whole-machine work. Profiling was off.
+
+The prior [same-Mio core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39902235048)
 qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
 C1 CON, 64/1024 bytes, five seconds and four rotated pairs. Baseline `f23d69c`
 and candidate `ff089264` use the same adapter, capacities and frozen client.
@@ -61,6 +80,10 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 
 ### Next steps
 
+- Inspect the retained current-run pacing failures before selecting another
+  measurement. Check the exact C1 dispatch order and response-time traces;
+  distinguish a fixed-trace response-backpressure bound from unmeasured
+  client and scheduler delays. Do not replace failed windows or relax gates.
 - Separate core processing from host I/O and scheduling using the existing
   optimizer-resistant core probe. Keep client preparation and response
   verification visible; whole-probe CPU is not isolated server CPU. Inspect
@@ -69,9 +92,9 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
 - Validate the change with matched, complete operations and clean CPU windows.
-  Keep diagnosis separate from clean measurement. Supplement coarse process
-  CPU ticks with bounded whole-process clock readings; preserve original
-  eligibility, ratios and failures. Reuse existing counters and
+  Keep diagnosis separate from clean measurement. Reuse the validated bounded
+  whole-process clock supplement alongside the original coarse ticks;
+  preserve eligibility, ratios and failures. Reuse existing counters and
   runners; add bounded observability only to answer a concrete cost question.
   Keep kernel/eBPF work proportional to measurable value.
 - Complete representative SmallDevice/Constrained and cloud qualification:
