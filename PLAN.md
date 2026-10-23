@@ -46,6 +46,36 @@ The latest clean socket comparison tests current core `7ab6949` against baseline
 are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/eea0374b60c93098a7f0dcf24a999e49d753d624/tools/benchmark/linux_cpu.md).
 
+The [server-App CPU diagnostic](https://github.com/jeffglousher/coaptic-validation/pull/170)
+is implemented and merged. Its [qualified Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40024678302)
+uses core `b9b83d8` and companion `ff46fd5`: four serial processes, each with
+50,000 measured operations and 128 warmups, a 64-byte representation and no UDP.
+All 200,512 exchanges verify, all four CPU windows qualify, and 1,001 independent
+evidence checks pass. The two unprotected observations are 0.901244 and 0.916253
+microseconds/op; OSCORE observations are 2.032878 and 2.034727 microseconds/op.
+These are server-App driver windows including full App polls, fixture copies,
+monotonic reads and loop/gate work. Client preparation and complete authenticated
+response verification run outside them. Two observations per mode do not establish
+a confidence interval, an optimization gain or either 50% target.
+
+The runner is Ubuntu 24.04, Linux 6.17.0-1022-azure, AMD EPYC 7763 with four
+assigned logical CPUs, glibc 2.39 and Rust 1.99.0. Release uses thin LTO, one codegen
+unit, debug information and frame pointers; detailed diagnostics are disabled.
+The prior [five-window control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40022418841)
+also verifies every exchange, but unprotected windows are below the unchanged
+10 ms CPU minimum. Those failures remain retained. Consolidating the same 50,000
+operations into one window preserves the 10 ms, 100-resolution and 1% empty-control
+guards. Empty controls are never subtracted.
+
+Only diagnostic capture rows use 256-byte storage for this fixed workload;
+App/CoreIo datagrams remain 1,472 bytes with unchanged pools. Enclosing requested
+fixture plus App is 27,658,654 bytes, including all rows, metadata/padding,
+requested App heap, inline owners and a 16 KiB scratch allowance. This is below
+the 32 MiB diagnostic ceiling, not a production memory requirement or whole-RAM
+measurement. Allocator overhead and generated peak stack remain unknown. Native
+worker-death/control-EOF checks pass; production marker/error cleanup retains
+mocked coverage. Whole-tree failure cleanup remains unqualified.
+
 ### What the measurements support
 
 The [current same-Mio comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39924741885)
@@ -117,14 +147,16 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 - Keep the client pacer unchanged: source inspection found no missing deadline
   recheck or demonstrated defect. Preserve the original failed windows and gates;
   interval counters establish no server, sleep or scheduler cause.
-- Resume the saved [server-App batch CPU draft](https://github.com/jeffglousher/coaptic-validation/pull/170)
-  with fresh combined review and affected native checks before Linux execution
-  or merge. Rust compilation and real ownership/clock cleanup qualification are
-  pending. Mocked Python checks are not native qualification.
-- Separate core processing from host I/O and scheduling using the existing
-  optimizer-resistant core probe. Keep client preparation and response
-  verification visible; whole-probe CPU is not isolated server CPU. Inspect
-  optimized emitted code to establish which memory operations actually remain.
+- Reuse the merged server-App CPU mode for core diagnosis. Its source-matched
+  native checks and finite Linux clock/window qualification pass. Keep its
+  driver scope and cleanup limits explicit; subtracting it from another run's
+  socket timing cannot establish transport cost.
+- Select one bounded Linux I/O experiment against Mio, preserving the portable
+  core. Submission/completion ownership and cancellation need a concrete design
+  before an io_uring adapter; fewer App polls and a newer I/O API alone predict
+  no saving. Keep a simple batched-socket control available. Account for ring,
+  packet, runtime and kernel storage and all attributable worker CPU. Do not
+  introduce unbounded queues, hidden polling threads or automatic expansion.
 - Optimize the largest supported cost in a coherent batch. Reuse storage and
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
