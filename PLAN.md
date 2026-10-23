@@ -14,32 +14,33 @@ unprotected and established OSCORE communication. Preserve behavior, security,
 capacities, refusal and recovery. A passing host control does not complete the
 representative SmallDevice/Constrained and cloud targets.
 
-The socket measurements below used Rust equivalent to core `120a622`. The current
-batch mutates Observe responses in place and initializes local Inner scratch only
-after protected input is selected. Windows emitted code confirms one helper
-return copy removed; an ordinary 608-byte response copy remains. CPU gains are
-unmeasured. The companion's explicit scheduling controls are at `3a1764d`.
-Source-matched commands, compiler settings and limits are in the
+The current Rust implementation is equivalent to core `ff089264`. Observe
+responses mutate in place, and local Inner scratch initializes only after
+protected input is selected. Windows emitted code confirms one helper return
+copy removed; an ordinary 608-byte response copy remains. The latest socket
+comparison uses companion `3a1764d`. Commands, compiler settings and limits are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
 
 ### What the measurements support
 
-The [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
+The [same-Mio core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39902235048)
 qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
-C1 CON, 64/1024 bytes and four rotated pairs. Mio used 12.20%/14.29% less server
-CPU unprotected and 12.59%/8.28% less with OSCORE. All 16 CPU pairs favored Mio.
-Pooled latency guards passed, but two pair guards failed: unprotected 64-byte
-p99 +12.027 microseconds and OSCORE 1024-byte median +4.107 microseconds. This
-supports a limited host CPU saving, not overall latency acceptance or either
-50% target.
+C1 CON, 64/1024 bytes, five seconds and four rotated pairs. Baseline `f23d69c`
+and candidate `ff089264` use the same adapter, capacities and frozen client.
+Server CPU changes were -1.80%/-2.70% unprotected and -4.07%/-0.76% with OSCORE.
+These are only 1–5 pooled counter ticks; no material repeatable saving is
+established. Pooled latency guards pass, but three pair guards fail:
+unprotected 64-byte p99 +80.892 microseconds, unprotected 1024-byte median
++2.634 microseconds and OSCORE 1024-byte median +4.427 microseconds.
+Preserve all three failures. Overall latency acceptance is not established.
+Profiling was off, so this run does not identify the next hotspot.
 
-The [Mio-versus-staged-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39895566785)
-also qualified all 32 windows and 640,000 operations plus 640 warmups. Staging
-established no consistent CPU improvement: changes were +4.42%/0.00%
-unprotected and +8.61%/-3.98% with OSCORE at 64/1024 bytes. OSCORE 64-byte pooled
-median increased 14.738 microseconds; five pair median guards failed. Preserve
-these failures. Fewer empty App polls did not establish a lower total cost.
-Existing selectors and defaults remain unchanged.
+The earlier [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
+supports a limited host CPU saving of 8.28–14.29%, with two failed pair latency
+guards. [Receive staging](https://github.com/jeffglousher/coaptic-validation/actions/runs/39895566785)
+established no consistent gain and failed latency guards. Fewer empty App polls
+did not establish lower total cost. Full reports and failures remain in #650;
+existing selectors and defaults remain unchanged.
 
 These are separate host comparisons. Do not combine their ratios, replace failed
 windows or subtract timings with different scopes. Process CPU includes host I/O
@@ -67,11 +68,11 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 Count whole-system memory: configured pools, initialization, metadata, scratch,
 security, transport, runtime, stacks and kernel costs. Pools are allocated at
 startup and reused; automatic expansion stays off. Inline components and RSS
-snapshots do not establish peak or whole RAM. In the latest Linux staged-Mio
-control, Stage (32 bytes) is inside adapter (2,088 bytes), which is inside App
-(16,040 bytes); Driver is separate (64 bytes). Stage retains one extra datagram
-beyond the four Engine RX slots using existing scratch. Do not sum nested owners.
-Runtime allocations and whole-memory costs remain unqualified.
+snapshots do not establish peak or whole RAM. The latest Mio comparison has no
+server resource ledger. The lazy local scratch adds one tag byte in measured
+Windows layouts, with no persistent App field or extra payload buffer. Its
+async-future delta is unknown. Do not sum nested owners; runtime allocations,
+peak stack and whole-memory costs remain unqualified.
 
 ### Delivered behavior and boundaries
 
