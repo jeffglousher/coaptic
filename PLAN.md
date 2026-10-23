@@ -14,11 +14,12 @@ unprotected and established OSCORE communication. Preserve behavior, security,
 capacities, refusal and recovery. A passing host control does not complete the
 representative SmallDevice/Constrained and cloud targets.
 
-The current Rust implementation is equivalent to core `ff089264`. Observe
-responses mutate in place, and local Inner scratch initializes only after
-protected input is selected. Windows emitted code confirms one helper return
-copy removed; an ordinary 608-byte response copy remains. The latest socket
-comparison uses companion `3a1764d`. Commands, compiler settings and limits are in the
+Dispatch constructs responses directly and applies Observe updates in place.
+Local Inner scratch initializes only after protected input is selected. Windows
+emitted code confirms removal of the helper return copy and the ordinary
+608-byte response join copy. CPU gains for the latest change remain unmeasured.
+The latest socket comparison tests prior core `ff089264` with companion
+`3a1764d`. Commands, compiler settings and limits are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
 
 ### What the measurements support
