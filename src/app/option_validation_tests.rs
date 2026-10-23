@@ -1,6 +1,6 @@
 //! Bounded equivalence checks for the request option admission predicate.
 
-use super::{bad_option_request, oscore};
+use super::{oscore, validate_request_options};
 use crate::message::{
     Code, Message, MessageId, Opt, OptionNumber, OptionsBuilder, ParsedMessage, Token, Type,
     decode, encode,
@@ -42,7 +42,7 @@ fn legacy_bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field<
 }
 
 fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
-    let mut options = OptionsBuilder::<4>::new();
+    let mut options = OptionsBuilder::<5>::new();
     options.push(Opt::uri_path("bench")).unwrap();
     for option in extra {
         options.push(*option).unwrap();
@@ -53,12 +53,41 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
     let mut wire = [0; 128];
     let n = encode(&message, &mut wire).unwrap();
     let parsed = decode(&wire[..n]).unwrap();
+    let validated = validate_request_options(&parsed, oscore);
     assert_eq!(
-        bad_option_request(&parsed, oscore),
+        validated.is_none(),
         legacy_bad_option_request(&parsed, oscore),
         "{code:?}, {extra:?}, security active={}",
         oscore::is_active(oscore)
     );
+    if let Some(validated) = validated {
+        assert_eq!(validated.block1, parsed.block1().and_then(Result::ok));
+        assert_eq!(validated.block2, parsed.block2().and_then(Result::ok));
+        assert_eq!(
+            validated.q_block2,
+            parsed.q_block2().next().and_then(Result::ok)
+        );
+        // Frozen accessor-based 4.00 checks, independent of collected state.
+        let missing_q1_metadata = parsed.q_block1().is_some()
+            && (parsed.request_tag().next().is_none() || !matches!(parsed.size1(), Some(Ok(_))));
+        let missing_fetch_format = code == Code::FETCH && parsed.content_format().is_none();
+        let mut previous: Option<crate::message::BlockValue> = None;
+        let valid_q_selections = parsed.q_block2().all(|value| {
+            let Ok(value) = value else {
+                return false;
+            };
+            if previous.is_some_and(|last| value.num() <= last.num() || value.szx() != last.szx()) {
+                return false;
+            }
+            previous = Some(value);
+            true
+        });
+        assert_eq!(
+            validated.bad_request,
+            missing_q1_metadata || missing_fetch_format || !valid_q_selections,
+            "{code:?}, {extra:?}"
+        );
+    }
 }
 
 fn compare_cases(oscore: &oscore::Field<4>) {
@@ -89,6 +118,9 @@ fn compare_cases(oscore: &oscore::Field<4>) {
         Opt::new(OptionNumber::Q_BLOCK2, &[7]),
         Opt::new(OptionNumber::Q_BLOCK2, &[0x08]),
         Opt::new(OptionNumber::Q_BLOCK2, &[0x18]),
+        Opt::new(OptionNumber::SIZE1, &[]),
+        Opt::new(OptionNumber::SIZE1, &[0xff; 4]),
+        Opt::new(OptionNumber::SIZE1, &[1; 5]),
         Opt::new(OptionNumber::REQUEST_TAG, &[]),
         Opt::new(OptionNumber::REQUEST_TAG, b"12345678"),
         Opt::new(OptionNumber::REQUEST_TAG, b"123456789"),
@@ -120,6 +152,24 @@ fn compare_cases(oscore: &oscore::Field<4>) {
                     &[first, Opt::new(OptionNumber::Q_BLOCK2, &[0x10]), third],
                     oscore,
                 );
+            }
+        }
+        for q1 in [&[][..], &[1; 4], &[7]] {
+            for first in [&[][..], &[0xff; 4], &[1; 5]] {
+                for second in [&[][..], &[1; 5]] {
+                    // Empty tags count as present. Size1 must use its first
+                    // value even when a later duplicate has a different shape.
+                    compare_case(
+                        code,
+                        &[
+                            Opt::new(OptionNumber::Q_BLOCK1, q1),
+                            Opt::new(OptionNumber::SIZE1, first),
+                            Opt::new(OptionNumber::SIZE1, second),
+                            Opt::request_tag(&[]),
+                        ],
+                        oscore,
+                    );
+                }
             }
         }
     }

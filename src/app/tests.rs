@@ -11,8 +11,8 @@ use crate::app::App;
 use crate::error::{EncodeError, SlotMessageError};
 use crate::message::{
     BlockValue, Code, ContentFormat, Echo as EchoOpt, EncodedUint, Message, MessageId,
-    MissingBlocks, ObserveTransmission, Opt, OptionNumber, OptionsBuilder, ProblemDetails,
-    QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
+    MissingBlocks, NoResponse, ObserveTransmission, Opt, OptionNumber, OptionsBuilder,
+    ProblemDetails, QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
     BlockKey, DatagramIo, DedupEntry, DedupKey, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile,
@@ -496,6 +496,163 @@ fn repeated_block2_validates_and_uses_only_the_first_value() {
         );
         assert_eq!(CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(app.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[test]
+fn request_option_errors_preserve_proxy_bad_option_and_bad_request_precedence() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let unknown = Opt::new(OptionNumber::new(65001), &[]);
+    let bad_tag = Opt::request_tag(b"123456789");
+    let cases: &[(&[Opt<'_>], Code, bool)] = &[
+        (&[], Code::BAD_REQUEST, false),
+        (
+            &[
+                Opt::new(OptionNumber::NO_RESPONSE, &[0, 0]),
+                Opt::new(OptionNumber::NO_RESPONSE, &[NoResponse::SUPPRESS_ALL]),
+            ],
+            Code::BAD_REQUEST,
+            false,
+        ),
+        (&[bad_tag], Code::BAD_OPTION, false),
+        (&[unknown], Code::BAD_OPTION, true),
+        (&[bad_tag, unknown], Code::BAD_OPTION, true),
+        (
+            &[Opt::proxy_uri("coap://example.com/x"), unknown],
+            Code::PROXYING_NOT_SUPPORTED,
+            false,
+        ),
+        (
+            &[Opt::proxy_scheme("coap"), bad_tag],
+            Code::PROXYING_NOT_SUPPORTED,
+            false,
+        ),
+    ];
+    for &(extra, expected, reports_unknown) in cases {
+        let mut options = OptionsBuilder::<5>::new();
+        // The descending selection is 4.00 only after all 4.02 checks pass.
+        options
+            .push(Opt::new(OptionNumber::Q_BLOCK2, &[0x20]))
+            .unwrap();
+        options
+            .push(Opt::new(OptionNumber::Q_BLOCK2, &[0x10]))
+            .unwrap();
+        for option in extra {
+            options.push(*option).unwrap();
+        }
+        let (wire, n) = encode_wide(Code::GET, &["bench"], options.as_slice(), 0x3a02);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route("bench", get(|_| panic!("invalid options reached handler")))
+            .allow_unprotected()
+            .bind(WideLoopback {
+                inbox: Some((peer, wire, n)),
+                ..WideLoopback::default()
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().send_n, 1);
+        let reply = last_wide(&app);
+        assert_eq!(reply.code(), expected);
+        assert!(reply.q_block2().next().is_none());
+        if reports_unknown {
+            let details = crate::ProblemDetails::decode(reply.payload()).unwrap();
+            assert_eq!(details.unprocessed_options().next(), Some(65001));
+            assert_eq!(details.unprocessed_options().len(), 1);
+        }
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn protected_inner_bad_option_precedes_bad_request_and_replays_ciphertext() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    let make = |sender, recipient| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[0x42; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut client = make(&[1], &[2]);
+    let token = Token::new(&[0xa1]).unwrap();
+    let options = [
+        Opt::uri_path("bench"),
+        // Descending Q selections alone require 4.00. The later unknown
+        // critical Inner option must take precedence and produce 4.02.
+        Opt::new(OptionNumber::Q_BLOCK2, &[0x20]),
+        Opt::new(OptionNumber::Q_BLOCK2, &[0x10]),
+        Opt::new(OptionNumber::new(65001), &[]),
+    ];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x3a03))
+        .with_token(token)
+        .with_options(&options);
+    let mut wire = [0; 256];
+    let n = client.protect_request(&request, &mut wire).unwrap();
+    let reference = client.lookup(token).unwrap();
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route(
+            "bench",
+            get(|_| panic!("invalid Inner options reached handler")),
+        )
+        .oscore(make(&[2], &[1]))
+        .bind(RecordIo::default())
+        .unwrap();
+    let before = server.oscore().unwrap().replay_checkpoint();
+    server.transport_mut().inbox = Some((peer, wire, n));
+    server.poll(0).unwrap();
+    assert_eq!(server.transport().sent_n, 1);
+    let (_, first, first_n) = server.transport().sent[0].unwrap();
+    let outer = decode(&first[..first_n]).unwrap();
+    assert!(outer.oscore().is_some());
+    assert_ne!(outer.code(), Code::BAD_OPTION);
+    assert!(outer.q_block2().next().is_none());
+    assert!(outer.unknown_critical().is_none());
+    let mut opened = [0; 256];
+    let inner = client
+        .unprotect_response(&outer, reference, &mut opened)
+        .unwrap();
+    assert_eq!(inner.code(), Code::BAD_OPTION);
+    assert_eq!(
+        inner.content_format(),
+        Some(Ok(ContentFormat::PROBLEM_DETAILS))
+    );
+    assert!(inner.q_block2().next().is_none());
+    let details = ProblemDetails::decode(inner.payload()).unwrap();
+    assert_eq!(details.unprocessed_options().next(), Some(65001));
+    assert_eq!(details.unprocessed_options().len(), 1);
+    let accepted = server.oscore().unwrap().replay_checkpoint();
+    assert_ne!(
+        accepted, before,
+        "authenticated request advances replay state"
+    );
+    let sender_seq = server.oscore().unwrap().sender_seq();
+
+    server.transport_mut().inbox = Some((peer, wire, n));
+    server.poll(1).unwrap();
+    assert_eq!(server.transport().sent_n, 2);
+    let (_, replay, replay_n) = server.transport().sent[1].unwrap();
+    assert_eq!(&first[..first_n], &replay[..replay_n]);
+    assert_eq!(server.oscore().unwrap().replay_checkpoint(), accepted);
+    assert_eq!(server.oscore().unwrap().sender_seq(), sender_seq);
+    assert_eq!(server.engine_mut().rx_occupied(), 0);
+    assert_eq!(server.engine_mut().tx_occupied(), 0);
+    for index in 0..server.engine().capacities().rx_body_slots.unwrap() {
+        assert!(
+            server
+                .engine()
+                .rx_body_transfer(crate::storage::SlotId::from_index(index))
+                .is_none()
+        );
     }
 }
 
