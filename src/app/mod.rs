@@ -4334,7 +4334,7 @@ where
         None
     };
     let plan = request_plan.unwrap_or_else(ObservePlan::idle);
-    let mut catalog = site::LinkFormatScratch::<N>::new();
+    let mut catalog = None;
     let mut response = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
@@ -4357,7 +4357,11 @@ where
                     .with_retained_if_none_match(retained);
                 match dispatch {
                     Some(dispatch) => dispatch(request, deferred_handle),
-                    None => site.dispatch(request, catalog.as_mut()),
+                    None => site.dispatch_with_catalog(request, || {
+                        catalog
+                            .get_or_insert_with(site::LinkFormatScratch::<N>::new)
+                            .as_mut()
+                    }),
                 }
             }
             Err(

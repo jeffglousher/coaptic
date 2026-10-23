@@ -23,6 +23,12 @@ refusal behavior are preserved. Windows emission confirms removal of the
 48-byte intermediate, its 44-byte clear and staging copy, with more branches
 and register saves. Net CPU benefit remains unmeasured.
 
+Discovery catalog scratch initializes only for the selected built-in GET.
+Windows emission removes the ordinary 128-byte clear; scratch-owner layouts
+and the measured 17,128-byte constrained async future stay unchanged. The
+local dispatch frame grows by 16 bytes. This is a recorded stack cost, not
+a whole-memory saving or measured CPU gain.
+
 The latest socket comparison tests prior core `ff089264` with companion
 `3a1764d`. Commands, compiler settings and limits are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/3a1764d73668e1050277fbf24825786739bd7ce1/tools/benchmark/linux_cpu.md).
@@ -34,7 +40,7 @@ qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
 C1 CON, 64/1024 bytes, five seconds and four rotated pairs. Baseline `f23d69c`
 and candidate `ff089264` use the same adapter, capacities and frozen client.
 Server CPU changes were -1.80%/-2.70% unprotected and -4.07%/-0.76% with OSCORE.
-These are only 1–5 pooled counter ticks; no material repeatable saving is
+These are only 1â€“5 pooled counter ticks; no material repeatable saving is
 established. Pooled latency guards pass, but three pair guards fail:
 unprotected 64-byte p99 +80.892 microseconds, unprotected 1024-byte median
 +2.634 microseconds and OSCORE 1024-byte median +4.427 microseconds.
@@ -42,7 +48,7 @@ Preserve all three failures. Overall latency acceptance is not established.
 Profiling was off, so this run does not identify the next hotspot.
 
 The earlier [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
-supports a limited host CPU saving of 8.28–14.29%, with two failed pair latency
+supports a limited host CPU saving of 8.28â€“14.29%, with two failed pair latency
 guards. [Receive staging](https://github.com/jeffglousher/coaptic-validation/actions/runs/39895566785)
 established no consistent gain and failed latency guards. Fewer empty App polls
 did not establish lower total cost. Full reports and failures remain in #650;
@@ -106,14 +112,14 @@ is tracked separately from Coaptic implementation.
 
 These stay open. Continue software work while their prerequisites are unavailable.
 
-- **Power-loss recovery — [#333](https://github.com/jeffglousher/coaptic/issues/333):**
+- **Power-loss recovery â€” [#333](https://github.com/jeffglousher/coaptic/issues/333):**
   cold-power and interrupted persistent-write checks on the reserved ESP32.
   Done when retained identity, authorization and unresolved effects recover
   correctly, or the device explicitly refuses unsafe recovery.
-- **Backup-owner recovery — [#365](https://github.com/jeffglousher/coaptic/issues/365):**
+- **Backup-owner recovery â€” [#365](https://github.com/jeffglousher/coaptic/issues/365):**
   execute installed recovery with three distinct credentials, then refuse reuse
   of the consumed backup. Needs the operator's deferred touch action.
-- **Reverse LAN comparison — [#341](https://github.com/jeffglousher/coaptic/issues/341):**
+- **Reverse LAN comparison â€” [#341](https://github.com/jeffglousher/coaptic/issues/341):**
   execute MCU-to-host unprotected and protected cells. Needs scoped Windows
   inbound UDP permission. Host-to-MCU execution and reverse software/build
   checks already exist; they do not complete these two runtime cells.

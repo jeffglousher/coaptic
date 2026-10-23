@@ -204,6 +204,26 @@ fn well_known_core_scratch_is_not_4kib() {
 }
 
 #[test]
+fn lazy_catalog_owner_preserves_the_full_scratch_layout() {
+    fn check<const N: usize>() {
+        let backing = (N * LINK_FORMAT_PER_ROUTE).max(128);
+        let scratch = size_of::<LinkFormatScratch<N>>();
+        let owner = size_of::<Option<LinkFormatScratch<N>>>();
+        assert_eq!(scratch, backing + 1, "N={N}: full backing plus enum tag");
+        assert_eq!(owner, scratch, "N={N}: lazy owner must not grow");
+        assert_eq!(link_format_capacity::<N>(), backing.min(RESPONSE_BODY));
+        println!("catalog routes={N} scratch={scratch} lazy_owner={owner}");
+    }
+    check::<0>();
+    check::<1>();
+    check::<5>();
+    check::<6>();
+    check::<8>();
+    check::<16>();
+    check::<256>();
+}
+
+#[test]
 fn block_request_identity_sidecar_has_an_explicit_bound() {
     use coaptic::storage::BlockTransfer;
     let bytes = size_of::<BlockTransfer>();

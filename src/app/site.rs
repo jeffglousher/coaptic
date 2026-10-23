@@ -345,6 +345,15 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
     /// Unsupported unicast discovery query filters are ignored.
     #[must_use]
     pub fn dispatch<'a>(&self, request: Request<'_, T>, catalog: &'a mut [u8]) -> Response<'a, T> {
+        self.dispatch_with_catalog(request, || catalog)
+    }
+
+    /// Obtain caller-owned scratch only after built-in discovery GET is selected.
+    pub(crate) fn dispatch_with_catalog<'a>(
+        &self,
+        request: Request<'_, T>,
+        catalog: impl FnOnce() -> &'a mut [u8],
+    ) -> Response<'a, T> {
         for entry in self.entries.iter().flatten() {
             if !entry.path.matches(request.path()) {
                 continue;
@@ -356,7 +365,7 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
         }
         if self.well_known && path_is_well_known(request.path()) {
             return match request.method() {
-                Some(Method::Get) => link_format(self, catalog),
+                Some(Method::Get) => link_format(self, catalog()),
                 _ => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
             };
         }
@@ -448,6 +457,10 @@ fn link_format<'a, const N: usize, T: OwnedToken>(
 #[cfg(test)]
 #[path = "site_metadata_tests.rs"]
 mod metadata_tests;
+
+#[cfg(test)]
+#[path = "lazy_catalog_tests.rs"]
+mod lazy_catalog_tests;
 
 #[cfg(test)]
 #[path = "extended_handler_tests.rs"]
