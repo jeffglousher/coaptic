@@ -4333,8 +4333,9 @@ where
     } else {
         None
     };
+    let plan = request_plan.unwrap_or_else(ObservePlan::idle);
     let mut catalog = site::LinkFormatScratch::<N>::new();
-    let (mut response, plan) = {
+    let mut response = {
         let body = match assembled {
             InboundBody::Complete(id) => engine.rx_body_payload(id),
             InboundBody::None
@@ -4354,25 +4355,19 @@ where
                     .with_body(body)
                     .with_association(oscore.association(peer))
                     .with_retained_if_none_match(retained);
-                let plan = request_plan.unwrap_or_else(ObservePlan::idle);
-                let response = match dispatch {
+                match dispatch {
                     Some(dispatch) => dispatch(request, deferred_handle),
                     None => site.dispatch(request, catalog.as_mut()),
-                };
-                (response, plan)
+                }
             }
             Err(
                 request::PathError::BadUtf8
                 | request::PathError::EmptySegment
                 | request::PathError::DotSegment,
-            ) => (
-                Response::problem(Code::BAD_REQUEST).title("Bad Request"),
-                ObservePlan::idle(),
-            ),
-            Err(request::PathError::TooLong) => (
-                Response::problem(Code::NOT_FOUND).title("Not Found"),
-                ObservePlan::idle(),
-            ),
+            ) => Response::problem(Code::BAD_REQUEST).title("Bad Request"),
+            Err(request::PathError::TooLong) => {
+                Response::problem(Code::NOT_FOUND).title("Not Found")
+            }
         }
     };
     if response.is_deferred() {
